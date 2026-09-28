@@ -1,12 +1,35 @@
 use std::{path::Path, sync::Arc};
 
-use farcaster_runtime::{RuntimeHost, RuntimeMetric, RuntimeTimer};
+use farcaster_runtime::{RuntimeHost, RuntimeMetric, RuntimeTimer, ScheduledWake};
 
 use crate::{agents::WorkerSnapshot, protocol::SlashCommand};
 
-pub(crate) struct AppRuntimeHost;
+pub(crate) struct AppRuntimeHost {
+    executor: gpui::BackgroundExecutor,
+}
+
+struct AppScheduledWake {
+    _task: gpui::Task<()>,
+}
+impl ScheduledWake for AppScheduledWake {}
 
 impl RuntimeHost for AppRuntimeHost {
+    fn schedule_wake(
+        &self,
+        deadline: std::time::Instant,
+        wake: std::thread::Thread,
+    ) -> Box<dyn ScheduledWake> {
+        let timer = self
+            .executor
+            .timer(deadline.saturating_duration_since(std::time::Instant::now()));
+        Box::new(AppScheduledWake {
+            _task: self.executor.spawn(async move {
+                timer.await;
+                wake.unpark();
+            }),
+        })
+    }
+
     fn state_store(&self) -> Result<farcaster_storage::SharedStateStore, String> {
         super::persistence::shared()
     }
@@ -54,6 +77,7 @@ impl RuntimeHost for AppRuntimeHost {
             RuntimeMetric::LoadHistory => "switch.load_history",
             RuntimeMetric::ProjectHistory => "switch.project_history",
             RuntimeMetric::RuntimeRoute => "switch.runtime_route",
+            RuntimeMetric::IdleRetirement => "idle.retirement_check",
         };
         let operation = matches!(metric, RuntimeMetric::LoadHistory)
             .then(|| OperationTiming::new(OperationKind::HistoryLoad, 0));
@@ -77,6 +101,10 @@ impl RuntimeTimer for AppRuntimeTimer {
     }
 }
 
-pub(crate) fn host() -> Arc<dyn RuntimeHost> {
-    Arc::new(AppRuntimeHost)
+pub(crate) fn host(executor: gpui::BackgroundExecutor) -> Arc<dyn RuntimeHost> {
+    Arc::new(AppRuntimeHost { executor })
 }
+
+#[cfg(test)]
+#[path = "runtime_host_tests.rs"]
+mod tests;

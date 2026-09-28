@@ -1,3 +1,5 @@
+mod activity;
+pub use activity::{WorkerActivitySubscription, subscribe_worker_activity};
 mod caller;
 mod concurrency;
 mod names;

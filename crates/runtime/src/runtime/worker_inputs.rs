@@ -1,24 +1,33 @@
 use super::*;
 
 impl RuntimeOwner {
-    pub(super) fn publish_child_inputs(&self) {
-        if self.process.is_none() {
-            return;
-        }
-        let Some(path) = self.active_session.as_deref() else {
-            return;
-        };
-        let Some((backend, locator)) = agents::external_session_identity(path).or_else(|| {
+    fn child_input_identity(&self) -> Option<sessions::NativeSessionIdentity> {
+        let path = self.active_session.as_deref()?;
+        let (backend, locator) = agents::external_session_identity(path).or_else(|| {
             self.harness
                 .map(|harness| (harness, path.to_string_lossy().into_owned()))
-        }) else {
-            return;
-        };
-        let identity = sessions::NativeSessionIdentity {
+        })?;
+        Some(sessions::NativeSessionIdentity {
             project: sessions::normalize_session_path(&self.project),
             harness: backend,
             profile_id: self.process_command.profile_id.clone(),
             id: locator,
+        })
+    }
+
+    pub(super) fn replay_child_inputs(&self) {
+        if let Some(identity) = self.child_input_identity() {
+            agents::CallerRegistry::shared().replay_child_inputs_for_session(&identity);
+            self.publish_child_inputs();
+        }
+    }
+
+    pub(super) fn publish_child_inputs(&self) {
+        if self.process.is_none() && self.idle_retirement.inbox.is_none() {
+            return;
+        }
+        let Some(identity) = self.child_input_identity() else {
+            return;
         };
         for id in agents::CallerRegistry::shared().take_expired_child_inputs_for_session(&identity)
         {

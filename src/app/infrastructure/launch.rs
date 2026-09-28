@@ -90,6 +90,18 @@ pub(crate) fn run(
     let platform_application = gpui_platform::application();
     drop(platform_timing);
     let event_loop_timing = StartupTiming::always("launch.event_loop_start");
+    let notification_app: Rc<RefCell<Option<WeakEntity<FarcasterApp>>>> =
+        Rc::new(RefCell::new(None));
+    let wake_app = notification_app.clone();
+    platform_application.on_system_wake(move |cx| {
+        if let Some(app) = wake_app.borrow().clone() {
+            let _ = app.update(cx, |app, _| {
+                if let Err(error) = app.runtime.send(crate::runtime::RuntimeCommand::SystemWake) {
+                    zlog::warn!("Could not refresh idle harnesses after system wake: {error}");
+                }
+            });
+        }
+    });
     platform_application
         .with_assets(AppAssets)
         .run(move |cx: &mut App| {
@@ -114,8 +126,6 @@ pub(crate) fn run(
             }
             drop(fonts_timing);
             install_component_theme(cx);
-            let notification_app: Rc<RefCell<Option<WeakEntity<FarcasterApp>>>> =
-                Rc::new(RefCell::new(None));
             super::quit::install(
                 notification_app.clone(),
                 FarcasterApp::request_application_quit,

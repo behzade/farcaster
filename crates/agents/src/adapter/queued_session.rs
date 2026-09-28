@@ -458,6 +458,26 @@ impl QueuedSession {
 }
 
 impl SessionTransport for QueuedSession {
+    fn has_exited(&mut self) -> bool {
+        self.inner.has_exited()
+    }
+
+    fn retain_inbox(&self) -> Result<Option<Box<dyn crate::SessionInbox>>, String> {
+        self.inner.retain_inbox()
+    }
+
+    fn can_retire(&self) -> bool {
+        !self.running
+            && !self.compacting
+            && self.normal_requests.is_empty()
+            && self.queue.is_empty()
+            && self.stopped_batch.is_empty()
+            && self.held_batch.is_none()
+            && self.dispatched.is_empty()
+            && self.pending.is_empty()
+            && self.inner.can_retire()
+    }
+
     fn tracks_prompt_delivery(&self, mode: PromptMode) -> bool {
         self.inner.tracks_prompt_delivery(mode)
     }

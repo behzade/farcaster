@@ -253,6 +253,12 @@ impl Supervisor {
         match self.command_rx.try_recv() {
             Ok(RuntimeCommand::Shutdown) => false,
             Ok(command) => {
+                if matches!(command, RuntimeCommand::SystemWake) {
+                    for actor in self.actors.values() {
+                        actor.send(command.clone());
+                    }
+                    return true;
+                }
                 if matches!(command, RuntimeCommand::SendToSession { .. }) {
                     self.send_to_session(command);
                     return true;

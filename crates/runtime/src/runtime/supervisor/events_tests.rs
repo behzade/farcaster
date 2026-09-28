@@ -129,6 +129,21 @@ fn catalog_session(path: &Path, project: &Path, running: bool) -> crate::session
 }
 
 #[test]
+fn system_wake_reaches_selected_and_background_actors() {
+    let mut fixture = SupervisorFixture::new("selected", PathBuf::from("/project"), None);
+    let selected = fixture.add_recording_actor("selected");
+    let background = fixture.add_recording_actor("background");
+    fixture.commands.send(RuntimeCommand::SystemWake).unwrap();
+    assert!(fixture.supervisor.process_next_command());
+    for actor in [selected, background] {
+        assert!(matches!(
+            actor.recv_timeout(Duration::from_secs(1)),
+            Ok(RuntimeCommand::SystemWake)
+        ));
+    }
+}
+
+#[test]
 fn settled_snapshot_clears_stale_catalog_running_for_selected_and_background_sessions() {
     for selected in [true, false] {
         let project = PathBuf::from("/project");

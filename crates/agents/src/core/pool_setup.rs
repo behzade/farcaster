@@ -260,6 +260,7 @@ impl super::WorkerPool {
             }
             if let Ok(mut current) = shared.lock() {
                 current.status = WorkerStatus::Running;
+                crate::core::activity::record(&current.project);
             }
             if let Some(binding) =
                 CallerRegistry::shared().worker_binding(&record.launch.project, &reserved.id)
@@ -356,6 +357,7 @@ impl super::WorkerPool {
                 .store(cleanup_confirmed, Ordering::SeqCst);
             if let Ok(mut current) = record.snapshot.lock() {
                 current.status = WorkerStatus::Failed;
+                crate::core::activity::record(&current.project);
                 current.error = Some(error.clone());
                 current.pending_input = None;
             }

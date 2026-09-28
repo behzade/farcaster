@@ -110,6 +110,7 @@ pub(super) fn owner_without_process(
                 profile_id: None,
             },
             process: None,
+            idle_retirement: Default::default(),
             snapshot: RuntimeSnapshot {
                 connected: true,
                 status: "Ready".into(),
@@ -2544,6 +2545,7 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
         session_id: None,
         process_command: AgentLaunchConfig::default(),
         process: None,
+        idle_retirement: Default::default(),
         snapshot: RuntimeSnapshot {
             connected: true,
             status: "Working".into(),

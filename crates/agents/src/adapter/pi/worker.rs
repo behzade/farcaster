@@ -138,6 +138,10 @@ enum InputKind {
 }
 
 impl WorkerSession for PiWorkerSession {
+    fn has_exited(&mut self) -> bool {
+        self.process.has_exited()
+    }
+
     fn tracks_prompt_delivery(&self, mode: WorkerSendMode) -> bool {
         matches!(mode, WorkerSendMode::Steer | WorkerSendMode::Queue)
     }

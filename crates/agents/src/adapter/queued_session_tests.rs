@@ -11,6 +11,9 @@ struct Wire {
 }
 struct Transport(Arc<Mutex<Wire>>, bool);
 impl SessionTransport for Transport {
+    fn can_retire(&self) -> bool {
+        true
+    }
     fn steer_error_recovery(&self, _: &str) -> SteerErrorRecovery {
         self.0.lock().expect("wire").steer_recovery
     }
@@ -37,6 +40,35 @@ impl SessionTransport for Transport {
     fn close(&mut self) -> Result<(), String> {
         Ok(())
     }
+}
+
+#[test]
+fn retirement_waits_for_local_queue_and_native_admission() {
+    let (mut session, wire) = session(SteeringBoundary::Native, true);
+    session.running = false;
+    assert!(session.can_retire());
+    let id = session
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Normal,
+            message: "work".into(),
+            images: vec![],
+        })
+        .expect("submit");
+    assert!(!session.can_retire());
+    wire.lock()
+        .unwrap()
+        .events
+        .push_back(SessionEvent::Response(SessionResponse::failure(
+            Some(id),
+            SessionOperation::Prompt(PromptMode::Normal),
+            "rejected".into(),
+        )));
+    drain(&mut session);
+    assert!(session.can_retire());
+    session.running = true;
+    enqueue(&mut session, PromptMode::FollowUp);
+    session.running = false;
+    assert!(!session.can_retire());
 }
 fn session(policy: SteeringBoundary, tracked: bool) -> (QueuedSession, Arc<Mutex<Wire>>) {
     let wire = Arc::new(Mutex::new(Wire::default()));

@@ -2,6 +2,94 @@ use super::*;
 use crate::Backend;
 
 #[test]
+fn retired_parent_wakes_and_routes_nested_child_input_with_exact_profile() -> Result<(), String> {
+    let registry = CallerRegistry::default();
+    let profile = CallerProfile {
+        backend: Backend::Pi,
+        provider: None,
+        model: None,
+        effort: None,
+    };
+    let (armed, ready) = mpsc::channel();
+    let (sent, received) = mpsc::channel();
+    let actor = std::thread::spawn(move || {
+        armed.send(()).unwrap();
+        std::thread::park_timeout(std::time::Duration::from_secs(5));
+        sent.send(()).unwrap();
+    });
+    let parent = registry.issue(
+        Path::new("/project"),
+        profile.clone(),
+        Some(actor.thread().clone()),
+    );
+    parent.set_harness_profile_id(Some("one".into()));
+    parent.bind("parent-session");
+    let context = registry.resolve(parent.token())?;
+    let scope = CallerSession::from_context(&context).native;
+    let middle = registry.issue_as_with_access(
+        Path::new("/project"),
+        profile,
+        None,
+        "middle".into(),
+        "middle".into(),
+        Some(context.worker_id),
+        crate::HarnessAccessMode::Auto,
+    )?;
+    middle.bind("middle-session");
+    let context = registry.resolve(middle.token())?;
+    let child = WorkerParent::new(
+        context.worker_id,
+        context.project,
+        "nested".into(),
+        context.session,
+    );
+    let retained = parent.retain_inbox()?.unwrap();
+    let token = parent.token().to_owned();
+    drop(parent);
+    assert!(registry.resolve(&token).is_err());
+    ready.recv().unwrap();
+    let (responses, receiver) = mpsc::channel();
+    let lease = registry.request_child_input(
+        &child,
+        WorkerInput {
+            id: "native-approval".into(),
+            prompt: "Allow?".into(),
+            options: vec![],
+            secret: false,
+        },
+        responses,
+    )?;
+    for profile_id in [None, Some("two".into())] {
+        let mut other = scope.clone();
+        other.profile_id = profile_id;
+        assert!(registry.take_child_inputs_for_session(&other).is_empty());
+    }
+    received
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("retired actor wake");
+    actor.join().unwrap();
+    let inputs = registry.take_child_inputs_for_session(&scope);
+    assert_eq!(inputs.len(), 1);
+    assert!(inputs[0].prompt.contains("nested"));
+    assert!(registry.take_child_inputs_for_session(&scope).is_empty());
+    registry.respond_to_child_input(WorkerInputResponse {
+        id: inputs[0].id.clone(),
+        value: Some("allow".into()),
+        cancel: false,
+    })?;
+    assert_eq!(
+        receiver.try_recv().unwrap(),
+        WorkerInputResponse {
+            id: "native-approval".into(),
+            value: Some("allow".into()),
+            cancel: false,
+        }
+    );
+    drop((lease, retained));
+    Ok(())
+}
+
+#[test]
 fn profile_choice_uses_the_parent_input_channel() -> Result<(), String> {
     let registry = CallerRegistry::default();
     let identity = registry.issue(
@@ -252,6 +340,13 @@ fn profile_binding_keeps_input_and_expiry_with_its_parent() -> Result<(), String
     );
     let shown = registry.take_child_inputs_for_session(&scope);
     assert_eq!(shown.len(), 1);
+    registry.replay_child_inputs_for_session(&other);
+    assert!(registry.take_child_inputs_for_session(&scope).is_empty());
+    registry.replay_child_inputs_for_session(&scope);
+    let replayed = registry.take_child_inputs_for_session(&scope);
+    assert_eq!(replayed.len(), 1);
+    assert_eq!(replayed[0].id, shown[0].id);
+    assert!(registry.take_child_inputs_for_session(&scope).is_empty());
     drop(first);
     let _replacement = issue("one");
     drop(lease);
@@ -264,5 +359,7 @@ fn profile_binding_keeps_input_and_expiry_with_its_parent() -> Result<(), String
         registry.take_expired_child_inputs_for_session(&scope),
         vec![shown[0].id.clone()]
     );
+    registry.replay_child_inputs_for_session(&scope);
+    assert!(registry.take_child_inputs_for_session(&scope).is_empty());
     Ok(())
 }

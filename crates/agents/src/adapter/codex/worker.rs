@@ -827,6 +827,31 @@ struct CodexWorkerSession {
 }
 
 impl WorkerSession for CodexWorkerSession {
+    fn has_exited(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(_)))
+    }
+
+    fn retain_inbox(&self) -> Result<Option<Box<dyn crate::SessionInbox>>, String> {
+        self.caller_identity.retain_inbox()
+    }
+
+    fn can_retire(&self) -> bool {
+        self.current_turn.is_none()
+            && !self.compacting
+            && !self.manual_compaction
+            && self.pending.is_empty()
+            && self.pending_inputs.is_empty()
+            && self.native_inputs.is_empty()
+            && self.handoff.is_none()
+            && self.abort_cleanup.is_none()
+            && !self.abort_starting_turn
+            && self.peer_messages.is_empty()
+            && self.events.is_empty()
+            && self.queued_inbound.is_empty()
+            && self.prompt_acks.is_empty()
+            && !self.caller_identity.has_pending_messages()
+    }
+
     fn steer_error_recovery(&self, error: &str) -> crate::SteerErrorRecovery {
         use crate::SteerErrorRecovery;
 

@@ -622,6 +622,7 @@ impl RuntimeOwner {
     }
 
     pub(super) fn maybe_send_deferred_prompt(&mut self) {
+        self.send_resumed_commands();
         if !self.startup_state_loaded
             || !self.startup_history_loaded
             || self.pending_session_controls.selection_pending()

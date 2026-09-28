@@ -269,6 +269,10 @@ impl Process {
                 Err(TryRecvError::Disconnected) => Some(Err("Claude stdout reader stopped".into())),
             })
     }
+    pub(super) fn has_exited(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(_)))
+    }
+
     pub(super) fn close(&mut self) -> Result<(), String> {
         self.closing.store(true, Ordering::Release);
         self.input.take();

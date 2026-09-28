@@ -8,6 +8,18 @@ const FIXTURES: &str =
 const TEST_SESSION_ID: &str = "00000000-0000-4000-8000-000000000001";
 
 #[test]
+fn closed_session_still_observes_native_process_exit() {
+    let (directory, command) = setup();
+    let mut session = session(&command, directory.path());
+    session.closed = true;
+    assert!(session.poll().is_none());
+    assert!(!session.has_exited());
+    session.process.close().expect("close fixture process");
+    assert!(session.poll().is_none());
+    assert!(session.has_exited());
+}
+
+#[test]
 fn cancellation_receipt_settles_only_the_named_active_prompt() {
     let (directory, command) = setup();
     let mut session = session(&command, directory.path());

@@ -1470,6 +1470,27 @@ impl OpenCodeWorkerSession {
 }
 
 impl WorkerSession for OpenCodeWorkerSession {
+    fn has_exited(&mut self) -> bool {
+        self.server.has_exited()
+    }
+
+    fn retain_inbox(&self) -> Result<Option<Box<dyn crate::SessionInbox>>, String> {
+        self.caller_identity.retain_inbox()
+    }
+
+    fn can_retire(&self) -> bool {
+        !self.turn_active
+            && self.pending_inputs.is_empty()
+            && self.pending_deliveries.is_empty()
+            && self.delivered_awaiting_execution.is_empty()
+            && self.active_tools.is_empty()
+            && self.completions.is_none()
+            && self.steering_interrupts == 0
+            && !self.abort_waiting_for_start
+            && self.pending.is_empty()
+            && !self.caller_identity.has_pending_messages()
+    }
+
     fn tracks_prompt_delivery(&self, _mode: WorkerSendMode) -> bool {
         true
     }

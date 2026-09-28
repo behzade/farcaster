@@ -260,6 +260,18 @@ pub enum WorkerEvent {
 }
 
 pub trait WorkerSession: Send {
+    fn has_exited(&mut self) -> bool {
+        false
+    }
+
+    fn retain_inbox(&self) -> Result<Option<Box<dyn crate::SessionInbox>>, String> {
+        Ok(None)
+    }
+
+    fn can_retire(&self) -> bool {
+        false
+    }
+
     fn steer_error_recovery(&self, _error: &str) -> crate::SteerErrorRecovery {
         crate::SteerErrorRecovery::Fail
     }

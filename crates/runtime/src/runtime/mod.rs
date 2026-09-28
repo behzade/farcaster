@@ -5,6 +5,7 @@ mod command_queue;
 mod commands;
 mod documents;
 mod history;
+mod idle;
 mod launch_context;
 mod notifications;
 mod process;
@@ -107,6 +108,7 @@ struct RuntimeOwner {
     session_id: Option<String>,
     process_command: AgentLaunchConfig,
     process: Option<Box<dyn SessionTransport>>,
+    idle_retirement: idle::IdleRetirement,
     snapshot: RuntimeSnapshot,
     owns_session_catalog: bool,
     session_generation: u64,

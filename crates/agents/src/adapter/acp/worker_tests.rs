@@ -2488,6 +2488,7 @@ fn acp_close_reports_eof_before_response_and_still_reaps() {
     let error = session
         .close()
         .expect_err("EOF cannot confirm session close completion");
+    assert!(session.has_exited());
     let cause = error
         .strip_prefix("close Test ACP session: ")
         .expect("close error should name the ACP profile once");

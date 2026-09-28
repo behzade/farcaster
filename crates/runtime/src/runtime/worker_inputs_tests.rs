@@ -45,6 +45,15 @@ impl WorkerSession for InputWorker {
 #[test]
 fn expired_child_lease_dismisses_the_dialog_and_late_answers_keep_parent_alive()
 -> Result<(), String> {
+    check_child_lease_expiry(false)
+}
+
+#[test]
+fn retired_parent_delivers_child_approval_and_expiry_without_resuming() -> Result<(), String> {
+    check_child_lease_expiry(true)
+}
+
+fn check_child_lease_expiry(retired: bool) -> Result<(), String> {
     struct ParentTransport(std::rc::Rc<std::cell::Cell<usize>>);
     impl agents::SessionTransport for ParentTransport {
         fn send(&mut self, _: agents::SessionCommand) -> Result<String, String> {
@@ -113,6 +122,13 @@ fn expired_child_lease_dismisses_the_dialog_and_late_answers_keep_parent_alive()
         }
     };
     wait_update()?;
+    let retained = if retired {
+        let retained = parent.retain_inbox()?;
+        drop(parent);
+        retained
+    } else {
+        None
+    };
     child_events
         .send(WorkerEvent::NeedsInput(agents::WorkerInput {
             id: "native-approval".into(),
@@ -124,7 +140,12 @@ fn expired_child_lease_dismisses_the_dialog_and_late_answers_keep_parent_alive()
     wait_update()?;
     let (mut owner, events) = owner_without_process(temp.path().into());
     let closed = std::rc::Rc::new(std::cell::Cell::new(0));
-    owner.process = Some(Box::new(ParentTransport(closed.clone())));
+    if retired {
+        owner.idle_retirement.inbox = retained;
+        owner.idle_retirement.retired = true;
+    } else {
+        owner.process = Some(Box::new(ParentTransport(closed.clone())));
+    }
     owner.active_session = Some(path);
     owner.process_command.profile_id = Some("11111111-1111-4111-8111-111111111111".into());
     Arc::make_mut(&mut owner.snapshot.conversation).running = true;
@@ -167,14 +188,18 @@ fn expired_child_lease_dismisses_the_dialog_and_late_answers_keep_parent_alive()
         assert_eq!(closed.get(), 0);
         assert!(owner.snapshot.connected);
         assert!(owner.snapshot.conversation.running);
-        assert_eq!(
-            owner
-                .process
-                .as_mut()
-                .expect("active process")
-                .send(agents::SessionCommand::Abort)?,
-            "still-alive"
-        );
+        if retired {
+            assert!(owner.process.is_none());
+        } else {
+            assert_eq!(
+                owner
+                    .process
+                    .as_mut()
+                    .expect("active process")
+                    .send(agents::SessionCommand::Abort)?,
+                "still-alive"
+            );
+        }
     }
     Ok(())
 }

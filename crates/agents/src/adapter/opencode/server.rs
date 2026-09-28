@@ -69,6 +69,10 @@ impl OpenCodeServerProcess {
         self.transport.endpoint()
     }
 
+    pub fn has_exited(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(_)))
+    }
+
     pub fn terminate(&mut self) -> Result<(), String> {
         self.stdin.take();
         if self

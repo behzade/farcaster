@@ -1,10 +1,13 @@
 use crate::Backend;
 use farcaster_sessions::{AppSessionId, NativeSessionIdentity, SessionKey};
 use std::{
-    cell::RefCell,
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock, mpsc},
+    sync::{
+        Arc, Mutex, OnceLock, Weak,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -13,6 +16,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{super::contract::PeerMessage, names, worker::WorkerActivityState};
 
+mod inbox;
+use inbox::{Mailbox, RetainedInboxState};
 mod inputs;
 pub use inputs::is_child_input_id;
 
@@ -56,6 +61,7 @@ pub type ExecutionSink =
 #[derive(Clone, Default)]
 pub struct CallerRegistry {
     callers: Arc<Mutex<HashMap<String, RegisteredCaller>>>,
+    retired_inboxes: Arc<Mutex<HashMap<String, RegisteredCaller>>>,
     family_sink: Arc<Mutex<Option<WorkerFamilySink>>>,
     inputs: Arc<Mutex<Vec<inputs::PendingInput>>>,
     expired_inputs: Arc<Mutex<Vec<inputs::ExpiredInput>>>,
@@ -112,6 +118,8 @@ struct RegisteredCaller {
     assignment: Option<super::WorkerAssignment>,
     activity: WorkerActivityState,
     inbox: mpsc::Sender<PeerMessage>,
+    mailbox: Arc<Mutex<Mailbox>>,
+    retained_inbox: Weak<RetainedInboxState>,
     wake: Option<thread::Thread>,
 }
 
@@ -167,10 +175,9 @@ impl CallerSession {
 
 pub struct CallerIdentity {
     token: String,
-    inbox: mpsc::Receiver<PeerMessage>,
+    inbox: Arc<Mutex<Mailbox>>,
     registry: CallerRegistry,
     slot: Option<super::WorkerSlot>,
-    pending_message: RefCell<Option<PeerMessage>>,
 }
 
 impl CallerContext {
@@ -180,6 +187,20 @@ impl CallerContext {
 }
 
 impl CallerRegistry {
+    pub fn child_inboxes_idle(&self, project: &Path) -> bool {
+        self.callers.lock().is_ok_and(|callers| {
+            callers
+                .values()
+                .filter(|caller| caller.project == project && caller.parent_worker_id.is_some())
+                .all(|caller| {
+                    caller
+                        .mailbox
+                        .lock()
+                        .is_ok_and(|mut inbox| !inbox.has_pending())
+                })
+        })
+    }
+
     pub fn set_execution_sinks(
         &self,
         session: Option<SessionRecordSink>,
@@ -445,6 +466,10 @@ impl CallerRegistry {
         let worker_id = new_worker_id();
         let project = canonical_project(project);
         let (inbox, receiver) = mpsc::channel();
+        let mailbox = Arc::new(Mutex::new(Mailbox {
+            receiver,
+            pending: None,
+        }));
         if let Ok(mut callers) = self.callers.lock() {
             let worker_name = names::generated_name(|candidate| {
                 callers.values().any(|caller| {
@@ -476,16 +501,17 @@ impl CallerRegistry {
                     assignment: None,
                     activity: WorkerActivityState::Starting,
                     inbox,
+                    mailbox: mailbox.clone(),
+                    retained_inbox: Weak::new(),
                     wake,
                 },
             );
         }
         CallerIdentity {
             token,
-            inbox: receiver,
+            inbox: mailbox,
             registry: self.clone(),
             slot: None,
-            pending_message: RefCell::new(None),
         }
     }
 
@@ -528,6 +554,10 @@ impl CallerRegistry {
         let token = new_identity("caller");
         let project = canonical_project(project);
         let (inbox, receiver) = mpsc::channel();
+        let mailbox = Arc::new(Mutex::new(Mailbox {
+            receiver,
+            pending: None,
+        }));
         let mut callers = self
             .callers
             .lock()
@@ -569,16 +599,17 @@ impl CallerRegistry {
                 assignment: None,
                 activity: WorkerActivityState::Starting,
                 inbox,
+                mailbox: mailbox.clone(),
+                retained_inbox: Weak::new(),
                 wake,
             },
         );
         drop(callers);
         Ok(CallerIdentity {
             token,
-            inbox: receiver,
+            inbox: mailbox,
             registry: self.clone(),
             slot: None,
-            pending_message: RefCell::new(None),
         })
     }
 
@@ -741,19 +772,26 @@ impl CallerRegistry {
         let caller = callers
             .get(token)
             .ok_or_else(|| "unknown Farcaster caller".to_owned())?;
+        let retired = self
+            .retired_inboxes
+            .lock()
+            .map_err(|_| "retired inbox registry is unavailable")?;
         let recipient = match caller.parent_worker_id.as_deref() {
             Some(parent_id) => callers
                 .values()
+                .chain(retired.values())
                 .find(|candidate| {
                     candidate.worker_id == parent_id && candidate.project == caller.project
                 })
                 .or_else(|| {
                     caller.parent_session.as_ref().and_then(|parent| {
-                        unique_caller(callers.values().filter(|candidate| {
-                            candidate
-                                .session_key()
-                                .is_some_and(|key| key.same_session(parent))
-                        }))
+                        unique_caller(callers.values().chain(retired.values()).filter(
+                            |candidate| {
+                                candidate
+                                    .session_key()
+                                    .is_some_and(|key| key.same_session(parent))
+                            },
+                        ))
                     })
                 }),
             None => callers.values().find(|candidate| {
@@ -820,6 +858,7 @@ impl RegisteredCaller {
         self.inbox
             .send(PeerMessage { from, message })
             .map_err(|_| format!("worker {} is unavailable", self.worker_name))?;
+        super::activity::record(&self.project);
         if let Some(wake) = &self.wake {
             wake.unpark();
         }
@@ -979,6 +1018,7 @@ impl CallerIdentity {
             context.activity = WorkerActivityState::Idle;
         }
         self.registry.bind_record(&self.token);
+        self.registry.adopt_retained_inbox(&self.token);
         self.registry.refresh_family(&self.token);
         let after = self.registry.callers.lock().ok().and_then(|callers| {
             callers
@@ -1032,23 +1072,25 @@ impl CallerIdentity {
         self.registry.persist_family(&self.token);
     }
 
+    pub fn has_pending_messages(&self) -> bool {
+        self.inbox
+            .lock()
+            .map_or(true, |mut inbox| inbox.has_pending())
+    }
+
     pub fn try_recv(&self) -> Option<PeerMessage> {
-        let message = self
-            .pending_message
-            .borrow_mut()
-            .take()
-            .or_else(|| self.inbox.try_recv().ok())?;
-        if self.try_activate() {
-            Some(message)
-        } else {
-            *self.pending_message.borrow_mut() = Some(message);
-            None
+        let mut inbox = self.inbox.lock().ok()?;
+        if !inbox.has_pending() || !self.try_activate() {
+            return None;
         }
+        inbox.pending.take()
     }
 
     pub fn discard_pending_messages(&self) {
-        self.pending_message.borrow_mut().take();
-        while self.inbox.try_recv().is_ok() {}
+        if let Ok(mut inbox) = self.inbox.lock() {
+            inbox.pending.take();
+            while inbox.receiver.try_recv().is_ok() {}
+        }
     }
 }
 
@@ -1096,7 +1138,16 @@ impl WorkerParent {
         let Ok(callers) = registry.callers.lock() else {
             return;
         };
-        let Some(parent) = self.find(&callers) else {
+        let Ok(retired) = registry.retired_inboxes.lock() else {
+            return;
+        };
+        let parent = callers
+            .values()
+            .chain(retired.values())
+            .find(|caller| caller.worker_id == self.id && caller.project == self.project)
+            .or_else(|| self.find(&callers))
+            .or_else(|| self.find(&retired));
+        let Some(parent) = parent else {
             zlog::warn!("Parent unavailable for worker {} report", self.child_name);
             return;
         };
@@ -1108,8 +1159,15 @@ impl WorkerParent {
 
 impl Drop for CallerIdentity {
     fn drop(&mut self) {
-        if let Ok(mut callers) = self.registry.callers.lock() {
-            callers.remove(&self.token);
+        if let Ok(mut callers) = self.registry.callers.lock()
+            && let Some(caller) = callers.remove(&self.token)
+            && caller.retained_inbox.upgrade().is_some()
+            && let Ok(mut retired) = self.registry.retired_inboxes.lock()
+        {
+            if let Some(state) = caller.retained_inbox.upgrade() {
+                state.detached();
+            }
+            retired.insert(self.token.clone(), caller);
         }
     }
 }

@@ -14,6 +14,9 @@ mod title_native_tests;
 #[path = "close_lifecycle_tests.rs"]
 mod close_lifecycle_tests;
 
+#[path = "idle_lifecycle_tests.rs"]
+mod idle_lifecycle_tests;
+
 #[path = "selection_lifecycle_tests.rs"]
 mod selection_lifecycle_tests;
 
@@ -399,6 +402,7 @@ impl Scenario {
         while let Some(event) = self.owner.process.as_mut().and_then(|p| p.poll()) {
             self.owner.apply_process_item(event);
         }
+        self.owner.send_resumed_commands();
         self.events.extend(self.incoming_events.try_iter());
     }
 

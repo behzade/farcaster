@@ -449,15 +449,31 @@ fn queued_child_message_waits_for_capacity_without_being_lost() -> Result<(), St
     child.bind("child");
     slot.release();
     let other = concurrency.reserve()?;
+    let activity = crate::subscribe_worker_activity(Path::new("/project"), std::thread::current());
+    let revision = activity.revision();
+    assert!(registry.child_inboxes_idle(Path::new("/project")));
     registry.send(parent.token(), "review", "first".into())?;
+    assert!(activity.revision() > revision);
+    assert!(!registry.child_inboxes_idle(Path::new("/project")));
     registry.send(parent.token(), "review", "second".into())?;
+    assert!(child.has_pending_messages());
+    assert!(
+        child.has_pending_messages(),
+        "retirement checks preserve the head message"
+    );
     assert!(child.try_recv().is_none());
     assert!(child.try_recv().is_none());
+    assert!(
+        !registry.child_inboxes_idle(Path::new("/project")),
+        "capacity-blocked head still owns work"
+    );
     drop(other);
     assert_eq!(child.try_recv().expect("first message").message, "first");
     assert!(concurrency.reserve().is_err(), "delivery reserves capacity");
     assert_eq!(child.try_recv().expect("second message").message, "second");
     assert!(child.try_recv().is_none());
+    assert!(!child.has_pending_messages());
+    assert!(registry.child_inboxes_idle(Path::new("/project")));
     Ok(())
 }
 
@@ -766,3 +782,6 @@ fn family_stop_refreshes_merged_bindings_before_the_next_caller_send() {
         Err("storage unavailable".into())
     );
 }
+
+#[path = "caller/inbox_tests.rs"]
+mod retained_inbox_tests;

@@ -92,6 +92,18 @@ pub(super) fn compact_invocation(message: &str) -> Option<&str> {
 }
 
 impl SessionTransport for PiRpcProcess {
+    fn has_exited(&mut self) -> bool {
+        PiRpcProcess::has_exited(self)
+    }
+
+    fn retain_inbox(&self) -> Result<Option<Box<dyn crate::SessionInbox>>, String> {
+        self.retain_session_inbox()
+    }
+
+    fn can_retire(&self) -> bool {
+        self.can_retire_idle()
+    }
+
     fn tracks_prompt_delivery(&self, _: PromptMode) -> bool {
         true
     }

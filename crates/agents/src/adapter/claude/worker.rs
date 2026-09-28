@@ -769,6 +769,29 @@ impl ClaudeSession {
 }
 
 impl WorkerSession for ClaudeSession {
+    fn has_exited(&mut self) -> bool {
+        self.process.has_exited()
+    }
+
+    fn retain_inbox(&self) -> Result<Option<Box<dyn crate::SessionInbox>>, String> {
+        self.caller.retain_inbox()
+    }
+
+    fn can_retire(&self) -> bool {
+        !self.active
+            && !self.closed
+            && self.dispatched.is_empty()
+            && self.queued.is_empty()
+            && !self.handoff_pending
+            && self.handoff_uuid.is_none()
+            && self.abort_waiting_on_handoff_interrupt.is_none()
+            && self.permissions.is_empty()
+            && self.interrupts.is_empty()
+            && self.prompt_acks.is_empty()
+            && self.events.pending.is_empty()
+            && !self.caller.has_pending_messages()
+    }
+
     fn tracks_prompt_delivery(&self, _mode: WorkerSendMode) -> bool {
         true
     }

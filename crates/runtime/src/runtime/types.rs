@@ -162,6 +162,7 @@ pub enum RuntimeCommand {
     CommitImport {
         sessions: Vec<SessionSummary>,
     },
+    SystemWake,
     Shutdown,
 }
 

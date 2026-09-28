@@ -253,6 +253,7 @@ impl WorkerPool {
             super::CallerRegistry::shared().track_binding(&session_binding);
             let parent_binding = Arc::new(Mutex::new(Some(parent_identity)));
             super::CallerRegistry::shared().track_binding(&parent_binding);
+            super::activity::record(&snapshot.project);
             state.records.insert(
                 id.clone(),
                 WorkerRecord {
@@ -579,6 +580,7 @@ impl WorkerPool {
             error: None,
             pending_input: None,
         };
+        super::activity::record(&initial.project);
         state.records.insert(
             id.clone(),
             WorkerRecord {
@@ -697,6 +699,7 @@ impl WorkerPool {
                     && current.status == WorkerStatus::Pending
                 {
                     current.status = WorkerStatus::Stopped;
+                    super::activity::record(&current.project);
                     current.pending_input = None;
                 }
             }
@@ -726,6 +729,7 @@ impl WorkerPool {
                     || record.cleanup_confirmed.load(Ordering::SeqCst))
             {
                 current.status = WorkerStatus::Stopped;
+                super::activity::record(&current.project);
                 current.pending_input = None;
             }
             let current = snapshot(record)?;
@@ -856,6 +860,7 @@ impl WorkerPool {
             }
             if let Ok(mut current) = record.snapshot.lock() {
                 current.status = WorkerStatus::Pending;
+                super::activity::record(&current.project);
                 current.error = None;
                 current.pending_input = None;
             }
@@ -957,7 +962,9 @@ fn reap_terminal(state: &mut PoolState) {
         .take(remove)
         .collect::<Vec<_>>();
     for id in ids {
-        state.records.remove(&id);
+        if let Some(record) = state.records.remove(&id) {
+            super::activity::record(&record.launch.project);
+        }
     }
 }
 

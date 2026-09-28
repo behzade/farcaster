@@ -442,6 +442,25 @@ impl PiRpcProcess {
         Ok(())
     }
 
+    pub(super) fn retain_session_inbox(
+        &self,
+    ) -> Result<Option<Box<dyn crate::SessionInbox>>, String> {
+        self.caller_identity.retain_inbox()
+    }
+
+    pub(super) fn can_retire_idle(&self) -> bool {
+        self.activity == WorkerActivityState::Idle
+            && self.pending.is_empty()
+            && self.pending_prompt_modes.is_empty()
+            && self.deliveries.is_empty()
+            && self.pending_configurations.is_empty()
+            && self.pending_queue_configurations.is_empty()
+            && self.apply_steering_requests.is_empty()
+            && self.peer_messages.is_empty()
+            && self.queued.is_empty()
+            && !self.caller_identity.has_pending_messages()
+    }
+
     fn set_activity(&mut self, activity: WorkerActivityState) {
         self.activity = activity;
         self.caller_identity.set_activity(activity);
@@ -866,6 +885,12 @@ impl PiRpcProcess {
                 Some(SessionEvent::Failure("Pi reader threads stopped".into()))
             }
         }
+    }
+
+    pub(super) fn has_exited(&mut self) -> bool {
+        self.child
+            .lock()
+            .is_ok_and(|mut child| matches!(child.try_wait(), Ok(Some(_))))
     }
 
     pub fn terminate(&mut self) -> Result<(), String> {

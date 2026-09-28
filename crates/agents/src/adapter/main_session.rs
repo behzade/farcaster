@@ -895,6 +895,24 @@ impl WorkerSessionTransport {
 }
 
 impl SessionTransport for WorkerSessionTransport {
+    fn has_exited(&mut self) -> bool {
+        self.worker.has_exited()
+    }
+
+    fn retain_inbox(&self) -> Result<Option<Box<dyn crate::SessionInbox>>, String> {
+        self.worker.retain_inbox()
+    }
+
+    fn can_retire(&self) -> bool {
+        !self.running
+            && self.pending.is_empty()
+            && self.pending_prompts.is_empty()
+            && self.prompt_deliveries.is_empty()
+            && self.steering.is_empty()
+            && self.follow_up.is_empty()
+            && self.worker.can_retire()
+    }
+
     fn steer_error_recovery(&self, error: &str) -> crate::SteerErrorRecovery {
         self.worker.steer_error_recovery(error)
     }

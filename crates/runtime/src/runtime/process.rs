@@ -105,6 +105,7 @@ impl RuntimeOwner {
     }
 
     pub(super) fn reset_process_runtime(&mut self) {
+        self.idle_retirement = Default::default();
         self.complete_current_delivered_prompt();
         self.fail_pending_queued_prompts("Runtime reset before acknowledgement");
         self.pending_session_controls.reset_transport();
@@ -134,6 +135,10 @@ impl RuntimeOwner {
         fork: Option<PathBuf>,
         preserve_transcript: bool,
     ) {
+        if self.idle_retirement.closing.is_some() {
+            self.fail("The previous session process is still closing. Try again shortly.".into());
+            return;
+        }
         if let Some(path) = session.as_ref().or(fork.as_ref()) {
             self.process_command = match configuration_for_target(
                 &self.process_command,
@@ -195,7 +200,18 @@ impl RuntimeOwner {
             .deferred_prompt
             .as_ref()
             .and(self.pending_submission_id.clone());
+        let retained_inbox = (session.is_some() && session == self.active_session)
+            .then(|| self.idle_retirement.inbox.take())
+            .flatten();
+        let resume_attempted = self.idle_retirement.resume_attempted;
+        let retired = self.idle_retirement.retired
+            && session.is_some()
+            && session == self.active_session
+            && fork.is_none();
         self.reset_process_runtime();
+        self.idle_retirement.inbox = retained_inbox;
+        self.idle_retirement.resume_attempted = resume_attempted;
+        self.idle_retirement.retired = retired;
         self.pending_session_controls.restore_preview = keep_preview;
         self.pending_submission_id = deferred_submission_id;
         // Missing backend metadata must never make a resume or fork eligible for a title.
@@ -269,6 +285,7 @@ impl RuntimeOwner {
             generation: self.process_generation,
             preserve_submission: preserve_transcript,
         });
+        self.replay_child_inputs();
         self.publish();
         let start = if let Some(source) = fork {
             SessionStart::Fork(source)
@@ -300,6 +317,7 @@ impl RuntimeOwner {
         self.access_mode_changes.applying = false;
         match process {
             Ok(process) => {
+                self.idle_retirement.retired = false;
                 if agents::service_tier_policy(self.harness).application
                     == agents::ServiceTierApplication::OnLaunch
                     && let Some(tier) = launch_tier.as_deref()
@@ -367,6 +385,8 @@ impl RuntimeOwner {
         let operation = request.operation();
         match self.process.as_mut().map(|process| process.send(request)) {
             Some(Ok(id)) => {
+                self.idle_retirement.invalidate();
+                self.idle_retirement.requests.insert(id.clone());
                 if let Some(model) = selected_model {
                     self.pending_session_controls.model_sent(id, model);
                 } else if let Some(tier) = selected_tier {
@@ -384,6 +404,7 @@ impl RuntimeOwner {
     }
 
     pub(super) fn apply_process_item(&mut self, item: SessionEvent) -> SnapshotChange {
+        self.idle_retirement.observe(&item);
         match item {
             SessionEvent::Response(response) => {
                 self.apply_response(response);
@@ -602,6 +623,9 @@ impl RuntimeOwner {
             let _ = process.close();
         }
         let previewing = self.parked_snapshot.is_some();
+        if self.idle_retirement.inbox.is_some() {
+            self.idle_retirement.retired = true;
+        }
         let label = if starting {
             format!("Couldn’t start {}", self.backend_name())
         } else {

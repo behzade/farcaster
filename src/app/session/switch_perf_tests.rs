@@ -193,6 +193,7 @@ fn refresh_document(
 
 #[gpui::test]
 fn switching_between_sessions_runs_every_measured_phase(cx: &mut gpui::TestAppContext) {
+    let executor = cx.background_executor.clone();
     let test_name = concat!(
         module_path!(),
         "::switching_between_sessions_runs_every_measured_phase"
@@ -213,7 +214,7 @@ fn switching_between_sessions_runs_every_measured_phase(cx: &mut gpui::TestAppCo
                 ),
                 None,
                 AgentLaunchConfig::test_script(&script, vec!["quiet".into()]),
-                crate::app::runtime_host::host(),
+                crate::app::runtime_host::host(executor.clone()),
             )
         },
         |cx, app, project| {
@@ -278,6 +279,7 @@ fn switching_between_sessions_runs_every_measured_phase(cx: &mut gpui::TestAppCo
 
 #[gpui::test]
 fn hover_prefetch_and_cold_selection_load_the_same_transcript(cx: &mut gpui::TestAppContext) {
+    let executor = cx.background_executor.clone();
     crate::app::test_support::with_runtime_app(
         concat!(
             module_path!(),
@@ -296,7 +298,7 @@ fn hover_prefetch_and_cold_selection_load_the_same_transcript(cx: &mut gpui::Tes
                 ),
                 None,
                 AgentLaunchConfig::test_script(&script, vec!["quiet".into()]),
-                crate::app::runtime_host::host(),
+                crate::app::runtime_host::host(executor.clone()),
             )
         },
         |cx, app, project| {

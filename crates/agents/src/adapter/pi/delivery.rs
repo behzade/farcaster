@@ -11,6 +11,10 @@ use crate::{
 pub(super) struct Deliveries(VecDeque<(String, PromptMode, Value)>);
 
 impl Deliveries {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     pub fn submitted(&mut self, id: String, mode: PromptMode, text: &str, images: &[PromptImage]) {
         let mut content = vec![json!({"type":"text", "text":text})];
         content.extend(images.iter().map(|image| {

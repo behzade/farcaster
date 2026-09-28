@@ -23,6 +23,7 @@ pub(super) fn run(
         session_id: None,
         process_command,
         process: None,
+        idle_retirement: Default::default(),
         snapshot: RuntimeSnapshot {
             status: "Done".into(),
             project,
@@ -105,6 +106,7 @@ pub(super) fn run(
         }
         owner.publish_child_inputs();
         owner.apply_queued_access_mode_change();
+        owner.send_resumed_commands();
         if immediate_snapshot_change
             || stream_publish_due.is_some_and(|deadline| Instant::now() >= deadline)
         {
@@ -116,6 +118,7 @@ pub(super) fn run(
             .access_mode_change_ready()
             .then(|| owner.access_mode_changes.next_deadline())
             .flatten();
+        owner.poll_idle_retirement(now, false);
         let next_deadline = [
             stream_publish_due,
             owner.session_refresh_due,
@@ -134,7 +137,12 @@ pub(super) fn run(
             Err(mpsc::TryRecvError::Disconnected) => running = false,
         }
     }
-    let close_result = close_process(owner.process.take());
+    let close_result = close_process(
+        owner
+            .process
+            .take()
+            .or_else(|| owner.idle_retirement.closing.take()),
+    );
     let _ = owner.event_tx.send(RuntimeEvent::Stopped);
     close_result
 }

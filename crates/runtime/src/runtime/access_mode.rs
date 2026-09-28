@@ -13,7 +13,6 @@ pub(super) struct AccessModeChangeState {
 }
 
 impl AccessModeChangeState {
-    #[cfg(test)]
     pub(super) fn is_idle(&self) -> bool {
         self.queued.is_none() && !self.restart_pending
     }

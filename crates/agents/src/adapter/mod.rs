@@ -141,6 +141,17 @@ pub fn service_tier_policy(harness: impl Into<Option<Backend>>) -> crate::Servic
     })
 }
 
+pub fn supports_session_resume(harness: impl Into<Option<Backend>>) -> bool {
+    harness.into().is_some_and(|harness| {
+        for_backend(harness)
+            .descriptor()
+            .capabilities
+            .sessions
+            .resume
+            == super::contract::CapabilitySupport::Available
+    })
+}
+
 pub fn supports_session_fork(harness: impl Into<Option<Backend>>) -> bool {
     let Some(harness) = harness.into() else {
         return false;

@@ -64,7 +64,7 @@ impl FarcasterApp {
                 .clone(),
             None,
             agent_launch,
-            runtime_host::host(),
+            runtime_host::host(cx.background_executor().clone()),
         );
         drop(runtime_timing);
 

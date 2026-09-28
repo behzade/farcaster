@@ -7,6 +7,7 @@ mod adapter;
 pub mod builtin_mcp;
 pub use farcaster_agent_protocol as contract;
 mod core;
+pub use core::{WorkerActivitySubscription, subscribe_worker_activity};
 mod profiles;
 pub use profiles::{HarnessProfile, HarnessProfiles, profile_id_from_locator};
 
@@ -24,11 +25,10 @@ pub use adapter::{
     saved_project_trust, service_tier_policy, spawn_session, supports_auto_title_generation,
     supports_individual_queue_cancellation, supports_reasoning_effort, supports_reasoning_reset,
     supports_sandbox_discovery, supports_session_fork, supports_session_move,
-    supports_startup_command, supports_steering, validate_launch, validate_session_move,
-    warm_session_history_for_profile, worker_factories,
+    supports_session_resume, supports_startup_command, supports_steering, validate_launch,
+    validate_session_move, warm_session_history_for_profile, worker_factories,
 };
 pub use adapter::{delegated_worker_access_mode, worker_access_modes};
-#[cfg(any(test, feature = "test-support"))]
 pub use contract::WorkerStatus;
 pub use contract::extensions;
 pub use contract::{
@@ -36,10 +36,11 @@ pub use contract::{
     DiscoveredSession, DiscoveredUsage, HarnessAccessMode, PeerMessage, PromptOutcome,
     PromptPresentation, QueuedPrompt, SandboxState, ServiceTierApplication, ServiceTierPolicy,
     SessionActivityKind, SessionCommand, SessionContextUsage, SessionEvent, SessionGoal,
-    SessionHistory, SessionLaunch, SessionMetadata, SessionOperation, SessionResponse,
-    SessionResponseErrorKind, SessionResponsePayload, SessionStart, SessionTransport, SessionUsage,
-    SessionUsageTokens, StartWorker, SteerErrorRecovery, WorkerContext, WorkerInput,
-    WorkerInputResponse, effort_rank, model_efforts, valid_worker_name, validate_child_access,
+    SessionHistory, SessionInbox, SessionLaunch, SessionMetadata, SessionOperation,
+    SessionResponse, SessionResponseErrorKind, SessionResponsePayload, SessionStart,
+    SessionTransport, SessionUsage, SessionUsageTokens, StartWorker, SteerErrorRecovery,
+    WorkerContext, WorkerInput, WorkerInputResponse, effort_rank, model_efforts, valid_worker_name,
+    validate_child_access,
 };
 
 #[derive(Clone, Default)]

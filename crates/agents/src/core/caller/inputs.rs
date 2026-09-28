@@ -50,8 +50,10 @@ impl Drop for InputLease {
                 });
             }
             if let Ok(callers) = self.registry.callers.lock()
+                && let Ok(retired) = self.registry.retired_inboxes.lock()
                 && let Some(parent) = callers
                     .values()
+                    .chain(retired.values())
                     .find(|caller| caller.worker_id == pending.parent_id)
                 && let Some(wake) = &parent.wake
             {
@@ -128,12 +130,10 @@ impl CallerRegistry {
         let Ok(callers) = self.callers.lock() else {
             return Vec::new();
         };
-        let Some(parent) = unique_caller(callers.values().filter(|caller| {
-            caller.parent_worker_id.is_none()
-                && caller
-                    .session_key()
-                    .is_some_and(|key| key.native == *identity)
-        })) else {
+        let Ok(retired) = self.retired_inboxes.lock() else {
+            return Vec::new();
+        };
+        let Some(parent) = input_parent(&callers, &retired, identity) else {
             return Vec::new();
         };
         let Ok(mut inputs) = self.inputs.lock() else {
@@ -149,6 +149,17 @@ impl CallerRegistry {
                 Some(pending.input.clone())
             })
             .collect()
+    }
+
+    pub fn replay_child_inputs_for_session(&self, identity: &NativeSessionIdentity) {
+        if let Ok(mut inputs) = self.inputs.lock() {
+            for pending in inputs
+                .iter_mut()
+                .filter(|pending| pending.parent_session.native == *identity)
+            {
+                pending.delivered = false;
+            }
+        }
     }
 
     pub fn respond_to_child_input(&self, mut response: WorkerInputResponse) -> Result<(), String> {
@@ -189,12 +200,10 @@ impl CallerRegistry {
         let Ok(callers) = self.callers.lock() else {
             return Vec::new();
         };
-        let Some(parent) = unique_caller(callers.values().filter(|caller| {
-            caller.parent_worker_id.is_none()
-                && caller
-                    .session_key()
-                    .is_some_and(|key| key.native == *identity)
-        })) else {
+        let Ok(retired) = self.retired_inboxes.lock() else {
+            return Vec::new();
+        };
+        let Some(parent) = input_parent(&callers, &retired, identity) else {
             return Vec::new();
         };
         let Ok(mut expired) = self.expired_inputs.lock() else {
@@ -222,13 +231,19 @@ impl CallerRegistry {
             .callers
             .lock()
             .map_err(|_| "worker caller registry is unavailable")?;
+        let retired = self
+            .retired_inboxes
+            .lock()
+            .map_err(|_| "retired worker registry is unavailable")?;
         let mut parent_id = &child.id;
         let mut direct = true;
         let parent = loop {
             let parent = callers
                 .values()
+                .chain(retired.values())
                 .find(|caller| caller.worker_id == *parent_id && caller.project == child.project)
                 .or_else(|| direct.then(|| child.find(&callers)).flatten())
+                .or_else(|| direct.then(|| child.find(&retired)).flatten())
                 .ok_or("parent worker is unavailable")?;
             direct = false;
             match &parent.parent_worker_id {
@@ -262,6 +277,19 @@ impl CallerRegistry {
             id,
         })
     }
+}
+
+fn input_parent<'a>(
+    callers: &'a HashMap<String, RegisteredCaller>,
+    retired: &'a HashMap<String, RegisteredCaller>,
+    identity: &NativeSessionIdentity,
+) -> Option<&'a RegisteredCaller> {
+    unique_caller(callers.values().chain(retired.values()).filter(|caller| {
+        caller.parent_worker_id.is_none()
+            && caller
+                .session_key()
+                .is_some_and(|key| key.native == *identity)
+    }))
 }
 
 #[cfg(test)]

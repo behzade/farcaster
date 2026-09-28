@@ -1197,6 +1197,34 @@ impl AcpWorkerSession {
 }
 
 impl WorkerSession for AcpWorkerSession {
+    fn has_exited(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(_)))
+    }
+
+    fn retain_inbox(&self) -> Result<Option<Box<dyn crate::SessionInbox>>, String> {
+        self.caller_identity
+            .as_ref()
+            .map_or(Ok(None), |caller| caller.retain_inbox())
+    }
+
+    fn can_retire(&self) -> bool {
+        self.current_prompt.is_none()
+            && self.current_inputs.is_empty()
+            && self.queued_prompts.is_empty()
+            && self.handoff.is_none()
+            && self.pending_inputs.is_empty()
+            && self.tool_states.values().all(|tool| tool.finished)
+            && self.peer_messages.is_empty()
+            && self.events.is_empty()
+            && self.prompt_acks.is_empty()
+            && self.pending_prompt_result.is_none()
+            && self.cancel_deadline.is_none()
+            && self
+                .caller_identity
+                .as_ref()
+                .is_none_or(|caller| !caller.has_pending_messages())
+    }
+
     fn tracks_prompt_delivery(&self, _mode: WorkerSendMode) -> bool {
         true
     }

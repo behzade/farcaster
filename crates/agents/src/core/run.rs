@@ -199,6 +199,7 @@ fn notify(updates: &async_channel::Sender<()>) {
 fn update(snapshot: &Mutex<WorkerSnapshot>, change: impl FnOnce(&mut WorkerSnapshot)) {
     if let Ok(mut snapshot) = snapshot.lock() {
         change(&mut snapshot);
+        super::activity::record(&snapshot.project);
     }
 }
 

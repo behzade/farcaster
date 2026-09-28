@@ -117,6 +117,7 @@ impl RuntimeOwner {
 
     pub(super) fn apply_command(&mut self, runtime_command: RuntimeCommand) {
         match runtime_command {
+            RuntimeCommand::SystemWake => self.poll_idle_retirement(Instant::now(), true),
             RuntimeCommand::ClearQueue => {
                 if let Err(error) = self.clear_prompt_queue() {
                     zlog::error!("Could not clear queue: {error}");
@@ -260,18 +261,18 @@ impl RuntimeOwner {
             RuntimeCommand::Reload => self.reload(),
             RuntimeCommand::Compact {
                 custom_instructions,
-            } => self.send(SessionCommand::Compact {
+            } => self.send_idle_aware(SessionCommand::Compact {
                 instructions: custom_instructions,
             }),
             RuntimeCommand::ExportHtml { output_path } => {
-                self.send(SessionCommand::ExportHtml { output_path })
+                self.send_idle_aware(SessionCommand::ExportHtml { output_path })
             }
             RuntimeCommand::SetSessionName(name) => {
                 self.invalidate_auto_title_generation();
                 if let Some(state) = self.active_snapshot_mut().session.as_mut() {
                     state.session_name = Some(name.clone());
                 }
-                self.send(SessionCommand::Rename { name })
+                self.send_idle_aware(SessionCommand::Rename { name })
             }
             RuntimeCommand::RenameSession {
                 path,
@@ -398,6 +399,7 @@ impl RuntimeOwner {
             }
             RuntimeCommand::SetAppProxy(proxy) => self.set_app_proxy(proxy),
             RuntimeCommand::ExtensionResponse(response) => {
+                self.idle_retirement.responded(&response);
                 if self.respond_to_child_input(&response) {
                     return;
                 }

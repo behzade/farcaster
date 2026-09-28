@@ -579,6 +579,23 @@ fn test_session() -> CodexWorkerSession {
     }
 }
 
+#[test]
+fn retirement_waits_for_native_turn_admission() {
+    let (mut session, _reader) = writable_test_session();
+    assert!(session.can_retire());
+    session
+        .send("next prompt".into(), WorkerSendMode::Prompt)
+        .expect("send prompt");
+    assert!(
+        session.current_turn.is_none(),
+        "native turn has not arrived yet"
+    );
+    assert!(
+        !session.can_retire(),
+        "pending native request owns the input"
+    );
+}
+
 pub(super) fn writable_test_session() -> (
     CodexWorkerSession,
     std::io::BufReader<std::process::ChildStdout>,

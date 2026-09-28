@@ -6,7 +6,7 @@ use farcaster_sessions as sessions;
 use farcaster_sessions::activity as agent_activity;
 
 mod host;
-pub use host::{RuntimeHost, RuntimeMetric, RuntimeTimer};
+pub use host::{RuntimeHost, RuntimeMetric, RuntimeTimer, ScheduledWake, WorkerActivity};
 
 pub mod runtime;
 

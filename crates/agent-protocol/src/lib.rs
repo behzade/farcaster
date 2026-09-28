@@ -384,7 +384,24 @@ pub enum SteerErrorRecovery {
     RetryNow,
 }
 
+pub trait SessionInbox: Send {
+    fn has_pending_messages(&self) -> bool;
+    fn transferred(&self) -> bool;
+}
+
 pub trait SessionTransport {
+    fn has_exited(&mut self) -> bool {
+        false
+    }
+
+    fn retain_inbox(&self) -> Result<Option<Box<dyn SessionInbox>>, String> {
+        Ok(None)
+    }
+
+    fn can_retire(&self) -> bool {
+        false
+    }
+
     fn steer_error_recovery(&self, _error: &str) -> SteerErrorRecovery {
         SteerErrorRecovery::Fail
     }
