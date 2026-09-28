@@ -48,6 +48,37 @@ fn fixture_binary() -> &'static std::path::Path {
         .path()
 }
 
+#[test]
+fn catalog_fixture_discovery_preserves_arguments_and_only_bypasses_exact_opencode_command() {
+    let dir = tempfile::tempdir().expect("create fixture directory");
+    for (backend, args, discovery) in [
+        ("opencode", vec!["debug", "paths"], true),
+        ("opencode", vec!["serve", "--stdio"], false),
+        ("opencode", vec!["debug", "paths", "--extra"], false),
+        ("codex", vec!["debug", "paths"], false),
+    ] {
+        let executable = dir.path().join(backend);
+        fs::copy(fixture_binary().join("agent"), &executable).expect("copy fixture");
+        // There is no control.sock: only discovery may succeed without a relay.
+        let output = Command::new(&executable)
+            .args(&args)
+            .stdin(Stdio::null())
+            .output()
+            .expect("run fixture");
+        assert_eq!(
+            output.status.success(),
+            discovery,
+            "{backend} {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stdout.is_empty());
+        assert_eq!(
+            fs::read_to_string(executable.with_extension("args")).expect("read fixture arguments"),
+            args.join("\n")
+        );
+    }
+}
+
 /// Re-exec only this test before changing HOME/PATH. Parallel tests and real
 /// credentials cannot leak into the supervisor's global environment or caches.
 fn isolated(name: &str, backends: &[&str], run: impl FnOnce()) {

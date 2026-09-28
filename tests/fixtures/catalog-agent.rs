@@ -8,10 +8,15 @@ use std::{
 
 fn main() -> io::Result<()> {
     let executable = std::env::current_exe()?;
-    std::fs::write(
-        executable.with_extension("args"),
-        std::env::args().skip(1).collect::<Vec<_>>().join("\n"),
-    )?;
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    std::fs::write(executable.with_extension("args"), args.join("\n"))?;
+    if executable.file_name() == Some(std::ffi::OsStr::new("opencode"))
+        && args == ["debug", "paths"]
+    {
+        // This optional discovery command has no database in the fixture.
+        // Empty output keeps normal history loading without opening a relay.
+        return Ok(());
+    }
     let mut control = UnixStream::connect(executable.parent().unwrap().join("control.sock"))?;
     control.set_read_timeout(Some(Duration::from_secs(20)))?;
     writeln!(
