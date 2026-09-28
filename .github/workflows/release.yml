@@ -66,8 +66,8 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  publish:
-    name: Publish GitHub release
+  draft:
+    name: Prepare draft release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [linux, macos]
     runs-on: ubuntu-22.04
@@ -80,16 +80,21 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Create release and upload assets
+      - name: Create draft release and upload assets
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          if is_draft=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft --jq .isDraft); then
+            if [ "$is_draft" != true ]; then
+              echo "Release $GITHUB_REF_NAME is already published; refusing to replace its assets." >&2
+              exit 1
+            fi
             gh release upload "$GITHUB_REF_NAME" dist/* \
               --repo "$GITHUB_REPOSITORY" --clobber
           else
             gh release create "$GITHUB_REF_NAME" dist/* \
-              --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes \
+              --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --draft \
               --title "Farcaster $GITHUB_REF_NAME"
           fi
