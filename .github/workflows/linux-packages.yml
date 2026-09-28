@@ -82,10 +82,8 @@ jobs:
           test -n "$appimage"
           install -m755 "$appimage" "dist/Farcaster-${BUILD_LABEL}-x86_64.AppImage"
 
-      - name: Package Debian binary and Arch source
-        run: |
-          bash scripts/package-deb.sh dist
-          bash scripts/package-arch-source.sh dist
+      - name: Package Debian binary
+        run: bash scripts/package-deb.sh dist
 
       - uses: actions/upload-artifact@v4
         with:
@@ -100,9 +98,61 @@ jobs:
     with:
       artifact: release-linux-x86_64
 
-  native-packages:
-    name: Native package checks
+  debian:
+    name: Install / ${{ matrix.image }}
     needs: linux
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['ubuntu:22.04', 'ubuntu:24.04', 'debian:12', 'debian:13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-linux-x86_64
+          path: dist
+      - name: Install through apt and check the dependency closure
+        shell: bash
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ./dist/*.deb
+          ldd /usr/lib/farcaster/farcaster | tee dependencies.log
+          if grep -q 'not found' dependencies.log; then exit 1; fi
+          test -f /usr/share/applications/io.github.behzade.farcaster.desktop
+          test -f /usr/share/icons/hicolor/256x256/apps/io.github.behzade.farcaster.png
+      - name: Install only desktop and diagnostic tools
+        run: |
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            weston libegl-mesa0 libgl1-mesa-dri mesa-vulkan-drivers \
+            fonts-dejavu-core dbus binutils file xvfb desktop-file-utils
+          # Ubuntu 22.04 supplies weston-info with Weston instead.
+          if [ "${{ matrix.image }}" != ubuntu:22.04 ]; then
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wayland-utils
+          fi
+          desktop-file-validate /usr/share/applications/io.github.behzade.farcaster.desktop
+          useradd --create-home tester
+          install -d -o tester -g tester /tmp/probe-logs
+      - name: Launch the installed package as a normal user
+        run: |
+          install -m755 scripts/probe-native-startup.sh /tmp/probe-native-startup.sh
+          install -m644 scripts/probe-wayland.sh /tmp/probe-wayland.sh
+          su - tester -c 'dbus-run-session -- bash /tmp/probe-native-startup.sh /usr/bin/farcaster /tmp/probe-logs'
+      - name: Verify removal
+        run: |
+          apt-get remove -y farcaster
+          test ! -e /usr/bin/farcaster
+          test ! -e /usr/lib/farcaster/farcaster
+          test ! -e /usr/share/applications/io.github.behzade.farcaster.desktop
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-deb-${{ strategy.job-index }}-${{ github.run_attempt }}
+          path: /tmp/probe-logs
+          if-no-files-found: warn
+
+  native-packages:
+    name: Native Arch and Nix packages
     uses: ./.github/workflows/native-packages.yml
-    with:
-      artifact: release-linux-x86_64
