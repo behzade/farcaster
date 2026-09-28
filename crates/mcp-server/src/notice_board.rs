@@ -10,13 +10,26 @@ const MAX_PROJECT_NOTICES: usize = 256;
 
 #[derive(Clone)]
 pub struct NoticeBoard {
-    entries: Arc<Mutex<HashMap<PathBuf, Vec<Notice>>>>,
+    entries: Arc<Mutex<HashMap<PathBuf, ProjectNotices>>>,
     updates: async_channel::Sender<()>,
     update_receiver: async_channel::Receiver<()>,
+    changes: tokio::sync::watch::Sender<()>,
+}
+
+struct ProjectNotices {
+    generation: uuid::Uuid,
+    sequence: u64,
+    notices: Vec<Notice>,
+}
+
+pub(super) struct NoticeBatch {
+    pub cursor: String,
+    pub notices: Vec<NoticeView>,
 }
 
 #[derive(Clone)]
 struct Notice {
+    sequence: u64,
     from_id: String,
     from_name: String,
     message: String,
@@ -45,47 +58,80 @@ impl NoticeBoard {
         message: String,
         paths: Vec<PathBuf>,
     ) -> Result<(), String> {
-        let now = Instant::now();
         {
             let mut boards = self
                 .entries
                 .lock()
                 .map_err(|_| "worker notice board is unavailable".to_owned())?;
+            let now = Instant::now();
             let board = boards.entry(project.to_owned()).or_default();
             prune(board, now);
-            board.push(Notice {
+            board.sequence += 1;
+            board.notices.push(Notice {
+                sequence: board.sequence,
                 from_id,
                 from_name,
                 message,
                 paths,
                 created_at: now,
             });
-            let excess = board.len().saturating_sub(MAX_PROJECT_NOTICES);
-            board.drain(..excess);
+            let excess = board.notices.len().saturating_sub(MAX_PROJECT_NOTICES);
+            board.notices.drain(..excess);
         }
         let _ = self.updates.try_send(());
+        self.changes.send_replace(());
         Ok(())
     }
 
-    pub fn matching(
+    pub(super) fn matching(
         &self,
         project: &Path,
         excluded_worker: &str,
         paths: &[PathBuf],
-    ) -> Result<Vec<NoticeView>, String> {
+        after: Option<&str>,
+    ) -> Result<NoticeBatch, String> {
         self.read(project, |board, now| {
-            board
+            let after = after
+                .map(|cursor| board.validate_cursor(cursor))
+                .transpose()?;
+            let notices = board
+                .notices
                 .iter()
+                .filter(|notice| after.is_none_or(|after| notice.sequence > after))
                 .filter(|notice| notice.from_id != excluded_worker)
                 .filter(|notice| relevant(&notice.paths, paths))
                 .map(|notice| notice_view(notice, now))
-                .collect()
-        })
+                .collect();
+            Ok(NoticeBatch {
+                cursor: format!("{}:{}", board.generation, board.sequence),
+                notices,
+            })
+        })?
+    }
+
+    pub(super) async fn wait(
+        &self,
+        project: &Path,
+        excluded_worker: &str,
+        paths: &[PathBuf],
+        after: &str,
+        timeout: Duration,
+    ) -> Result<NoticeBatch, String> {
+        let mut changes = self.changes.subscribe();
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let batch = self.matching(project, excluded_worker, paths, Some(after))?;
+            if !batch.notices.is_empty() || tokio::time::Instant::now() >= deadline {
+                return Ok(batch);
+            }
+            let _ = tokio::time::timeout_at(deadline, changes.changed()).await;
+        }
     }
 
     pub fn snapshot(&self, project: &Path) -> Vec<NoticeView> {
         self.read(project, |board, now| {
             board
+                .notices
                 .iter()
                 .rev()
                 .map(|notice| notice_view(notice, now))
@@ -97,13 +143,13 @@ impl NoticeBoard {
     fn read<T>(
         &self,
         project: &Path,
-        read: impl FnOnce(&[Notice], Instant) -> T,
+        read: impl FnOnce(&ProjectNotices, Instant) -> T,
     ) -> Result<T, String> {
-        let now = Instant::now();
         let mut boards = self
             .entries
             .lock()
             .map_err(|_| "worker notice board is unavailable".to_owned())?;
+        let now = Instant::now();
         let board = boards.entry(project.to_owned()).or_default();
         prune(board, now);
         Ok(read(board, now))
@@ -117,7 +163,37 @@ impl Default for NoticeBoard {
             entries: Arc::default(),
             updates,
             update_receiver,
+            changes: tokio::sync::watch::channel(()).0,
         }
+    }
+}
+
+impl Default for ProjectNotices {
+    fn default() -> Self {
+        Self {
+            generation: uuid::Uuid::new_v4(),
+            sequence: 0,
+            notices: Vec::new(),
+        }
+    }
+}
+
+impl ProjectNotices {
+    fn validate_cursor(&self, cursor: &str) -> Result<u64, String> {
+        let oldest_cursor = self
+            .notices
+            .first()
+            .map_or(self.sequence, |notice| notice.sequence - 1);
+        let sequence = cursor
+            .split_once(':')
+            .filter(|(generation, _)| *generation == self.generation.to_string())
+            .and_then(|(_, sequence)| sequence.parse::<u64>().ok());
+        sequence
+            .filter(|sequence| *sequence >= oldest_cursor && *sequence <= self.sequence)
+            .ok_or_else(|| {
+                "worker notice cursor is invalid or expired; read notices again for a fresh cursor"
+                    .into()
+            })
     }
 }
 
@@ -144,8 +220,10 @@ fn relevant(notice: &[PathBuf], filter: &[PathBuf]) -> bool {
         })
 }
 
-fn prune(board: &mut Vec<Notice>, now: Instant) {
-    board.retain(|notice| now.duration_since(notice.created_at) < NOTICE_TTL);
+fn prune(board: &mut ProjectNotices, now: Instant) {
+    board
+        .notices
+        .retain(|notice| now.duration_since(notice.created_at) < NOTICE_TTL);
 }
 
 #[cfg(test)]

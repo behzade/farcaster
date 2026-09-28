@@ -1,4 +1,7 @@
-use std::path::{Component, Path, PathBuf};
+use std::{
+    path::{Component, Path, PathBuf},
+    time::Duration,
+};
 
 use path_clean::PathClean as _;
 use rmcp::schemars;
@@ -17,6 +20,7 @@ const MAX_PATH_BYTES: usize = 1_024;
 pub(super) enum Action {
     Read,
     Post,
+    Wait,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -25,6 +29,14 @@ pub(super) struct Params {
     pub(super) message: Option<String>,
     #[serde(default)]
     pub(super) paths: Vec<String>,
+    #[schemars(
+        description = "For wait, the cursor returned by the last read, post, or wait with the same path filter."
+    )]
+    pub(super) after: Option<String>,
+    #[schemars(
+        description = "For wait only: maximum wait in seconds, from 1 to 60; defaults to 30."
+    )]
+    pub(super) timeout_seconds: Option<u64>,
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
@@ -32,6 +44,8 @@ pub(super) struct Params {
 pub(super) struct Response {
     posted: bool,
     notices: Vec<NoticeResponse>,
+    cursor: String,
+    timed_out: bool,
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
@@ -55,7 +69,7 @@ impl From<NoticeView> for NoticeResponse {
 }
 
 impl NoticeBoard {
-    pub(super) fn access(
+    pub(super) async fn access(
         &self,
         caller: &CallerContext,
         params: Params,
@@ -64,10 +78,23 @@ impl NoticeBoard {
             return Err("worker notices are available only to top-level workers".into());
         }
         let action = params.action;
+        let wait = matches!(action, Action::Wait);
+        if wait && params.after.is_none() {
+            return Err("worker notice wait requires `after` from a previous response".into());
+        }
+        if !wait && (params.after.is_some() || params.timeout_seconds.is_some()) {
+            return Err(
+                "worker notice `after` and `timeout_seconds` are valid only for wait".into(),
+            );
+        }
+        let timeout_seconds = params.timeout_seconds.unwrap_or(30);
+        if !(1..=60).contains(&timeout_seconds) {
+            return Err("worker notice timeout_seconds must be between 1 and 60".into());
+        }
         let paths = normalize_paths(params.paths)?;
         let message = match (action, params.message) {
-            (Action::Read, None) => None,
-            (Action::Read, Some(_)) => {
+            (Action::Read | Action::Wait, None) => None,
+            (Action::Read | Action::Wait, Some(_)) => {
                 return Err("worker notice `message` is valid only when action is `post`".into());
             }
             (Action::Post, Some(message)) if !message.trim().is_empty() => {
@@ -91,12 +118,30 @@ impl NoticeBoard {
                 paths.clone(),
             )?;
         }
-        let notices = self
-            .matching(&caller.project, &caller.worker_id, &paths)?
+        let batch = if let Some(after) = params.after {
+            self.wait(
+                &caller.project,
+                &caller.worker_id,
+                &paths,
+                &after,
+                Duration::from_secs(timeout_seconds),
+            )
+            .await?
+        } else {
+            self.matching(&caller.project, &caller.worker_id, &paths, None)?
+        };
+        let timed_out = wait && batch.notices.is_empty();
+        let notices = batch
+            .notices
             .into_iter()
             .map(NoticeResponse::from)
             .collect();
-        Ok(Response { posted, notices })
+        Ok(Response {
+            posted,
+            notices,
+            cursor: batch.cursor,
+            timed_out,
+        })
     }
 }
 

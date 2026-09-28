@@ -201,22 +201,26 @@ impl FarcasterMcp {
 
     #[tool(
         name = "worker_notices",
-        description = "Read or post project notices only when coordinating potentially overlapping work with other top-level workers."
+        description = "Read, post, or wait for project notices when coordinating overlapping work with other top-level workers. Responses include a cursor. To wait without polling, use action=wait with after=cursor and the same paths; returns new matching notices or timedOut after timeout_seconds (default 30, max 60). A notice is advisory, not a lock."
     )]
     async fn worker_notices(
         &self,
         Parameters(params): Parameters<notices::Params>,
         Extension(parts): Extension<axum::http::request::Parts>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<Json<notices::Response>, String> {
         let token = caller_token(&parts)
             .ok_or_else(|| "worker notices require a registered Farcaster caller".to_owned())?;
-        let board = self.notices.clone();
-        let value = tokio::task::spawn_blocking(move || {
-            let caller = crate::agents::CallerRegistry::shared().resolve(&token)?;
-            board.access(&caller, params)
+        let caller = tokio::task::spawn_blocking(move || {
+            crate::agents::CallerRegistry::shared().resolve(&token)
         })
         .await
         .map_err(|error| format!("worker notice task failed: {error}"))??;
+        let value = tokio::select! {
+            biased;
+            _ = context.ct.cancelled() => return Err("worker notice request cancelled".into()),
+            value = self.notices.access(&caller, params) => value?,
+        };
         Ok(Json(value))
     }
 
