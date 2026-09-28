@@ -29,9 +29,14 @@ runs:
       run: |
         [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
         mkdir -p candidate artifacts
-        url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/Farcaster-${RELEASE_TAG}-linux-x86_64.AppImage"
+        base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/Farcaster-${RELEASE_TAG}"
+        url="${base}-x86_64.AppImage"
+        if ! curl --fail --location --retry 3 "$url" -o candidate/Farcaster.AppImage; then
+          # Older releases included "linux" in the asset name.
+          url="${base}-linux-x86_64.AppImage"
+          curl --fail --location --retry 3 "$url" -o candidate/Farcaster.AppImage
+        fi
         printf '%s\n' "$url" > artifacts/release-url.txt
-        curl --fail --location --retry 3 "$url" -o candidate/Farcaster.AppImage
 
     - name: Select and record the AppImage under test
       id: select

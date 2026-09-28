@@ -20,8 +20,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Test Debian packaging logic
-        run: python3 scripts/package-deb_tests.py
+      - name: Test Linux packaging logic
+        run: |
+          python3 scripts/package-deb_tests.py
+          python3 scripts/package-appimage_tests.py
 
       - name: Install Linux build dependencies
         run: |
@@ -57,12 +59,18 @@ jobs:
         with:
           version: 0.16.0
 
-      - name: Install cargo-packager
-        run: cargo install cargo-packager --version 0.11.8 --locked
+      - name: Install linuxdeploy
+        run: |
+          mkdir -p "$RUNNER_TEMP/linuxdeploy"
+          cd "$RUNNER_TEMP/linuxdeploy"
+          curl --fail --location --retry 3 \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage \
+            -o linuxdeploy
+          echo 'c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d  linuxdeploy' | sha256sum --check
+          chmod 755 linuxdeploy
+          echo "$PWD" >> "$GITHUB_PATH"
 
       - name: Build AppImage
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: "1"
         run: make bundle BUNDLE_FORMATS=appimage
 
       - name: Stage release asset
@@ -72,8 +80,7 @@ jobs:
           mkdir -p dist
           appimage=$(find target/release -maxdepth 1 -type f -iname '*farcaster*.AppImage' -print -quit)
           test -n "$appimage"
-          cp "$appimage" "dist/Farcaster-${BUILD_LABEL}-linux-x86_64.AppImage"
-          chmod 755 "dist/Farcaster-${BUILD_LABEL}-linux-x86_64.AppImage"
+          install -m755 "$appimage" "dist/Farcaster-${BUILD_LABEL}-x86_64.AppImage"
 
       - name: Package Debian binary and Arch source
         run: |
