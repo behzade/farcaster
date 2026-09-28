@@ -26,7 +26,6 @@ pub(in crate::app::views) fn render(
     panel: WeakEntity<RunPanelView>,
 ) -> AnyElement {
     let close = entity.clone();
-    // One leaf per file; all ranges remain available in selection details.
     let mut seen = BTreeSet::new();
     let rows = change_tree::rows(
         active
@@ -120,7 +119,6 @@ pub(in crate::app::views) fn render(
                     }
                     TreeRow::File { index, depth } => {
                         let location = &active.review.items[index];
-                        // Preserve the selected range when clicking its file again.
                         let index = inspecting
                             .filter(|&selected| active.review.items[selected].path == location.path)
                             .unwrap_or(index);

@@ -1,4 +1,3 @@
-//! Read-only native transcript discovery. Storage records are not CLI wire frames.
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -65,7 +64,6 @@ fn files(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
-// A child shares its parent's session UUID; include both IDs in its locator.
 pub(super) fn child_id(parent: &str, agent: &str) -> Option<String> {
     uuid::Uuid::parse_str(parent).ok()?;
     if agent.is_empty()
@@ -126,7 +124,6 @@ fn read(path: &Path) -> Result<Vec<Value>, String> {
         }
         match serde_json::from_str(&line) {
             Ok(row) => rows.push(row),
-            // An active append writer can leave its last record incomplete.
             Err(_) if !line.ends_with('\n') => break,
             Err(error) => {
                 return Err(format!(
@@ -139,8 +136,6 @@ fn read(path: &Path) -> Result<Vec<Value>, String> {
     Ok(rows)
 }
 
-// The SDK catalog samples the head and tail. Do not load every session's tool
-// output just to draw the session list; only explicit history reads need it.
 fn summary(path: &Path) -> Result<Vec<Value>, String> {
     const SAMPLE: u64 = 65_536;
     let mut file = fs::File::open(path).map_err(|error| error.to_string())?;
@@ -161,7 +156,6 @@ fn summary(path: &Path) -> Result<Vec<Value>, String> {
         let mut tail = Vec::new();
         file.read_to_end(&mut tail)
             .map_err(|error| error.to_string())?;
-        // The first line may start in the middle of an earlier record.
         rows.extend(
             tail.split(|byte| *byte == b'\n')
                 .skip(1)
@@ -171,8 +165,6 @@ fn summary(path: &Path) -> Result<Vec<Value>, String> {
     Ok(rows)
 }
 
-/// Follow the newest main conversation's parent chain, not abandoned branches.
-/// Compaction can reparent a preserved segment; apply those links as the SDK does.
 fn conversation(rows: &[Value], sidechain: bool) -> Vec<&Value> {
     let mut nodes = HashMap::new();
     let mut parents = HashMap::new();

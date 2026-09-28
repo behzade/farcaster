@@ -32,7 +32,6 @@ pub struct AcpProfile {
     pub auth_method: Option<&'static str>,
     pub force_argument: Option<&'static str>,
     pub resume_method: &'static str,
-    /// Native mode ids for supervised and full access, when set over ACP.
     pub permission_modes: Option<(&'static str, &'static str)>,
 }
 

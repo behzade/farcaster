@@ -58,7 +58,6 @@ pub(super) fn choices(
     choices
 }
 
-// None is the "New task" entry before the existing chats in the picker.
 pub(super) fn cycle_destination(
     current: Option<usize>,
     count: usize,
@@ -77,7 +76,6 @@ impl FarcasterApp {
         let Some(dialog) = self.workspace.send_to_chat.as_mut() else {
             return;
         };
-        // The open picker's list owns navigation until it is confirmed or cancelled.
         if dialog.picker.is_some() {
             return;
         }

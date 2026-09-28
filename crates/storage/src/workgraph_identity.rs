@@ -64,8 +64,6 @@ fn migrate_in_transaction(tx: &Transaction<'_>) -> Result<(), String> {
         });
         match (matches.next(), matches.next()) {
             (Some(identity), None) => Some(identity.key.clone()),
-            // Legacy native IDs are opaque too. Quarantine a reserved-key
-            // lookalike rather than accidentally granting it application ownership.
             _ if AppSessionId::from_key(native_id).is_some() => {
                 Some(format!("legacy-session:{native_id}"))
             }
@@ -81,7 +79,6 @@ fn migrate_in_transaction(tx: &Transaction<'_>) -> Result<(), String> {
     Ok(())
 }
 
-/// Called before the removed session row is deleted, inside the same transaction.
 pub(super) fn merge(tx: &Transaction<'_>, keep: i64, other: i64) -> Result<(), String> {
     migrate_in_transaction(tx)?;
     let keep = AppSessionId::try_from(keep)?.to_key();
@@ -90,7 +87,6 @@ pub(super) fn merge(tx: &Transaction<'_>, keep: i64, other: i64) -> Result<(), S
         .map_err(|error| format!("merge workgraph session keys: {error}"))
 }
 
-/// Resolve legacy graph keys while the deleted session rows still exist.
 pub(super) fn delete(tx: &Transaction<'_>, ids: &[i64]) -> Result<(), String> {
     if ids.is_empty() {
         return Ok(());

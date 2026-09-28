@@ -304,7 +304,6 @@ pub(in crate::app) fn starts_recent_completion(
     next == "Done" && (force || previous.is_some_and(|status| status != "Done"))
 }
 
-/// Session merges can change graph ownership without changing the selected key.
 pub(in crate::app) fn session_identities_changed(
     current: &[SessionSummary],
     next: &[SessionSummary],

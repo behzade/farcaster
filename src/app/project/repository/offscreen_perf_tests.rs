@@ -1,6 +1,3 @@
-//! Measures idle off-screen refresh using real Git repositories and virtual
-//! scheduler time. Scan wall time is separate: busy scans can defer a tick, so
-//! these fixture results are not an upper bound on real-world staleness.
 #![allow(clippy::print_stderr)]
 
 use super::super::observations::observe_project;
@@ -33,9 +30,6 @@ fn git(project: &Path, args: &[&str]) {
     );
 }
 
-/// A real repository with one committed file and one uncommitted change, so the
-/// app has a working copy to remember and a later write shows up as another
-/// change.
 fn new_repository() -> tempfile::TempDir {
     let repository = tempfile::tempdir_in(
         std::env::temp_dir()
@@ -65,8 +59,6 @@ fn new_repository() -> tempfile::TempDir {
     repository
 }
 
-/// What the app would see if it read the working copy right now, which is the
-/// number the remembered one has to keep up with.
 fn current_changes(project: &Path) -> usize {
     let (_, scanned) = observe_project(project, BackendPreference::default())
         .expect("scan the test repository")
@@ -82,8 +74,6 @@ fn scan_ms(project: &Path) -> f64 {
     millis(started.elapsed())
 }
 
-/// The change count the app is holding for a project it does not have on
-/// screen.
 fn remembered_changes(app: &FarcasterApp, project: &Path) -> Option<usize> {
     app.project
         .repository
@@ -92,8 +82,6 @@ fn remembered_changes(app: &FarcasterApp, project: &Path) -> Option<usize> {
         .map(|snapshot| snapshot.changes.len())
 }
 
-/// Moves the app's own clock forward by whole pass ticks, so the count of ticks
-/// a project stays stale is what the pass's timer decides, not the test's.
 fn ticks(cx: &mut VisualTestContext, app: &Entity<FarcasterApp>, count: u32) {
     for _ in 0..count {
         cx.executor().advance_clock(PASS_TICK);
@@ -101,7 +89,6 @@ fn ticks(cx: &mut VisualTestContext, app: &Entity<FarcasterApp>, count: u32) {
     }
 }
 
-/// Drain ready work without advancing the periodic timer again.
 fn pump(cx: &mut VisualTestContext, app: &Entity<FarcasterApp>) {
     cx.run_until_parked();
     cx.update(|window, cx| {
@@ -110,7 +97,6 @@ fn pump(cx: &mut VisualTestContext, app: &Entity<FarcasterApp>) {
     });
 }
 
-/// Waits for the initial off-screen scan, then keeps or stops the periodic pass.
 fn warm_off_screen(
     cx: &mut VisualTestContext,
     app: &Entity<FarcasterApp>,
@@ -160,7 +146,6 @@ fn an_off_screen_project_stays_stale_without_the_pass(cx: &mut gpui::TestAppCont
         let warmed = warm_off_screen(cx, app, repository, false);
         assert_eq!(warmed, current_changes(repository));
 
-        // A change while the project is off screen, which nothing reads back.
         fs::write(repository.join("arrived.txt"), "two\n").expect("change the off-screen project");
         const TICKS: u32 = 3;
         ticks(cx, app, TICKS);
@@ -246,8 +231,6 @@ fn the_pass_reads_each_off_screen_project_once_per_cycle(cx: &mut gpui::TestAppC
                 app.project.repository.project = current.clone();
                 app.project.registered = repositories.clone();
                 app.project.registered.push(current.clone());
-                // Startup warming prioritizes unseen projects. Measure the
-                // steady-state cycle only after all of them have been visited.
                 app.project
                     .repository
                     .warmed

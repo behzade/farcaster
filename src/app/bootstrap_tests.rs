@@ -68,7 +68,6 @@ fn warming_uses_the_sessions_profile_and_rejects_a_removed_profile() {
         .replace(vec![profile.clone()])
         .expect("profile");
     let mut session = remembered_session(project, "recent", "Recent chat");
-    // Native Pi files need not live beneath the profile's locator directory.
     let path = project.join("recent.jsonl");
     session.profile_id = Some(profile.id.clone());
     std::fs::write(
@@ -111,7 +110,6 @@ fn warming_uses_catalog_roots_for_app_children_and_orphans() {
     child.app_session_id = 2;
     child.parent_app_session_id = Some(root.app_session_id);
     child.modified = root.modified + std::time::Duration::from_secs(1);
-    // Its missing file would fail warming if the newer child were chosen.
     let sessions = [root.clone(), child];
     assert!(
         warm_recent_history(&sessions, project, Default::default())

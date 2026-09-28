@@ -64,7 +64,6 @@ pub(crate) fn disclosure_title_row(
         })
 }
 
-/// Compact folder disclosure shared by repository and review trees.
 pub(crate) fn tree_folder_row(
     id: impl Into<ElementId>,
     label: String,

@@ -10,8 +10,6 @@ pub(crate) const ARGUMENT: &str = "--isolated";
 
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
-// App-state isolation only: project files and backend-owned histories stay shared.
-// Keep this guard in main until the app and MCP server have shut down.
 pub(crate) struct Isolation {
     directory: tempfile::TempDir,
     mcp_addr: String,
@@ -105,8 +103,6 @@ fn copy_app_state(source: &Path, destination: &Path) -> Result<(), String> {
         crate::storage::snapshot_database(&database, &snapshot)?;
         crate::storage::relocate_snapshot_session_locators(&snapshot, source, destination)?;
     }
-    // Copy only durable app-owned assets, not logs, transient launch files, or
-    // database sidecars. Images are immutable and are published before DB rows.
     for name in ["projects.json", "project-trust.json"] {
         copy_optional_file(&source.join(name), &destination.join(name))?;
     }
@@ -124,7 +120,6 @@ fn copy_app_state(source: &Path, destination: &Path) -> Result<(), String> {
             fs::read_dir(&images).map_err(|error| format!("read {}: {error}", images.display()))?
         {
             let entry = entry.map_err(|error| format!("read {}: {error}", images.display()))?;
-            // Atomic image publication can leave an in-flight temporary file.
             let name = entry.file_name();
             if name.to_str().is_some_and(|name| {
                 name.len() == 64

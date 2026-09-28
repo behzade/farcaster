@@ -127,8 +127,6 @@ fn first_archive_expansion_highlights_the_requested_row_before_runtime_confirmat
     let previous = archived_session(&archive[0]);
     let requested = archived_session(&archive[1]);
 
-    // Expansion precedes confirmation; neither the previous selection nor an
-    // older in-flight response may highlight the wrong row while loading.
     for confirmed in [&previous.path, &archived_session(&archive[0]).path] {
         let highlighted = selected_root(&sessions, Some(confirmed), Some(&requested.path));
         assert_eq!(
@@ -138,7 +136,6 @@ fn first_archive_expansion_highlights_the_requested_row_before_runtime_confirmat
             confirmed.display()
         );
     }
-    // Once acknowledged, clearing the pending request keeps the same highlight.
     let highlighted = selected_root(&sessions, Some(&requested.path), None);
     assert_eq!(
         highlighted.map(|session| session.app_session_id),

@@ -2,14 +2,8 @@ use super::*;
 use crate::reviews::{artifact, presentation::TranscriptPresentation};
 use std::{collections::HashMap, path::Path, sync::Arc};
 
-/// Builds the transcript presentation for the active snapshot. Review cards
-/// are the submit_review tool rows themselves; a replayed row whose result
-/// dropped the echoing artifact is hydrated from its own arguments, so live
-/// turns and history replay render identically without per-turn card storage.
 #[derive(Default)]
 pub(super) struct ReviewProjection {
-    /// The source row last synced into the presentation per index, so only
-    /// changed rows are rebuilt and hydrated rows stay stable.
     synced: HashMap<usize, Arc<TranscriptItem>>,
     document: Arc<TranscriptPresentation>,
 }
@@ -65,9 +59,6 @@ impl ReviewProjection {
     }
 }
 
-/// Reattach the review artifact assembled from the row's own arguments when
-/// history replay dropped the echoing result. Unchanged rows keep sharing the
-/// conversation's item so incremental rendering fast paths stay effective.
 fn hydrated_row(source: &Arc<TranscriptItem>, project: &Path) -> Arc<TranscriptItem> {
     let Some(result) = artifact::hydration_result(source, project) else {
         return source.clone();

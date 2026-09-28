@@ -289,7 +289,6 @@ fn skill_refresh_updates_commands_and_attaches_paths_to_prompts() {
         matches!(session.poll(), Some(WorkerEvent::Activity(WorkerActivity::CommandsChanged { commands }))
         if commands.iter().any(|command| command == &json!({"name":"skill:review", "description":"Review code", "source":"skill"})) && commands.len() == 6)
     );
-    // A late reply from an older refresh must not erase the new catalog.
     session.queued_inbound.push_back(Ok(CodexInbound::Response {
         id: requests[0].clone(),
         result: json!({"data":[]}),
@@ -330,7 +329,6 @@ fn native_child_events_carry_metadata_and_emit_one_finished_activity() {
     ] {
         let item = json!({"type": "subAgentActivity", "id": kind,
             "kind": kind, "agentThreadId": "native-event-child", "agentPath": "/root/reviewer"});
-        // A notification for another parent must not affect this session.
         for (method, thread) in [
             ("item/completed", "unrelated"),
             ("item/started", "native-parent"),
@@ -761,7 +759,6 @@ fn rejected_native_abort_cleanup_fails_instead_of_reporting_settled() {
 
 #[test]
 fn abort_deadline_closes_transport_at_each_unfinished_cleanup_phase() {
-    // Withhold the initial ACK, turn completion, or post-completion ACK.
     for completed_steps in 0..3 {
         let (mut session, _sent) = writable_test_session();
         session.current_turn = Some("turn-1".into());
@@ -786,7 +783,6 @@ fn abort_deadline_closes_transport_at_each_unfinished_cleanup_phase() {
             assert_eq!(session.abort_deadline, deadline);
         }
         session.abort_deadline = Some(std::time::Instant::now());
-        // Queued activity must not starve the deadline or leak after failure.
         session.events.push_back(WorkerEvent::Started);
         let Some(WorkerEvent::Failed(error)) = session.poll() else {
             panic!("unfinished abort must fail");
@@ -3086,7 +3082,6 @@ fn peer_steer_during_codex_stream_preserves_arrival_order() {
         from: "reviewer".into(),
         message: "keep going".into(),
     };
-    // Equal text from distinct deliveries must remain separate replies.
     session.peer_messages.extend([peer.clone(), peer.clone()]);
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),

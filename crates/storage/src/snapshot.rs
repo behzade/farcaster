@@ -1,21 +1,7 @@
-//! Copy SQLite state without invoking application migrations or repairs.
-
 use std::{fs, io::Read as _, path::Path};
 
 use rusqlite::{Connection, OpenFlags};
 
-/// Snapshot committed database contents, including a live WAL, into a new file.
-///
-/// The caller owns the destination's private directory and must keep the source
-/// path stable until this returns. Existing destinations
-/// are never replaced. This copies only SQLite contents, not images or session
-/// files, and does not migrate or repair application state.
-///
-/// SQLite opens the source database read-only and takes normal read locks. It
-/// may create an empty WAL, create or rebuild shared memory, and update shared
-/// memory read marks. These sidecars are SQLite coordination state; the source
-/// database's rows and schema are not changed. A source needing database writes
-/// for recovery fails rather than being reopened with write access.
 pub fn snapshot_database(source: &Path, destination: &Path) -> Result<(), String> {
     let mut file = fs::File::open(source)
         .map_err(|error| format!("open snapshot source {}: {error}", source.display()))?;

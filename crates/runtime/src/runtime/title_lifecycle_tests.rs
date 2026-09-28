@@ -1,5 +1,3 @@
-//! Runtime -> real Pi/Codex adapter -> isolated subprocess -> runtime metadata.
-//! Only protocol peers are scripted; title requests and rename requests run normally.
 use super::*;
 use crate::agents::Backend;
 use crate::runtime::tests::owner_without_process;
@@ -121,7 +119,6 @@ impl Drop for ProtocolPeer {
 
 fn write(peer: &mut UnixStream, value: Value) {
     if let Err(error) = writeln!(peer, "{value}") {
-        // Runtime shutdown can close a pipe while a reply is in flight.
         assert!(
             matches!(
                 error.kind(),
@@ -632,7 +629,6 @@ fn codex_native_title_wins_over_pending_generation() {
                 json!({"method":"turn/started", "params":{"threadId":"main-thread","turn":{"id":"native-turn","status":"inProgress"}}}),
             );
         }
-        // Seeing the following turn event proves the preceding name event was read.
         s.until(|s| s.owner.snapshot.conversation.running);
         s.finish_title();
         assert!(

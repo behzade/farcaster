@@ -1,11 +1,3 @@
-//! Real installed-harness smoke cases.  These stay ignored because each case
-//! consumes a model turn; `scripts/e2e.sh` runs one case/harness/process.
-//!
-//! Do not replace these with fixture transports.  The point is to exercise
-//! `spawn_session`, the installed binary, its real model account, normalized
-//! activities, transcript projection, and native history together.
-
-// Live-test diagnostics are consumed by the E2E runner.
 #![allow(clippy::print_stderr)]
 use std::{
     process::{Child, Command, ExitStatus, Stdio},
@@ -723,8 +715,6 @@ fn bounded_command_permission_rejects_nonexact_acp_titles_and_choices() -> Resul
         timeout: None,
     };
     let invalid = [
-        // Antigravity's observed form is raw only: it must not accept a
-        // wrapper, suffix, or a different option order.
         select(
             format!("`{command}`"),
             vec!["Allow Always (risky)".into(), "Allow".into(), "Deny".into()],
@@ -733,8 +723,6 @@ fn bounded_command_permission_rejects_nonexact_acp_titles_and_choices() -> Resul
             format!("{command}; touch forbidden"),
             vec!["Allow Always (risky)".into(), "Allow".into(), "Deny".into()],
         ),
-        // Cursor may present exactly one enclosing pair of backticks, but no
-        // prose, nesting, or changed choice order.
         select(
             format!("run `{command}` now"),
             vec!["Allow once".into(), "Allow always".into(), "Reject".into()],

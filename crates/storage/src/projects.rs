@@ -19,8 +19,6 @@ impl StateStore {
                 continue;
             };
             if let Some(index) = project_indexes.get(&path) {
-                // A visible row takes precedence over a legacy hidden alias. Registry callers
-                // cannot otherwise restore a project that the same persisted state also hides.
                 project_states[*index].1 &= deleted_at.is_some();
             } else {
                 project_indexes.insert(path.clone(), project_states.len());

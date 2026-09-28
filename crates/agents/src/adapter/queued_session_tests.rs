@@ -258,7 +258,6 @@ fn only_locally_owned_queue_rows_advertise_cancellation() {
     let (mut session, wire) = session(SteeringBoundary::Native, true);
     let steer = enqueue(&mut session, PromptMode::Steer);
     let followup = enqueue(&mut session, PromptMode::FollowUp);
-    // Native IDs identify inputs; they do not establish local ownership.
     wire.lock().expect("wire").events.push_back(activity(json!({
         "type":"queue_update", "steering":["same text"], "steeringIds":[steer],
         "cancellableIds":["untrusted-native-cancellation"]
@@ -420,9 +419,7 @@ fn held_boundary_admits_every_pending_steer_before_releasing_the_batch() {
             .cancel_prompt(input)
             .expect("claimed row click is ignored");
     }
-    // A later steer belongs to the next opportunity, not this snapshot.
     let later = enqueue(&mut session, PromptMode::Steer);
-    // Out-of-order and duplicate admission evidence must not release early.
     for native in ["native-2", "native-2", "native-1"] {
         session.observe(activity(json!({"type":"prompt_delivery", "submissionId":native, "status":"accepted", "message":{}})));
         assert!(session.held_batch.is_some());
@@ -698,7 +695,6 @@ fn escape_stages_all_local_inputs_before_native_handoff_on_every_backend() {
                 SessionCommand::ApplySteering,
             ]
         ));
-        // The wrapper must not invent a successful control response.
         assert!(
             !drain(&mut session)
                 .iter()
@@ -855,8 +851,6 @@ fn text_only_settlement_sends_all_pending_steers_in_one_native_prompt() {
         }
         assert_eq!(session.queue.len(), 1);
         assert_eq!(session.queue[0].id, followup);
-        // One native receipt proves delivery of the entire submitted envelope,
-        // not just its first member. Each logical input keeps its own reply.
         wire.lock().expect("wire").events.extend([
             activity(json!({"type":"prompt_delivery", "submissionId":"native-1", "status":"delivered", "message":{}})),
             SessionEvent::Response(SessionResponse::success(Some("native-1".into()), Payload::Prompt(PromptMode::Normal))),

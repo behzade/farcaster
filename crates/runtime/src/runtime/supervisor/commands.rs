@@ -66,7 +66,6 @@ impl Supervisor {
             self.actor_paths.insert(session.path.clone(), key.clone());
             key
         } else {
-            // Draft comments address only the draft where the capture began.
             target.clone()
         };
         if let Some(actor) = self.actors.get(&key) {
@@ -92,7 +91,6 @@ impl Supervisor {
         message: String,
     ) {
         let key = format!("draft:{id}");
-        // Retrying the same creation request must not launch or submit twice.
         if self.actors.contains_key(&key) {
             return;
         }
@@ -131,7 +129,6 @@ impl Supervisor {
         self.clock = self.clock.saturating_add(1);
         self.last_touch.insert(key.clone(), self.clock);
         self.interacted.insert(key.clone());
-        // A user may open the draft before its actor has published any events.
         self.latest.insert(
             key.clone(),
             Arc::new(RuntimeSnapshot {
@@ -338,9 +335,6 @@ impl Supervisor {
                         self.selected.clone(),
                         (harness, snapshot.project.clone(), *mode),
                     );
-                    // A live actor persists its effective mode through session
-                    // metadata after the restart succeeds. History-only sessions
-                    // have no later metadata event, so save their selection here.
                     if snapshot.live_session.is_none()
                         && let Some(session) = snapshot.selected_session.as_deref()
                         && let Some(state) = self.catalog_state.as_ref()

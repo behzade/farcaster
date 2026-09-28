@@ -139,7 +139,6 @@ fn comment_reuses_running_background_session_and_queues_when_steering_is_unavail
                     message: "Fix the selected code".into(),
                 })
                 .expect("send comment");
-            // Claude cannot steer. Finishing its turn must release the queued comment.
             let finished = include_str!(
                 "../../../../crates/agents/src/adapter/claude/fixtures/cli-2.1.236.jsonl"
             )
@@ -294,10 +293,8 @@ fn opening_during_startup_does_not_restart_task() {
                 .runtime
                 .send(task(&harness, "early", None))
                 .expect("start task");
-            // Select before the actor can finish startup or publish a locator.
             harness.select(Backend::Claude, "early");
             let mut peer = harness.accept(WAIT).expect("task starts");
-            // Selecting also loads a catalog; either process may connect first.
             let mut catalog = harness.accept(WAIT).expect("catalog starts");
             peer.complete_catalog(false);
             catalog.complete_catalog(false);

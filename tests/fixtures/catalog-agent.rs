@@ -1,5 +1,3 @@
-//! A std-only subprocess relay. Tests supply protocol replies over a local socket;
-//! the real adapter still owns process launch, pipes, framing, and translation.
 use std::{
     io::{self, BufRead, BufReader, Write},
     os::unix::net::UnixStream,
@@ -13,8 +11,6 @@ fn main() -> io::Result<()> {
     if executable.file_name() == Some(std::ffi::OsStr::new("opencode"))
         && args == ["debug", "paths"]
     {
-        // This optional discovery command has no database in the fixture.
-        // Empty output keeps normal history loading without opening a relay.
         return Ok(());
     }
     let mut control = UnixStream::connect(executable.parent().unwrap().join("control.sock"))?;
@@ -47,11 +43,8 @@ fn main() -> io::Result<()> {
                 break;
             }
         }
-        // Also exit if the test crashes or its watchdog kills it. Do not leave
-        // a child blocked on stdin after the controller closes its socket.
         std::process::exit(0);
     });
-    // Pi's print mode has no stdin; keep the relay alive for its output.
     if std::env::var_os("FARCASTER_FIXTURE_REPORT_MODE").is_some()
         && std::env::args().any(|arg| arg == "--print")
     {

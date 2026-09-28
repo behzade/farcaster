@@ -78,7 +78,6 @@ impl RuntimeOwner {
             .as_ref()
             .is_some_and(|state| state.session_name.is_none());
         if unnamed {
-            // The rename acknowledgement reloads state and publishes the saved name.
             self.send(SessionCommand::Rename { name: title });
         }
     }
@@ -194,8 +193,6 @@ impl RuntimeOwner {
                 snapshot.pending_initial_service_tier,
             )
         });
-        // This prompt belongs to the process we are starting, not the one being
-        // reset. Its UI identity must survive until acknowledgement.
         let deferred_submission_id = self
             .deferred_prompt
             .as_ref()
@@ -214,7 +211,6 @@ impl RuntimeOwner {
         self.idle_retirement.retired = retired;
         self.pending_session_controls.restore_preview = keep_preview;
         self.pending_submission_id = deferred_submission_id;
-        // Missing backend metadata must never make a resume or fork eligible for a title.
         self.title_generation.new_session = session.is_none() && fork.is_none();
         self.active_session = session.clone();
         self.process_command.access_mode = self
@@ -256,8 +252,6 @@ impl RuntimeOwner {
             }
         }
         self.active_snapshot_mut().profile_id = self.process_command.profile_id.clone();
-        // Startup still needs the catalog that validated the launch mode. Clearing it
-        // here makes the loading snapshot treat supported modes as unavailable.
         if let Some((
             models,
             thinking_levels,
@@ -560,8 +554,6 @@ impl RuntimeOwner {
         self.complete_current_delivered_prompt();
         self.fail_pending_queued_prompts(&details);
         let prompt_was_delivered = self.pending_prompt_result_emitted;
-        // A deferred prompt never reached the backend. Return it to the
-        // composer instead of retrying it after a later successful send.
         if let (Some(outbox_id), Some(target)) = (
             self.deferred_prompt
                 .as_ref()
@@ -578,8 +570,6 @@ impl RuntimeOwner {
                 );
             }
         }
-        // A failure after dispatch cannot prove that an undelivered prompt was
-        // rejected. Leave its durable outbox row pending for a later retry.
         if !prompt_was_delivered {
             if self.deferred_prompt.is_some() {
                 self.pending_outbox_id = None;
@@ -605,8 +595,6 @@ impl RuntimeOwner {
         self.process_command.access_mode = self
             .access_mode_changes
             .take_requested_mode(self.process_command.access_mode);
-        // Keep an unacknowledged submission out of the transcript and out of
-        // the error stream. The pending outbox row is the retry record.
         self.pending_prompt_target = None;
         self.pending_submission_id = None;
         self.pending_prompt_result_emitted = false;
@@ -656,9 +644,6 @@ impl RuntimeOwner {
         let active_snapshot = self.active_snapshot();
         let mut snapshot = self.snapshot.clone();
         if !self.queued_prompts.is_empty() {
-            // These rows still belong to the runtime, before transport dispatch
-            // (including durable recovered input). Do not persist this overlay
-            // on the native queue snapshot after ownership changes.
             conversation_mut(&mut snapshot)
                 .queue
                 .cancellable_ids

@@ -56,7 +56,6 @@ fn expand_body(
         let Some(index) = sources.iter().position(|(candidate, _)| *candidate == name) else {
             continue;
         };
-        // Leave cyclic references literal, as with unknown or escaped invocations.
         if active.contains(&index) {
             continue;
         }

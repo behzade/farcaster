@@ -36,8 +36,6 @@ impl ActiveSessionItem {
         }
     }
 
-    /// When the chat was last touched. A draft is born with the chat, so its
-    /// creation time is its recency until it is submitted.
     fn recency_ms(&self) -> u64 {
         match self {
             Self::Draft(draft) => draft.created_ms,
@@ -97,8 +95,6 @@ pub(super) fn session_rail_lists_for_roots<'a>(
         .filter(|draft| draft.archived)
         .cloned()
         .collect::<Vec<_>>();
-    // One row per chat: a draft that was submitted shadows the session it is
-    // writing into, exactly as it does in the active list.
     let shadowed = archived_drafts
         .iter()
         .map(|draft| draft.app_session_id)

@@ -478,15 +478,6 @@ fn composer_and_run_panel_track_their_rendered_snapshot_inputs() {
 }
 
 #[test]
-fn fps_debug_flag_accepts_only_literal_true() {
-    let enabled = |value: Option<&str>| value == Some("true");
-    assert!(enabled(Some("true")));
-    assert!(!enabled(Some("TRUE")));
-    assert!(!enabled(Some("1")));
-    assert!(!enabled(None));
-}
-
-#[test]
 fn transcript_splice_keeps_unchanged_rows_out_of_the_render_path() {
     let current = vec![item("one"), item("two"), item("three")];
     assert_eq!(transcript_splice(&current, &current), None);

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Launch an installed native package under a real Wayland compositor.
 set -euo pipefail
 binary=$(realpath "${1:?usage: probe-native-startup.sh INSTALLED_BINARY LOG_DIR}")
 mkdir -p "${2:?usage: probe-native-startup.sh INSTALLED_BINARY LOG_DIR}"

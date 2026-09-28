@@ -1,4 +1,3 @@
-# Run with the selected channel's nixpkgs and the exact candidate AppImage.
 { nixpkgs, appimage }:
 let
   pkgs = import (builtins.toPath nixpkgs) { system = "x86_64-linux"; };

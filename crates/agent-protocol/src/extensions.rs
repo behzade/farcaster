@@ -62,14 +62,12 @@ pub struct Model {
         rename = "serviceTiers"
     )]
     pub service_tiers: Vec<String>,
-    /// Concrete model ID behind a selectable alias, when reported by the backend.
     #[serde(
         default,
         rename = "resolvedModel",
         skip_serializing_if = "Option::is_none"
     )]
     pub resolved_model: Option<String>,
-    /// Access modes reported by the model, when provided.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub access_modes: Option<Vec<super::HarnessAccessMode>>,
 }

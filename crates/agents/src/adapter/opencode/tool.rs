@@ -89,7 +89,6 @@ pub(super) fn normalize_opencode_tool(
     (canonical.into(), Value::Object(normalized))
 }
 
-// OpenCode prefixes unified diffs with an Index line and a separator.
 fn strip_patch_preamble(diff: &str) -> &str {
     if let Some((index, rest)) = diff.split_once('\n')
         && index.starts_with("Index: ")

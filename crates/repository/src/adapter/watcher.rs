@@ -128,8 +128,6 @@ impl JujutsuMetadata {
 
     fn changed(&self, path: &Path) -> bool {
         if let Ok(relative) = path.strip_prefix(&self.repo) {
-            // Snapshot reads touch locks and tree state. Only published operations
-            // should cause another refresh.
             return relative.starts_with("op_heads/heads")
                 && path.file_name().is_some_and(|name| {
                     let name = name.to_string_lossy();
@@ -186,7 +184,6 @@ fn discovery_targets(project: &Path) -> Result<Vec<WatchTarget>, String> {
             project.display()
         )
     })?;
-    // Only the project and its parents can gain a marker for this project.
     Ok(project
         .ancestors()
         .map(|path| WatchTarget {

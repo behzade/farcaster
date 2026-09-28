@@ -49,7 +49,6 @@ fn scratch_uses_visible_activity_summaries_instead_of_raw_tool_payloads() {
         text,
         "## You\n\nRead the file\n\n## Tool\n\nRead src/main.rs\n\n## Assistant\n\nFirst line\nFinal line"
     );
-    // Raw export remains an explicit, separate operation.
     assert!(copy_transcript_items(&state.items, 0..=2).contains("hidden output"));
     assert!(transcript_scratch_text(&PersistentVec::default()).is_empty());
 }

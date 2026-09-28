@@ -17,7 +17,6 @@ pub enum PiWireMessage {
     Event(Value),
 }
 
-/// Pi-only provenance for discovering controls; it never enters the shared catalog.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub(super) struct PiCommand {
     pub name: String,

@@ -18,8 +18,6 @@ fn flights() -> &'static Mutex<HashMap<FlightKey, Flight>> {
     FLIGHTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-// One parent's concurrent sends share even a use-once choice or cancellation.
-// OnceLock waits for the first caller without holding the map lock during input.
 fn select_once(key: FlightKey, select: impl FnOnce() -> Selection) -> Selection {
     let flight = flights()
         .lock()
@@ -74,7 +72,6 @@ pub(super) fn configure(
     store: &SharedStore,
 ) -> Selection {
     select_once((caller.worker_id.clone(), profile.to_owned()), || {
-        // Another request may have saved this profile after our caller loaded it.
         let saved = with_store(store, |store| store.load_worker_profiles())?;
         let backends = available_worker_backends(launch_config, &caller.project);
         let access = agents::delegated_worker_access_mode(caller.backend, caller.access_mode);
@@ -289,7 +286,6 @@ fn available_worker_backends(
     config: &agents::AgentLaunchConfig,
     project: &std::path::Path,
 ) -> Vec<agents::Backend> {
-    // Explicit presets use the base harness configuration, even for named-profile callers.
     let mut config = config.clone();
     config.profile_id = None;
     agents::Backend::ALL
@@ -308,7 +304,6 @@ fn fallback_harnesses(
         .iter()
         .copied()
         .filter(|&harness| {
-            // A catalog with no eligible choices cannot accept an arbitrary ID.
             if catalogs.iter().any(|entry| {
                 entry.profile_id.is_none() && entry.project == project && entry.harness == harness
             }) {

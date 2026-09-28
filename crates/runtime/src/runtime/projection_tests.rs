@@ -82,7 +82,6 @@ fn failed_catalog_responses_preserve_last_valid_values_and_report_error() {
             .any(|item| item.text.contains("invalid catalog payload"))
     );
 
-    // A valid empty catalog is different from a failed refresh.
     for payload in [
         Payload::ListModels(Vec::new()),
         Payload::ListReasoningLevels(Vec::new()),

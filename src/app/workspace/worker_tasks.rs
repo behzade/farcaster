@@ -293,7 +293,6 @@ impl FarcasterApp {
             let draft = current
                 .get_mut(target.profile)
                 .ok_or("Profile no longer exists")?;
-            // Keep incomplete edits attached to their model as the list moves.
             let selected = if let Some(saved) = profiles.get_mut(target.profile) {
                 if saved.models.is_empty() && matches!(edit, WorkerModelEdit::Add) {
                     let selected = edit_models(&mut draft.models, target.model, edit)?;

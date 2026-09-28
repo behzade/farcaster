@@ -344,8 +344,6 @@ fn model_available_for_profile(
                 && entry.project == project
         })
         .peekable();
-    // Without a catalog, allow the installed harness to validate the configured IDs.
-    // With a catalog, skip providers and models that this harness does not offer.
     catalogs.peek().is_none()
         || catalogs.any(|entry| {
             entry.catalog.models.iter().any(|candidate| {

@@ -156,8 +156,6 @@ fn profile_history_adapter(
     Ok(for_backend(harness))
 }
 
-/// Prime the adapter's foreground history cache without starting an agent.
-/// Returns false when the adapter cannot safely reuse a passive history load.
 pub fn warm_session_history_for_profile(
     config: &crate::AgentLaunchConfig,
     harness: Backend,

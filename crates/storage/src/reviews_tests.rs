@@ -106,7 +106,6 @@ fn old_profiled_caller_placeholder_moves_turns_without_archiving_live_session() 
     let mut store = StateStore::open_at(&database)?;
     let locator = profiled_claude_path(temp.path());
     let real = store.update_session_metadata(&live_claude_metadata(temp.path()))?;
-    // Seed the old native-only registration, before callers carried a profile.
     let ghost_locator = super::super::identity::family_locator_root(
         &temp.path().join("session-locators"),
         temp.path(),
@@ -171,7 +170,6 @@ fn review_submission_is_read_only_for_session_identity_and_uses_captured_turn() 
             Ok((r.get(0)?, r.get(1)?))
         })
         .expect("session");
-    // Newer execution registration cannot retarget a request captured earlier.
     store.save_review(&caller, &first, &artifact(temp.path(), "review"))?;
     let after: (i64, String) = store
         .connection

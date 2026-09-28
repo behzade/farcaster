@@ -1,4 +1,3 @@
-//! Convert Pi's numbered display diff to a positioned, backend-neutral patch.
 pub(super) fn unified_diff(diff: &str) -> Option<String> {
     let mut output = String::new();
     let mut block = Block::default();

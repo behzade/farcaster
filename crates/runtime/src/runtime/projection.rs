@@ -167,9 +167,6 @@ impl RuntimeOwner {
                 .as_ref()
                 .is_some_and(|id| self.pending_queued_prompts.contains_key(id))
         {
-            // Exact cancellation receipts have already removed their pending
-            // submission. Their terminal reply must not restore a draft or add
-            // a spurious command-failed row.
             return;
         }
         if matches!(operation, SessionOperation::Prompt(_))
@@ -282,9 +279,6 @@ impl RuntimeOwner {
             if is_prompt_response
                 && error.kind == crate::agents::SessionResponseErrorKind::Cancelled
             {
-                // Abort deliberately returns ownership of an undelivered input
-                // to the composer. It is not a command failure and should not
-                // add an error row after the prompt result restores the draft.
                 let running = self
                     .active_snapshot()
                     .session
@@ -307,7 +301,6 @@ impl RuntimeOwner {
             let blocks_resume = self.deferred_prompt.is_some() && startup_query;
             let blocks_session_command_resume =
                 !self.pending_session_controls.is_empty() && startup_query;
-            // Ignore cancelled refreshes unless they gate a pending prompt or control.
             if error.kind == crate::agents::SessionResponseErrorKind::Cancelled
                 && (startup_query || operation == SessionOperation::LoadUsage)
                 && !blocks_resume
@@ -416,7 +409,6 @@ impl RuntimeOwner {
                         }
                     }
                     conversation_mut(self.active_snapshot_mut()).replace_history(&messages);
-                    // Deferred delivery restores the local row after both startup responses.
                     self.pending_prompt_item = None;
                 }
                 self.startup_history_loaded = true;
@@ -434,8 +426,6 @@ impl RuntimeOwner {
             Payload::LoadUsage(usage) => {
                 let running = self.active_snapshot().conversation.running;
                 let previous = self.active_snapshot().stats.clone();
-                // The transcript/activity projection still uses a JSON stats document.
-                // Response validation has already happened at the adapter boundary.
                 self.active_snapshot_mut().stats =
                     stable_session_stats(&previous, json!(usage), running);
                 self.publish_session_metadata();

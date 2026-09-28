@@ -1,4 +1,3 @@
-//! Decode review artifacts from successful tool results, not model prose or arguments.
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -13,7 +12,7 @@ use crate::{
 pub struct Artifact {
     version: u32,
     #[serde(default)]
-    #[allow(dead_code)] // the transcript card renders from the review itself
+    #[allow(dead_code)]
     pub id: Option<String>,
     pub project: PathBuf,
     pub review: Review,
@@ -27,8 +26,6 @@ pub fn from_item(item: &TranscriptItem) -> Option<Artifact> {
     find(result, 0, &mut 1000)
 }
 
-// MCP adapters retain either structuredContent or JSON in a text block. Read
-// the result only, never tool arguments or arbitrary assistant Markdown.
 fn find(value: &Value, depth: usize, budget: &mut usize) -> Option<Artifact> {
     if depth > 8 || *budget == 0 {
         return None;
@@ -60,9 +57,6 @@ fn find(value: &Value, depth: usize, budget: &mut usize) -> Option<Artifact> {
     }
 }
 
-/// Rebuild a review artifact from a submit_review row's own arguments when
-/// history replay dropped the echoing result. The row itself is the durable
-/// carrier of the review; rendering never depends on a separately stored card.
 pub fn hydration_result(item: &TranscriptItem, project: &Path) -> Option<Value> {
     if item.kind != TranscriptKind::Tool
         || item.tool_execution_state() != Some(ToolExecutionState::Succeeded)
@@ -89,9 +83,6 @@ pub fn hydration_result(item: &TranscriptItem, project: &Path) -> Option<Value> 
 }
 
 fn review_from_arguments(arguments: &Value) -> Option<Review> {
-    // Farcaster MCP proxies may wrap the parameters one level deep: Cursor
-    // nests them under "args", and completed tool updates can re-wrap them
-    // under "arguments" next to a "prompt" summary.
     [
         Some(arguments),
         arguments.get("args"),

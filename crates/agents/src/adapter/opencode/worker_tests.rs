@@ -404,8 +404,6 @@ fn cli_model_fallback_preserves_provider_and_nested_model_ids() {
 
 #[test]
 fn session_updates_surface_titles() {
-    // `session.renamed` carries a flat title; this is what title generation
-    // and renames emit on the installed opencode server.
     let renamed = json!({
         "sessionID": "session-1",
         "title": "Renamed probe title"
@@ -415,7 +413,6 @@ fn session_updates_surface_titles() {
         Some("Renamed probe title")
     );
 
-    // `session.updated` nests the full session record under `info`.
     let updated = json!({
         "sessionID": "session-1",
         "info": {"id": "session-1", "title": "Refactor adapter"}
@@ -833,7 +830,6 @@ fn model_override_only_decides_new_sessions() -> Result<(), String> {
         variant: Some("high".into()),
     };
 
-    // A new session starts on the override.
     let mut client = OpenCodeClient::new(Transport {
         responses: VecDeque::from([response(204, Value::Null)]),
         requests: Vec::new(),
@@ -854,7 +850,6 @@ fn model_override_only_decides_new_sessions() -> Result<(), String> {
         json!({"model": {"providerID": "opencode", "id": "big-pickle", "variant": "high"}})
     );
 
-    // Resuming keeps the model saved on the session.
     let saved = OpenCodeModelSelection {
         provider_id: "anthropic".into(),
         id: "sonnet".into(),
@@ -878,7 +873,6 @@ fn model_override_only_decides_new_sessions() -> Result<(), String> {
         "resuming must keep the saved model"
     );
 
-    // A fork keeps the model inherited from the session it was forked from.
     let inherited = OpenCodeModelSelection {
         provider_id: "google".into(),
         id: "gemini-3-pro".into(),
@@ -900,7 +894,6 @@ fn model_override_only_decides_new_sessions() -> Result<(), String> {
         "forks must inherit the source session's model"
     );
 
-    // Without a saved model a new session still falls back to the backend default.
     let mut client = OpenCodeClient::new(Transport {
         responses: VecDeque::from([response(
             200,
@@ -940,7 +933,6 @@ fn extracts_the_last_assistant_text() {
 
 #[test]
 fn question_prompt_preserves_native_question_and_option_descriptions() {
-    // OpenCode 2.0.1 question tool: form title is generic; question is in description.
     let form = json!({"title": "Questions", "fields": [{
         "key": "q0", "type": "string", "title": "When it freezes",
         "description": "Do values freeze after replies or while working?",
@@ -1705,8 +1697,6 @@ fn http_sse_prompt_and_escape_flow_preserves_exact_delivery_and_liveness() -> Re
                     let response = r#"{"interrupted":true}"#;
                     write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len())
                         .map_err(|error| error.to_string())?;
-                    // Match the native server contract: acknowledging an
-                    // interrupt does not imply that it will resume.
                     if request.starts_with("POST /api/session/session-1/interrupt?resume=true ") {
                         for kind in ["session.execution.interrupted", "session.execution.started"] {
                             fixture_event_sender
@@ -1852,8 +1842,6 @@ fn http_sse_prompt_and_escape_flow_preserves_exact_delivery_and_liveness() -> Re
             json!({"sessionID":"session-1", "delta":"before "}),
         )))
         .map_err(|error| error.to_string())?;
-    // Normal and FollowUp must get their delivery from actual promotion
-    // requests above. Injecting Normal delivery here hid the stranded input.
     event_sender
         .send(FixtureEvent::Data(event(
             "session.inbox.delivered",

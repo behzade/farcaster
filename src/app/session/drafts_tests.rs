@@ -102,8 +102,6 @@ fn draft_archive_sends_durable_intent_without_a_ui_locator(cx: &mut gpui::TestAp
                             };
                             assert_eq!(app_session_id.get(), draft.app_session_id);
                             assert_eq!(requested, archived);
-                            // The snapshot alone cannot mutate archive state, even
-                            // if runtime binding overtook the UI's missing path.
                             let saved = store
                                 .load_drafts()
                                 .expect("drafts")
@@ -161,8 +159,6 @@ fn startup_idle_preserves_only_the_unresolved_draft_submission() {
         assert!(!preserves(&target, status, &pending, &statuses));
     }
 
-    // Identity arrives during startup; the next idle update still addresses
-    // the draft actor, but its badge and pending submission may be promoted.
     transfer_draft_status(&mut statuses, &mut HashMap::new(), "starting", &path);
     pending
         .get_mut("submission")
@@ -203,7 +199,6 @@ fn empty_startup_draft_stays_deleted_after_late_composer_save()
     let mut drafts = store.load_drafts()?;
     sync_materialized_draft(&mut drafts, "startup", id, &project, Some(Backend::Pi));
     store.remove_draft("startup")?;
-    // A queued composer write must not recreate the draft after quit removes it.
     store.save_composer_session(&ComposerRecord {
         target: draft_target("startup"),
         ..Default::default()

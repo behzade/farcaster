@@ -24,7 +24,6 @@ use crate::{
 pub(in crate::app) struct PendingSubmission {
     pub(in crate::app) id: String,
     pub(in crate::app) submitted_at: Instant,
-    // Runtime replies keep this target even after the draft is promoted.
     pub(in crate::app) submitted_target: String,
     pub(in crate::app) mode: PromptMode,
     pub(in crate::app) text: String,
@@ -257,8 +256,6 @@ impl FarcasterApp {
                 continue;
             }
 
-            // Preserve any newer draft, then restore each rejection in the
-            // submission order established above.
             self.capture_composer_session(cx);
             let restored = restore_rejected_text(&mut self.composer.sessions, &target, &pending);
             self.composer
@@ -368,8 +365,6 @@ pub(in crate::app) fn has_pending_submission(
         .any(|submission| submission.submitted_target == target)
 }
 
-// Presentation only: retain attachment information without changing the payload
-// used for delivery or acknowledgement.
 fn pending_queue_preview(submission: &PendingSubmission) -> String {
     let mut parts = Vec::new();
     match submission.images.len() {
@@ -387,10 +382,6 @@ fn pending_queue_preview(submission: &PendingSubmission) -> String {
     parts.join(" · ")
 }
 
-/// The queue shown by the production composer. A pending submission first
-/// appears locally, then the backend queue begins reflecting that same item
-/// after admission. Overlay matching local entries onto native entries so this
-/// handoff does not briefly render one submission twice.
 pub(in crate::app) fn visible_prompt_queue(
     native: &crate::conversation::QueueState,
     pending: &std::collections::HashMap<String, PendingSubmission>,
@@ -426,7 +417,6 @@ pub(in crate::app) fn visible_prompt_queue(
         };
         let preview = pending_queue_preview(submission);
         if let Some(index) = messages.iter().enumerate().find_map(|(index, message)| {
-            // Submission trims the editor value; the local copy retains it for recovery.
             (!matched[index] && (message == &submission.text || message == submission.text.trim()))
                 .then_some(index)
         }) {

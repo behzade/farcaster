@@ -142,7 +142,6 @@ impl ThemeDefinition {
         ] {
             self.validate_bounds(LengthKey::Metric(min), LengthKey::Metric(max))?;
         }
-        // Composer clearance and transcript tail reserve clamp between these sizes.
         for (min, max) in [("size-12", "size-28"), ("size-72", "size-280")] {
             self.validate_bounds(
                 LengthKey::from_name(min).expect("known size token"),
@@ -240,7 +239,6 @@ impl ThemeLibrary {
             selected: selected.unwrap_or_default().to_owned(),
             themes,
         };
-        // These names were available to user themes before the palette ports shipped.
         for index in 0..library.themes.len() {
             let name = &library.themes[index].name;
             if builtin::BUILT_IN_THEMES

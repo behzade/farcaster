@@ -1,5 +1,4 @@
 #!/bin/sh
-# Shared layout for native Linux packages. PREFIX must be a staging directory.
 set -eu
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 binary=${1:?usage: install-linux.sh BINARY PREFIX}

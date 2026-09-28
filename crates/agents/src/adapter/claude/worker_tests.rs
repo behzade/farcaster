@@ -664,7 +664,6 @@ fn permission_modes_match_launch_access_and_exclude_plan() {
         let (directory, mut command) = setup();
         command.access_mode = access;
         let mut session = session(&command, directory.path());
-        // The transport uses the first advertised mode as the initial selection.
         assert_eq!(session.modes[0]["id"], initial);
         assert!(session.select_mode("plan").is_err());
         let expected = if access == HarnessAccessMode::Auto {

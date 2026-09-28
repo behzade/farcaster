@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""Check real staging and artifact validation with a fixture deployment tool.
-
-Linux CI builds and starts the real AppImage separately.
-"""
 import json
 import os
 from pathlib import Path
@@ -51,7 +47,6 @@ elif name.endswith(".AppImage"):
     shutil.copytree(root / "image", "squashfs-root", symlinks=True)
     settings = json.loads((root / "settings.json").read_text())
     appdir = pathlib.Path("squashfs-root")
-    # Apply faults only to the finished image, not the staging tree.
     if settings.get("apprun_mode") is not None:
         (appdir / "AppRun").unlink()
         (appdir / "AppRun").write_text("fixture launcher")

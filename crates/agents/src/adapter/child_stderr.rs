@@ -103,7 +103,6 @@ fn glog_level(line: &str) -> Option<Level> {
     {
         return None;
     }
-    // Antigravity's raw payloads repeat accumulated text on every update.
     if level == Level::Info && message.starts_with("RAW WS MSG: ") {
         return Some(Level::Debug);
     }

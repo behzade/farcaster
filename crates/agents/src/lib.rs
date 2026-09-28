@@ -50,7 +50,6 @@ pub struct AgentLaunchConfig {
     pub access_mode: HarnessAccessMode,
     pub app_proxy: Option<String>,
     pub session_locator_root: Option<std::path::PathBuf>,
-    /// Session-scoped hook endpoint. Never inherited by separately launched workers.
     pub prompt_boundary_url: Option<String>,
     pub profiles: std::sync::Arc<HarnessProfiles>,
     pub profile_id: Option<String>,

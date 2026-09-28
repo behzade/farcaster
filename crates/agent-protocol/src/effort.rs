@@ -17,7 +17,6 @@ pub fn model_efforts(model: &Model, fallback: &[String]) -> Vec<String> {
     if !model.reasoning {
         return Vec::new();
     }
-    // Presentation ordering must not change the catalog's model-switch policy.
     let mut efforts = model.efforts.as_deref().unwrap_or(fallback).to_vec();
     efforts.sort_by(|left, right| {
         effort_rank(left)

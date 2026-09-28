@@ -93,7 +93,7 @@ fn old_scan_cannot_replace_a_newer_foreground_observation() {
     let ticket = cache
         .begin(project.clone(), BackendPreference::Auto)
         .unwrap();
-    cache.invalidate(&project); // Select the project while its scan is running.
+    cache.invalidate(&project);
     cache.remember(project.clone(), observation(BackendPreference::Auto, 42));
     assert!(!cache.finish(&ticket));
     assert_eq!(

@@ -12,7 +12,6 @@ pub struct DraftSession {
     pub id: String,
     #[serde(default)]
     pub app_session_id: i64,
-    // No selection while a draft waits for the user to choose a backend.
     #[serde(with = "draft_backend")]
     pub harness: Option<Backend>,
     #[serde(default)]
@@ -25,7 +24,6 @@ pub struct DraftSession {
     pub session_path: Option<PathBuf>,
     #[serde(default)]
     pub title: Option<String>,
-    /// Archive state for submitted chats awaiting a session record.
     #[serde(default)]
     pub archived: bool,
 }

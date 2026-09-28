@@ -3,8 +3,6 @@ use serde_json::Value;
 
 use crate::{SessionHistory, SessionOperation, SessionResponsePayload};
 
-/// Decode known response bodies before they leave the Pi adapter. A malformed
-/// body is a correlated command failure, not a successful empty catalog.
 pub(super) fn decode(
     operation: SessionOperation,
     data: Value,

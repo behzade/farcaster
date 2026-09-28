@@ -15,11 +15,8 @@ use super::notices;
 use super::{BIND_ADDRESS, FarcasterMcp, MCP_PATH, server_config};
 
 static SERVER: Mutex<Option<ServerState>> = Mutex::new(None);
-// Keep the reservation even while MCP is disabled or startup fails.
 static INSTALLED_LISTENER: Mutex<Option<TcpListener>> = Mutex::new(None);
 
-/// Install a reserved endpoint before starting the server or launching agents.
-/// The socket stays reserved for this process, including while MCP is disabled.
 pub fn install_listener(listener: TcpListener) -> Result<(), String> {
     let current = SERVER
         .lock()

@@ -348,7 +348,6 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             keystroke: "escape".into(),
             show_in_help: true,
             show_in_picker: false,
-            // Raw key handling needs `KeyDownEvent::is_held`, which action dispatch omits.
             binding: KeyBinding::new(
                 "escape",
                 Unbind(ComposerEscape.name().into()),

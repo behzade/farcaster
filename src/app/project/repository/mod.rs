@@ -188,8 +188,6 @@ impl RepositoryState {
         true
     }
 
-    /// Move the current working copy out so it can be remembered for its own
-    /// project. A project with nothing observed yet has nothing to keep.
     fn observe(&mut self) -> Option<RepositoryObservation> {
         if !self.execution_allowed {
             return None;
@@ -212,8 +210,6 @@ impl RepositoryState {
         self.initialized = self.snapshot.is_some();
     }
 
-    /// Rows key off a focus handle per changed file, so a restored working copy
-    /// needs its handles recreated before it can be rendered.
     fn ensure_row_focus(&mut self, cx: &mut Context<FarcasterApp>) {
         let keys = self
             .snapshot

@@ -89,7 +89,6 @@ impl Render for SessionRailView {
         };
         let grouped = app.read(cx).settings.group_sessions_by_project;
         if self.grouped != grouped {
-            // Changing modes changes row heights; discard cached measurements.
             self.list.reset(0);
             self.rows.borrow_mut().clear();
             self.grouped = grouped;
@@ -131,8 +130,6 @@ fn reveal_session_row(list: &ListState, rows: &RefCell<Vec<String>>, reveal: &mu
         && let Some(index) = rows.borrow().iter().position(|row| row == &key)
     {
         list.scroll_to_reveal_item(index);
-        // Without a measured viewport, reveal can land at the selected row's
-        // bottom edge. Keep the whole row visible, including at that boundary.
         if list.logical_scroll_top().item_ix >= index {
             list.scroll_to(gpui::ListOffset {
                 item_ix: index,

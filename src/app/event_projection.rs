@@ -239,9 +239,6 @@ impl FarcasterApp {
         dirty: &mut DirtyRegions,
         cx: &mut Context<Self>,
     ) {
-        // Selecting a session clears its transcript for as long as the history
-        // load takes. Paint the last read of that same session instead of an
-        // empty pane; the runtime's own snapshot replaces it when it lands.
         crate::app::session::remembered_transcript::remember(&snapshot);
         let snapshot = crate::app::session::remembered_transcript::stand_in(snapshot);
         if self
@@ -888,7 +885,6 @@ impl FarcasterApp {
                 outcome,
                 session,
             } => {
-                // Replies belong to a submission, even after navigation changes generations.
                 self.project_prompt_result(submission_id, target, outcome, session, dirty, cx);
             }
             RuntimeEvent::SessionStatus {
@@ -999,8 +995,6 @@ fn project_dialog_dismissal(
     match extension.dismiss_dialog(id) {
         crate::app::extensions::DialogDismissal::ActiveWithNext
         | crate::app::extensions::DialogDismissal::ActiveFinal => {
-            // Root lifecycle owns the Window needed to focus the next dialog or restore focus
-            // after the final one disappears.
             *pending_dialog_setup = true;
             if restored_dialog_id.as_deref() == Some(id) {
                 *restored_dialog_id = None;
@@ -1020,19 +1014,15 @@ pub(in crate::app) fn record_pending_prompt_result_for_submission(
     outcome: crate::agents::PromptOutcome,
     session: Option<PathBuf>,
 ) {
-    // An uncertain send remains in the visible saved-message queue. It is no
-    // longer active work and must not keep the quit warning on screen.
     let key = match submission_id {
         Some(id) => pending
             .get(id)
             .is_some_and(|row| {
                 row.submitted_target == target
-                    // Promotion moves the pending send to its session path;
-                    // the actor's reply still names the original draft.
                     || (target.starts_with("draft:")
-                        && session.as_deref().is_some_and(|path| {
-                            row.submitted_target == session_target(path)
-                        }))
+                        && session
+                            .as_deref()
+                            .is_some_and(|path| row.submitted_target == session_target(path)))
             })
             .then(|| id.to_owned()),
         None => {

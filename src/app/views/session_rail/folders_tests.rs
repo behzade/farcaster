@@ -136,7 +136,6 @@ impl gpui::Render for FolderDropHarness {
             title: "Session".into(),
             project: "Project".into(),
         };
-        // Match the sidebar's virtual list and its enclosing drop area.
         div().w(gpui::px(300.)).h(gpui::px(200.)).child(
             div()
                 .id("outer-drop-area")

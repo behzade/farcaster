@@ -2,7 +2,6 @@ use serde_json::Value;
 
 pub(super) use agent_client_protocol::schema::v1::RequestId as AcpRequestId;
 
-/// Events delivered by the SDK to Farcaster's adapter.
 #[derive(Clone, Debug)]
 pub(super) enum AcpInbound {
     Response {

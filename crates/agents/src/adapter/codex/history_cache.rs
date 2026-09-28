@@ -35,8 +35,6 @@ impl Scope {
         config: Option<&crate::AgentLaunchConfig>,
         project: Option<&Path>,
     ) -> Self {
-        // Command exposes explicit overrides, but default launches also inherit
-        // PATH and provider/configuration variables from the process.
         let mut inherited_env: Vec<_> = std::env::vars_os().collect();
         inherited_env.sort();
         Self {
@@ -81,10 +79,6 @@ pub(super) fn load(
     )
 }
 
-// thread/read hydrates persisted history. Its inputs include the native rollout,
-// state identity, and (for paginated histories) the separate history database.
-// Read identity through SQLite: app-server startup can change global state file
-// stamps even when this thread did not change. History DB stamps include WALs.
 fn revision(home: &Path, thread: &str) -> Option<Revision> {
     if !home.is_absolute() {
         return None;
@@ -101,7 +95,6 @@ fn revision(home: &Path, thread: &str) -> Option<Revision> {
             |row| Ok((row.get(0)?, row.get(1)?, Identity { provider: row.get(2)?, model: row.get(3)?, effort: row.get(4)? })),
         )
         .ok()?;
-    // Unknown schemas/modes and missing files use the existing app-server path.
     if mode != "legacy" && mode != "paginated" {
         return None;
     }
@@ -123,8 +116,6 @@ fn database_stamps(home: &Path) -> Option<DatabaseStamps> {
     let mut stamps = Vec::new();
     for database in ["thread_history_1.sqlite"] {
         let reported = home.join(database);
-        // SQLite resolves a database symlink before locating its WAL/journal.
-        // Track the resolved path too, so retargeting a link invalidates entries.
         let database = match std::fs::symlink_metadata(&reported) {
             Ok(_) => std::fs::canonicalize(&reported).ok()?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => reported,

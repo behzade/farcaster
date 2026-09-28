@@ -25,7 +25,6 @@ struct TaskNotice {
 
 #[derive(Default)]
 pub(in crate::app) struct CodeTasks {
-    // More than one message may be in flight for the same chat.
     pending: HashMap<String, TaskChat>,
     notice: Option<TaskNotice>,
 }

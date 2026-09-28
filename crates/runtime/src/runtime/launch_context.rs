@@ -22,8 +22,6 @@ impl<'a> LaunchTarget<'a> {
     }
 }
 
-/// Select the persisted harness configuration before reading defaults, loading a
-/// catalog, or starting an adapter. Native session paths need not encode it.
 pub(super) fn configuration_for_target(
     base: &AgentLaunchConfig,
     state: Option<&SharedStateStore>,

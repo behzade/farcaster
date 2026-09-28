@@ -1,4 +1,3 @@
-//! Review handoff placement changes presentation, never conversation order.
 use super::*;
 
 pub(super) fn arrange(
@@ -17,8 +16,6 @@ pub(super) fn arrange(
     let mut span = Vec::new();
     for row in rows.iter().copied() {
         let index = row.item_start();
-        // History has user-message boundaries. During a live run, steering
-        // messages do not complete that run or relocate its existing reviews.
         let completed = completed_runs.get(completed_runs.partition_point(|run| run.end < index));
         let inside_completed = completed.is_some_and(|run| run.start < index && index < run.end);
         let boundary = items

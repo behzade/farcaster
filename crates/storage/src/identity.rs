@@ -1,8 +1,6 @@
 use super::*;
 use crate::agents::Backend;
 
-/// Explicit launch identity and persisted identity survive native file locators.
-/// A conflicting explicit profile must not silently retarget an existing session.
 pub(super) fn resolve_session_profile(
     connection: &Connection,
     locator: &Path,
@@ -124,10 +122,6 @@ pub(super) fn merge_session(tx: &Transaction<'_>, keep: i64, other: i64) -> Resu
     } else {
         None
     };
-    // Explicit intent wins over snapshots in either merge direction. Across
-    // rows, use the latest intent time, then the higher durable ID for ties;
-    // event sequences are local to a session. Read the chosen row's current
-    // value so subsequent merges retain the decision after events move.
     for sql in [
         "UPDATE sessions SET
            profile_id=COALESCE(profile_id,(SELECT profile_id FROM sessions WHERE id=?2)),
@@ -219,8 +213,6 @@ pub(super) fn family_locator_root(locator_root: &Path, project: &Path) -> PathBu
     locator_root.join(format!("{digest:x}"))
 }
 
-// Old MCP callers registered a native ID under the project-hashed path.
-// Repair only that blank path when one profiled row owns the same native ID.
 pub(super) fn repair_profiled_caller_placeholders(
     connection: &mut Connection,
     locator_root: &Path,
@@ -228,8 +220,6 @@ pub(super) fn repair_profiled_caller_placeholders(
     let tx = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| format!("repair caller session identity: {error}"))?;
-    // New default-profile callers use this same locator shape. Repair only rows
-    // present before this identity boundary, never registrations on later opens.
     let repaired: bool = tx
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM meta WHERE key='profiled_caller_identity_repaired_v1')",

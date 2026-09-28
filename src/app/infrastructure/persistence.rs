@@ -56,7 +56,6 @@ pub(crate) fn open() -> Result<StoreGuard<'static>, String> {
     if let Some(store) = STATE.get() {
         return store.lock().map(StoreGuard::Shared);
     }
-    // Unit tests construct isolated databases without running application startup.
     #[cfg(test)]
     return open_fresh().map(StoreGuard::Owned);
     #[cfg(not(test))]

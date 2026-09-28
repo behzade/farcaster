@@ -101,8 +101,6 @@ impl Supervisor {
             }
             RuntimeEvent::SessionUpdated(mut session) => {
                 if let Some(running) = self.live_catalog_running_for(&session.path) {
-                    // A catalog reply can describe an earlier point in the
-                    // same turn. The live actor owns its current run state.
                     session.is_running = running;
                 }
                 let changed = if let Some(previous) = self
@@ -135,16 +133,12 @@ impl Supervisor {
             }
             RuntimeEvent::Snapshot { snapshot, .. } => {
                 let mut snapshot = snapshot;
-                // A fast catalog can finish before the actor's first snapshot.
-                // Send only missing or stale state: capability-only Pi catalogs
-                // can have no models, so an empty-model test alone loops forever.
                 if let Some(actor) = self.actors.get(&key)
                     && let Some(command) =
                         self.configurations.catalog_command_for_snapshot(&snapshot)
                 {
                     actor.send(command);
                 }
-                // Publish identity even when the actor finishes starting in the background.
                 if let Some(target) = snapshot.session_target()
                     && self
                         .latest
@@ -357,7 +351,6 @@ impl Supervisor {
                         ..
                     } = &mut event
                 {
-                    // SQLite stores archive and metadata, while app events own live status.
                     let running: HashSet<_> = self
                         .catalog_sessions
                         .iter()

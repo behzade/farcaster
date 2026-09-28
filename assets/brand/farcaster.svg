@@ -4,17 +4,14 @@
 
   <rect width="512" height="512" rx="112" fill="#1D2220"/>
 
-  <!-- A quiet horizon gives the opening depth without turning it into a landscape. -->
   <path d="M144 324C192 302 232 309 270 326c35 16 63 16 98 3v43H144v-48Z" fill="#303A35"/>
   <path d="M144 324C192 302 232 309 270 326c35 16 63 16 98 3" fill="none" stroke="#F5E8CE" stroke-width="10" stroke-linecap="round"/>
 
-  <!-- The portal sits above the horizon, masking its ends at the inner edge. -->
   <path
     fill="#F47B40"
     fill-rule="evenodd"
     d="M92 416V256C92 146 165 72 256 72S420 146 420 256V416H92Zm52-44h224V256c0-82-49-140-112-140s-112 58-112 140v116Z"
   />
 
-  <!-- The single glint is the far-off destination. -->
   <path d="M307 180c0 18-9 27-27 27 18 0 27 9 27 27 0-18 9-27 27-27-18 0-27-9-27-27Z" fill="#F5E8CE"/>
 </svg>

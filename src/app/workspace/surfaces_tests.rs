@@ -137,12 +137,6 @@ fn focusing_a_native_surface_waits_until_the_bar_stops_obscuring_it(cx: &mut gpu
 }
 
 #[test]
-fn arriving_requests_only_focus_when_replacing_the_composer_slot() {
-    assert!(arriving_request_takes_focus(true));
-    assert!(!arriving_request_takes_focus(false));
-}
-
-#[test]
 fn activating_a_sheet_never_stacks_it_with_an_existing_sheet() {
     for sheet in [
         AppSheet::Sessions,

@@ -1,4 +1,3 @@
-//! Externally installed ACP agents. No runtime installation or credential storage.
 use super::AcpProfile;
 use crate::contract::{
     AgentBackendDescriptor, AgentCapabilities, CapabilitySupport, ConfigurationCapabilities,

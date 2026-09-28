@@ -1,8 +1,6 @@
 use super::*;
 
 impl StateStore {
-    /// Resolve the stored profile first. Synthetic locators are a fallback only
-    /// when the session has not been persisted yet.
     pub fn session_profile_id(&self, session: &Path) -> Result<Option<String>, String> {
         let locator = crate::sessions::normalize_session_path(session);
         super::identity::resolve_session_profile(&self.connection, &locator, None)
@@ -99,8 +97,6 @@ impl StateStore {
             .query_map([id], |row| {
                 let harness = row.get::<_, String>(17)?;
                 if harness.parse::<Backend>().is_err() {
-                    // Keep data from removed backends without letting it prevent
-                    // supported sessions from loading.
                     return Ok(None);
                 }
                 row_to_session(row).map(Some)
@@ -231,8 +227,6 @@ impl StateStore {
             )
             .map_err(|error| error.to_string())?;
         }
-        // Keep the row protected from concurrent draft binding until read-back
-        // completes: binding can merge this row into a different session ID.
         let mut session = Self::read_cached_sessions(&tx, Some(id))?
             .into_iter()
             .next()

@@ -57,7 +57,6 @@ fn worker_order_uses_creation_time_across_formats_and_stored_fallbacks() {
         crate::agent_activity::parse_iso_timestamp("2026-09-23T00:00:00Z").expect("creation time");
     sessions[2].created_at = Some(base + Duration::from_secs(2));
     sessions[3].created_at = Some(base + Duration::from_secs(3));
-    // Recent activity on an older worker must not move it above newer workers.
     sessions[1].modified = SystemTime::now();
     assert_eq!(worker_ids(&sessions), ["a", "x", "b", "z"]);
 }

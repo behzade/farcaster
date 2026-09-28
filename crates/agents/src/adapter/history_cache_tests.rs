@@ -206,8 +206,6 @@ fn a_hit_protects_an_entry_from_lru_eviction() {
     assert_eq!(cache.state.lock().unwrap().entries.len(), LIMIT);
 }
 
-// Signal from the waiter's revision check, while it holds the cache lock, so
-// releasing the warm load cannot race ahead of the foreground lookup.
 fn concurrent_warm_then_select(outcome: &str) {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;

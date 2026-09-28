@@ -13,9 +13,7 @@ pub struct WorkerSnapshot {
     pub id: String,
     pub backend: crate::Backend,
     pub project: PathBuf,
-    /// Canonical child ownership at publication time. Unknown identities stay unassigned.
     pub session_key: Option<farcaster_sessions::SessionKey>,
-    /// Native adapter identity used for display and resume, not ownership matching.
     pub session_locator: Option<String>,
     pub status: crate::contract::WorkerStatus,
     pub output: Option<String>,
@@ -50,7 +48,6 @@ impl WorkerSendMode {
 
 #[derive(Clone, Debug)]
 pub struct WorkerLaunch {
-    /// Named harness configuration; independent of the worker preset.
     pub harness_profile_id: Option<String>,
     pub slot: Option<super::WorkerSlot>,
     pub worker_id: String,
@@ -208,7 +205,6 @@ pub enum WorkerActivity {
         title: Option<String>,
         is_running: bool,
         outcome: Option<ChildSessionOutcome>,
-        /// `None` inherits the owning session's selection; `Some` is authoritative.
         execution: Option<WorkerModelSelection>,
     },
     CompactionStarted,
@@ -233,12 +229,10 @@ pub enum WorkerEvent {
         operation: String,
         error: String,
     },
-    /// This submission has no definitive receipt. The connection may still be usable.
     PromptDeliveryUnknown {
         submission_id: String,
         error: String,
     },
-    /// The backend definitively cancelled this submission before delivery.
     PromptCancelled {
         submission_id: String,
     },
@@ -264,8 +258,6 @@ pub trait WorkerSession: Send {
     fn tracks_prompt_delivery(&self, _mode: WorkerSendMode) -> bool {
         false
     }
-    /// Whether this backend can definitively report that an admitted prompt
-    /// was cancelled before delivery.
     fn can_cancel_prompt_before_delivery(&self, _mode: WorkerSendMode) -> bool {
         false
     }
@@ -289,8 +281,6 @@ pub trait WorkerSession: Send {
             Err("worker backend does not support image input".into())
         }
     }
-    /// Return true only after the backend confirms admission. Async backends
-    /// return false and later report the caller's id through poll_prompt_ack.
     fn submit_prompt(
         &mut self,
         _id: String,
@@ -305,8 +295,6 @@ pub trait WorkerSession: Send {
     }
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String>;
     fn abort(&mut self) -> Result<(), String>;
-    /// Apply submitted steering without discarding pending input.
-    /// Backends that deliver steering on submission need no extra action.
     fn apply_steering(&mut self) -> Result<(), String> {
         Ok(())
     }
@@ -338,7 +326,6 @@ pub trait WorkerSession: Send {
     fn close(&mut self) -> Result<(), String>;
 }
 
-/// An authoritative selection, including an explicitly unset effort.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WorkerModelSelection {
     pub model: Option<(String, String)>,

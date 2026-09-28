@@ -86,8 +86,6 @@ impl WorkGraphSidebarView {
                 self.cache_order.retain(|entry| entry != &key);
                 self.cache_order.push_back(key);
             }
-            // A merge can move graph state into an already cached application
-            // identity. Show the cache immediately, then read its current graph.
             let needs_load = self.session_id.is_some();
             self.state = match (&self.store, cached) {
                 (_, Some(data)) => PlanLoadState::Ready(data),
@@ -99,8 +97,6 @@ impl WorkGraphSidebarView {
                 self.refresh(cx);
             }
         } else {
-            // Catalog identity changes also notify the retained session of a
-            // merge, whose selected key can stay the same.
             self.invalidate_and_refresh(cx);
         }
         if let Some(goal) = session_goal {

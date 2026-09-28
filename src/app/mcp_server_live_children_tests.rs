@@ -1,6 +1,3 @@
-//! Opt-in, billable child-worker checks. These tests deliberately use the real
-//! backend executable and model selected by `FARCASTER_E2E_HARNESS`.
-// Live-test progress is consumed by the E2E runner.
 #![allow(clippy::print_stderr)]
 use crate::agents::Backend;
 
@@ -741,9 +738,6 @@ impl LiveChildFixture {
                     self.harness, self.model_identity, child.id,
                 ));
             }
-            // A named child may retain an older Idle snapshot until its peer
-            // message reaches the run loop. Only the real gate witness proves
-            // the new turn started; Idle is not a rejection signal here.
             if Instant::now() >= deadline {
                 return Err(format!(
                     "timed out waiting for real child shell gate: harness={} model={} worker={} phase={phase} final_snapshot={snapshot:?} gate_started={} gate_timed_out={}",
@@ -803,9 +797,6 @@ impl LiveChildFixture {
     }
 
     fn finish_reports(self, expected: &[(&str, &str)]) -> Result<(), String> {
-        // The pool publishes a turn's report before its Idle snapshot. Joining
-        // its worker threads also fences late events before we inspect the
-        // complete inbox; never discard unexpected reports or rely on a sleep.
         drop(self.pool);
         let reports = std::iter::from_fn(|| self.parent.try_recv()).collect::<Vec<_>>();
         if reports.len() != expected.len() {
@@ -936,10 +927,6 @@ impl LiveChildFixture {
     }
 }
 
-// The parent uses the production registered-caller route rather than asking a
-// model parent to choose the MCP tool. `workers::send` still resolves that
-// caller, launches the real child factory, and routes its reports through the
-// same registry used by a live parent turn.
 fn new_parent(
     project: &Path,
     harness: Backend,

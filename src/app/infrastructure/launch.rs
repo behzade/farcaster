@@ -258,8 +258,6 @@ pub(crate) fn run(
 }
 
 fn quit_after_start(cx: &mut App) {
-    // Linux invokes the launch callback before calloop::run, which resets its
-    // stop signal. Queue shutdown on the foreground executor so it is not lost.
     cx.spawn(async |cx| {
         cx.update(|cx| cx.quit());
     })

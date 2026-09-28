@@ -303,7 +303,6 @@ fn hovering_short_tool_output_does_not_notify_the_view(cx: &mut gpui::TestAppCon
     let observed = notifications.clone();
     let _subscription =
         cx.update(|_, cx| cx.observe(&view, move |_, _| observed.set(observed.get() + 1)));
-    // Sweep the text area, including multiple characters and lines.
     for y in (50..130).step_by(10) {
         for x in (20..150).step_by(10) {
             cx.simulate_mouse_move(

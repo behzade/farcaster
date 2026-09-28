@@ -1,7 +1,6 @@
 use super::*;
 
 impl StateStore {
-    /// Resolve an authenticated caller without provisioning or changing identity.
     pub fn resolve_caller_session(
         &self,
         caller: &crate::agents::CallerContext,
@@ -14,8 +13,6 @@ impl StateStore {
             .ok_or_else(|| "authenticated session has no indexed locator yet".into())
     }
 
-    /// Session provisioning is a caller-binding lifecycle operation, not an
-    /// effect of a tool submission. Use the same scoped identity as families.
     pub fn register_caller_session(
         &self,
         caller: &crate::agents::CallerContext,
@@ -56,8 +53,6 @@ impl StateStore {
             .pointer("/farcaster_review/id")
             .and_then(serde_json::Value::as_str)
             .ok_or("review is missing its identity")?;
-        // This lookup is deliberately read-only: no locator changes, provisioning,
-        // or identity merges can happen as a side effect of submit_review.
         let changed = self
             .connection
             .execute(
@@ -242,8 +237,6 @@ fn register_caller_session_in(
         .as_ref()
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|| caller.session.clone());
-    // app_session_id is a binding snapshot and may have been merged away. Resolve
-    // against the validated locator/native scope before returning a current ID.
     let identity = if !Path::new(&identity).is_absolute()
         && let Some(profile) = &caller.harness_profile_id
     {

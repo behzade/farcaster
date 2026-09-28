@@ -14,8 +14,6 @@ pub(super) struct DraggedSession {
 }
 
 impl DraggedSession {
-    /// Every chat can be filed away and brought back, including one that has
-    /// not been written to a session yet, so this only needs an identity.
     pub(super) fn can_move_to(&self, kind: SessionRailKind) -> bool {
         self.app_session_id > 0 && self.kind != kind
     }

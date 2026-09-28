@@ -46,7 +46,6 @@ impl RuntimeSnapshot {
         if self.sandbox_controls_available() {
             self.access_mode
         } else {
-            // Discovery, not a previous unmanaged session, chooses the new mode.
             crate::agents::HarnessAccessMode::default()
         }
     }
@@ -92,7 +91,6 @@ impl RuntimeSnapshot {
                 .and_then(|session| session.model.as_ref())
                 .or(self.prefill_model.as_ref())
         };
-        // A live session's unset effort is authoritative, not a missing draft value.
         let effort = match &self.session {
             Some(session) => session.thinking_level.as_deref(),
             None => self.prefill_thinking_level.as_deref(),

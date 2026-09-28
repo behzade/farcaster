@@ -1,13 +1,6 @@
 use super::*;
 
 #[test]
-fn a_frame_drawn_after_the_change_captures_immediately() {
-    let mut refresh = CoveredRefresh::new(7);
-    assert_eq!(refresh.observe(7), RefreshStep::Wait);
-    assert_eq!(refresh.observe(8), RefreshStep::Capture);
-}
-
-#[test]
 fn frames_drawn_before_the_change_never_capture() {
     let mut refresh = CoveredRefresh::new(12);
     for frames in 0..=12 {

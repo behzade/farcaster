@@ -26,7 +26,6 @@ impl CopyCodeButton {
 
 impl RenderOnce for CopyCodeButton {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        // Render inside the block's element namespace so each button owns its state.
         let state = window.use_keyed_state("copy-code-state", cx, |_, _| CopyState::default());
         let copied = state.read(cx).copied_code.as_ref() == Some(&self.code);
         icon_button(
@@ -43,7 +42,6 @@ impl RenderOnce for CopyCodeButton {
                 cx.write_to_clipboard(ClipboardItem::new_string(self.code.to_string()));
                 state.update(cx, |state, cx| {
                     state.copied_code = Some(self.code.clone());
-                    // Replacing the task restarts the delay on repeated clicks.
                     state.reset_task = Some(cx.spawn(async move |state, cx| {
                         cx.background_executor().timer(Duration::from_secs(2)).await;
                         let _ = state.update(cx, |state, cx| {

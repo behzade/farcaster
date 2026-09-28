@@ -81,7 +81,6 @@ fn completed_patch_files_become_shared_edits_in_live_and_restored_tools() {
         assert_eq!(args["patchText"], input["patchText"]);
         assert_eq!(normalize_opencode_tool(&name, &args, &native), (name, args));
 
-        // File-shaped metadata on an unrelated custom tool is not an edit.
         assert_eq!(
             normalize_opencode_tool("mcp_database", &input, &native).1,
             input

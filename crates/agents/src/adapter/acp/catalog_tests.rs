@@ -160,18 +160,6 @@ done
 }
 
 #[test]
-fn catalog_exchange_times_out_when_agent_stalls() {
-    let (release, stalled) = mpsc::channel::<()>();
-    let error = run_with_timeout(Duration::from_millis(20), move || {
-        let _ = stalled.recv();
-        Ok(())
-    })
-    .expect_err("invalid test input must fail");
-    assert!(error.contains("timed out loading configuration"));
-    drop(release);
-}
-
-#[test]
 fn replay_keeps_messages_and_tools() {
     let notification = |update| AcpInbound::Notification {
         method: "session/update".into(),

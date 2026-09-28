@@ -125,8 +125,6 @@ pub fn load_history(
                 path.display()
             )
         })?;
-    // History has its own connection so opening a session never waits behind a
-    // configuration load, which spends seconds in session/new and model listing.
     with_connection_kind(
         profile,
         config,
@@ -144,9 +142,6 @@ pub fn load_history(
             )?;
             let queued = connection.drain_queued()?;
             let queued_count = queued.len();
-            // cursor/list_available_models is a network round-trip that only
-            // refines the selected model id for the picker. The history preview
-            // uses the model session/load already reports, so skip it here.
             let history = discovered_history(profile, queued, &response, &locator);
             close_session(connection, &locator);
             zlog::info!(
@@ -231,8 +226,6 @@ fn with_connection<T: Send + 'static>(
     with_connection_kind(profile, config, project, "session", operation)
 }
 
-// Listing has its own connection so catalog-only sessions created for model
-// discovery cannot appear as live sessions in the server's listing response.
 fn with_connection_kind<T: Send + 'static>(
     profile: &AcpProfile,
     config: &AgentLaunchConfig,
@@ -248,13 +241,7 @@ fn with_connection_kind<T: Send + 'static>(
     + 'static,
 ) -> Result<T, String> {
     let key = (profile.backend, kind);
-    // The ACP request carries its own cwd, so the child process is reusable
-    // across projects when both projects resolve to the same launch context.
-    // Comparing the captured environment keeps project-specific PATH, account,
-    // and proxy configuration behind the backend process boundary.
     let (command, launch) = catalog_command(profile, config, project)?;
-    // Only map access holds the global lock. Each backend/connection kind owns
-    // its exchange lock, so a stalled agent cannot block another backend.
     let slot = {
         let mut processes = catalog_processes()
             .lock()
@@ -403,30 +390,6 @@ fn run_catalog_operation<T: Send + 'static>(
         .map_err(|error| format!("start ACP catalog handshake: {error}"))?;
     match receiver.recv_timeout(timeout) {
         Ok(result) => Ok(result),
-        Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
-            "timed out loading configuration after {} seconds; check the agent's authentication and connection",
-            timeout.as_secs()
-        )),
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            Err("ACP catalog handshake stopped unexpectedly".into())
-        }
-    }
-}
-
-#[cfg(test)]
-fn run_with_timeout<T: Send + 'static>(
-    timeout: Duration,
-    operation: impl FnOnce() -> Result<T, String> + Send + 'static,
-) -> Result<T, String> {
-    let (sender, receiver) = mpsc::channel();
-    thread::Builder::new()
-        .name("acp-catalog-handshake".into())
-        .spawn(move || {
-            let _ = sender.send(operation());
-        })
-        .map_err(|error| format!("start ACP catalog handshake: {error}"))?;
-    match receiver.recv_timeout(timeout) {
-        Ok(result) => result,
         Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
             "timed out loading configuration after {} seconds; check the agent's authentication and connection",
             timeout.as_secs()

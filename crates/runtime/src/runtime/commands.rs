@@ -15,9 +15,6 @@ impl RuntimeOwner {
         for (id, target) in local {
             self.emit_prompt_result(Some(&id), &target, agents::PromptOutcome::Cancelled);
         }
-        // Only the queue owner knows which inputs it has already claimed.
-        // Persist its exact cancellation events; never mark every in-flight
-        // prompt cancelled merely because the pending queue was cleared.
         Ok(())
     }
 
@@ -49,7 +46,6 @@ impl RuntimeOwner {
                 .flatten()
             });
         if let (Some(request_id), Some(process)) = (request_id, self.process.as_mut()) {
-            // The shared queue owns cancellation and resolves stale clicks.
             process.cancel_prompt(&request_id)?;
         }
         Ok(())
@@ -86,8 +82,6 @@ impl RuntimeOwner {
         let Some(mut prompt) = self.saved_prompts.remove(index) else {
             return;
         };
-        // This is a new, explicit attempt. The old composer submission has
-        // already been settled, so a later failure must return to saved state.
         prompt.submission_id = None;
         self.publish();
         self.deliver_queued(prompt);
@@ -107,8 +101,6 @@ impl RuntimeOwner {
             .as_ref()
             .ok_or_else(|| "State unavailable".to_owned())
             .and_then(|state| state.with(|store| store.cancel_queued_prompts(&ids)));
-        // Stop this run even if the disk write fails. In that case make the
-        // missing durability explicit: we cannot promise safety after restart.
         self.queued_prompts.clear();
         if let Err(error) = result {
             zlog::error!("Could not persist queue cancellation: {error}");
@@ -433,7 +425,6 @@ impl RuntimeOwner {
                 generation,
             } => self.preview_import(harness, profile_id, generation),
             RuntimeCommand::CommitImport { sessions } => self.commit_import(sessions),
-            // Configuration loading belongs to the supervisor, not a chat actor.
             RuntimeCommand::LoadConfiguration { .. }
             | RuntimeCommand::StartTask { .. }
             | RuntimeCommand::Shutdown => {}

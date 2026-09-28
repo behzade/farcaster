@@ -70,7 +70,6 @@ fn family_preflight_rejects_pending_work() {
 #[test]
 #[ignore = "requires installed Codex; uses a disposable rollout and isolated SQLite state, no model calls"]
 fn native_move_survives_restart() -> Result<(), Box<dyn std::error::Error>> {
-    // The catalog deliberately hides projects under the system temp directory.
     let temp = tempfile::tempdir_in(std::env::current_dir()?)?;
     let source = temp.path().join("source");
     let destination = temp.path().join("destination");
@@ -111,7 +110,6 @@ fn native_move_survives_restart() -> Result<(), Box<dyn std::error::Error>> {
         request(connection, "thread/resume", resume.clone())?;
         Ok(())
     })?;
-    // Production starts a fresh server: do not preload the thread in this process.
     {
         let mut session = family().remove(0);
         session.id = id.clone();
@@ -129,7 +127,6 @@ fn native_move_survives_restart() -> Result<(), Box<dyn std::error::Error>> {
         let threads = listed["data"].as_array().ok_or("missing thread list")?;
         assert_eq!(threads.len(), 1, "move created a duplicate: {listed}");
         assert_eq!(threads[0]["id"].as_str(), Some(id.as_str()));
-        // Native history keeps its original folder; Farcaster owns the move.
         assert_eq!(threads[0]["cwd"].as_str(), source.to_str());
         let discovered =
             super::super::catalog::discover_with_client(connection, home, temp.path(), "")?;
@@ -141,7 +138,6 @@ fn native_move_survives_restart() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(discovered[0].id, id);
         let project = discovered[0].project.clone();
         assert_eq!(project, destination);
-        // Resume by identity, without the fixture path that could mask discovery failures.
         let resumed = connection.resume_thread(&id, crate::HarnessAccessMode::Sandboxed)?;
         assert_eq!(resumed.cwd, destination.to_str().ok_or("destination")?);
         assert_eq!(resumed.id, id);
@@ -198,8 +194,6 @@ fn move_preserves_history_appended_by_an_already_open_writer()
         &path,
         "{\"type\":\"session_meta\",\"payload\":{\"id\":\"root\",\"cwd\":\"/source\"}}\n",
     )?;
-    // Codex's rollout recorder keeps an append handle open. Keeping it open
-    // across the move reproduces the race without threads, sleeps, or hooks.
     let mut writer = std::fs::OpenOptions::new()
         .read(true)
         .append(true)
@@ -212,7 +206,6 @@ fn move_preserves_history_appended_by_an_already_open_writer()
     writer.write_all(after.as_bytes())?;
     writer.sync_all()?;
 
-    // Prove the writer did write the entry before checking the discoverable file.
     writer.seek(SeekFrom::Start(0))?;
     let mut written = String::new();
     writer.read_to_string(&mut written)?;
@@ -222,7 +215,6 @@ fn move_preserves_history_appended_by_an_already_open_writer()
     );
     let discovered = std::fs::read_to_string(&path)?;
     assert!(discovered.contains(before));
-    // Refusing a move with an open writer is acceptable; losing its write is not.
     assert!(
         discovered.contains(after),
         "move result {moved:?}: append succeeded, but history at the rollout path lost the entry"

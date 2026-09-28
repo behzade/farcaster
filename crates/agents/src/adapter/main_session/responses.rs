@@ -91,7 +91,6 @@ impl WorkerSessionTransport {
                 access_modes: None,
             });
         if model.context_window == 0 {
-            // Some adapters report the live limit separately from their catalog.
             model.context_window = self.usage.context_window;
         }
         model

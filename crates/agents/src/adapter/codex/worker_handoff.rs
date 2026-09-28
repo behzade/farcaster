@@ -3,7 +3,6 @@ use super::*;
 pub(super) struct BatchInput {
     pub(super) delivery: NativeInputDelivery,
     pub(super) needs_ack: bool,
-    // Only claimed handoff input can be retried after definite rejection.
     pub(super) claimed: Option<(String, Vec<CodexUserInput>)>,
 }
 
@@ -375,8 +374,6 @@ impl CodexWorkerSession {
                         self.record_prompt_ack(id, Err(error.into()));
                     }
                 } else if let Some((id, input)) = entry.claimed {
-                    // Admission preceded the handoff, so the caller no longer
-                    // owns this input. Preserve it for explicit retry only.
                     self.native_inputs.insert(
                         id.clone(),
                         PendingNativeInput {

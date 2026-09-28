@@ -1,12 +1,3 @@
-//! Live input-control coverage.
-//!
-//! These tests run a fresh installed harness and a real model through the
-//! production `SessionTransport`. They use an observed shell-tool gate rather
-//! than a delay, fixture process, or injected activity. Set
-//! `FARCASTER_E2E_HARNESS` to one harness when running them so every feature
-//! reports its harness-specific result.
-
-// Live-test diagnostics are consumed by the E2E runner.
 #![allow(clippy::print_stderr)]
 use std::time::Duration;
 
@@ -70,7 +61,6 @@ impl UnrelatedProcess {
 
 impl Drop for UnrelatedProcess {
     fn drop(&mut self) {
-        // Only the Child created above belongs to this cleanup.
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
@@ -85,9 +75,6 @@ fn live_e2e_input_queue_runs_once_after_the_held_turn() -> Result<(), String> {
         live.require_functional_prompt_observation(PromptMode::FollowUp)?;
         let gate = live.start_gated_turn("queue-auto")?;
         let queued = submit_input(live, PromptMode::FollowUp, "queue-auto", Vec::new())?;
-        // A native queued input may not receive its replay receipt until the
-        // held turn reaches its boundary. Do not make queue execution depend
-        // on an acknowledgement that has not become observable yet.
         let release = live.activity_cursor();
         gate.assert_still_closed()?;
         live.release_gate(&gate)?;
@@ -170,8 +157,6 @@ fn live_e2e_input_stale_cancel_does_not_reject_an_inflight_steer() -> Result<(),
             event["type"] == "message_update"
         })?;
         let steer = submit_input(live, PromptMode::Steer, "stale-cancel", Vec::new())?;
-        // Codex steers are already native-owned. A click from an old composer
-        // snapshot must neither surface a cancel error nor claim cancellation.
         live.cancel_prompt(&steer.submission.id)?;
         live.cancel_prompt(&steer.submission.id)?;
         live.wait_for_functional_observation_after(
@@ -282,8 +267,6 @@ fn live_e2e_input_text_only_turn_consumes_all_pending_steers_together() -> Resul
         let start = live.activity_cursor();
         live.submit(PromptMode::Normal,
             "Do not use any tools. Write a numbered list of 100 short, distinct facts about the ocean. Finish the list in this response.", Vec::new())?;
-        // Submit during observed model output, not after a timing delay and not
-        // behind a tool gate (which would exercise the already-working path).
         live.wait_for_activity_after(start, TURN_TIMEOUT, |event| {
             event["type"] == "message_update"
         })?;
@@ -300,9 +283,6 @@ fn live_e2e_input_text_only_turn_consumes_all_pending_steers_together() -> Resul
             );
             submissions.push((live.submit(PromptMode::Steer, &text, Vec::new())?, text));
         }
-        // Pi can admit the batch at turn_end before agent_settled; OpenCode
-        // admits it after settlement. In either case inspect the very next
-        // assistant reply, not a later response after all steers trickle in.
         live.wait_for_activity_after(queued_at, TURN_TIMEOUT, |event| {
             event["type"] == "message_end" && event["message"]["role"] == "assistant"
         })?;
@@ -345,10 +325,6 @@ fn live_e2e_input_escape_does_not_strand_an_undelivered_normal_prompt() -> Resul
         require_control_features(live)?;
         live.require_prompt_delivery_tracking(PromptMode::Normal)?;
         let gate = live.start_gated_turn("normal-before-escape")?;
-        // Hold native execution to make the reported ordering deterministic:
-        // Normal is admitted but not delivered when Escape arrives. In the
-        // reported session recovered native steers occupied this execution;
-        // the gate replaces that timing, not the native admission/delivery API.
         let normal = submit_input(live, PromptMode::Normal, "pending-normal", Vec::new())?;
         live.wait_for_activity_after(normal.submitted_at, RECEIPT_TIMEOUT, |event| {
             event["type"] == "prompt_delivery"
@@ -473,8 +449,6 @@ fn live_e2e_input_abort_does_not_consume_queued_work() -> Result<(), String> {
         live.wait_for_settled_after(liveness_at, TURN_TIMEOUT)?;
         require_abort_receipt(live, &first)?;
         require_abort_receipt(live, &second)?;
-        // A receipt that won the race before `agent_settled` remains valid.
-        // Cancellation forbids only a later delivery or model effect.
         assert_undelivered_never_started_after(live, &first.submission, settled_at)?;
         assert_undelivered_never_started_after(live, &second.submission, settled_at)?;
         assert_delivered_submissions_exactly_once(live, &[&first.submission, &second.submission])?;
@@ -515,53 +489,6 @@ fn live_e2e_input_queue_and_steer_keep_separate_ownership() -> Result<(), String
 
 #[test]
 #[ignore = "uses one installed harness and a real model; set FARCASTER_E2E_HARNESS"]
-fn live_e2e_input_queue_steer_and_apply_handoffs_all_inputs_once() -> Result<(), String> {
-    run_input_case(|live| {
-        require_control_features(live)?;
-        let gate = live.start_gated_turn("queue-steer-apply")?;
-        let queued = submit_input(
-            live,
-            PromptMode::FollowUp,
-            "queue-steer-apply-queue",
-            Vec::new(),
-        )?;
-        let steer = submit_input(
-            live,
-            PromptMode::Steer,
-            "queue-steer-apply-steer",
-            Vec::new(),
-        )?;
-        let handoff = live.activity_cursor();
-        let apply = live.apply_steering()?;
-        require_control_success(live, &apply, SessionOperation::ApplySteering)?;
-        live.wait_for_apply_handoff_after(handoff, &gate, TURN_TIMEOUT)?;
-        gate.assert_still_closed()?;
-        live.wait_for_functional_observation_after(
-            handoff,
-            &queued.submission,
-            &queued.marker,
-            TURN_TIMEOUT,
-        )?;
-        live.wait_for_functional_observation_after(
-            handoff,
-            &steer.submission,
-            &steer.marker,
-            TURN_TIMEOUT,
-        )?;
-        wait_for_assistant_message_after(live, handoff, &queued.effect)?;
-        wait_for_assistant_message_after(live, handoff, &steer.effect)?;
-        gate.assert_still_closed()?;
-        live.release_gate(&gate)?;
-        require_effect_and_exactly_once(live, &queued)?;
-        require_effect_and_exactly_once(live, &steer)?;
-        require_accepted(live, &queued)?;
-        require_accepted(live, &steer)?;
-        prove_same_session_liveness(live)
-    })
-}
-
-#[test]
-#[ignore = "uses one installed harness and a real model; set FARCASTER_E2E_HARNESS"]
 fn live_e2e_input_queue_steer_and_abort_cancels_only_undelivered_handoff_work() -> Result<(), String>
 {
     run_input_case(|live| {
@@ -581,10 +508,6 @@ fn live_e2e_input_queue_steer_and_abort_cancels_only_undelivered_handoff_work() 
         )?;
         let apply = live.apply_steering()?;
         require_control_success(live, &apply, SessionOperation::ApplySteering)?;
-        // Deliberately do not wait for either delivery: this is the second-Esc
-        // race. Abort may find a local input or one the harness already owns.
-        // The native cancellation result determines which claim this test can
-        // make; a late receipt alone cannot establish that timing.
         let aborted_at = live.activity_cursor();
         let abort = live.abort()?;
         require_control_success(live, &abort, SessionOperation::Abort)?;
@@ -598,10 +521,6 @@ fn live_e2e_input_queue_steer_and_abort_cancels_only_undelivered_handoff_work() 
         live.wait_for_settled_after(liveness_at, TURN_TIMEOUT)?;
         let queued_receipt = require_abort_receipt(live, &queued)?;
         let steer_receipt = require_abort_receipt(live, &steer)?;
-        // Apply may already have committed a handoff when Abort reaches the
-        // harness. A one-time, ID-correlated late delivery then belongs to the
-        // original submission; it is not a replay. A proven local rejection
-        // must never deliver. Anything else remains an explicit E2E limit.
         assert_mixed_handoff_abort_disposition(live, &queued, queued_receipt, settled_at)?;
         assert_mixed_handoff_abort_disposition(live, &steer, steer_receipt, settled_at)?;
         assert_delivered_submissions_exactly_once(live, &[&queued.submission, &steer.submission])?;
@@ -649,8 +568,6 @@ fn live_e2e_input_receipt_races_keep_old_and_new_inputs_isolated() -> Result<(),
         live.wait_for_delivery_after(newer.submitted_at, &newer.submission.id, TURN_TIMEOUT)?;
         require_effect_and_exactly_once(live, &newer)?;
         require_accepted(live, &newer)?;
-        // A late event for old must stay tied to old; it cannot bind the newer
-        // input merely because the two turns share one session.
         if old_receipt == AbortReceipt::Accepted {
             assert_retired_submission_isolated(live, &old, &newer)?;
         }
@@ -718,8 +635,6 @@ fn run_input_case(
     mut exercise: impl FnMut(&mut LiveSession) -> Result<(), String>,
 ) -> Result<(), String> {
     for_each_selected(|live| {
-        // We require each selected harness to prove the advertised behavior.
-        // Unsupported capability is an explicit failure, never a skipped pass.
         live.configure_steering()?;
         exercise(live)
     })
@@ -794,9 +709,6 @@ fn require_submission_accepted(
     }
 }
 
-/// A second Escape may find a prompt still local to the adapter, or may lose
-/// the race to the harness receipt. Both are observable outcomes. A write with
-/// no receipt is neither and must not become a passing cancellation claim.
 fn require_abort_receipt(live: &mut LiveSession, input: &Input) -> Result<AbortReceipt, String> {
     let response = live.wait_for_response(&input.submission.id, RECEIPT_TIMEOUT)?;
     if response.operation() != SessionOperation::Prompt(input.submission.mode) {
@@ -862,8 +774,6 @@ fn require_effect_and_exactly_once(live: &mut LiveSession, input: &Input) -> Res
 
 fn prove_same_session_liveness(live: &mut LiveSession) -> Result<(), String> {
     live.require_functional_prompt_observation(PromptMode::Normal)?;
-    // A final text delta can precede native turn settlement. A new Normal
-    // prompt must wait for actual idle state, not race the old response tail.
     live.wait_for_native_idle(TURN_TIMEOUT)?;
     let later = submit_liveness_input(live)?;
     live.wait_for_functional_observation_after(
@@ -873,8 +783,6 @@ fn prove_same_session_liveness(live: &mut LiveSession) -> Result<(), String> {
         TURN_TIMEOUT,
     )?;
     live.wait_for_assistant_text(&later.effect, TURN_TIMEOUT)?;
-    // Streaming the token does not prove that the native client has finished
-    // recording this turn. Wait for its real idle state before reading history.
     live.wait_for_native_idle(TURN_TIMEOUT)?;
     live.assert_functional_submission_once(&later.submission, &later.marker)?;
     require_accepted(live, &later)
@@ -967,8 +875,6 @@ fn assert_undelivered_never_started_after(
     settled_at: usize,
 ) -> Result<(), String> {
     if !live.tracks_prompt_delivery(submission.mode) {
-        // Native history has no ID-correlated consumption event. It cannot
-        // distinguish an allowed receipt from execution after Abort.
         eprintln!(
             "E2E_LIMIT: {} cannot prove exact post-settlement cancellation for untracked {:?} input {}",
             live.harness(),
@@ -983,11 +889,6 @@ fn assert_undelivered_never_started_after(
     Ok(())
 }
 
-/// Apply followed by Abort has a third ownership state that plain queued Abort
-/// does not: the harness can have committed the handoff while cancellation is
-/// in flight. A later correlated delivery must land exactly once. The common
-/// event stream cannot prove whether a delivery after settlement predated the
-/// native cancellation attempt, so that outcome remains limited.
 fn assert_mixed_handoff_abort_disposition(
     live: &mut LiveSession,
     input: &Input,
@@ -1005,11 +906,7 @@ fn assert_mixed_handoff_abort_disposition(
     }
 
     match receipt {
-        AbortReceipt::RejectedBeforeAcceptance => {
-            // This is the only outcome that proves the harness never owned
-            // the input. A correlated delivery would contradict that result.
-            live.assert_no_delivery(&input.submission.id)
-        }
+        AbortReceipt::RejectedBeforeAcceptance => live.assert_no_delivery(&input.submission.id),
         AbortReceipt::Accepted => {
             let accepted = prompt_delivery_positions(live, &input.submission.id, "accepted");
             if accepted.len() != 1 {

@@ -12,8 +12,6 @@ fn idle_tick_checks_for_notices_after_project_switch() {
     )));
     assert!(!refresh.update(false));
 
-    // A project switch does not post to the notice channel. The next tick
-    // still checks the new project's board and redraws its existing notices.
     assert!(block_on(wait_for_notice_refresh(
         &updates,
         future::ready(()),

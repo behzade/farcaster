@@ -65,8 +65,6 @@ impl RepositoryOperations for GitOperations {
             .iter()
             .filter(|change| change.layer == ChangeLayer::GitUntracked)
         {
-            // Git diffs a symlink's target path, not the destination's contents.
-            // Reading a link can also block forever when it points to a FIFO.
             let path = change.target.absolute_path();
             let contents = std::fs::symlink_metadata(&path)
                 .ok()

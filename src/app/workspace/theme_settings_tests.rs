@@ -104,7 +104,6 @@ fn failed_theme_load_cannot_replace_saved_themes(cx: &mut gpui::TestAppContext) 
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
                     app.settings.themes = ThemeSettings::load_failed("read failed".into());
-                    // Even a direct action bypassing the disabled controls must not save.
                     app.select_theme(&BUILT_IN_THEMES[0].name, window, cx);
                     assert!(app.persist_themes().is_err());
                     app.flush_theme_save();
@@ -135,7 +134,6 @@ fn restored_theme_opens_an_editor_and_quit_flushes_pending_changes(cx: &mut gpui
                     assert!(!app.settings.themes.tokens.is_empty());
                     app.commit_theme_rename("Ocean renamed".into(), window, cx);
                     assert!(app.settings.themes.dirty);
-                    // Cancelling a quit must not consume the pending save.
                     app.activity
                         .run_statuses
                         .insert("session:busy".into(), "Working".into());
@@ -145,7 +143,6 @@ fn restored_theme_opens_an_editor_and_quit_flushes_pending_changes(cx: &mut gpui
                     assert!(app.settings.themes.dirty);
                 });
             });
-            // Use the App context: shutdown destroys the held window.
             cx.cx.update(|cx| cx.shutdown());
             let store = crate::app::persistence::StateStore::open_at(
                 &crate::app::persistence::state_path().unwrap(),
@@ -162,7 +159,6 @@ fn restored_theme_opens_an_editor_and_quit_flushes_pending_changes(cx: &mut gpui
     );
 }
 
-// App tests may install this definition globally; retain the default visuals.
 fn default_palette_library() -> String {
     let mut library = ThemeLibrary::default();
     let mut definition = BUILT_IN_THEMES[0].clone();
@@ -213,7 +209,6 @@ fn failed_theme_save_stays_dirty_until_retry_succeeds(cx: &mut gpui::TestAppCont
                 .unwrap();
             cx.update(|_, cx| {
                 app.update(cx, |app, _| {
-                    // No further edit is needed to retry the unsaved state.
                     app.flush_theme_save();
                     assert!(!app.settings.themes.dirty);
                 });

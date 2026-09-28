@@ -88,7 +88,6 @@ fn reject(session: &mut CodexWorkerSession, batch: &Value) {
 #[test]
 fn whole_abort_deadline_survives_late_turn_and_missing_handoff_delivery() {
     let (mut session, mut sent, batch) = claimed_batch(false);
-    // Abort after sending the replacement turn but before it starts or delivers.
     session.abort().expect("abort pending handoff");
     let deadline = session.abort_deadline.expect("whole abort deadline");
     reply(
@@ -162,7 +161,6 @@ fn rejected_claimed_handoff_retries_exact_input_only_on_explicit_apply() {
             None,
             "prior admission must not be undone"
         );
-        // A now-idle turn lets the explicit retry start immediately.
         session.current_turn = None;
         session.apply_steering().expect("apply steering");
         assert!(

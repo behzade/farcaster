@@ -44,7 +44,6 @@ pub struct DiscoveredUsage {
     pub cost_micros: u64,
 }
 
-/// Metadata supplied by a live session, never by a global history scan.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SessionMetadata {
     pub harness: Backend,
@@ -123,8 +122,6 @@ impl AccountUsageWindow {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QueuedPrompt {
     pub id: i64,
-    /// Identifies the exact UI submission while this process remains alive.
-    /// Recovered rows predate the UI process and have no pending composer entry.
     pub submission_id: Option<String>,
     pub target: String,
     pub harness: Backend,
@@ -373,14 +370,11 @@ pub use response::{
     SessionResponsePayload, SessionUsage, SessionUsageTokens,
 };
 
-/// Recovery for a steer rejected before dispatch. Never retry uncertain delivery.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SteerErrorRecovery {
     #[default]
     Fail,
-    /// Keep the input queued until the starting or active turn settles.
     RetryWhenIdle,
-    /// No turn is starting or active; the queue may start the next turn.
     RetryNow,
 }
 
@@ -408,10 +402,6 @@ pub trait SessionTransport {
     fn clear_queue(&mut self) -> Result<(), String> {
         Err("This harness cannot clear its queue".into())
     }
-    /// Requests cancellation of exactly one pending input. Completion arrives as
-    /// a prompt_delivery activity with status cancelled, or a request error.
-    /// Queue owners may ignore stale requests for inputs they no longer own;
-    /// Ok alone is not evidence of cancellation. Only the receipt confirms it.
     fn cancel_prompt(&mut self, _id: &str) -> Result<(), String> {
         Err("This harness cannot cancel individual queued messages".into())
     }
@@ -477,25 +467,20 @@ pub struct TurnCapabilities {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ServiceTierApplication {
-    /// Send a live command when the selected model or session offers the tier.
     #[default]
     Live,
-    /// Apply at launch, restarting an existing session when needed.
     OnLaunch,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ServiceTierPolicy {
     pub application: ServiceTierApplication,
-    /// Choices used only when neither the model nor the session declares tiers.
     pub fallback_tiers: &'static [String],
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfigurationCapabilities {
-    /// Modes implemented by the adapter.
     pub access_modes: &'static [HarnessAccessMode],
-    /// Modes that also require an explicit declaration from the selected model.
     pub model_required_access_modes: &'static [HarnessAccessMode],
     pub models: CapabilitySupport,
     pub select_model: CapabilitySupport,
@@ -583,7 +568,6 @@ pub enum HarnessAccessMode {
 pub enum SandboxState {
     #[default]
     Unmanaged,
-    // The previous mode remains effective until the queued change can start.
     Pending(HarnessAccessMode),
     Checking,
     Active(HarnessAccessMode),

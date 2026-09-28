@@ -76,7 +76,6 @@ pub struct OpenCodeModelSelection {
 fn deserialize_variant<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<String>, D::Error> {
-    // OpenCode persists an omitted selection as the reserved "default" marker.
     Ok(Option::<String>::deserialize(deserializer)?.filter(|variant| variant != "default"))
 }
 

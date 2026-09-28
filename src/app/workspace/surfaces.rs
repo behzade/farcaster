@@ -57,11 +57,6 @@ const fn should_capture_return_focus(flags: SheetFlags) -> bool {
     !flags.any()
 }
 
-#[cfg(test)]
-const fn arriving_request_takes_focus(composer_slot_owns: bool) -> bool {
-    composer_slot_owns
-}
-
 impl FarcasterApp {
     pub(in crate::app) fn recover_keyboard_focus(
         &mut self,
@@ -254,7 +249,6 @@ impl FarcasterApp {
         }
     }
 
-    /// Number of frames the covered native surface has drawn.
     fn covered_surface_frame_count(&self, cx: &mut Context<Self>) -> u64 {
         match self.workspace.surface {
             AppSurface::Terminal => self
@@ -275,10 +269,6 @@ impl FarcasterApp {
         }
     }
 
-    /// Reads back the frame that stands in for a covered native surface, once
-    /// the surface has repainted behind it. The readback is retried until the
-    /// surface reports a new frame, so a covered terminal follows a theme
-    /// change immediately instead of after a fixed delay.
     pub(in crate::app) fn refresh_covered_workspace_snapshot(&mut self, cx: &mut Context<Self>) {
         if !self.workspace.native_surface_covered {
             return;

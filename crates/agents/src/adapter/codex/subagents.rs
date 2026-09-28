@@ -9,8 +9,6 @@ use serde_json::Value;
 #[path = "subagents_tests.rs"]
 mod tests;
 
-// A separate catalog app-server reports live children as notLoaded. Keep the
-// lifecycle observed by their owning connection until that connection closes.
 fn states() -> MutexGuard<'static, HashMap<String, (String, bool)>> {
     static STATES: OnceLock<Mutex<HashMap<String, (String, bool)>>> = OnceLock::new();
     STATES
@@ -24,7 +22,6 @@ pub(super) fn observe(parent: &str, item: &Value) -> Option<bool> {
     let running = match item.get("kind").and_then(Value::as_str) {
         Some("started") => true,
         Some("interrupted" | "completed" | "failed") => false,
-        // Message delivery does not start a turn, even when the child is idle.
         _ => return None,
     };
     states().insert(child.to_owned(), (parent.to_owned(), running));
@@ -39,7 +36,6 @@ pub(super) fn observe_thread(parent: &str, child: &str, thread: &Value) -> Optio
     let running = match thread.pointer("/status/type").and_then(Value::as_str) {
         Some("active") => true,
         Some("idle" | "systemError") => false,
-        // An unloaded thread can still have a turn running in another process.
         _ => match thread
             .get("turns")?
             .as_array()?

@@ -40,8 +40,6 @@ fn refresh_history_preserves_config_and_selects_profile_from_locator() {
             data_directory: Some(root),
         }])
         .expect("saved profile");
-    // The selected history's locator, rather than the active process's profile,
-    // determines which saved data directory the history worker reads.
     let active_profile = uuid::Uuid::new_v4().to_string();
     owner.process_command.profile_id = Some(active_profile.clone());
     let (sender, receiver) = std::sync::mpsc::channel();
@@ -209,7 +207,6 @@ fn accepted_image_only_prompt_survives_empty_backend_history_and_reopen()
     drop(store);
 
     let store = StateStore::open_at(&database)?;
-    // Admission retains the image payload and remains retryable after restart.
     assert_eq!(store.queued_prompts()?.len(), 1);
     let mut messages = Vec::new();
     annotate_history_presentations(Some(&store), &session, &mut messages);

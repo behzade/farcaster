@@ -15,8 +15,6 @@ enum Command {
     Shutdown,
 }
 
-/// Writes session changes in atomic batches. Flush before process exit;
-/// dropping the handle queues one final attempt without blocking the caller.
 pub struct SessionStateWriter {
     sender: mpsc::Sender<Command>,
     revision: Cell<u64>,

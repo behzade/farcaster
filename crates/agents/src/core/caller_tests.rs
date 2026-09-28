@@ -770,7 +770,6 @@ fn family_stop_refreshes_merged_bindings_before_the_next_caller_send() {
         AppSessionId::new(41).map(SessionKey::App)
     );
     record.store(84, std::sync::atomic::Ordering::SeqCst);
-    // The stop path uses this refresh without resolving or sending through caller.
     registry.refresh_session_bindings(project).unwrap();
     assert_eq!(
         binding.lock().unwrap().as_ref().unwrap().key,

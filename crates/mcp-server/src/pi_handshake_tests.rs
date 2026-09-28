@@ -1,5 +1,3 @@
-// Diagnostic probe: replicate the injected Pi extension's exact MCP client sequence against the
-// real server to locate the HTTP 400 the Pi extension observes at startup.
 use super::*;
 use crate::agents::Backend;
 use std::io::{Read as _, Write as _};
@@ -35,8 +33,6 @@ fn steering_client_sequence_handshakes() {
     let address: std::net::SocketAddr = "127.0.0.1:18766".parse().expect("probe address");
     let mut server =
         ServerState::new(service, true, &address.to_string()).expect("server should start");
-    // Full 2026-07-28 client contract: per-request version header, SEP-2243
-    // routing headers, and _meta request metadata on every non-initialize POST.
     let request = |body: String, extra_headers: &[(&str, &str)]| -> (u16, String) {
         let mut stream = TcpStream::connect(address).expect("connect");
         stream

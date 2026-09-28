@@ -9,7 +9,6 @@ use crate::repository::{
 
 const CACHE_CAPACITY: usize = 24;
 
-/// The last working copy observed for one project.
 pub(super) struct RepositoryObservation {
     pub(super) preference: BackendPreference,
     pub(super) backend: Option<RepositoryBackend>,
@@ -45,7 +44,6 @@ pub(super) type ScanResult = Result<
     RepositoryError,
 >;
 
-/// Reads a project's working copy without publishing it anywhere.
 pub(super) fn observe_project(project: &Path, preference: BackendPreference) -> ScanResult {
     RepositoryBackend::discover(project, preference).map(|backend| {
         backend.map(|backend| {
@@ -67,8 +65,6 @@ pub(super) struct ObservationTicket {
     generation: u64,
 }
 
-/// Inactive projects, oldest first. Reuse moves an observation into the active
-/// project; remembering it again makes it the most recently used entry.
 #[derive(Default)]
 pub(super) struct ObservationCache {
     projects: VecDeque<(PathBuf, RepositoryObservation)>,
@@ -114,7 +110,6 @@ impl ObservationCache {
         Some(ticket)
     }
 
-    /// Invalid work still occupies the scan slot until it finishes.
     pub(super) fn invalidate(&mut self, project: &Path) {
         if self
             .pending

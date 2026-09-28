@@ -60,7 +60,6 @@ impl WorkerSessionFactory for ClaudeWorkerFactory {
             )?
             .with_slot(launch.slot);
         caller.set_harness_profile_id(command.profile_id.clone());
-        // Child sessions use the shared parent/inbox path, never the Farcaster MCP server.
         let process = Process::spawn(
             &command,
             &launch.project,
@@ -629,8 +628,6 @@ impl ClaudeSession {
                     {
                         self.abort_waiting_on_handoff_interrupt = None;
                     }
-                    // A prompt cancelled before execution has no result frame.
-                    // Only settle when the typed receipt names our active prompt.
                     if response["response"].get("cancelled").is_some() {
                         let receipt: SDKControlInterruptResponse =
                             decode(response["response"].clone())?;
@@ -878,7 +875,6 @@ impl WorkerSession for ClaudeSession {
         if self.closed {
             return None;
         }
-        // Read all already-arrived frames before delivering another turn.
         for _ in 0..128 {
             let Some(frame) = self.process.poll() else {
                 break;

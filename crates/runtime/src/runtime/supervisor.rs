@@ -260,35 +260,6 @@ pub(super) fn publish_session_status_if_changed(
     });
 }
 
-#[cfg(test)]
-pub(super) fn changed_external_documents(
-    latest: &HashMap<String, Arc<RuntimeSnapshot>>,
-    paths: &[PathBuf],
-) -> Vec<(String, PathBuf, PathBuf, Option<Backend>)> {
-    latest
-        .iter()
-        .filter_map(|(key, snapshot)| {
-            let path = snapshot.selected_session.as_ref()?;
-            if !snapshot.history_preview
-                || !paths.iter().any(|candidate| {
-                    candidate == path
-                        || crate::sessions::normalize_session_path(candidate).as_path()
-                            == path.as_path()
-                })
-            {
-                None
-            } else {
-                Some((
-                    key.clone(),
-                    path.clone(),
-                    snapshot.project.clone(),
-                    snapshot.harness,
-                ))
-            }
-        })
-        .collect()
-}
-
 fn cache_configuration_catalog(
     entries: &mut Vec<farcaster_storage::CachedConfigurationCatalog>,
     harness: Backend,
@@ -398,8 +369,6 @@ fn send_configured_command(
     let catalog = command_target(&command).and_then(|(_, project, harness)| {
         configurations.catalog_command_for_profile(harness, profile_id, &project)
     });
-    // Fork and restart launch inside the command handler, so validate them
-    // against the cached catalog before starting the child process.
     if matches!(
         &command,
         RuntimeCommand::ForkSession { .. } | RuntimeCommand::RestartSession { .. }
@@ -411,7 +380,6 @@ fn send_configured_command(
         actor.send(RuntimeCommand::RestoreAccessMode(mode));
     }
     actor.send(command);
-    // The actor may have changed projects and rejected the earlier update.
     if let Some(catalog) = catalog {
         actor.send(catalog);
     }
@@ -462,8 +430,6 @@ struct Supervisor {
     configuration_catalogs: Vec<farcaster_storage::CachedConfigurationCatalog>,
     configuration_rx: mpsc::Receiver<ConfigurationUpdate>,
     configuration_tx: Option<mpsc::Sender<ConfigurationUpdate>>,
-    // Coalesce in-flight requests and keep successful loads for this app run.
-    // A failed result removes its key so the next selection can retry.
     configuration_requests: HashSet<(Backend, Option<String>, PathBuf)>,
     requested_access_modes: HashMap<String, (Backend, PathBuf, HarnessAccessMode)>,
     published_statuses: HashMap<String, (Option<PathBuf>, String)>,

@@ -49,8 +49,6 @@ fn config_directory_matches_cursor_precedence() {
 fn find_session_prefers_the_persisted_store_across_config_roots() {
     let primary = tempfile::tempdir().expect("test operation should succeed");
     let secondary = tempfile::tempdir().expect("test operation should succeed");
-    // A draft in the first root must not hide a persisted session in another
-    // root created under a different launch environment.
     let primary = primary.path().join("acp-sessions");
     let secondary = secondary.path().join("acp-sessions");
     fixture(&primary, "draft-elsewhere", false);

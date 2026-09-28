@@ -51,7 +51,6 @@ runCommand "farcaster-ghostty-zig-deps" { } (
   + "\n"
   + lib.concatStringsSep "\n" (
     lib.mapAttrsToList (name: path: ''
-      # Real directories keep Zig's relative build paths and header scans valid.
       cp -R --no-preserve=mode ${path} "$out/${name}"
     '') packages
   )

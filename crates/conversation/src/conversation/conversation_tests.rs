@@ -92,7 +92,6 @@ fn queued_deliveries_before_assistant_output_preserve_the_original_prompt() {
         }
         let original = state.items[0].clone();
         state.reduce(&json!({"type": "agent_start"}));
-        // Identical text must also remain a separate delivery.
         for text in ["first steer", "original", "third steer"] {
             for kind in ["message_start", "message_end"] {
                 state.reduce(&json!({

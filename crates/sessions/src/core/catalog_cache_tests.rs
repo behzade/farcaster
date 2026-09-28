@@ -40,7 +40,6 @@ fn cached_relationships_preserve_profile_identity_orphans_and_cycles() {
         session("cycle-a", "/locators/codex-cli/cycle-a", Some("cycle-b")),
         session("cycle-b", "/locators/codex-cli/cycle-b", Some("cycle-a")),
     ];
-    // A cached but unresolved parent must not fall back to its native-ID homonym.
     rows[3].parent_session = Some("root".into());
     rows[3].parent_app_session_id = Some(999);
     let catalog = SessionCatalog::from(rows);
@@ -77,7 +76,6 @@ fn mutation_rebuilds_relationships_and_returns_current_metadata() {
         catalog.root_for_path(Some(Path::new("/child"))).unwrap().id,
         "root"
     );
-    // Reordering changes every stored position; editing changes identity and metadata.
     catalog.reverse();
     catalog[1].title = "Renamed".into();
     catalog[1].path = "/moved".into();

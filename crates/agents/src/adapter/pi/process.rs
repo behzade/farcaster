@@ -44,8 +44,6 @@ fn pi_program(packaged_path: Option<std::ffi::OsString>) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("pi"))
 }
 
-/// Pi's model/thinking RPCs change global defaults. Automatic launches must
-/// select their own configuration without changing the user's next session.
 pub(super) fn launch_selection(
     command: &mut AgentLaunchConfig,
     model: Option<(&str, &str)>,
@@ -597,7 +595,6 @@ impl PiRpcProcess {
 
     fn next_request_id(&mut self) -> String {
         self.next_id = self.next_id.saturating_add(1);
-        // Receipts outlive the transport in runtime recovery and saved history.
         format!("gpui-{}-{}", self.request_namespace, self.next_id)
     }
 
@@ -989,8 +986,6 @@ impl PiRpcProcess {
         ))
     }
 
-    /// A local extension command must acknowledge both the RPC request and its
-    /// effect. Neither a successful prompt response nor a status alone is enough.
     pub(super) fn confirm_control(
         &mut self,
         command: Value,
@@ -1177,8 +1172,7 @@ impl PiRpcProcess {
                             }
                         }
                         if let Some(session) = session
-                        // An inherited worker resumes the parent before forking it.
-                        && self.parent_session.as_deref() != Some(session)
+                            && self.parent_session.as_deref() != Some(session)
                         {
                             self.caller_identity.bind(session);
                             if self.parent_session.is_some() {

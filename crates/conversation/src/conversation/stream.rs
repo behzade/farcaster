@@ -167,14 +167,11 @@ impl ConversationState {
         if message
             .is_some_and(|message| message.get("role").and_then(Value::as_str) == Some("assistant"))
         {
-            // Some backends do not echo the initial user message. Once the reply
-            // starts, keep its local row but stop matching it to later inputs.
             self.optimistic_user = None;
         }
         if let Some(message) = message
             && message.get("role").and_then(Value::as_str) == Some("user")
         {
-            // Early queued deliveries must not replace the original local row.
             if message.get("queued").and_then(Value::as_bool) == Some(true) {
                 self.optimistic_user = None;
             }

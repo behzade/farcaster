@@ -222,7 +222,6 @@ fn check_burst(parent: &str, expected: Selection) {
             })
         });
         threads.push(handle);
-        // The first caller must be inside its selection before the rest join.
         if threads.len() == 1 {
             started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         }

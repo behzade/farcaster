@@ -2254,7 +2254,6 @@ fn peer_delivery_preserves_order_when_final_output_supplies_the_remaining_text()
     let mut conversation = ConversationState::default();
     while let Some(event) = transport.poll() {
         if let SessionEvent::Activity(activity) = event {
-            // The app can batch live deltas until the next paint.
             conversation.reduce_deferred(activity.value());
         }
     }

@@ -70,8 +70,6 @@ impl FarcasterApp {
             self.notify_session_rail(cx);
             return;
         }
-        // These explicit handoffs already require durable state on main: the
-        // runtime reads the draft profile from storage when NewSession arrives.
         match futures::executor::block_on(self.sessions.writer.flush()) {
             Ok(()) => action(self, window, cx),
             Err(error) => {
@@ -364,7 +362,6 @@ impl FarcasterApp {
         true
     }
 
-    /// Archive submitted chats and keep their session record in sync.
     pub(in crate::app) fn request_draft_archive(
         &mut self,
         id: String,
@@ -627,8 +624,6 @@ fn clear_promoted_selection(selected_draft: &mut Option<String>, promoted_id: &s
     }
 }
 
-// Idle startup snapshots must not overwrite an unresolved draft send's
-// optimistic Working badge, including after its session identity is promoted.
 fn preserve_submission_working_status(
     target: &str,
     session: Option<&std::path::Path>,

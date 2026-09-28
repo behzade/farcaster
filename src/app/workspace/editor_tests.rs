@@ -15,7 +15,6 @@ fn editor_command_input_saves_and_reaches_the_terminal_launcher(cx: &mut gpui::T
                     app.select_editor(crate::storage::EditorChoice::Custom, cx);
                     app.settings.editor_command_input.update(cx, |input, cx| {
                         input.set_value("micro -p", window, cx);
-                        // set_value is silent; typing also emits Change.
                         cx.emit(gpui_component::input::InputEvent::Change);
                     });
                 });

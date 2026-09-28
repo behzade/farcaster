@@ -13,8 +13,6 @@ pub(super) fn receive_command(
     let RuntimeCommand::LoadSessions(mut query) = command else {
         return Ok(command);
     };
-    // Catalog reads can be costly. Skip obsolete adjacent queries, but never
-    // move a search across a command that may change the catalog or session.
     loop {
         match receiver.try_recv() {
             Ok(RuntimeCommand::LoadSessions(next)) => query = next,

@@ -74,7 +74,6 @@ pub(in crate::app) fn effective_editor_choice(
     choice: crate::storage::EditorChoice,
     project: &Path,
 ) -> crate::storage::EditorChoice {
-    // An explicit custom command must report its own launch errors, not fall back.
     if choice == crate::storage::EditorChoice::Custom {
         return choice;
     }
@@ -284,8 +283,6 @@ impl FarcasterApp {
         else {
             return;
         };
-        // Reusing the native terminal must not unmap/remap it: both file jumps
-        // and repeated Open editor commands come through this path.
         let switching_editor = self.workspace.editor.view.as_ref() != Some(&editor);
         if switching_editor {
             self.hide_editor(cx);
@@ -300,8 +297,6 @@ impl FarcasterApp {
         self.workspace.editor.view = Some(editor.clone());
         self.workspace.editor.terminal_editor_view = None;
         self.hide_terminal(cx);
-        // Startup prompts can block remote requests until the user responds.
-        // Show the terminal before waiting so those prompts remain accessible.
         self.workspace.editor.ready = true;
         self.reveal_native_center_surface(AppSurface::Editor, window, cx);
         let generation = self.workspace.editor.request_generation;

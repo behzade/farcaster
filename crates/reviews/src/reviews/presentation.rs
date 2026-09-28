@@ -4,8 +4,6 @@ use crate::{
 };
 use std::{ops::Range, sync::Arc};
 
-/// Rendering data only. It contains no protocol reducer, tool offsets, or live
-/// message bookkeeping, so app-owned rows cannot corrupt protocol execution.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TranscriptPresentation {
     pub items: PersistentVec<Arc<TranscriptItem>>,
@@ -26,8 +24,6 @@ impl From<&ConversationState> for TranscriptPresentation {
 }
 
 impl TranscriptPresentation {
-    /// Apply a UI-owned optimistic edit without removing durable cards or
-    /// writing presentation indices back into the protocol state.
     pub fn update_source(&mut self, source: &ConversationState, dirty: usize) -> usize {
         let prefix = self.update_items(source, dirty);
         self.update_runs(source);

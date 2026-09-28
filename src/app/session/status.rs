@@ -66,9 +66,6 @@ fn active_activity_session_paths<'a>(
             sessions_by_path
                 .get(activity.session_path.as_path())
                 .copied()
-                // Activity keys are canonicalized at ingestion. The fallback
-                // preserves alias matching without canonicalizing every session
-                // during every frame.
                 .or_else(|| {
                     sessions
                         .iter()

@@ -59,7 +59,6 @@ pub fn available_access_modes(
     for_backend(harness).access_modes(model, sandbox_adapter)
 }
 
-/// Translate a parent's native access mode into its worker approval policy.
 pub fn delegated_worker_access_mode(
     harness: Backend,
     mode: crate::HarnessAccessMode,
@@ -67,8 +66,6 @@ pub fn delegated_worker_access_mode(
     for_backend(harness).delegated_worker_access_mode(mode)
 }
 
-/// Modes a restricted parent may consider when creating a worker.
-/// The caller must still enforce its own access ceiling.
 pub fn worker_access_modes(
     harness: Backend,
     model: Option<&crate::extensions::Model>,
@@ -280,7 +277,6 @@ fn spawn_native_session(
     adapter.spawn(config, launch)
 }
 
-/// Rename using the target configuration already resolved by the caller.
 pub fn rename_session(
     config: &crate::AgentLaunchConfig,
     harness: Backend,

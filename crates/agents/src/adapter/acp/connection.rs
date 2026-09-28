@@ -25,9 +25,6 @@ use super::{
 const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Bridges SDK callbacks to Farcaster's worker polling API. The SDK owns
-/// encoding, request IDs, correlation, and dispatch. Raw payloads preserve
-/// Cursor extensions and provider metadata for our translators.
 pub(super) struct AcpConnection {
     connection: ConnectionTo<Agent>,
     incoming: mpsc::Receiver<Result<AcpInbound, String>>,
@@ -279,7 +276,6 @@ impl Drop for AcpConnection {
     }
 }
 
-/// Bound each frame before allocating it or handing it to the SDK parser.
 async fn read_frame(
     reader: &mut (impl AsyncBufRead + Unpin),
     limit: usize,

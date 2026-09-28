@@ -14,8 +14,6 @@ fn queue_cancellation_requires_current_owner_evidence_not_an_id_or_receipt() {
     assert!(state.queue.can_cancel("owned"));
     assert!(!state.queue.can_cancel("native"));
     assert!(!state.queue.can_cancel(""));
-    // The owner claims the row before native delivery arrives. Neither an
-    // accepted nor an unknown receipt can grant ownership back to the UI.
     state.reduce(&json!({"type":"queue_update", "steering":["same"], "steeringIds":["native"]}));
     state.reduce(&delivery("owned", "same", "accepted"));
     state.reduce(&delivery("native", "same", "unknown"));

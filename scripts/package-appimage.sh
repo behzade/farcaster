@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Build an AppImage from the shared Linux layout with stock linuxdeploy.
 set -euo pipefail
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"
@@ -17,8 +16,6 @@ trap 'rm -rf "$stage"' EXIT
 appdir="$stage/AppDir"
 sh scripts/install-linux.sh "$binary" "$appdir/usr"
 
-# GPUI loads some graphics libraries at runtime. Explicit --library arguments
-# also include libraries such as libxcb that linuxdeploy normally excludes.
 xcb_libdir=$(pkg-config --variable=libdir xcb)
 wayland_libdir=$(pkg-config --variable=libdir wayland-client)
 vulkan_libdir=$(pkg-config --variable=libdir vulkan)
@@ -37,13 +34,10 @@ done
 filename="Farcaster-v${version}-${arch}.AppImage"
 candidate="$stage/$filename"
 unset SOURCE_DATE_EPOCH
-# Host Mesa drivers need the host Wayland ABI, including newly added symbols.
 APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$arch" VERSION="$version" OUTPUT="$candidate" \
     linuxdeploy --appdir "$appdir" "${libraries[@]}" \
     --exclude-library 'libwayland-client.so*' --output appimage
 
-# Check the finished image, following AppRun's symlink to the executable.
-# Owner-only execution can pass extract-and-run yet fail on a root-owned mount.
 (
     cd "$stage"
     env -u APPIMAGE_EXTRACT_AND_RUN "$candidate" --appimage-extract > /dev/null

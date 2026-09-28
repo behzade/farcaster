@@ -39,7 +39,6 @@ pub(crate) fn import() -> Result<Option<u128>, String> {
         .env_clear()
         .envs(environment)
         .env(APP_ENV_IMPORTED, "1")
-        // Carry the elapsed time across exec to log it after shell import.
         .env(
             APP_ENV_IMPORT_MS,
             started_at.elapsed().as_millis().to_string(),

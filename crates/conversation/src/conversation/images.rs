@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use farcaster_agent_protocol::extensions::PromptImage;
 
-/// Encoded image-file bytes, independent of the renderer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EncodedImage {
     mime_type: &'static str,

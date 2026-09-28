@@ -85,7 +85,6 @@ impl<'a> SessionRootIndex<'a> {
 
     pub fn parent(&self, session: &SessionSummary) -> Option<&'a SessionSummary> {
         if let Some(id) = session.parent_app_session_id {
-            // An unresolved cached parent must not bind to a native-ID homonym.
             return self.by_app_id.get(&id).copied();
         }
         let parent = session.parent_session.as_deref()?;
@@ -95,7 +94,6 @@ impl<'a> SessionRootIndex<'a> {
         self.by_id.get(&identity).copied()
     }
 
-    /// Nearest parent first, excluding the starting session even in a cycle.
     pub fn ancestors(&self, session: &SessionSummary) -> Vec<&'a SessionSummary> {
         let mut seen = HashSet::from([session.path.as_path()]);
         let mut ancestors = Vec::new();

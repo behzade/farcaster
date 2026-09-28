@@ -1,6 +1,5 @@
 use super::*;
 
-/// Queued UI snapshots. Archive methods record explicit intent separately.
 #[derive(Clone, Default)]
 pub struct SessionStateChanges {
     pub projects: Option<projects::ProjectList>,
@@ -15,8 +14,6 @@ impl SessionStateChanges {
 }
 
 impl StateStore {
-    /// Apply explicit archive intent to the durable chat, whether binding has
-    /// happened yet or its draft key has already been removed by promotion.
     pub fn set_app_session_archived(
         &mut self,
         app_session_id: sessions::AppSessionId,
@@ -75,9 +72,6 @@ pub(super) fn apply_archive_intent(
     if updated == 0 {
         return Err("The chat is no longer available to archive".into());
     }
-    // A NULL archive value alone cannot distinguish an explicit unarchive
-    // from an old snapshot. Merges and snapshots use this marker to preserve
-    // the explicit decision.
     tx.execute(
         "INSERT INTO session_events(session_id,seq,t,schema_version,body)
          SELECT ?1, COALESCE(MAX(seq),0)+1, ?2, 1,
@@ -99,8 +93,6 @@ fn update_draft(tx: &Transaction<'_>, draft: &DraftSession) -> Result<(), String
         .optional()
         .map_err(|error| format!("read draft before saving: {error}"))?;
     let Some((submitted, locator, archived)) = existing else {
-        // Allocation is synchronous; a queued save must never recreate a deleted
-        // draft or reattach a draft key removed by promotion.
         return Ok(());
     };
     if !submitted && locator.is_none() {
@@ -108,8 +100,6 @@ fn update_draft(tx: &Transaction<'_>, draft: &DraftSession) -> Result<(), String
         snapshot.archived = archived;
         save_draft(tx, &snapshot)?;
     } else {
-        // Runtime promotion can finish before this queued UI snapshot. Preserve
-        // the canonical identity, settings and title instead of rolling them back.
         tx.execute(
             "UPDATE sessions SET submitted=MAX(submitted,?3),
                 title=CASE WHEN title='' THEN COALESCE(?4,'') ELSE title END

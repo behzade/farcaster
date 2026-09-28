@@ -29,8 +29,6 @@ impl SubmittedUser {
 }
 
 impl ConversationState {
-    /// Remove an undelivered receipt after explicit dismissal or confirmed cancellation.
-    /// Delivered messages remain in the transcript even if a late cancellation arrives.
     pub fn dismiss_pending_receipt(&mut self, id: &str) {
         if self
             .submitted_users
@@ -41,8 +39,6 @@ impl ConversationState {
         }
     }
 
-    /// Saved receipt presentation only. These records must never become
-    /// executable queue entries merely because history was opened.
     pub fn pending_receipts(&self) -> Vec<PendingReceipt> {
         let mut pending = self
             .submitted_users
@@ -88,8 +84,6 @@ impl ConversationState {
             });
     }
 
-    /// Admission retains queued payloads off-transcript. Only delivery creates
-    /// their user row; ordinary optimistic input keeps its existing row.
     pub fn record_prompt_delivery(
         &mut self,
         id: &str,
@@ -108,7 +102,6 @@ impl ConversationState {
             .as_ref()
             .and_then(|entry| self.items.position(|item| Arc::ptr_eq(item, &entry.item)));
         if status == "rejected" {
-            // A later error cannot undo proven receipt or a committed user item.
             if previous
                 .as_ref()
                 .is_none_or(|entry| entry.accepted || entry.delivered)

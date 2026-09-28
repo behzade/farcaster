@@ -53,7 +53,6 @@ fn header_opens_by_default_and_alt_click_only_toggles_locations(cx: &mut gpui::T
     let header = cx
         .debug_bounds("review-header-7")
         .expect("review header bounds");
-    // Blank row space has the same primary action as the title.
     let target = point(header.right() - px(5.0), header.center().y);
     cx.simulate_click(target, Default::default());
     assert!(!expanded.get());
@@ -71,8 +70,6 @@ fn header_opens_by_default_and_alt_click_only_toggles_locations(cx: &mut gpui::T
     cx.simulate_click(target, alt);
     assert!(!expanded.get());
     assert_eq!(opened.get(), 2);
-    // The single keyboard stop opens; disclosure remains an explicit
-    // secondary action, also available in the context menu.
     cx.simulate_keystrokes("tab enter");
     assert!(!expanded.get());
     assert_eq!(opened.get(), 3);

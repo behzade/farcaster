@@ -484,9 +484,9 @@ fn child_settlement_sends_one_final_message_per_turn() -> Result<(), String> {
     let events = factory.events.lock().map_err(|_| "events")?[0].clone();
     for (starts_turn, output, delivers) in [
         (false, "done", true),
-        (false, "done", false), // Duplicate completion.
-        (true, "done", true),   // Same answer on a later turn.
-        (true, "  ", false),    // Empty completion.
+        (false, "done", false),
+        (true, "done", true),
+        (true, "  ", false),
     ] {
         if starts_turn {
             events
@@ -1724,7 +1724,6 @@ fn canonical_fence_precedes_children_and_follows_binding_and_merge() -> Result<(
                 .contains("family is stopping")
         );
     }
-    // A restarted caller has a new worker ID but the retained canonical binding.
     drop(parent);
     let replacement = canonical_parent(project.path(), None);
     replacement.bind_execution_for_test(crate::ExecutionBinding {
@@ -1782,7 +1781,6 @@ fn family_stop_keeps_selection_when_authoritative_refresh_merges_its_key() -> Re
     let key = context.session_key().unwrap();
     let stopped =
         pool.stop_session_family_with_refresh(project.path(), std::slice::from_ref(&key), |_| {
-            // This is the registry refresh boundary, before the pool lock is retaken.
             parent.bind_execution_for_test(crate::ExecutionBinding {
                 session_record: 84,
                 turn_id: "turn".into(),
@@ -1829,7 +1827,6 @@ fn finishing_refreshed_stop_releases_prior_equivalent_fence_only() -> Result<(),
     child.parent_worker_id = Some(context.worker_id.clone());
     pool.start(child.clone())?;
     pool.stop_session_family(project.path(), &[old_key])?;
-    // The previous caller left its fence installed. A new request uses a merged key.
     parent.bind_execution_for_test(crate::ExecutionBinding {
         session_record: 84,
         turn_id: "new".into(),

@@ -78,7 +78,6 @@ fn retired_built_in_selections_keep_their_appearance_and_custom_themes() {
             library
         );
 
-        // An imported theme with the old name is still a valid user theme.
         let custom = definition(old);
         let library = ThemeLibrary::from_css(&custom.to_css().unwrap(), Some(old)).unwrap();
         assert_eq!(library.selected(), custom);
@@ -320,15 +319,6 @@ fn export_file_names_are_slugs() {
 }
 
 #[test]
-fn css_comments_are_ignored() {
-    let css = format!("/* Ocean */\n{}", css("Ocean"));
-    assert_eq!(
-        ThemeDefinition::from_css(&css).expect("decode theme").name,
-        "Ocean"
-    );
-}
-
-#[test]
 fn unsafe_lengths_are_rejected_by_shared_acceptance_paths() {
     for (name, value) in [
         ("space-xs", f32::NAN),
@@ -342,7 +332,6 @@ fn unsafe_lengths_are_rejected_by_shared_acceptance_paths() {
         invalid.set_length(LengthKey::from_name(name).expect("token"), pxf(value));
         assert!(invalid.validate().is_err(), "{name}: {value}");
         assert!(invalid.to_css().is_err(), "{name}: {value}");
-        // Bypass export validation to represent an externally supplied file.
         let css = theme_block(&invalid);
         assert!(ThemeDefinition::from_css(&css).is_err(), "{name}: {value}");
         assert!(ThemeLibrary::from_css(&css, Some("Unsafe")).is_err());

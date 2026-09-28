@@ -123,8 +123,6 @@ fn session_item_identity(item: &SessionRailItem) -> String {
     session_row_identity(&item.session)
 }
 
-// UI-only keys retain the full tagged identity, including non-UTF-8 locators.
-// They are shared by list reconciliation, reveal targets, and row controls.
 pub(in crate::app::views) fn session_row_identity(session: &SessionSummary) -> String {
     format!("session:{:?}", session.key())
 }

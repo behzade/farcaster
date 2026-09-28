@@ -404,7 +404,6 @@ fn canonical_activity_is_profile_exact_in_either_row_order_and_after_merge() {
             );
         }
     }
-    // A stale, missing, or duplicated key cannot fall back to the shared native ID.
     snapshot.session_key = Some(crate::sessions::SessionKey::App(
         crate::sessions::AppSessionId::new(41).unwrap(),
     ));

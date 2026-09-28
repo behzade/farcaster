@@ -636,8 +636,6 @@ impl WorkerPool {
         let project = canonical_directory(project)?;
         let keys = sessions.iter().cloned().collect::<BTreeSet<_>>();
         let fence_key = (project.clone(), keys.clone());
-        // Keep matching handles before the storage refresh can replace their keys.
-        // Storage is called only after releasing the pool lock.
         let mut fence = {
             let state = self
                 .inner

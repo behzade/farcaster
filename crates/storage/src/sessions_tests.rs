@@ -62,7 +62,6 @@ fn native_session_profile_survives_binding_refresh_discovery_and_reopen() -> Res
             Some(profile)
         );
         assert_eq!(store.draft_profile_id(&draft.id)?.as_deref(), Some(profile));
-        // Native discovery lacks profile information and must not erase it.
         let mut discovered = refreshed;
         discovered.profile_id = None;
         discovered.app_session_id = 0;
@@ -366,8 +365,6 @@ fn metadata_readback_failure_rolls_back_the_update() -> Result<(), String> {
     let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
     let mut update = metadata("readback");
     let original = store.update_session_metadata(&update)?;
-    // Inject a value accepted by SQLite but rejected by the summary decoder.
-    // All writes succeed, so only the read-back can cause the rollback.
     store
         .connection
         .execute_batch(
@@ -751,7 +748,6 @@ fn unavailable_project_round_trip_preserves_draft_composer_and_outbox() -> Resul
     assert_eq!(store.load_composer_sessions()?, before_composer);
     assert_eq!(store.queued_prompts()?, before_queue);
 
-    // Explicitly deleting the draft must still remove its dependent state.
     store.remove_draft("saved-work")?;
     drop(store);
     let reopened = StateStore::open_at(&database)?;

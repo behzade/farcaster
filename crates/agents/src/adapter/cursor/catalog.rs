@@ -19,10 +19,6 @@ struct SessionMeta {
     extra: BTreeMap<String, serde_json::Value>,
 }
 
-/// The config root resolved by the environment that launched cursor-agent
-/// can differ from this process's environment (for example `XDG_CONFIG_HOME`
-/// injected by a project shell), so inspect accepts every root in Cursor's
-/// own precedence order plus the XDG default.
 fn session_roots() -> Result<Vec<PathBuf>, String> {
     let env = |key| {
         std::env::var(key)
@@ -37,8 +33,6 @@ fn session_roots() -> Result<Vec<PathBuf>, String> {
             roots.push(root);
         }
     };
-    // Cursor's own precedence first, then the common XDG default that other
-    // launch environments may have used.
     push(
         config_root(
             env("CURSOR_CONFIG_DIR"),
@@ -241,7 +235,6 @@ fn listed_session(
     if !query.is_empty() && !search.to_ascii_lowercase().contains(query) {
         return None;
     }
-    // Model discovery can leave an empty backend session with no store.
     if matches!(inspect(&id), Ok((_, true))) {
         return None;
     }

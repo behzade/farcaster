@@ -43,8 +43,6 @@ impl Deliveries {
         } else {
             message["content"].clone()
         };
-        // Pi has no client ID on user events. Match payloads (including images)
-        // in Pi's normal/steer/follow-up order, FIFO within each mode.
         let index = self
             .0
             .iter()

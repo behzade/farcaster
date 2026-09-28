@@ -114,7 +114,6 @@ fn family_status_uses_profile_identity_and_explicit_parent_links() {
         "Done"
     );
 
-    // Persisted parent identity takes precedence even across harness profiles.
     child.parent_app_session_id = Some(second.app_session_id);
     assert_eq!(
         roots_waiting_for_descendants(&[first, second.clone(), child]),

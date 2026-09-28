@@ -30,7 +30,6 @@ fn expanded_workers_keep_the_main_row_and_restore_sections_on_navigation(
         |cx, app, _, project| {
             let project_path = project.canonicalize().unwrap();
             let project = project_path.as_path();
-            // with_offline_app runs this closure in a child with a temporary home and data dir.
             crate::app::project::trust::apply(project, crate::projects::TrustChoice::TrustProject)
                 .unwrap();
             assert!(
@@ -122,7 +121,6 @@ fn expanded_workers_keep_the_main_row_and_restore_sections_on_navigation(
             assert!(cx.debug_bounds("show-more-workers").is_none());
             assert!(cx.debug_bounds("run-panel-plan").is_none());
             assert!(cx.debug_bounds("run-panel-repository").is_none());
-            // Clicking an already-selected main agent must also restore the panel.
             cx.simulate_click(main_before.center(), Default::default());
             draw(cx);
             assert!(cx.debug_bounds("run-panel-repository").is_some());
@@ -138,7 +136,6 @@ fn expanded_workers_keep_the_main_row_and_restore_sections_on_navigation(
                         .workers_expanded_for(&root)
                 )
             });
-            // The oldest child is now included, alongside the recent workers.
             let child_selector = Box::leak(
                 format!("agent-card-{}", project.join("a.jsonl").display()).into_boxed_str(),
             );

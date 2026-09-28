@@ -1,5 +1,3 @@
-# Repository-owned Cargo packages, relative to the repository root.
-# Keep vendor packages out. scripts/test_tests.py checks for missing packages.
 crates/access/Cargo.toml
 crates/agent-protocol/Cargo.toml
 crates/agents/Cargo.toml

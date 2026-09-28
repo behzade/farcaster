@@ -131,8 +131,6 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             child,
             writer: Some(writer),
             incoming,
-            // Pool workers poll on their run-loop interval; only the main
-            // session supplies a parked runtime thread that needs a wake.
             wake: None,
             thread_id: thread_id.clone(),
             codex_home,
@@ -508,7 +506,6 @@ fn setup_main_connection(
         crate::SessionStart::Fork(_) => {
             let thread_id = main_session::launch_session_locator(launch)
                 .ok_or_else(|| "Codex fork requires a thread id".to_owned())?;
-            // Codex otherwise forks with CLI defaults, not the parent's selection.
             let model = history.and_then(|history| history.model.as_ref());
             connection.fork_thread(
                 &thread_id,
@@ -787,8 +784,6 @@ struct CodexWorkerSession {
     current_turn: Option<String>,
     abort_starting_turn: bool,
     abort_cleanup: Option<AbortCleanup>,
-    // One deadline spans turn admission, cleanup, completion and late handoffs.
-    // Retargeting cleanup or pressing Escape again must not extend it.
     abort_deadline: Option<std::time::Instant>,
     abort_timeout: std::time::Duration,
     abort_failure: Option<String>,
@@ -1073,8 +1068,6 @@ impl WorkerSession for CodexWorkerSession {
             && self.caller_identity.try_activate()
             && let Some(message) = self.peer_messages.pop_front()
         {
-            // The native user-message event confirms delivery and adds the peer
-            // row. Adding it on send as well would show the same reply twice.
             if let Err(error) = self.send_peer_message(&message, mode) {
                 return Some(WorkerEvent::Failed(error));
             }
@@ -1084,7 +1077,6 @@ impl WorkerSession for CodexWorkerSession {
                 .queued_inbound
                 .pop_front()
                 .or_else(|| self.incoming.try_recv().ok())?;
-            // Correlate the actual RPC reply, never a write or turn notification.
             if let Ok(CodexInbound::Response { id, result }) = &inbound
                 && let Some(prompt) = self.prompt_requests.get(id).cloned()
             {
@@ -1555,8 +1547,6 @@ impl WorkerSession for CodexWorkerSession {
                                 return Some(WorkerEvent::Activity(activity));
                             }
                             let item_type = params.pointer("/item/type").and_then(Value::as_str);
-                            // Native child activity is an instantaneous event, projected once
-                            // from item/completed along with a catalog refresh.
                             if item_type == Some("subAgentActivity") {
                                 continue;
                             }
@@ -2072,8 +2062,6 @@ impl CodexWorkerSession {
         target_turn: &str,
         phase: AbortCleanupPhase,
     ) -> Result<Option<WorkerEvent>, String> {
-        // This ACK only confirms that app-server admitted the core cleanup op.
-        // The live gate test verifies that the owned shell actually exits.
         let Some(cleanup) = self.abort_cleanup.as_mut() else {
             return Ok(None);
         };
@@ -2122,8 +2110,6 @@ impl CodexWorkerSession {
     }
 
     fn fail_abort(&mut self, error: String) -> WorkerEvent {
-        // Never unlock this transport after a timeout: late replies could still
-        // start work. Close it and use the normal failure/resume path instead.
         let error = match self.close() {
             Ok(()) => format!(
                 "{error}. The Codex connection was closed; send again to resume this session."
@@ -2511,7 +2497,6 @@ impl CodexWorkerSession {
     fn observe_child_activity(&mut self, item: &Value) -> Option<WorkerActivity> {
         let child = item["agentThreadId"].as_str()?;
         let title = item["agentPath"].as_str().map(str::to_owned);
-        // A later lifecycle event supersedes any status read still in flight.
         for pending in self.pending.values_mut() {
             if matches!(pending, PendingRequest::ChildStatus { id, .. } if id == child) {
                 *pending = PendingRequest::ObsoleteChildStatus;
@@ -2530,8 +2515,6 @@ impl CodexWorkerSession {
         if item["kind"].as_str() != Some("interacted") {
             return None;
         }
-        // Both message delivery and follow-up turns emit interacted. Read the
-        // child's actual turn instead of assigning a lifecycle to that event.
         match self.request(
             "thread/read",
             json!({"threadId": child, "includeTurns": true}),
@@ -2652,8 +2635,6 @@ const HANDOFF_CLIENT_ID_PREFIX: &str = "farcaster-handoff-";
 const NORMAL_CLIENT_ID_PREFIX: &str = "farcaster-normal-";
 
 fn client_message_id(prefix: &str, next_id: i64, submission_id: Option<&str>) -> String {
-    // The native user item retains this ID in thread/read. Encode the request
-    // ID so a new process can match that item to its durable outbox dispatch.
     match submission_id.filter(|id| id.starts_with("codex-cli-")) {
         Some(id) => format!("{prefix}{id}"),
         None => format!("{prefix}{next_id}"),
@@ -3006,7 +2987,6 @@ fn codex_tool_end(params: &Value) -> Option<WorkerActivity> {
         }])
     } else if kind == "commandExecution" && item.get("aggregatedOutput").is_none_or(Value::is_null)
     {
-        // Commands may complete without output, including when output was streamed.
         json!([{"type": "text", "text": ""}])
     } else if kind == "webSearch" {
         json!([{"type": "text", "text": tool::web_search_query(item).unwrap_or_default()}])

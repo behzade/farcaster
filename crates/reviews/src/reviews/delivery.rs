@@ -1,4 +1,3 @@
-//! The MCP response is a compatibility path; the local journal owns delivery.
 use std::sync::{
     Arc, Mutex, OnceLock, Weak,
     atomic::{AtomicU64, Ordering},

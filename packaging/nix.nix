@@ -26,9 +26,6 @@ let
   lock = builtins.fromTOML (builtins.readFile ../Cargo.lock);
   ghostty = builtins.head (builtins.filter (p: p.name == "gpui-libghostty") lock.package);
   zigDeps = callPackage ./ghostty-zig-deps.nix { };
-  # --system supplies offline packages but also defaults to system libraries.
-  # Keep Ghostty's normal bundled choices, including fontconfig's libxml2,
-  # so its static archive retains the linkage expected by the Rust build script.
   ghosttyZig = writeShellScript "farcaster-ghostty-zig" ''
     if [ "''${1-}" = build ]; then
       shift
@@ -76,10 +73,8 @@ rustPlatform.buildRustPackage {
   };
   cargoLock = {
     lockFile = ../Cargo.lock;
-    # All git dependencies have full commit IDs in Cargo.lock.
     allowBuiltinFetchGit = true;
   };
-  # Zig comes from ZIG below; a direct input would replace Cargo's build phases.
   nativeBuildInputs = [
     pkg-config
     cmake
@@ -92,7 +87,6 @@ rustPlatform.buildRustPackage {
     "--bin"
     "farcaster"
   ];
-  # The app's tests require a desktop. checks.<system>.startup tests the package.
   doCheck = false;
   preBuild = ''
     export ZIG="${ghosttyZig}"
@@ -102,7 +96,6 @@ rustPlatform.buildRustPackage {
     export GHOSTTY_ZIG_SYSTEM_PACKAGE_DIR="${zigDeps}"
   '';
   postInstall = ''
-    # cargoInstallHook already installed the executable.
     mv "$out/bin/farcaster" "$NIX_BUILD_TOP/farcaster-installed"
     sh scripts/install-linux.sh "$NIX_BUILD_TOP/farcaster-installed" "$out"
     wrapProgram "$out/bin/farcaster" \

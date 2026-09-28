@@ -31,8 +31,6 @@ pub(crate) fn with_prepared_offline_app(
     );
 }
 
-/// An app over a runtime the test builds for the project it is given, so a case
-/// can drive the app against a real runtime instead of the offline one.
 pub(crate) fn with_runtime_app(
     test_name: &str,
     cx: &mut TestAppContext,

@@ -1,4 +1,3 @@
-// Live-test diagnostics are consumed by the E2E runner.
 #![allow(clippy::print_stderr)]
 use crate::Backend;
 #[cfg(test)]
@@ -221,9 +220,6 @@ fn exercise_live_harness(harness: Backend, capabilities: &AgentCapabilities) -> 
         Err(error) => return Err(cleanup_error(error, close, harness, &path, coverage)),
     };
     close.map_err(|error| cleanup_error(error, Ok(()), harness, &path, coverage))?;
-    // A temporary live project intentionally blocks catalog discovery and
-    // therefore move coverage.  Do not let that expected limitation skip the
-    // independent resume, history, persistence, and cleanup checks below.
     let move_outcome = if coverage.move_project {
         exercise_live_move(harness, &config, &project, &path, &marker, coverage)
     } else {
@@ -299,7 +295,6 @@ fn exercise_live_move(
     };
     let mut current = original.clone();
     let outcome = (|| {
-        // Move back as well, so persistence checks and cleanup use the original locator.
         for project in [destination.as_path(), source] {
             let moved = super::move_session_family(&[current.clone()], project)?;
             current.path = moved.root.clone();
@@ -331,8 +326,6 @@ fn exercise_live_move(
                     return Err("resume created a session".into());
                 }
                 require_history_response(&mut *resumed, marker)?;
-                // The prompt does not disclose the token or an absolute path. A real
-                // relative file read must use the moved session's working directory.
                 let token = format!(
                     "MOVE_CWD_{}",
                     std::time::SystemTime::now()
@@ -1007,9 +1000,6 @@ fn approve_in_project(
     project: Option<&Path>,
 ) -> Result<(), String> {
     match request {
-        // These mutate only harness UI state.  They have no dialog ID under
-        // the production contract, so there is no response to send and no
-        // permission to grant.
         ExtensionUiRequest::Notify { .. }
         | ExtensionUiRequest::SetStatus { .. }
         | ExtensionUiRequest::SetWidget { .. }
@@ -1047,10 +1037,6 @@ fn require_assistant_text(conversation: &ConversationState, expected: &str) -> R
     ))
 }
 
-/// Test-only support for ignored tests that run the installed harness against a
-/// real account.  It deliberately speaks only through `spawn_session` and the
-/// normalized transport; fixture processes and injected activities belong in
-/// adapter tests, not here.
 pub mod support {
     use super::*;
 
@@ -1063,24 +1049,16 @@ pub mod support {
         pub id: String,
         pub mode: PromptMode,
         pub text: String,
-        /// `marker` is the exact caller-provided text.  Live tests use an
-        /// unguessable marker in it, rather than a process ID or fixed token.
         pub marker: String,
         pub images: Vec<PromptImage>,
     }
 
-    /// The strongest receipt evidence a harness actually exposes.  Native
-    /// history is enough for one unique functional marker, never for matching
-    /// equal text or delayed image receipts.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub enum PromptObservation {
         CorrelatedDelivery,
         NativeHistoryOnly,
     }
 
-    /// The exact provider/model pair accepted by a short-lived real harness
-    /// session.  Child E2E profiles use this instead of guessing from the
-    /// first entry in a possibly stale configuration catalog.
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct LiveWorkerModel {
         pub provider: String,
@@ -1150,9 +1128,6 @@ pub mod support {
             &self.file_name
         }
 
-        /// The only shell command a live E2E permission responder may allow.
-        /// It runs the owned, project-local gate without arguments or shell
-        /// composition.
         pub fn shell_command(&self) -> String {
             format!("sh ./{}", self.script_file_name())
         }
@@ -1165,16 +1140,12 @@ pub mod support {
             )
         }
 
-        /// UI tests can release a real tool process without owning the
-        /// transport that started it.
         pub fn release(&self) -> Result<(), String> {
             self.assert_still_closed()?;
             fs::write(&self.release_path, format!("{}\n", self.marker))
                 .map_err(|error| format!("release live tool gate {}: {error}", self.file_name))
         }
 
-        /// Control tests call this before release.  It rules out the tool's
-        /// bounded timeout as the reason a turn settled or a handoff started.
         pub fn assert_still_closed(&self) -> Result<(), String> {
             if !self.script_path.is_file() {
                 return Err(format!(
@@ -1213,9 +1184,6 @@ pub mod support {
             }
         }
 
-        /// Verifies that the PID emitted by the live shell gate is observable
-        /// before a control command.  This calibrates `kill -0` against a
-        /// process we own, so a later failure is meaningful exit evidence.
         pub fn assert_process_alive(&self) -> Result<(), String> {
             self.assert_started()?;
             let pid = self.pid()?;
@@ -1229,10 +1197,6 @@ pub mod support {
             }
         }
 
-        /// After an acknowledged Abort, waits a bounded time for exactly the
-        /// shell process that opened this gate to exit.  It sends no signal;
-        /// `kill -0` only probes liveness.  A release or natural timeout makes
-        /// this fail rather than masking a no-op Abort.
         pub fn assert_process_exited_after_abort(&self) -> Result<(), String> {
             self.assert_still_closed()?;
             self.assert_started()?;
@@ -1317,12 +1281,6 @@ pub mod support {
         }
     }
 
-    /// Returns a one-shot reply only when an installed client asks to run one
-    /// of the exact project-local commands registered by this test.
-    ///
-    /// This recognizes only the observed permission forms.  In
-    /// particular, it never chooses an "always" option and never accepts a
-    /// title which merely contains an allowed command.
     pub fn bounded_command_permission(
         request: &ExtensionUiRequest,
         allowed_commands: &[String],
@@ -1454,9 +1412,6 @@ pub mod support {
         })
     }
 
-    /// Returns a reply only for the exact Bash permission required by one of
-    /// this process's registered project-local gates.  Live tests never grant
-    /// a general shell permission, even though the fixture itself is safe.
     pub fn bounded_gate_permission(
         request: &ExtensionUiRequest,
         gates: &[TurnGate],
@@ -1491,11 +1446,6 @@ pub mod support {
         ))
     }
 
-    /// An isolated project plus a single real installed harness session.
-    ///
-    /// `FARCASTER_DATA_DIR` is set by `scripts/e2e.sh`.  We reject an absent
-    /// setting here so a developer cannot accidentally point the live suite at
-    /// their normal Farcaster database.
     pub struct LiveSession {
         harness: Backend,
         capabilities: AgentCapabilities,
@@ -1713,10 +1663,6 @@ pub mod support {
             self.transport.cancel_prompt(id)
         }
 
-        /// Registers one literal command for the live fixture's narrow
-        /// one-shot permission responder.  Callers must use the returned
-        /// value verbatim in their prompt; the responder never extracts a
-        /// command from model or backend output.
         pub fn register_fixture_command(
             &mut self,
             command: impl Into<String>,
@@ -1739,16 +1685,12 @@ pub mod support {
             Ok(command)
         }
 
-        /// Ask the real model to hold an actual shell invocation.  Tests wait
-        /// for that observed tool event before writing the release file.
         pub fn start_gated_turn(&mut self, label: &str) -> Result<TurnGate, String> {
             self.require_available(
                 "tool activity",
                 &self.capabilities.observation.tool_activity,
             )?;
             let gate = TurnGate::new(self.project(), label)?;
-            // Register before the real prompt leaves this process.  Claude
-            // can ask its exact Bash permission before any tool activity.
             self.gates.push(gate.clone());
             self.submit(PromptMode::Normal, gate.prompt(), Vec::new())?;
             self.wait_for_tool_start(gate.file_name(), TURN_TIMEOUT)?;
@@ -1777,9 +1719,6 @@ pub mod support {
             .map_err(|error| format!("{error}; trace={}", self.trace_summary()))
         }
 
-        /// Finds the one real shell tool invocation made by this gate.  The
-        /// generated gate filename is unique per case, so this never matches
-        /// another turn by text order.
         pub fn gate_tool_call_id(&self, gate: &TurnGate) -> Result<String, String> {
             let matching = self
                 .activities
@@ -1810,10 +1749,6 @@ pub mod support {
                 })
         }
 
-        /// Waits for the actual gated shell invocation to finish after a
-        /// control command.  Harnesses such as OpenCode can keep the outer
-        /// turn alive after ApplySteering, so an unrelated `agent_start` is
-        /// not evidence that the control took effect.
         pub fn wait_for_gate_tool_end_after(
             &mut self,
             cursor: usize,
@@ -1828,12 +1763,6 @@ pub mod support {
             })
         }
 
-        /// Proves the first-Escape handoff reached a real turn boundary without
-        /// assuming every harness starts a replacement turn.  Some continue
-        /// the outer turn and finish the original shell tool; others settle it
-        /// and begin a new turn.  The tool path uses the exact observed call
-        /// ID, while the replacement path requires `agent_start` after—not
-        /// merely near—the matching settlement.
         pub fn wait_for_apply_handoff_after(
             &mut self,
             cursor: usize,
@@ -1874,11 +1803,6 @@ pub mod support {
             ))
         }
 
-        /// A cancelled gate may report an end event as part of cancellation,
-        /// so its end alone cannot prove later execution.  A new start of the
-        /// uniquely named gate after settlement does prove that the stopped
-        /// shell work restarted.  Keep this tied to the gate filename rather
-        /// than any assistant text, which models may echo or reason about.
         pub fn assert_no_gate_tool_start_after(
             &self,
             cursor: usize,
@@ -2164,10 +2088,6 @@ pub mod support {
             }
         }
 
-        /// Equal text cannot establish identity.  This assertion requires the
-        /// native history and normalized delivery events to retain each real
-        /// submission ID; a backend that cannot do so reports a blocked E2E
-        /// case instead of guessing with text order.
         pub fn assert_duplicate_submissions_once(
             &mut self,
             first: &Submission,
@@ -2415,10 +2335,6 @@ pub mod support {
             }
         }
 
-        /// Closes a LoadState-only model probe.  It deliberately does not ask
-        /// the native client to delete the locator: Codex rejects that request
-        /// before a prompt has created a rollout.  Real E2E turns continue to
-        /// use `close_cleanup`, which keeps deletion errors strict.
         fn close_model_probe(mut self) -> Result<(), String> {
             if self.submitted_prompt || !self.gates.is_empty() {
                 return Err("refusing probe-only cleanup after a live prompt or gate".into());
@@ -2564,11 +2480,6 @@ pub mod support {
         select_harnesses(std::env::var("FARCASTER_E2E_HARNESS").ok().as_deref())
     }
 
-    /// Resolves a child model from the installed harness's real `LoadState`.
-    /// An explicit `FARCASTER_E2E_MODEL` must agree with that actual selection;
-    /// this helper never asks for a catalog or changes a model.  The probe
-    /// always closes before its caller can launch MCP-backed child workers,
-    /// which restores the scoped MCP guard.
     pub fn selected_live_worker_model(harness: Backend) -> Result<LiveWorkerModel, String> {
         let mut probe = LiveSession::start(harness)?;
         let outcome = (|| {
@@ -2634,9 +2545,6 @@ pub mod support {
             {
                 Ok(HarnessAccessMode::Sandboxed)
             }
-            // Full access requires a deliberate environment opt-in. Pi's
-            // sandbox support comes from an optional adapter and therefore is
-            // not listed in its static descriptor.
             Some("full") => Ok(HarnessAccessMode::Full),
             None | Some("sandboxed") => Err(
                 "E2E_BLOCKED: selected harness has no sandboxed access mode; set FARCASTER_E2E_ACCESS_MODE=full only after approving a full-access live run"
@@ -2719,7 +2627,6 @@ pub mod support {
     }
 
     pub fn alternate_image() -> PromptImage {
-        // Valid 1×1 GIF, distinct from TEST_IMAGE's PNG bytes.
         image(
             "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==",
             "image/gif",

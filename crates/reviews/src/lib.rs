@@ -1,4 +1,3 @@
-//! Editor-neutral, advisory review locations and durable transcript delivery.
 extern crate self as reviews;
 
 use farcaster_conversation as conversation;
@@ -30,7 +29,6 @@ pub struct ReviewLocation {
     pub note: String,
 }
 
-/// Editor-reported locations and the last explicit review navigation.
 #[derive(Clone, Debug, Deserialize)]
 pub struct ReviewNavigation {
     pub list_id: u64,
@@ -84,8 +82,6 @@ fn bounded_text(text: &str, max: usize, field: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Resolve existing ancestors too, so missing files beneath escaping symlinks
-/// cannot become editor targets. Missing paths remain useful advisory entries.
 pub fn resolve_path(project: &Path, relative: &str) -> Result<PathBuf, String> {
     let root = project.canonicalize().map_err(|error| error.to_string())?;
     let candidate = root.join(relative);

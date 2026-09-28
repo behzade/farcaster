@@ -134,7 +134,6 @@ fn close_allows_the_cli_to_flush_after_stdin_eof() {
         &script,
         concat!(
             "while IFS= read -r line; do :; done\n",
-            // This exceeds both the 256-frame Rust channel and a normal OS pipe buffer.
             "awk 'BEGIN { for (i=0; i<32768; i++) print \"{\\\"type\\\":\\\"keep_alive\\\"}\" }'\n",
             "printf flushed > \"$1\"\n",
         ),

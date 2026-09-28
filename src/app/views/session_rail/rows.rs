@@ -400,7 +400,6 @@ fn session_archive_action(
     })
 }
 
-/// Shared Archive and Restore control for chat rows.
 pub(super) fn archive_action(
     id: &str,
     is_archived: bool,
@@ -408,8 +407,6 @@ pub(super) fn archive_action(
     on_press: impl Fn(bool, &mut Window, &mut App) + 'static,
 ) -> AnyElement {
     let label = if is_archived { "Restore" } else { "Archive" };
-    // The control names the state it moves the chat to, so one place decides
-    // the toggle and no row can disagree with the label it shows.
     let apply = !is_archived;
     let icon = if is_archived {
         AppIcon::ArrowCounterClockwise
@@ -609,8 +606,6 @@ pub(super) fn session_accessible_label(title: &str, state: &str, age: &str) -> S
     format!("Resume session: {title}. State: {state}. Updated {age}")
 }
 
-/// Every row reserves the same status, provider, age and shortcut columns.
-/// Actions cover the last two columns without changing their geometry.
 pub(super) fn session_row_trailing(
     harness: impl Into<Option<Backend>>,
     status: Option<AnyElement>,
@@ -716,8 +711,6 @@ fn session_metadata_slot(
         .into_any_element()
 }
 
-/// A chat reports its state immediately left of the provider icon, in the same
-/// slot a failed chat and any future reload action share.
 pub(super) fn session_status_icon(identity: &str, status: &str) -> Option<AnyElement> {
     let (icon, color) = status_visual(status)?;
     let tooltip = status.to_owned();

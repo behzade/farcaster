@@ -61,8 +61,6 @@ type HeldAcksRuntime = (
     Rc<RefCell<Vec<SessionCommand>>>,
 );
 
-/// Running Claude session with a held-ack transport and a durable state store.
-/// The first dispatched input receives the `held-1` request id.
 fn held_acks_runtime(temp: &std::path::Path) -> Result<HeldAcksRuntime, String> {
     let (mut owner, events) = owner_without_process(temp.to_path_buf());
     let transport = HeldAcks::new();
@@ -146,9 +144,6 @@ fn normal_receipt_after_steering_settles_releases_the_next_send() -> Result<(), 
         .clone();
     owner.apply_command(RuntimeCommand::ApplySteering);
 
-    // Settlement alone cannot acknowledge Normal. The native Escape E2E
-    // requires its delivery too; delay that receipt here to check that the
-    // runtime releases the send guard even if settlement arrives first.
     owner.apply_process_item(SessionEvent::Activity(
         json!({
             "type":"prompt_delivery", "submissionId":steer, "status":"delivered"
@@ -491,10 +486,6 @@ fn command_entry_sends_all_unacknowledged_inputs_before_first_escape() -> Result
     Ok(())
 }
 
-/// A transport that fails after a known delivery must keep the accepted
-/// outcome for the composer and leave the durable row in the recoverable
-/// `pending` state (the delivery receipt cannot be persisted because the
-/// injected trigger fails).
 #[test]
 fn transport_failure_after_delivery_keeps_the_accepted_outcome_and_recoverable_row()
 -> Result<(), String> {

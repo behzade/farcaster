@@ -6,7 +6,6 @@ use super::{
     extensions::{AgentMode, Model, PromptMode, SessionState, SlashCommand},
 };
 
-/// A response's operation is derived from its payload, not independently mutable.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SessionResponse {
     pub id: Option<String>,
@@ -74,7 +73,6 @@ pub struct SessionResponseError {
 pub enum SessionResponseErrorKind {
     #[default]
     RejectedBeforeAcceptance,
-    /// The transport abandoned the request during a lifecycle change, not a backend rejection.
     Cancelled,
     DeliveryUnknown,
 }
@@ -84,8 +82,6 @@ pub enum PromptOutcome {
     Cancelled,
     Accepted,
     RejectedBeforeAcceptance,
-    /// The request ended without a definitive receipt. Durable outbox recovery owns
-    /// later disposition; the composer must release its in-memory submission.
     DeliveryUnknown,
 }
 
@@ -150,8 +146,6 @@ impl SessionResponsePayload {
 #[derive(Clone, Debug, PartialEq)]
 pub enum SessionHistory {
     Preserve,
-    // Transcript message payloads remain open-ended until the activity/history
-    // contract is migrated; the response envelope itself is validated.
     Replace {
         messages: Vec<Value>,
         prompt_deliveries: Option<farcaster_sessions::PromptDeliveryReconciliation>,

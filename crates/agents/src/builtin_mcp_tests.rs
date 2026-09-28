@@ -18,8 +18,6 @@ fn disabled_guard_restores_enabled_state() {
 #[test]
 fn disabled_guard_restores_disabled_state() {
     let _outer = McpDisabledForTest::new();
-    // Keep the global lock through the assertion and final restoration. Give
-    // the inner guard its own lock to test Drop without nesting global locks.
     static INNER: Mutex<()> = Mutex::new(());
     let guard = McpDisabledForTest {
         _exclusive: INNER.lock().expect("inner guard lock"),

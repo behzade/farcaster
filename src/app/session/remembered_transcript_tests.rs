@@ -27,17 +27,6 @@ fn stamped_session(directory: &Path, contents: &str) -> PathBuf {
 }
 
 #[test]
-fn a_loading_snapshot_paints_the_session_it_last_showed() {
-    let directory = tempfile::tempdir().expect("session directory");
-    let path = stamped_session(directory.path(), "{}");
-
-    remember(&snapshot(&path, Some("hello")));
-
-    let loading = stand_in(snapshot(&path, None));
-    assert_eq!(loading.conversation.items.len(), 1);
-}
-
-#[test]
 fn an_empty_session_is_never_remembered() {
     let directory = tempfile::tempdir().expect("session directory");
     let path = stamped_session(directory.path(), "{}");

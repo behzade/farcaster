@@ -80,7 +80,6 @@ fn codex_restart_keeps_newer_unacknowledged_selection() {
             .expect("selected model");
             scenario.owner.set_model(model);
             scenario.owner.set_thinking("high".into());
-            // Restart before either selection acknowledgement reaches the runtime.
             scenario
                 .owner
                 .start_process(scenario.owner.active_session.clone());

@@ -28,7 +28,6 @@ impl CodeContext {
     }
 
     pub fn prompt(&self, instruction: &str) -> String {
-        // A selection may itself contain Markdown fences.
         let longest = self
             .text
             .split(|c| c != '`')
@@ -129,7 +128,6 @@ impl FarcasterApp {
             let result = capture.await;
             let _ = weak.update_in(cx, |this, window, cx| {
                 this.workspace.send_to_chat_capture = None;
-                // Never open a late capture over another session, editor, or modal.
                 if this.composer.sessions.current_target() != target
                     || this.workspace.editor.request_generation != generation
                     || this.workspace.editor.view.as_ref() != Some(&editor)

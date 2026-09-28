@@ -1,4 +1,3 @@
-//! Set up graphics before loading drivers, including AppImage/NixOS interoperability.
 use std::{ffi::OsString, path::Path, process::Command};
 
 const VULKAN_DRIVER_CONFIGURATION: [&str; 5] = [
@@ -60,8 +59,6 @@ fn appimage_environment(
         return Ok(environment);
     }
 
-    // Ubuntu-built loaders do not search NixOS's driver profile. Use the older
-    // variable understood by the bundled Vulkan loader, without replacing user policy.
     if !VULKAN_DRIVER_CONFIGURATION
         .iter()
         .any(|name| value(name).is_some())
@@ -80,9 +77,6 @@ fn appimage_environment(
         }
     }
 
-    // Host Mesa can require Wayland symbols newer than those in the AppImage.
-    // Resolve its own dependency with bundle search paths removed, then preload
-    // that ABI-compatible library before any graphics libraries are opened.
     let mesa = driver_root.join("lib/libEGL_mesa.so.0");
     if mesa.is_file() {
         let output = Command::new("ldd")

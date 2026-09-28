@@ -193,7 +193,6 @@ pub struct QueueState {
     pub follow_up: Vec<String>,
     pub steering_ids: Vec<String>,
     pub follow_up_ids: Vec<String>,
-    /// Exact IDs the queue owner can still remove before dispatch.
     pub cancellable_ids: Vec<String>,
 }
 

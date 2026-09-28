@@ -77,7 +77,6 @@ impl ComposerPersistenceWorker {
 
 impl sessions::ComposerPersistence<ComposerAttachment> for ComposerPersistenceWorker {
     fn save(&self, record: ComposerRecord) {
-        // Failed sends also reach the update stream; the next flush fails too.
         let _ = self.send(PersistenceCommand::Save(record));
     }
 
@@ -185,7 +184,6 @@ fn flush(store: &StateStore, pending: &mut Vec<PersistenceCommand>) -> Result<()
         completed += 1;
         Ok(())
     });
-    // Each composer command commits on its own. Retain only the failed suffix.
     pending.drain(..completed);
     result
 }

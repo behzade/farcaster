@@ -9,8 +9,6 @@ use crate::{
     sessions::{DraftSession, SessionSummary, root_session_for_path},
 };
 
-/// Where a chat's archived state lives. A chat that has never been written to
-/// has no session file yet, so it keeps that state on its registry record.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::app) enum ChatArchiveTarget {
     Draft(String),
@@ -67,9 +65,6 @@ impl FarcasterApp {
         cx.notify();
     }
 
-    /// File a chat away, or bring it back, by the identity the rail shows.
-    /// Every chat resolves: one that was written to a session takes the session
-    /// with it, and one that was not keeps its state on its own record.
     pub(in crate::app) fn request_chat_archive(
         &mut self,
         app_session_id: i64,

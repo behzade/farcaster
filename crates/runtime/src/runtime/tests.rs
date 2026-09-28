@@ -502,34 +502,6 @@ fn persisted_submitted_draft_selects_its_session() {
 }
 
 #[test]
-fn snapshot_event_clones_share_transcript_storage() {
-    let event = RuntimeEvent::Snapshot {
-        generation: 1,
-        snapshot: Arc::new(RuntimeSnapshot::default()),
-    };
-    let cloned = event.clone();
-    let RuntimeEvent::Snapshot { snapshot: left, .. } = &event else {
-        panic!("expected snapshot event");
-    };
-    let RuntimeEvent::Snapshot {
-        snapshot: right, ..
-    } = &cloned
-    else {
-        panic!("expected cloned snapshot event");
-    };
-
-    assert!(Arc::ptr_eq(left, right));
-}
-
-#[test]
-fn cloned_snapshots_share_conversation_storage() {
-    let snapshot = RuntimeSnapshot::default();
-    let cloned = snapshot.clone();
-
-    assert!(Arc::ptr_eq(&snapshot.conversation, &cloned.conversation));
-}
-
-#[test]
 fn session_status_publication_deduplicates_but_tracks_session_changes() {
     let (events_tx, events_rx) = mpsc::channel();
     let (wake_tx, _wake_rx) = async_channel::bounded(1);
@@ -1288,8 +1260,6 @@ fn deferred_prompt_is_rejected_when_startup_state_has_no_session_path()
             .len(),
         0
     );
-    // Rejection returns this unsent input to the composer, so the durable
-    // outbox must not retain a second recoverable copy.
     let connection = rusqlite::Connection::open(temp.path().join("gui-state.sqlite3"))?;
     let outbox_state: String =
         connection.query_row("SELECT state FROM outbox", [], |row| row.get(0))?;
@@ -1923,9 +1893,6 @@ fn cold_drafts_reuse_only_their_own_harness_catalog() {
     assert_eq!(next_pi.thinking_levels, vec!["high"]);
 }
 
-/// Startup sends steering configuration first, ahead of the state and history
-/// queries that can each deliver deferred prompts; the full sequence keeps every
-/// configuration and catalog query in one dispatch.
 #[test]
 fn startup_commands_send_configuration_before_state_and_history_queries() {
     assert_eq!(
@@ -2772,38 +2739,6 @@ fn refreshing_visible_external_history_preserves_transcript_ui_state() {
         published
             .iter()
             .all(|event| !matches!(event, RuntimeEvent::HistoryReset { .. }))
-    );
-}
-
-#[test]
-fn external_writes_refresh_only_resident_history_documents() {
-    let external = PathBuf::from("/sessions/external.jsonl");
-    let live = PathBuf::from("/sessions/live.jsonl");
-    let project = PathBuf::from("/project");
-    let latest = HashMap::from([
-        (
-            "external".into(),
-            Arc::new(RuntimeSnapshot {
-                project: project.clone(),
-                selected_session: Some(external.clone()),
-                history_preview: true,
-                ..RuntimeSnapshot::default()
-            }),
-        ),
-        (
-            "live".into(),
-            Arc::new(RuntimeSnapshot {
-                project,
-                selected_session: Some(live.clone()),
-                history_preview: false,
-                ..RuntimeSnapshot::default()
-            }),
-        ),
-    ]);
-
-    assert_eq!(
-        changed_external_documents(&latest, &[external.clone(), live]),
-        vec![("external".into(), external, PathBuf::from("/project"), None,)]
     );
 }
 

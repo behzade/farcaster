@@ -1,4 +1,3 @@
-//! Exercise native adapters and ensure completed work leaves no runtime lease.
 use super::*;
 use crate::agents::Backend;
 

@@ -402,10 +402,7 @@ impl PiWorkerSession {
             return;
         };
         match response.result {
-            Ok(_) if prompt.reports_ack && prompt.mode != PromptMode::Normal => {
-                // Pi's response proves queue admission. Native user message
-                // events below prove delivery to the model.
-            }
+            Ok(_) if prompt.reports_ack && prompt.mode != PromptMode::Normal => {}
             Ok(_) if prompt.reports_ack => {
                 self.prompt_acks.push_back((prompt.submission_id, Ok(())))
             }

@@ -1,5 +1,3 @@
-//! Pass the agents' captured project environment through Ghostty's command-only API.
-//! The private launch file avoids exposing environment values in process arguments.
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
@@ -61,15 +59,12 @@ fn take_command(path: &Path) -> Result<Command, String> {
         .current_dir(launch.project)
         .env_clear()
         .envs(launch.environment)
-        // Match the Ghostty surface, even when the project snapshot has TERM=dumb.
         .env("TERM", "xterm-256color")
         .env("COLORTERM", "truecolor")
         .env("TERM_PROGRAM", "gpui-ghostty");
     Ok(command)
 }
 
-/// Handle the internal child launch before app environment imports or GUI startup.
-/// Ordinary app invocations return; a successful child launch replaces this process.
 pub(crate) fn run_if_requested() -> Result<(), String> {
     use std::os::unix::process::CommandExt as _;
     let mut arguments = std::env::args_os().skip(1);

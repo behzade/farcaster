@@ -95,8 +95,6 @@ impl RepositoryBackend {
         self.operations.snapshot(self)
     }
 
-    /// Observe only when the operation lock is free and authorization still
-    /// allows execution. A busy lock or denied authorization returns `None`.
     pub fn try_snapshot_with_totals(
         &self,
         allowed: impl FnOnce() -> bool,

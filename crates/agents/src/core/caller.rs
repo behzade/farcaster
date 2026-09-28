@@ -84,9 +84,7 @@ pub struct CallerContext {
     pub worker_name: String,
     pub project: PathBuf,
     pub session: String,
-    /// The indexed Farcaster path, when known.
     pub session_locator: Option<PathBuf>,
-    /// Explicit launch profile; native session paths need not encode it.
     pub harness_profile_id: Option<String>,
     pub app_session_id: Option<AppSessionId>,
     pub backend: Backend,
@@ -271,7 +269,6 @@ impl CallerRegistry {
         Ok(())
     }
 
-    // Call before taking the pool lock: the sink may acquire storage locks.
     pub(super) fn refresh_session_bindings(&self, project: &Path) -> Result<(), String> {
         let tokens = self
             .callers
@@ -319,8 +316,6 @@ impl CallerRegistry {
         }
     }
 
-    // Replace snapshots only after an exact live binding or storage resolution.
-    // Pool/report handles share this binding, so App ID merges update them too.
     fn refresh_family(&self, token: &str) {
         let Some((worker_id, session, old_ids, live_ids, children)) = (|| {
             let mut callers = self.callers.lock().ok()?;
@@ -330,8 +325,6 @@ impl CallerRegistry {
             let previous = caller.binding.lock().ok()?.clone();
             let mut bindings = self.bindings.lock().ok()?;
             bindings.retain(|binding| binding.strong_count() > 0);
-            // Retained handles from an earlier process follow only an explicit
-            // binding transition from the same exact identity.
             let previous = previous.as_ref().unwrap_or(&session);
             for binding in bindings.iter().filter_map(std::sync::Weak::upgrade) {
                 if let Ok(mut value) = binding.lock()
@@ -536,7 +529,6 @@ impl CallerRegistry {
         )
     }
 
-    // Keep the explicit identity and access fields together at caller registration.
     #[allow(clippy::too_many_arguments)]
     pub fn issue_as_with_access(
         &self,
@@ -867,7 +859,6 @@ impl RegisteredCaller {
 }
 
 impl CallerIdentity {
-    /// Keep a backend locator available for in-memory routing without recording it as a session.
     pub fn without_session_persistence(self) -> Self {
         if let Ok(mut callers) = self.registry.callers.lock()
             && let Some(caller) = callers.get_mut(&self.token)
@@ -907,8 +898,6 @@ impl CallerIdentity {
         self.registry.refresh_family(&self.token);
     }
 
-    /// Called at execution dispatch, never when a queued prompt is admitted.
-    /// A missing sink is normal for standalone adapters and isolated tests.
     pub fn begin_execution(&self, prompt_id: Option<&str>) {
         self.registry.bind_record(&self.token);
         let execution = (|| {
@@ -987,7 +976,6 @@ impl CallerIdentity {
         self.bind_with_locator(session_locator, None);
     }
 
-    /// Set the resolved launch profile before binding a native session.
     pub fn set_harness_profile_id(&self, profile_id: Option<String>) {
         if let Ok(mut callers) = self.registry.callers.lock()
             && let Some(caller) = callers.get_mut(&self.token)

@@ -6,7 +6,6 @@ use std::{
 
 const LIMIT: usize = 24;
 
-// Detects ordinary writes, not same-size edits that restore the original mtime.
 #[derive(Clone, Eq, PartialEq)]
 pub(super) struct FileStamp {
     modified: SystemTime,
@@ -15,7 +14,6 @@ pub(super) struct FileStamp {
 
 impl FileStamp {
     pub(super) fn read(path: &Path) -> Option<Self> {
-        // Process-wide caches must not confuse relative paths across cwd changes.
         if !path.is_absolute() {
             return None;
         }
@@ -45,15 +43,11 @@ struct State<K, S, T> {
     loading: Vec<Arc<Source<K, S>>>,
 }
 
-// Each adapter owns its keys and freshness evidence. Unknown revisions bypass
-// caching; no file-system assumptions leak into runtime session selection.
 pub(super) struct HistoryCache<K, S, T> {
     state: Mutex<State<K, S, T>>,
     finished: Condvar,
 }
 
-// Release waiters on success, failure, and unwinding. Failed loads are retried;
-// changed revisions may load independently while an older read finishes.
 struct Loading<'a, K, S, T> {
     cache: &'a HistoryCache<K, S, T>,
     source: Arc<Source<K, S>>,
@@ -110,7 +104,6 @@ impl<K: Eq, S: Eq, T: Clone> HistoryCache<K, S, T> {
                     .any(|source| source.key == key && source.revision == before)
                 {
                     state = self.finished.wait(state).unwrap_or_else(|p| p.into_inner());
-                    // A completed warm may already be stale; check freshness again.
                     continue;
                 }
                 let source = Arc::new(Source {
@@ -126,13 +119,10 @@ impl<K: Eq, S: Eq, T: Clone> HistoryCache<K, S, T> {
             source: source.clone(),
         });
 
-        // Neither loading nor copying large histories holds the cache lock.
         let history = load()?;
         if let Some(source) = source.as_ref() {
             let cached = Arc::new(history.clone());
             let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            // Revalidate under the publication lock so a delayed older read
-            // cannot replace a newer fill, or cache data changed during loading.
             if revision().as_ref() == Some(&source.revision) {
                 state.entries.retain(|entry| entry.source.key != source.key);
                 state.entries.push(Entry {

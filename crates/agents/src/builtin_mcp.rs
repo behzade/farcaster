@@ -7,7 +7,6 @@ use std::sync::{Mutex, MutexGuard};
 const DEFAULT_URL: &str = "http://127.0.0.1:8765/mcp";
 static ENDPOINT: OnceLock<String> = OnceLock::new();
 
-/// Configure the host endpoint once, before any agents launch.
 pub fn set_endpoint(address: SocketAddr) -> Result<(), String> {
     ENDPOINT
         .set(format!("http://{address}/mcp"))
@@ -57,8 +56,6 @@ pub fn set_enabled(enabled: bool) {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-/// Hold across operations and assertions that require a stable MCP setting.
-/// Do not acquire this lock while holding another MCP test guard.
 pub fn exclusive_for_test() -> MutexGuard<'static, ()> {
     EXCLUSIVE
         .lock()

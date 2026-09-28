@@ -62,7 +62,6 @@ pub(super) fn tokens(usage: &Value) -> TokenUsage {
     }
 }
 
-/// Project both live and saved API content into Farcaster's neutral transcript.
 pub(super) fn history_messages(message: &Value) -> Vec<Value> {
     let mut messages = Vec::new();
     let mut content = Vec::new();
@@ -161,9 +160,7 @@ impl Events {
         }
     }
 
-    /// Input has already passed the source-derived SDK envelope decoder.
     pub(super) fn message(&mut self, frame: &Value) {
-        // Native subagent streams belong to their parent tool, not the main answer.
         if frame["parent_tool_use_id"].as_str().is_some() {
             return;
         }
@@ -215,7 +212,6 @@ impl Events {
                 self.context_usage = tokens(&message["usage"]);
                 let content = blocks(message);
                 for (index, block) in content.iter().enumerate() {
-                    // Claude may emit one assistant envelope per streamed block.
                     let index = if content.len() == 1 { self.block_index } else { index };
                     match string(block,"type") {
                         "text" | "thinking" => {
@@ -223,7 +219,6 @@ impl Events {
                             let full = string(block, if thinking {"thinking"} else {"text"});
                             let previous = if thinking {&self.thinking} else {&self.streamed}
                                 .get(&index).map(String::as_str).unwrap_or_default();
-                            // The complete message repeats streamed content; emit only its suffix.
                             if let Some(suffix) = full.strip_prefix(previous) {
                                 self.delta(index, suffix, thinking);
                             }
@@ -253,8 +248,6 @@ impl Events {
                 }
             }
             "result" => {
-                // modelUsage is cumulative and includes subagents and helper calls.
-                // result.usage covers only the main loop for this turn.
                 let mut usage = WorkerUsage { turn:self.context_usage, ..Default::default() };
                 for model in frame["modelUsage"].as_object().into_iter().flat_map(|models| models.values()) {
                     usage.session = usage.session.saturating_add(TokenUsage {

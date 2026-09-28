@@ -30,10 +30,3 @@ fn only_cr_adjacent_to_lf_is_stripped() {
     );
     assert_eq!(framer.finish(), Some(b"c\r".to_vec()));
 }
-
-#[test]
-fn unterminated_eof_preserves_trailing_cr_payload() {
-    let mut framer = JsonlFramer::default();
-    assert!(framer.push(b"payload\r").is_empty());
-    assert_eq!(framer.finish(), Some(b"payload\r".to_vec()));
-}

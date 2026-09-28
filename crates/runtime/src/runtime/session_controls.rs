@@ -4,7 +4,6 @@ use crate::agents::Backend;
 #[derive(Default)]
 pub(super) struct PendingSessionControls {
     model: Option<(String, String)>,
-    // Outer None means no pending change; Some(None) is an explicit reset.
     thinking: Option<Option<String>>,
     service_tier: Option<String>,
     model_requests: std::collections::HashSet<String>,
@@ -21,8 +20,6 @@ pub(super) struct PendingSessionControls {
 
 impl PendingSessionControls {
     pub(super) fn restore_selection(&mut self, model: Option<&Model>, effort: Option<&str>) {
-        // A new transport has not applied even an acknowledged selection from
-        // the old one. Newer queued or in-flight choices still take precedence.
         if !self.model_pending()
             && let Some(model) = model
         {

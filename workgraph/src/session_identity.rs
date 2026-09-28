@@ -2,10 +2,6 @@ use rusqlite::{Connection, params};
 
 use crate::{PersistenceError, ProjectGraph, StoredProject};
 
-/// Rewrite persisted session references within the caller's transaction.
-///
-/// The application resolves identities; the graph owns its stored shape. A
-/// missing table is normal when application storage predates graph startup.
 pub fn remap_session_keys(
     connection: &Connection,
     resolve: impl Fn(&str, &str, Option<&str>) -> Option<String>,
@@ -35,8 +31,6 @@ pub fn remap_session_keys(
     })
 }
 
-/// Release claims and detach deleted sessions within the caller's transaction.
-/// Completed tasks and walk history retain their original attribution.
 pub fn delete_session_keys(
     connection: &Connection,
     keys: &[String],
@@ -52,8 +46,6 @@ pub fn delete_session_keys(
             .filter(|link| keys.contains(&link.session_id))
             .map(|link| link.walk_number)
             .collect();
-        // Legacy graphs derive completion attribution from links. Save it before
-        // detaching those links so history does not turn into an unknown owner.
         let completed: Vec<_> = graph
             .nodes
             .iter()
@@ -143,8 +135,6 @@ fn update_graphs(
 }
 
 fn coalesce_links(graph: &mut ProjectGraph) {
-    // A merged session has one selected walk. Prefer a walk with a current
-    // owned task, then the most recently selected walk. Keep all task owners.
     let mut links = std::mem::take(&mut graph.sessions);
     links.sort_by_key(|link| {
         let active = graph.walks.iter().any(|walk| {
@@ -177,8 +167,6 @@ fn coalesce_links(graph: &mut ProjectGraph) {
         if !graph.sessions.iter().any(|kept| kept.walk_number == number)
             && let Some(walk) = graph.walks.iter_mut().find(|walk| walk.number == number)
         {
-            // The task claim remains authoritative without a selected walk.
-            // Do not leave a discarded walk positioned on that task forever.
             if walk.current_node.take().is_some() {
                 walk.version = walk.version.saturating_add(1);
             }

@@ -5,8 +5,6 @@ export default async function steering(pi) {
   registerSteering(pi);
   const boundary = process.env.FARCASTER_PROMPT_BOUNDARY_URL;
   if (boundary) {
-    // Pi awaits turn_end after all tools, before reading steering messages.
-    // The host releases this request after native steer admission, not delivery.
     pi.on("turn_end", async (_event, ctx) => {
       const response = await fetch(boundary, {
         method: "POST",
@@ -58,8 +56,6 @@ function registerSteering(pi) {
       try {
         ctx.abort();
         await ctx.waitForIdle();
-        // Start a new run without duplicating input already consumed before abort.
-        // The context hook removes this hidden trigger before the provider sees it.
         await new Promise(resolve => {
           resumeStarted = resolve;
           pi.sendMessage({customType: marker, content: [], display: false}, {triggerTurn: true});
@@ -105,9 +101,6 @@ async function registerFarcasterTools(pi, url, token, header) {
   }
 }
 
-// SEP-2243 (2026-07-28): every non-initialize POST declares its JSON-RPC method
-// and, for methods with a routing target, that target, so middle boxes can
-// route without parsing bodies.
 function standardHeaders(body) {
   const method = body?.method;
   if (typeof method !== "string" || !method) return {};
@@ -145,8 +138,6 @@ function toolLabel(name) {
     .join(" ");
 }
 
-// The old MCP gateway truncated oversized results; pass-through would otherwise
-// push unbounded JSON (full workgraph dumps) into model context.
 const MAX_TEXT_CHARS = 24_000;
 
 function toPiResult(mcp) {
@@ -208,8 +199,6 @@ class McpClient {
     };
     if (this.session) headers["Mcp-Session-Id"] = this.session;
     Object.assign(headers, standardHeaders(body));
-    // The no-catalog profile setup can ask six sequential questions, each with
-    // a 300s server wait. Keep the request bounded beyond that full path.
     const interactive = body.method === "tools/call" && body.params?.name === "worker_send";
     const timeout = AbortSignal.timeout(interactive ? 6 * 300000 + 10000 : 8000);
     const response = await fetch(this.url, {

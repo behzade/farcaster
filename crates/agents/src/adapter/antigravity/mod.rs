@@ -17,8 +17,6 @@ pub(super) const PROFILE: AcpProfile = AcpProfile {
     } else {
         &[]
     },
-    // The official server is already signed in. Sending authenticate for
-    // oauth-personal is unnecessary and can stall session startup.
     auth_method: None,
     force_argument: None,
     resume_method: "session/resume",
@@ -29,8 +27,6 @@ pub(super) fn descriptor() -> crate::contract::AgentBackendDescriptor {
     super::acp::backend::descriptor(&PROFILE, false)
 }
 
-/// The official server persists each conversation's working directory beside
-/// its trajectory database under the Gemini home.
 fn conversation_project(session_id: &str) -> Option<std::path::PathBuf> {
     let home = std::env::var_os("GEMINI_HOME")
         .map(std::path::PathBuf::from)

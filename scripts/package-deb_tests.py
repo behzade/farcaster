@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Exercise the packaging script with fixture linker/package metadata, without a Rust build.
-
-System-package tools are boundary doubles; staging, copying, and control-file
-creation use the real scripts. Native package installation stays covered by CI.
-"""
 import json
 import os
 from pathlib import Path

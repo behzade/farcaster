@@ -1,4 +1,3 @@
-//! Session-local model receipt deduplication shared by prompt adapters.
 use std::collections::HashSet;
 
 #[derive(Default)]

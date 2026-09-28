@@ -11,9 +11,6 @@ fn antigravity_sandbox_restart_without_history_replay_preserves_transcript() -> 
     };
     use std::os::unix::fs::PermissionsExt;
 
-    // Antigravity resumes the saved session without replaying session/update messages.
-    // Exercise the real ACP startup and main-session history response, not a fabricated
-    // SessionHistory value: Some(empty history) is different from unavailable history.
     const SCRIPT: &str = r#"#!/bin/sh
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$0.requests"
@@ -51,7 +48,6 @@ done
     let profile = &super::super::super::antigravity::PROFILE;
     let (mut original, _, _) = spawn_session(&command, profile, project.path(), None, None, None)?;
     let locator = original.session_id.clone();
-    // This is the visible conversation retained by restart_process_preserving_transcript.
     let mut conversation = crate::conversation::ConversationState::default();
     conversation.replace_history(&[
         json!({"role":"user", "content":"Remember the previous work"}),
@@ -114,7 +110,6 @@ done
     assert!(requests.contains("\"value\":\"default\""));
     assert!(requests.contains("\"value\":\"yolo\""));
 
-    // Apply the same history contract as RuntimeOwner's startup projection.
     if let SessionHistory::Replace { messages, .. } = &history {
         conversation.replace_history(messages);
     }
@@ -124,8 +119,6 @@ done
         "sandbox restart must retain the visible transcript when Antigravity resumes without replay; got {history:?}"
     );
 
-    // An empty session/load replay is authoritative. Do not fix the regression
-    // by discarding all empty histories, which would leave stale rows visible.
     let (mut loaded, _, history) = spawn_session(
         &command,
         &PROFILE,
@@ -1383,7 +1376,6 @@ fn live_cursor_configuration_and_listing() {
     ).expect("write test diagnostics");
 }
 
-/// Uses the installed, signed-in Cursor CLI and makes real model requests.
 #[test]
 #[ignore = "requires Cursor login and network; consumes model usage"]
 fn live_cursor_session_round_trip() {
@@ -1434,7 +1426,6 @@ fn live_cursor_session_round_trip() {
                     if action == "cancel" {
                         session.abort().expect("test operation should succeed");
                     } else {
-                        // Only approve the harmless command named by this test.
                         let approved = action == "allow"
                             && input.prompt.contains("printf FARCASTER_PERMISSION_CHECK");
                         approvals += usize::from(approved);
@@ -1548,7 +1539,6 @@ fn live_cursor_session_round_trip() {
     for action in ["allow", "deny", "cancel"] {
         permission_turn(&mut resumed, action);
     }
-    // Cancel independently of whether Cursor asks permission for printf.
     resumed
         .send(
             "Do not use tools. Count from one to one hundred.".into(),

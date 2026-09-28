@@ -8,7 +8,6 @@
     end
     review = previous.context.review
     if requested < 1 or requested > #review.items then error('Invalid review location') end
-    -- The app re-resolves the selected project-relative path at activation.
     if _A[3] then review.items[requested].path = _A[3] end
   else
     review = vim.json.decode(table.concat(vim.fn.readfile(_A), '\n'))
@@ -27,7 +26,6 @@
       count = vim.api.nvim_buf_line_count(buf)
       if vim.bo[buf].modified then warning = 'Buffer has unsaved edits; range may be stale' end
     else
-      -- Count without loading an entire potentially large file into memory.
       local file = io.open(item.path, 'r')
       if file then
         count = 0
@@ -54,8 +52,6 @@
       type = warning and 'W' or '',
     })
   end
-  -- Keep native quickfix navigation and history, but let Farcaster's sidebar
-  -- display the list. Refresh the same list when selecting from that sidebar.
   local options = {
     title = 'Farcaster review: ' .. review.title,
     items = entries,
@@ -68,8 +64,6 @@
   vim.cmd('cclose')
   local selected = requested or first_valid
   if selected and locations[selected].valid then
-    -- Pick the main editing pane, not a former quickfix pane now holding a
-    -- normal buffer. Never replace a preview, floating, or read-only window.
     local target, area
     for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
       local buf = vim.api.nvim_win_get_buf(win)
@@ -83,8 +77,6 @@
     end
     if target then vim.api.nvim_set_current_win(target)
     else vim.cmd('aboveleft new') end
-    -- Explicitly open here: :cc may choose another window already showing the
-    -- buffer. Keep the native list/index without delegating window selection.
     local item = review.items[selected]
     local buf = vim.fn.bufnr(item.path)
     if buf ~= -1 then vim.cmd('hide buffer ' .. buf)

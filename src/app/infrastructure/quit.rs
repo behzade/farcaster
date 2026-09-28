@@ -17,7 +17,6 @@ pub(super) fn install<T: 'static>(
 ) {
     cx.on_action(move |_: &QuitApplication, cx| {
         let app = app.clone();
-        // Key dispatch already holds the window; wait until it is available again.
         cx.defer(move |cx| {
             let Some(app) = app.borrow().clone() else {
                 cx.quit();
@@ -32,7 +31,6 @@ pub(super) fn install<T: 'static>(
 
 pub(super) fn install_window(window: &Window, cx: &App) {
     window.on_window_should_close(cx, |window, cx| {
-        // The close callback already holds this window; do not re-enter it via App.
         window.dispatch_action(Box::new(QuitApplication), cx);
         false
     });

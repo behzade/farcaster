@@ -38,8 +38,6 @@
       state.diffs[tab] = nil
     end
 
-    -- Review activation focuses quickfix. Open targets in an editing window,
-    -- never replace the quickfix buffer with a file or transcript.
     if vim.bo.buftype == 'quickfix' then
       local function can_edit(win)
         if not vim.api.nvim_win_is_valid(win)

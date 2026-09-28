@@ -7,10 +7,6 @@ use std::{
 use super::*;
 use crate::sessions::{SessionSummary, UsageSummary};
 
-/// A local benchmark for the archived-session rail at the current user's scale.
-///
-/// Run with `cargo test archived_rail_lists_792_large_roots -- --ignored --nocapture`.
-/// The fixture contains synthetic metadata only and has no fixed timing threshold.
 #[test]
 #[ignore]
 fn archived_rail_lists_792_large_roots() {

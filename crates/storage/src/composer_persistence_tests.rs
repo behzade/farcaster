@@ -178,7 +178,6 @@ fn flush_is_nonblocking_and_stops_before_later_commands() -> Result<(), Box<dyn 
         store.with(|store| store.load_composer_sessions())?[0].text,
         "before barrier"
     );
-    // Drop still performs the final save and joins the worker.
     resume_tx.send(true)?;
     drop(writer);
     assert!(

@@ -367,7 +367,6 @@ impl CodexWorkerSession {
                 if let Some(effort) = self.effort.clone() {
                     self.caller_identity.select_effort(&effort);
                 }
-                // A collaboration preset must not override the explicit model choice.
                 if let Some(mode) = self.collaboration_mode.as_mut() {
                     mode["settings"]["model"] = json!(id);
                     mode["settings"]["reasoning_effort"] = json!(self.effort);

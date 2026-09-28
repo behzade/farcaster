@@ -136,7 +136,6 @@ impl FarcasterApp {
         target
     }
 
-    /// Prefetch with the row's backend; paths alone do not identify every backend.
     pub(in crate::app) fn prefetch_session(
         &mut self,
         harness: crate::agents::Backend,

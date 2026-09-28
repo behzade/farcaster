@@ -184,7 +184,6 @@ fn installed_pi_child_model_does_not_replace_the_users_selected_default() -> Tes
             app_proxy: None,
             ephemeral: false,
         })?;
-        // Check the real settings file immediately, not just launch arguments.
         assert_installed_default(project.path(), "fixture")?;
         assert_eq!(
             installed_default_thinking(project.path())?,
@@ -1582,7 +1581,6 @@ fn live_pi_nono_sandbox_discovery_without_inference() -> TestResult {
             access_mode: mode.unwrap_or(HarnessAccessMode::Full),
             ..Default::default()
         };
-        // Use the worker launch path to omit the unrelated MCP extension flag.
         let mut process = PiRpcProcess::spawn_worker(
             &command,
             temp.path(),

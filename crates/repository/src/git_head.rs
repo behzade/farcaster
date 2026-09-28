@@ -42,7 +42,6 @@ fn git_head_contents_with_options(
     if contents.status.success() {
         return Ok(contents.stdout);
     }
-    // Added/untracked files and repositories with no commits have an empty base.
     let head = git(
         &root,
         &["rev-parse".as_ref(), "--verify".as_ref(), "HEAD".as_ref()],

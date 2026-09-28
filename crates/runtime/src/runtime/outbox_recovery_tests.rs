@@ -808,7 +808,6 @@ fn secondary_terminal_failure_releases_its_submission_without_blocking_later_res
         let third = "request-3";
         let second_outbox = owner.pending_queued_prompts[second].outbox_id;
         let third_outbox = owner.pending_queued_prompts[third].outbox_id;
-        // Admission is not completion, even for a secondary submission.
         owner.apply_response(SessionResponse::success(
             Some(second.into()),
             SessionResponsePayload::Prompt(PromptMode::FollowUp),
@@ -835,8 +834,6 @@ fn secondary_terminal_failure_releases_its_submission_without_blocking_later_res
             )
         };
         owner.apply_response(failure);
-        // The UI can now resolve every submission in original order, even
-        // though the later delivery arrived before the failed second input.
         let published = events.try_iter().collect::<Vec<_>>();
         let mut results = published
             .iter()
@@ -1359,7 +1356,6 @@ fn startup_failure_settles_deferred_outbox_with_or_without_controls() -> Result<
             assert!(owner.pending_submission_id.is_none());
             assert!(owner.pending_outbox_id.is_none());
             assert!(owner.can_deliver_queued(PromptMode::Normal));
-            // Supply a ready replacement transport after the startup failure.
             owner.process = Some(Box::new(Recorder(sent.clone())));
             owner.active_session = Some(temp.path().join("session.jsonl"));
             owner.startup_state_loaded = true;

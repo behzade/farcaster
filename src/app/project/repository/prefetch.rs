@@ -9,7 +9,6 @@ use super::{FarcasterApp, RepositoryObservation, observations::ScanResult, prefe
 use crate::app::project::trust::repository_execution_allowed;
 use crate::repository::{BackendPreference, RepositoryBackend};
 
-// Trust is checked inside the background job, before any repository command.
 fn observe_if_allowed(
     allowed: impl FnOnce() -> Result<bool, String>,
     scan: impl FnOnce() -> Option<ScanResult>,
@@ -69,7 +68,6 @@ impl FarcasterApp {
 
     fn next_offscreen_project(&mut self) -> Option<PathBuf> {
         let repository = &self.project.repository;
-        // Do not queue work behind an existing background or foreground scan.
         if repository.observations.busy() || repository.loading {
             return None;
         }
@@ -94,8 +92,6 @@ impl FarcasterApp {
         Some(projects[cursor].clone())
     }
 
-    // Startup warming and periodic refresh share one scheduler and one busy
-    // slot. Slow scans cannot accumulate detached tasks every timer tick.
     pub(in crate::app) fn start_offscreen_observation_pass(&mut self, cx: &mut Context<Self>) {
         if self.project.repository.pass_task.is_some() {
             return;
@@ -176,8 +172,6 @@ impl FarcasterApp {
                     this.project.repository.observations.forget(&project);
                     return;
                 }
-                // A busy operation lock is not evidence that the old cache is
-                // wrong. Leave it provisional and retry on the next pass.
                 let Some(scanned) = scanned else { return };
                 if let Some(observation) = RepositoryObservation::from_scan(preference, scanned) {
                     this.project
@@ -185,8 +179,6 @@ impl FarcasterApp {
                         .observations
                         .remember(project, observation);
                 } else {
-                    // Negative/error results never leave a known-stale positive
-                    // entry available for the next project switch.
                     this.project.repository.observations.forget(&project);
                 }
             });

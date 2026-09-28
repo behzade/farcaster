@@ -51,14 +51,12 @@ pub(crate) fn host_with_idle_metrics(
     )
 }
 
-/// Unit hosts own separate stores, even when the test process sets FARCASTER_DATA_DIR.
 pub fn host() -> Arc<dyn RuntimeHost> {
     let directory = tempfile::tempdir().expect("create test state directory");
     let path = directory.path().join("state.sqlite3");
     host_with_path(&path, Some(directory))
 }
 
-/// Subprocess fixtures opt into sharing the same on-disk store across restarts.
 pub fn host_at(path: &Path) -> Arc<dyn RuntimeHost> {
     host_with_path(path, None)
 }

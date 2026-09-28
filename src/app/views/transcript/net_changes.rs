@@ -1,7 +1,5 @@
-//! Compose recorded line edits without reading the current working copy.
 #[derive(Clone, Debug)]
 pub(super) struct Edit {
-    /// Zero-based position in the file after preceding edits have been applied.
     pub start: usize,
     pub old: Vec<String>,
     pub new: Vec<String>,
@@ -22,7 +20,6 @@ impl NetChanges {
     pub fn apply(&mut self, edits: &[Edit]) -> Option<()> {
         for edit in edits {
             let end = edit.start.checked_add(edit.old.len())?;
-            // Bound work for malformed or unusually large transcript patches.
             if end.max(self.current.len()).checked_add(edit.new.len())? > 200_000 {
                 return None;
             }

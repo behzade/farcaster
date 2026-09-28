@@ -26,16 +26,12 @@ pub(super) fn decode<T: DeserializeOwned>(value: Value) -> Result<T, String> {
 fn decode_frame(line: &str) -> Result<Option<StdoutMessage>, String> {
     let value: Value =
         serde_json::from_str(line).map_err(|error| format!("read Claude JSON: {error}"))?;
-    // SDKControlInterruptRequest documents these native queue-status frames,
-    // but the SDK's StdoutMessage union omits them. Its runtime forwards them
-    // without validation. Our local queue does not consume native queue status.
     if value["type"] == "command_lifecycle" {
         return Ok(None);
     }
     let kind = value["type"].as_str().unwrap_or("unknown").to_owned();
     let subtype = value["subtype"].as_str().unwrap_or("-").to_owned();
     serde_json::from_value(value).map(Some).map_err(|error| {
-        // Report version drift without putting prompts, tool data or secrets in logs.
         format!("Claude CLI frame {kind}/{subtype} does not match SDK 0.3.257: {error}. Native session files remain intact.")
     })
 }
@@ -278,8 +274,6 @@ impl Process {
         self.input.take();
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
-            // The reader uses a bounded channel. Keep consuming while the CLI handles EOF,
-            // or a full channel can stop its stdout pipe and prevent its final state flush.
             for _ in 0..256 {
                 if self.incoming.try_recv().is_err() {
                     break;

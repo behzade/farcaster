@@ -1,4 +1,3 @@
-//! Isolated integration tests: supervisor -> real adapter -> fixture process -> snapshot.
 use super::*;
 use crate::agents::Backend;
 use serde_json::{Value, json};
@@ -56,11 +55,9 @@ fn catalog_fixture_discovery_preserves_arguments_and_only_bypasses_exact_opencod
         ("opencode", vec!["debug", "paths", "--extra"], false),
         ("codex", vec!["debug", "paths"], false),
     ] {
-        // Keep each executable and argument report unique across launches.
         let dir = tempfile::tempdir().expect("create fixture directory");
         let executable = dir.path().join(backend);
         fs::copy(fixture_binary().join("agent"), &executable).expect("copy fixture");
-        // There is no control.sock: only discovery may succeed without a relay.
         let output = Command::new(&executable)
             .args(&args)
             .stdin(Stdio::null())
@@ -80,8 +77,6 @@ fn catalog_fixture_discovery_preserves_arguments_and_only_bypasses_exact_opencod
     }
 }
 
-/// Re-exec only this test before changing HOME/PATH. Parallel tests and real
-/// credentials cannot leak into the supervisor's global environment or caches.
 fn isolated(name: &str, backends: &[&str], run: impl FnOnce()) {
     isolated_with_env(name, backends, &[], run);
 }
@@ -106,7 +101,6 @@ fn isolated_with_env(name: &str, backends: &[&str], env: &[(&str, &str)], run: i
         fs::copy(fixture_binary().join("agent"), dir.path().join(backend))
             .expect("test operation should succeed");
     }
-    // The ACP adapter checks that this sibling exists. The relay never invokes it.
     fs::copy(
         fixture_binary().join("agent"),
         dir.path().join("localharness_external"),
@@ -176,7 +170,6 @@ impl Harness {
         listener
             .set_nonblocking(true)
             .expect("test operation should succeed");
-        // Unlike RuntimeHandle::spawn_with, do not disable catalog discovery.
         let runtime = RuntimeHandle::spawn_with_configuration_refresh(
             project.clone(),
             crate::sessions::DraftSession::with_id(
@@ -283,7 +276,6 @@ impl Peer {
         Self {
             reader,
             backend: match backend.trim() {
-                // The fixture reports the executable name, not the stored backend ID.
                 "codex" => Backend::Codex,
                 name => name.parse().expect("fixture backend"),
             },
@@ -405,7 +397,6 @@ fn claude_cached_models_survive_failed_refresh_after_restart() {
         &["claude"],
         || {
             round_trip(Backend::Claude);
-            // Keep the same on-disk application state but replace the supervisor.
             fs::remove_file(
                 std::env::current_dir()
                     .expect("test operation should succeed")
@@ -416,7 +407,6 @@ fn claude_cached_models_survive_failed_refresh_after_restart() {
             harness.select(Backend::Claude, "restored");
             let mut peer = harness.accept(WAIT).expect("refresh did not start");
             assert_eq!(peer.backend, Backend::Claude);
-            // The refreshed response is still held: these models must come from disk.
             let cached = harness.snapshot(Backend::Claude, |s| {
                 s.models.iter().any(|model| model.id == "fixture-model")
             });
@@ -564,8 +554,6 @@ fn stalled_acp_catalog_does_not_block_another_backend() {
             let mut stalled = harness
                 .accept(WAIT)
                 .expect("first ACP backend did not start");
-            // Receiving initialize proves this process is inside the catalog exchange.
-            // Hold its response until the other backend has published models.
             stalled.request("initialize");
             let healthy = if stalled.backend == Backend::Cursor {
                 Backend::Antigravity

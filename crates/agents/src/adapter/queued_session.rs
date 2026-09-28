@@ -1,4 +1,3 @@
-//! Backend-neutral ownership of main-session input until a delivery boundary.
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde_json::{Value, json};
@@ -15,13 +14,9 @@ const MAX_FILTERED_EVENTS_PER_POLL: usize = 256;
 
 #[derive(Clone, Copy)]
 pub(super) enum SteeringBoundary {
-    /// The backend has no steering support; Enter becomes a follow-up.
     Unsupported,
-    /// Native steering; follow-ups still belong to the shared queue.
     Native,
-    /// A blocking hook stays open until native admission acknowledges the steer.
     Held,
-    /// The native hook ends the loop after the completed tool batch, without abort.
     StopAfterBatch,
 }
 
@@ -70,7 +65,6 @@ pub(super) struct QueuedSession {
     compacting: bool,
     normal_requests: HashSet<String>,
     queue: VecDeque<Input>,
-    /// Snapshot claimed at a stop-after-batch hook; no longer individually cancellable.
     stopped_batch: Vec<Input>,
     held_batch: Option<HeldBatch>,
     dispatched: HashMap<String, Dispatch>,
@@ -113,8 +107,6 @@ impl QueuedSession {
         }
         let mut event = self.native_queue.clone();
         event["type"] = "queue_update".into();
-        // Only this owner can promise removal before dispatch. Native queue
-        // IDs and pending receipts are not evidence of cancellability.
         event["cancellableIds"] = self
             .queue
             .iter()
@@ -139,8 +131,6 @@ impl QueuedSession {
     }
 
     fn dispatch(&mut self, input: Input) {
-        // Automatic follow-ups start a normal run only when idle. Escape uses
-        // dispatch_as to stage inputs for the explicit native handoff instead.
         let mode = if self.running {
             PromptMode::Steer
         } else {
@@ -159,9 +149,6 @@ impl QueuedSession {
         }
         let starts_run = !self.running;
         let tracks_delivery = self.inner.tracks_prompt_delivery(mode);
-        // Starting separate native requests can start the model before the
-        // remaining steers arrive. One envelope makes the whole snapshot
-        // available on the first model step, regardless of the backend.
         let message = inputs
             .iter()
             .map(|input| input.message.as_str())
@@ -218,8 +205,6 @@ impl QueuedSession {
             boundary.release(false);
             return;
         }
-        // Another parallel tool hook may arrive while a steer is being admitted.
-        // It need not consume another queue item to let the completed batch finish.
         if self.held_batch.is_some() || !self.stopped_batch.is_empty() {
             boundary.release(false);
             return;
@@ -242,8 +227,6 @@ impl QueuedSession {
                 boundary.release(true);
             }
             SteeringBoundary::Held => {
-                // Snapshot all currently pending steers. Keep their identities
-                // and order; follow-ups still wait for the run to settle.
                 self.held_batch = Some(HeldBatch {
                     boundary,
                     pending: batch.iter().map(|input| input.id.clone()).collect(),
@@ -279,8 +262,6 @@ impl QueuedSession {
             SessionEvent::Response(response) => {
                 if let Ok(Payload::LoadState(state)) = &mut response.result {
                     self.session_id = Some(state.session_id.clone());
-                    // A state reply can describe the instant before a prompt
-                    // was admitted. Only settlement/rejection ends our run.
                     self.running |= state.is_streaming;
                     self.compacting = state.is_compacting;
                     state.pending_message_count += self.queue.len();
@@ -328,8 +309,6 @@ impl QueuedSession {
                         }
                         self.pending.push_back(SessionEvent::Response(reply));
                     }
-                    // Keep the identity mapping until delivery; an admission reply
-                    // is not proof that the backend consumed the message.
                     let unknown = response.result.as_ref().is_err_and(|error| {
                         error.kind == crate::SessionResponseErrorKind::DeliveryUnknown
                     });
@@ -405,9 +384,6 @@ impl QueuedSession {
                                 .iter()
                                 .map(|input| input.id.clone())
                                 .collect::<Vec<_>>();
-                            // The native receipt covers exactly the envelope
-                            // we sent. Project each member's original payload,
-                            // never the joined text or another member's images.
                             for input in &dispatch.inputs {
                                 let SessionEvent::Activity(receipt) = input.receipt(&status) else {
                                     unreachable!()
@@ -417,8 +393,6 @@ impl QueuedSession {
                                 member["message"] = receipt.value()["message"].clone();
                                 self.pending.push_back(activity(member));
                             }
-                            // The terminal response can follow the receipt; retain
-                            // the mapping for it as well.
                             if dispatch.responded && dispatch.delivered {
                                 self.dispatched.remove(&id);
                             }
@@ -435,8 +409,6 @@ impl QueuedSession {
             }
             SessionEvent::Failure(_) => {
                 self.release_boundary();
-                // A transport failure is not a user cancellation. Keep unsent
-                // input available to the runtime's durable recovery path.
             }
             _ => {}
         }
@@ -504,10 +476,6 @@ impl SessionTransport for QueuedSession {
             self.queue_changed();
             return Ok(());
         }
-        // A click can outlive the queue snapshot that offered it. Once this
-        // owner has claimed the input (or never owned it), leave delivery alone.
-        // In particular, do not turn a stale click into native cancellation or
-        // fabricate a cancelled receipt. Only removal above proves cancellation.
         Ok(())
     }
     fn send(&mut self, command: SessionCommand) -> Result<String, String> {
@@ -535,8 +503,6 @@ impl SessionTransport for QueuedSession {
                             if recovery == SteerErrorRecovery::Fail {
                                 return Err(error);
                             }
-                            // Only the adapter can prove that retry is safe.
-                            // Keep ownership here until its next idle boundary.
                             self.running = recovery == SteerErrorRecovery::RetryWhenIdle;
                             self.queue.push_back(Input {
                                 id: id.clone(),
@@ -583,9 +549,6 @@ impl SessionTransport for QueuedSession {
                 self.inner.send(SessionCommand::Abort)
             }
             SessionCommand::ApplySteering => {
-                // Escape is an explicit immediate handoff, unlike an ordinary
-                // steer. Stage every input with its native queued mode before
-                // invoking the adapter's interrupt-and-resume control.
                 for input in std::mem::take(&mut self.stopped_batch) {
                     let mode = input.mode;
                     self.dispatch_as(input, mode);
@@ -595,15 +558,12 @@ impl SessionTransport for QueuedSession {
                     self.dispatch_as(input, mode);
                 }
                 self.queue_changed();
-                // A native handoff must not wait on our own post-tool hook.
                 self.release_boundary();
                 if let Some(hook) = &self.hook {
                     while let Some(boundary) = hook.poll() {
                         boundary.release(false);
                     }
                 }
-                // Keep the real control response (and any failure), including
-                // when only an already-admitted native steer is pending.
                 self.inner.send(SessionCommand::ApplySteering)
             }
             other => {
@@ -624,9 +584,6 @@ impl SessionTransport for QueuedSession {
         if let Some(event) = self.pending.pop_front() {
             return Some(event);
         }
-        // A filtered native event may have more events behind it, including
-        // agent_settled. Keep draining so the caller does not stop polling
-        // while a terminal event is already queued.
         let mut filtered = 0;
         while let Some(event) = self.inner.poll() {
             if let Some(event) = self.observe(event).or_else(|| self.pending.pop_front()) {
@@ -634,8 +591,6 @@ impl SessionTransport for QueuedSession {
             }
             filtered += 1;
             if filtered == MAX_FILTERED_EVENTS_PER_POLL {
-                // Let the runtime handle commands before draining more native
-                // events. Wake it again: a terminal event may be behind these.
                 std::thread::current().unpark();
                 return None;
             }

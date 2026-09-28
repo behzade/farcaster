@@ -45,7 +45,6 @@ pub(super) fn migrate(value: serde_json::Value) -> Result<WorkerProfiles, String
             {
                 continue;
             }
-            // Keep distinct custom routes, even when long task names share a prefix.
             let mut suffix = format!("_{level}");
             let mut counter = 1;
             let name = loop {

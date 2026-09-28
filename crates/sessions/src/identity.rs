@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use farcaster_contracts::Backend;
 use serde::{Deserialize, Serialize};
 
-/// A positive identity allocated by the application state store.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(try_from = "i64", into = "i64")]
 pub struct AppSessionId(i64);
@@ -17,7 +16,6 @@ impl AppSessionId {
         self.0
     }
 
-    /// Stable opaque key for consumers which store session ownership as text.
     pub fn to_key(self) -> String {
         format!("app-session:{}", self.0)
     }
@@ -42,8 +40,6 @@ impl From<AppSessionId> for i64 {
     }
 }
 
-/// Exact routing identity. Binding must explicitly replace a locator key with
-/// its application key; these variants never compare equal implicitly.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub enum SessionKey {
     App(AppSessionId),
@@ -54,8 +50,6 @@ pub enum SessionKey {
     },
 }
 
-/// A backend's native ID is unique only within this scope. Use application IDs
-/// or locators for routing when available, and resolve legacy native IDs explicitly.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct NativeSessionIdentity {
     pub project: PathBuf,
@@ -64,8 +58,6 @@ pub struct NativeSessionIdentity {
     pub id: String,
 }
 
-/// Compatibility fallback for synthetic locators. Native session paths do not
-/// encode a profile; their explicit persisted profile remains authoritative.
 pub fn profile_id_from_locator(path: &Path) -> Option<String> {
     let backend = path.parent()?;
     let id = backend.parent()?;

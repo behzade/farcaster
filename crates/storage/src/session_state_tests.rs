@@ -127,8 +127,6 @@ fn archive_intent_survives_binding_in_either_order_and_late_snapshots() {
             assert_eq!(canonical.len(), 1);
             assert_eq!(canonical[0].app_session_id, pending.app_session_id);
             assert_eq!(canonical[0].archived, archived);
-            // A command queued while the draft existed also works after its
-            // draft key has gone. No locator was captured by that command.
             store
                 .set_app_session_archived(
                     sessions::AppSessionId::new(pending.app_session_id).expect("identity"),
@@ -276,8 +274,6 @@ fn merge_orders_explicit_archive_intents_by_time_then_durable_id() {
                     StateStore::open_at(&temp.path().join("state.sqlite3")).expect("store");
                 let first = draft(&mut store, temp.path(), "first");
                 let second = draft(&mut store, temp.path(), "second");
-                // A larger local sequence must not outrank a newer intent on
-                // another row, or decide the tie between two durable IDs.
                 for archived in [!first_archived, first_archived] {
                     store
                         .set_app_session_archived(
@@ -319,8 +315,6 @@ fn merge_orders_explicit_archive_intents_by_time_then_durable_id() {
                 tx.commit().expect("commit merge");
                 assert_eq!(store.load_drafts().expect("drafts")[0].archived, expected);
 
-                // Moving events changes their session and sequence. A later
-                // merge must retain the selected state, not replay an old body.
                 let third = draft(&mut store, temp.path(), "third");
                 let tx = store.connection.transaction().expect("begin next merge");
                 super::super::identity::merge_session(&tx, third.app_session_id, keep)
@@ -328,8 +322,6 @@ fn merge_orders_explicit_archive_intents_by_time_then_durable_id() {
                 tx.commit().expect("commit next merge");
                 assert_eq!(store.load_drafts().expect("drafts")[0].archived, expected);
 
-                // A later path-based action also survives another merge after
-                // the original intent events have changed session and sequence.
                 let path = temp.path().join("bound.jsonl");
                 let tx = store.connection.transaction().expect("begin bind");
                 bind_locator(&tx, &third.id, &path).expect("bind survivor");

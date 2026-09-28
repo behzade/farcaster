@@ -224,7 +224,6 @@ mod performance;
 pub(crate) mod utility {
     pub(crate) use farcaster_utility::persistent_vec;
 }
-// Use the real transcript primitives without app-wide dialog dependencies.
 mod primitives {
     pub(crate) use crate::bench_button::*;
     pub(crate) use crate::bench_content::*;

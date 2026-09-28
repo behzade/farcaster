@@ -1,26 +1,3 @@
-//! Opt-in, live account checks for the production runtime path.
-//!
-//! These tests deliberately start `RuntimeHandle`, rather than reducing
-//! `SessionEvent`s into a conversation directly. They therefore cover the
-//! supervisor, `RuntimeOwner`, durable prompt receipts, history replacement,
-//! and selected-session routing as the app uses them. They do not use fixture
-//! transports or inject protocol responses.
-//!
-//! Run one harness at a time through `scripts/e2e.sh`; that script creates the
-//! required sibling `data` and `evidence` directories.
-//!
-//! `scripts/e2e.sh` creates and validates fresh state and evidence directories
-//! before `StateStore::open` or a runtime thread starts. It retains the
-//! caller's harness credentials and configuration, which live accounts need.
-//! The test may leave a native session behind where the harness does not offer
-//! deletion; every retained session belongs to the temporary project.
-//!
-//! There is deliberately no generic live `DeliveryUnknown` or rejection test:
-//! each would need a harness-specific wire fault after a write, or an unsafe
-//! malformed request. Production controls cannot make either race both safe
-//! and repeatable across installed harnesses. Adapter process tests own those
-//! receipt states; these tests prove the real accepted/restart/navigation path.
-// Live-test progress is consumed by the E2E runner.
 #![allow(clippy::print_stderr)]
 use crate::agents::Backend;
 
@@ -292,8 +269,6 @@ fn live_e2e_runtime_accepted_prompt_survives_restart_without_duplicate_or_replay
             wait_for_gate_started(&runtime, &mut trace, &project, &message, TURN_TIMEOUT)?;
             require_user_rows(&trace, &message, std::slice::from_ref(&first_image))?;
 
-            // This is an application restart, not an injected process event. Drop joins the
-            // supervisor and closes its real adapter transport before the next runtime opens.
             trace.phase("drop runtime after witnessed initial shell")?;
             drop(runtime);
 
@@ -319,9 +294,6 @@ fn live_e2e_runtime_accepted_prompt_survives_restart_without_duplicate_or_replay
                     require_user_rows(trace, &message, std::slice::from_ref(&first_image)).is_ok()
                 })?;
 
-                // A harness may resume the interrupted tool before its close becomes visible. Abort
-                // only that real resumed run, then prove the original input was neither replayed nor
-                // duplicated by Farcaster's accepted-receipt restoration.
                 if after_restart
                     .snapshot
                     .as_ref()
@@ -338,13 +310,8 @@ fn live_e2e_runtime_accepted_prompt_survives_restart_without_duplicate_or_replay
                 }
                 require_user_rows(&after_restart, &message, std::slice::from_ref(&first_image))?;
 
-                // Equal native text with a different image proves receipt identity, not text, governs
-                // transcript reconciliation after the restart.
                 let later_target = bound_target(&first);
                 let later_image = alternate_image();
-                // The first gate only ends after the verified Abort. Its open file lets this later,
-                // equal-text prompt settle instead of making a natural gate timeout look like a
-                // replay result.
                 release_gate(&project, &message)?;
                 let snapshots_before_later = after_restart.snapshot_count;
                 let accepted_before_later = after_restart.accepted_count(&later_target);
@@ -374,8 +341,6 @@ fn live_e2e_runtime_accepted_prompt_survives_restart_without_duplicate_or_replay
                 Ok(())
             })();
 
-            // Keep the real held shell bounded even when resumption or a later prompt fails.
-            // Release it before closing the replacement runtime, then clean every known target.
             drop(_gate_cleanup);
             drop(resumed);
             restart_case
@@ -436,10 +401,6 @@ fn live_e2e_runtime_navigation_keeps_pending_receipts_in_their_origin_session() 
                 TURN_TIMEOUT,
             )?;
 
-            // While the real first turn is held in its tool, send a true FollowUp to A. It is
-            // not yet delivered. Navigate immediately, before waiting for any native receipt.
-            // This is the production queued-before-navigation case, rather than a normal prompt
-            // which may have already been delivered before selection changes.
             let queued_target = bound_target(&first);
             trace.phase("submit follow-up to first bound session before acknowledgement")?;
             runtime.send(prompt_with_mode(
@@ -449,8 +410,6 @@ fn live_e2e_runtime_navigation_keeps_pending_receipts_in_their_origin_session() 
                 queued_image.clone(),
             ))?;
 
-            // Navigate to B before releasing A's tool. B sends the same text but a different
-            // attachment. The eventual A delivery must not bind to this active B transcript.
             let second_draft = unique("navigation-b");
             let second_target = draft_target(&second_draft);
             trace.phase("navigate to second draft before releasing first gate")?;
@@ -483,9 +442,6 @@ fn live_e2e_runtime_navigation_keeps_pending_receipts_in_their_origin_session() 
             require_outcome_session(&trace, &second_target, &second)?;
             require_user_rows(&trace, &queued_message, std::slice::from_ref(&second_image))?;
 
-            // Release A only after B is selected. A's queued prompt now becomes eligible. Wait
-            // for B to settle without changing its selected target, then assert its identical
-            // text still has exactly its one local image row.
             trace.phase("release first shell gate while second session remains selected")?;
             release_gate(&project, &blocking_message)?;
             wait_for(&runtime, &mut trace, TURN_TIMEOUT, |trace| {
@@ -534,9 +490,6 @@ fn live_e2e_runtime_navigation_keeps_pending_receipts_in_their_origin_session() 
 
 #[test]
 #[ignore = "uses one selected installed harness and a real model; requires FARCASTER_E2E_HARNESS"]
-/// This starts below `FarcasterApp`, so it proves runtime transport, native
-/// delivery, and model effects. The GPUI live test owns immediate composer
-/// queue presentation before acknowledgement.
 fn live_e2e_runtime_accepted_steer_and_follow_up_queue_until_delivery() -> Result<(), String> {
     isolated_live_runtime("accepted_steer_and_follow_up_queue_until_delivery", || {
         let _mcp = McpGuard::disabled();
@@ -560,9 +513,6 @@ fn live_e2e_runtime_accepted_steer_and_follow_up_queue_until_delivery() -> Resul
         let runtime = start_runtime(harness, &project, &draft_id, live_config(harness)?)?;
         let gate_cleanup = GateCleanup::new(&project, &gate_message);
 
-        // Keep the actual shell gate bounded even when an assertion fails. The runtime
-        // drops after this block, and the native session is then removed if the harness
-        // exposes safe cleanup.
         let case = (|| -> Result<(), String> {
             trace.phase("submit held initial prompt")?;
             runtime.send(prompt(
@@ -593,8 +543,6 @@ fn live_e2e_runtime_accepted_steer_and_follow_up_queue_until_delivery() -> Resul
             let session_path = target.path.clone();
             wait_for_gate_started(&runtime, &mut trace, &project, &gate_message, TURN_TIMEOUT)?;
 
-            // The shared queue must publish both rows while the real tool stays
-            // held, without waiting for native admission or delivery.
             let target = bound_target(&target);
             trace.phase("submit steer while actual shell remains held")?;
             runtime.send(prompt_with_mode(
@@ -830,8 +778,6 @@ fn live_config(harness: Backend) -> Result<AgentLaunchConfig, String> {
     Ok(AgentLaunchConfig {
         program: PathBuf::from(harness.as_str()),
         prefix_args: Vec::new(),
-        // Sandboxed is the default. A caller must explicitly opt into Full
-        // through FARCASTER_E2E_ACCESS_MODE; we never fall back to it.
         access_mode: live_access_mode_for_harness(harness)?,
         app_proxy: None,
         session_locator_root: Some(isolated_locator_root()?),

@@ -64,7 +64,6 @@ fn closing_gate_releases_unclaimed_hooks() {
     let mut gate = PromptBoundary::new(None).expect("gate");
     gate.enable(true);
     let response = request(&gate.url, "parent");
-    // Requeue a fully parsed real connection so shutdown cannot race accept.
     let boundary = receive(&gate);
     let (sender, incoming) = mpsc::sync_channel(1);
     sender.send(boundary).expect("requeue hook");

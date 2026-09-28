@@ -324,8 +324,6 @@ fn open_target(
         &target,
         EditorTarget::Review(_) | EditorTarget::ReviewLocation { .. }
     );
-    // Keep large transcripts out of the command line. Hold the transfer file
-    // until Neovim has read it, then let it drop.
     let (expression, _transfer) = match target {
         EditorTarget::Resume => (session_expression(tab, None, None), None),
         EditorTarget::File(path, line) => (session_expression(tab, Some(&path), line), None),

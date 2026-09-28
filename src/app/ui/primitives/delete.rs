@@ -8,8 +8,6 @@ use crate::app::ui::{assets::AppIcon, theme::theme};
 
 use super::icon::{AppIconSize, app_icon, icon_control};
 
-/// The one trash control in the app. Rows that hide it until hover pass the
-/// group they belong to so the affordance is identical everywhere.
 #[derive(IntoElement)]
 pub(crate) struct DeleteButton {
     id: ElementId,

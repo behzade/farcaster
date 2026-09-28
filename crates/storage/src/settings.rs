@@ -189,7 +189,6 @@ impl StateStore {
     }
 
     pub fn load_preferred_harness(&self, project: &Path) -> Result<Option<Backend>, String> {
-        // Before the first saved choice, infer it from this project's main sessions.
         let normalized_project = crate::sessions::normalize_session_path(project);
         let legacy_project = project.to_string_lossy();
         self.connection

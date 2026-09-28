@@ -1,21 +1,3 @@
-//! Measures the phases a session switch runs through.
-//!
-//! The switch path reports timings only through `Timing`, which is silent
-//! unless detailed monitoring is on and only logs phases that reach
-//! `SLOW_OPERATION`. A measurement run therefore needs `DEBUG=true` (or
-//! `FARCASTER_PERF_TRACE=1`) to see `switch.session_request`,
-//! `switch.runtime_route`, `switch.select_document`, `switch.load_history`, and
-//! `switch.session_total`.
-//!
-//! The test switches between real session files through a real runtime, so the
-//! numbers come from the same code a click uses. It asserts only that every
-//! switch applied its projected transcript. The durations belong in the
-//! `PERF operation=` lines; a returning visit can be served from the
-//! supervisor's resident document and then reports fewer phases.
-//!
-//! A document refresh repeats the load that a resident document skips, so the
-//! same file is refreshed while cached and after it grows, which is the only
-//! place the history cache changes what a user waits for.
 #![allow(clippy::print_stderr)]
 
 use std::{
@@ -304,7 +286,6 @@ fn hover_prefetch_and_cold_selection_load_the_same_transcript(cx: &mut gpui::Tes
         |cx, app, project| {
             let project = project.canonicalize().unwrap();
             trust::apply(&project, TrustChoice::TrustProject).unwrap();
-            // Start the runtime before either measured selection.
             let warmup = write_session_file(&project, "prefetch-warmup", 4);
             switch_to(cx, app, &warmup, &project, 4);
             cx.run_until_parked();
@@ -316,9 +297,6 @@ fn hover_prefetch_and_cold_selection_load_the_same_transcript(cx: &mut gpui::Tes
                 let mut cold_wall = Duration::ZERO;
                 let mut hover_work = Duration::ZERO;
                 let mut prefetched_wall = Duration::ZERO;
-                // Separate files keep the baseline read from warming the hover case.
-                // Cold means a new app-cache key; the OS file cache is not flushed.
-                // Alternate order; no cache-internal APIs or timing thresholds.
                 for prefetch in [index % 2 == 0, index % 2 != 0] {
                     if prefetch {
                         let started = Instant::now();
@@ -332,7 +310,6 @@ fn hover_prefetch_and_cold_selection_load_the_same_transcript(cx: &mut gpui::Tes
                                 );
                             })
                         });
-                        // Drain the hover task on GPUI's deterministic executor.
                         cx.run_until_parked();
                         hover_work = started.elapsed();
                         prefetched_wall = switch_to(cx, app, &hovered, &project, SWITCH_MESSAGES);
@@ -340,7 +317,6 @@ fn hover_prefetch_and_cold_selection_load_the_same_transcript(cx: &mut gpui::Tes
                         cold_wall = switch_to(cx, app, &cold, &project, SWITCH_MESSAGES);
                     }
                 }
-                // Read only after both selections; this must not warm either case.
                 let cold_history =
                     crate::agents::load_session_history(Backend::Pi, &cold, &project).unwrap();
                 let hovered_history =

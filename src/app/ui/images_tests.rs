@@ -13,8 +13,6 @@ fn preview_and_history_images_preserve_format_bytes_and_cache_identity() {
     assert_eq!(encoded.bytes(), preview.bytes());
     assert!(Arc::ptr_eq(&image(&encoded), &preview));
 
-    // History arrives without a cached composer preview. Check the actual
-    // conversion on this path, using expectations independent of the cache.
     let history = Arc::new(EncodedImage::new(vec![7, 8, 9], "image/jpg").expect("history image"));
     let restored = image(&history);
     assert_eq!(restored.format(), ImageFormat::Jpeg);

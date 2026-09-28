@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::Backend;
 
-/// A named command that speaks one of Farcaster's supported backend protocols.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct HarnessProfile {
     pub id: String,

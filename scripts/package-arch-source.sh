@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Stage a source archive and a checksummed PKGBUILD for the exact release commit.
 set -euo pipefail
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"

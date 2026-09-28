@@ -1,14 +1,10 @@
 #!/bin/sh
-# Opt-in live tests: real installed harnesses and real model accounts.
-# Every case gets a separate process and Farcaster database. Native harness
-# credentials remain available; this script never changes HOME or CODEX_HOME.
 set -eu
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-"$repo_root/target"}
 
-# Each package owns its tests. Focused suites avoid building the GPUI target.
 case ${SUITE:-all} in
     all)
         status=0
@@ -37,8 +33,6 @@ git rev-parse HEAD > "$run_dir/commit.txt"
 git status --short > "$run_dir/worktree.txt"
 git diff --binary HEAD > "$run_dir/worktree.patch"
 
-# Build once, then clone that exact binary. Concurrent workspace edits must not
-# change the implementation halfway through a harness's feature matrix.
 if ! python3 scripts/run-live-case.py --timeout "${FARCASTER_E2E_BUILD_TIMEOUT:-900}" -- \
     cargo test --locked "$@" --no-run --message-format=json \
     < /dev/null > "$run_dir/build.jsonl" 2> "$run_dir/build.log"; then
@@ -77,11 +71,9 @@ if len(paths) != 1:
 print(paths.pop())
 ' "$test_target" < "$run_dir/build.jsonl")
 frozen_binary="$run_dir/farcaster-tests"
-# APFS clones retain the inode contents without copying 200+ MB per harness.
 cp -c "$built_binary" "$frozen_binary" 2>/dev/null || cp "$built_binary" "$frozen_binary"
 set -- "$frozen_binary"
 if [ "$(uname -s)" = Darwin ]; then
-    # The prescribed runner never executes from the crowded deps directory.
     set -- "$repo_root/scripts/run-macos.sh" "$frozen_binary"
 fi
 if ! python3 scripts/run-live-case.py --timeout 60 -- \
@@ -121,8 +113,6 @@ for harness in $harnesses; do
         mkdir "$case_dir" "$case_dir/data" "$case_dir/evidence"
         started=$(date +%s)
         printf '%s %s: RUNNING\n' "$harness" "$case_name"
-        # Isolation is mandatory and owned by this invocation, even if the caller
-        # has FARCASTER_DATA_DIR pointing at their normal application database.
         if FARCASTER_DATA_DIR="$case_dir/data" \
             FARCASTER_E2E_ARTIFACT_DIR="$case_dir/evidence" \
             FARCASTER_E2E_HARNESS="$harness" \
@@ -154,8 +144,6 @@ for harness in $harnesses; do
         if [ "$result" = LIMITED ]; then
             grep 'E2E_LIMIT:' "$case_dir/output.log"
         elif [ "$result" != PASS ]; then
-            # The full trace stays in output.log; do not print a many-thousand
-            # character JSON event line as the per-feature summary.
             tail -n 14 "$case_dir/output.log" | cut -c1-1000
         fi
     done < "$run_dir/cases.txt"
@@ -167,5 +155,4 @@ if [ "$ran" -eq 0 ]; then
 fi
 printf 'Completed %s cases; %s failed/blocked; %s limited. Evidence: %s\n' \
     "$ran" "$failed" "$limited" "$run_dir"
-# A partial capability proof is useful, but not a fully green feature matrix.
 [ "$failed" -eq 0 ] && [ "$limited" -eq 0 ]

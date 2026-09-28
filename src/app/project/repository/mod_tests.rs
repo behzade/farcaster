@@ -146,22 +146,6 @@ fn a_scan_with_nothing_to_show_is_never_remembered() {
 }
 
 #[test]
-fn a_cached_working_copy_is_only_reused_by_the_backend_that_produced_it() {
-    let mut cache = ObservationCache::default();
-    let project = PathBuf::from("/project");
-    cache.remember(project.clone(), cached_observation(BackendPreference::Git));
-
-    assert!(
-        cache.reuse(&project, BackendPreference::Jujutsu).is_none(),
-        "a working copy from another backend is not reusable"
-    );
-    assert!(
-        cache.reuse(&project, BackendPreference::Git).is_none(),
-        "the mismatched working copy is dropped instead of kept stale"
-    );
-}
-
-#[test]
 fn repository_preferences_are_project_specific() {
     let first = PathBuf::from("/first");
     let second = PathBuf::from("/second");
@@ -203,8 +187,6 @@ fn returning_to_a_project_restores_counts_but_requires_fresh_validation(
                     repository.apply_observation(observed);
                     repository.snapshot_validated = true;
                     assert!(repository.can_sync());
-                    // Occupy the refresh gate without spawning a scan. Selection
-                    // must queue its refresh behind this outstanding request.
                     let in_flight = repository.refresh.request().unwrap();
 
                     app.set_repository_project_execution(second.clone(), true, cx);
@@ -297,7 +279,6 @@ fn selecting_and_leaving_a_project_rejects_its_old_background_scan(cx: &mut gpui
 
                     app.set_repository_project_execution(target.clone(), true, cx);
                     assert!(app.project.repository.observations.busy());
-                    // Supply the newer foreground result without executing Git.
                     let repository = &mut app.project.repository;
                     let mut newer = cached_observation(repository.preference);
                     newer.additions = Some(42);

@@ -30,9 +30,7 @@ impl<A> Default for ComposerRecord<A> {
 pub trait ComposerPersistence<A> {
     fn save(&self, record: ComposerRecord<A>);
     fn delete(&self, target: String);
-    /// Queue a barrier now, then await all writes before it (or their failure).
     fn flush(&self) -> Pin<Box<dyn Future<Output = Result<(), String>>>>;
-    /// Number of accepted mutations, used to detect changes after a flush barrier.
     fn revision(&self) -> u64;
 }
 

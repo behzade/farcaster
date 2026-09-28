@@ -3,7 +3,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-// Git calls a file binary when its first bytes contain a NUL byte.
 const BINARY_SNIFF_BYTES: usize = 8000;
 
 pub(crate) fn untracked(contents: &[u8]) -> Option<(usize, usize)> {
@@ -62,7 +61,6 @@ pub(crate) fn parse(patch: &str) -> BTreeMap<PathBuf, Option<(usize, usize)>> {
     files
 }
 
-// Git quotes special bytes with C escapes (including octal UTF-8 bytes).
 fn patch_path(path: &str) -> Option<PathBuf> {
     let path = path.trim_end_matches('\t');
     if !path.starts_with('"') {

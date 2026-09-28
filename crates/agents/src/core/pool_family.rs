@@ -93,8 +93,6 @@ impl FamilyFence {
         }
     }
 
-    // Finishing a refreshed request also releases older fences for the same
-    // roots. Every requested root must be covered; partial overlap is not enough.
     pub(super) fn covered_by(&self, completed: &Self) -> bool {
         self.project == completed.project
             && self.keys.iter().all(|key| {

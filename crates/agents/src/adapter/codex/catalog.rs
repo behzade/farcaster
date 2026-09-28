@@ -73,8 +73,6 @@ pub(super) fn discover_with_client<R: std::io::BufRead, W: std::io::Write>(
             }
         }
     }
-    // General thread/list omits native children with no preview. An ancestor
-    // query includes them, including nested children, without reading their turns.
     let roots: Vec<_> = sessions.iter().map(|session| session.id.clone()).collect();
     let mut seen: std::collections::HashSet<_> =
         sessions.iter().map(|session| session.id.clone()).collect();
@@ -252,8 +250,6 @@ fn can_cache_persisted_history<R: std::io::BufRead, W: std::io::Write>(
     home: &Path,
 ) -> bool {
     let check = || -> Result<bool, String> {
-        // A reused/daemon-backed server can return unflushed live turns. Cache
-        // only when the server confirms it has no loaded threads.
         let id = connection.send_request("thread/loaded/list", json!({}))?;
         let loaded: Value = connection.wait_response(&id)?;
         if !loaded
@@ -263,8 +259,6 @@ fn can_cache_persisted_history<R: std::io::BufRead, W: std::io::Write>(
         {
             return Ok(false);
         }
-        // CODEX_HOME and SQLite's configured home can differ. The cache follows
-        // the existing identity reader, so bypass it for a relocated state DB.
         let id = connection.send_request("config/read", json!({"includeLayers": false}))?;
         let config: Value = connection.wait_response(&id)?;
         let Some(config) = config.get("config").and_then(Value::as_object) else {
@@ -478,7 +472,6 @@ fn summary(
     let Some(cwd) = string(thread, &["cwd"]) else {
         return Ok(None);
     };
-    // Approval reviews use the guardian source; catalog model metadata may be absent.
     if thread
         .pointer("/source/subAgent/other")
         .and_then(Value::as_str)

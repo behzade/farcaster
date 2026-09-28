@@ -57,7 +57,6 @@ pub struct SessionImport {
 pub struct SessionSummary {
     pub id: String,
     pub app_session_id: i64,
-    /// Explicit profile identity, including for backends with native file locators.
     pub profile_id: Option<String>,
     pub harness: Backend,
     pub path: PathBuf,
@@ -65,11 +64,9 @@ pub struct SessionSummary {
     pub title: String,
     pub first_user_message: String,
     pub timestamp: String,
-    /// Backend creation time, or the stored creation time when unavailable.
     pub created_at: Option<SystemTime>,
     pub parent_session: Option<String>,
     pub parent_harness: Option<Backend>,
-    /// Resolved application identity; a parent need not share this session's project.
     pub parent_app_session_id: Option<i64>,
     pub modified: SystemTime,
     pub message_count: usize,
@@ -272,8 +269,6 @@ pub struct LoadedHistory {
     pub model: Option<(String, String)>,
     pub thinking_level: Option<String>,
     pub pending_question: Option<RestoredQuestion>,
-    /// Authoritative backend evidence for Farcaster submission IDs. Absence
-    /// means this history source cannot prove whether a missing ID is pending.
     pub prompt_deliveries: Option<PromptDeliveryReconciliation>,
 }
 
@@ -281,7 +276,6 @@ pub struct LoadedHistory {
 pub struct PromptDeliveryReconciliation {
     pub delivered: Vec<String>,
     pub pending: Vec<String>,
-    /// Whether a missing ID proves that the native session no longer holds it.
     pub absence_is_not_delivered: bool,
 }
 

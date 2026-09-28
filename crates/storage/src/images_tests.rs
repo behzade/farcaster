@@ -47,7 +47,6 @@ fn queued_images_use_portable_deduplicated_files() -> Result<(), Box<dyn std::er
             serde_json::json!({"type":"image", "data":"aGVsbG8=", "mimeType":"image/png"})
         );
     }
-    // Keep a missing attachment in the queue, and fail sending it explicitly.
     std::fs::remove_file(
         queued[0].images[0]
             .path

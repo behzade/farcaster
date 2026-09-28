@@ -116,7 +116,6 @@ impl EditorChoice {
     }
 }
 
-/// An executable and literal arguments, never a shell expression.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct EditorCommand {
     pub program: PathBuf,
@@ -163,7 +162,6 @@ impl EditorCommand {
         if self.choice() == EditorChoice::Vim {
             vec![project.as_os_str().to_owned()]
         } else {
-            // Editors without directory support start in the launcher's project cwd.
             Vec::new()
         }
     }
@@ -198,7 +196,6 @@ impl EditorCommand {
     pub fn review_arguments(&self, locations: &[(PathBuf, Option<u64>)]) -> Vec<OsString> {
         if self.choice() == EditorChoice::Micro && locations.iter().any(|(_, line)| line.is_some())
         {
-            // Micro's +line applies to all files. parsecursor allows a position per file.
             let mut arguments = vec!["-parsecursor".into(), "true".into()];
             arguments.extend(locations.iter().map(|(path, line)| {
                 let mut location = path.as_os_str().to_owned();

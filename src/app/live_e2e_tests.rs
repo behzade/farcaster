@@ -1,9 +1,3 @@
-//! Opt-in checks of the installed harness through the actual Farcaster app.
-//!
-//! `scripts/e2e.sh` creates `FARCASTER_DATA_DIR`; this file refuses to use a
-//! normal user state directory. It sends real model requests and is ignored by
-//! ordinary test runs.
-// Live-test progress is consumed by the E2E runner.
 #![allow(clippy::print_stderr)]
 use crate::agents::Backend;
 
@@ -32,21 +26,12 @@ use crate::{
 
 const UI_POLL: Duration = Duration::from_millis(20);
 const QUEUE_VISIBILITY_TIMEOUT: Duration = Duration::from_secs(5);
-// Pi's real catalog process has a 15s readiness deadline and a second 15s
-// model/reasoning deadline. Keep the app fixture bounded just above that
-// concrete production path rather than spending a full turn timeout on an
-// unavailable configuration.
 const CONFIGURATION_TIMEOUT: Duration = Duration::from_secs(35);
 
 fn phase(name: &str) {
-    // The ignored suite is intentionally verbose. A live harness can block on
-    // native startup or a permission prompt, and the case log must identify
-    // that phase instead of looking like a test-runner deadlock.
     eprintln!("LIVE_UI_PHASE {name}");
 }
 
-/// Releases a real shell gate even if an assertion fails while its model turn
-/// is pending. The gate itself only writes inside this test's temp project.
 struct ReleaseGate(TurnGate);
 
 impl Drop for ReleaseGate {
@@ -71,8 +56,6 @@ fn live_config() -> Result<LiveUiConfig, String> {
             "FARCASTER_E2E_HARNESS {harness:?} did not select exactly one installed harness"
         ));
     }
-    // Match the shell runner's isolation rule exactly. This prevents an
-    // ignored test invoked by hand from touching the user's normal database.
     live_e2e_support::e2e_case_dir()?;
     Ok(LiveUiConfig {
         access_mode: live_e2e_support::live_access_mode_for_harness(harness.parse()?)?,
@@ -102,13 +85,8 @@ fn wait_for_with_timeout(
     phase(&format!("wait:{description}"));
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        // This is the app's real runtime projection. It drains only events
-        // emitted by the installed session; the test never creates events.
         let complete = cx.update(|window, cx| {
             app.update(cx, |app, cx| app.drain_runtime(cx));
-            // Runtime projection can resolve a submission during the next
-            // render. Draw one real frame, but never call GPUI's unbounded
-            // test-executor drain: Farcaster owns permanent receiver tasks.
             window.draw(cx).clear(cx);
             predicate(app.read(cx))
         });
@@ -237,9 +215,6 @@ fn exact_pending_submission(
     matches.next().is_none().then_some(exact)
 }
 
-/// A mixed steer/follow-up test needs a real rendered queue before it presses
-/// Escape. `can_submit` only releases the UI slot for the next real Tab key;
-/// it never stands in for acknowledgement or native delivery evidence.
 fn wait_for_exact_queue(
     cx: &mut VisualTestContext,
     app: &gpui::Entity<FarcasterApp>,
@@ -292,10 +267,6 @@ fn wait_for_exact_queue(
     ))
 }
 
-/// The held-key case intentionally dispatches its first Escape before it has
-/// required an acknowledgement. A pending submission with its exact typed
-/// payload, or the real rendered steer queue, is enough proof it reached the
-/// app command path; neither is a transcript receipt.
 fn wait_for_pending_or_visible_steer(
     cx: &mut VisualTestContext,
     app: &gpui::Entity<FarcasterApp>,
@@ -324,11 +295,6 @@ fn wait_for_pending_or_visible_steer(
     ))
 }
 
-/// A user row is not receipt evidence by itself: an admission path can
-/// incorrectly project one. During an Abort race, retain a row only when the
-/// live transcript has the matching model effect. Otherwise this UI surface
-/// cannot tell a native delivery from an acknowledgement, so fail rather than
-/// bless it.
 fn delivered_abort_receipts(
     app: &FarcasterApp,
     marker: &str,
@@ -399,23 +365,13 @@ fn apply_handoff_reached_boundary(
     gate: &TurnGate,
     completed_runs_before_apply: usize,
 ) -> bool {
-    // ApplySteering has two valid native shapes. A harness can end the exact
-    // gated tool in its outer turn, or settle that turn and begin a replacement
-    // before the queued work reacts. The latter cannot use tool completion:
-    // Codex leaves a managed tool visible while the replacement turn runs.
     let completed_runs = app.snapshot.conversation.completed_runs.len();
     gate_tool_finished(app, gate)
         || (completed_runs > completed_runs_before_apply
             && (app.snapshot.conversation.running
-                // A fast replacement can finish between UI polls. Two new
-                // completed runs prove the old turn settled and its
-                // replacement both started and settled.
                 || completed_runs >= completed_runs_before_apply.saturating_add(2)))
 }
 
-/// The shared matcher validates the exact registered command and a harness's
-/// known one-shot Allow options. This UI layer only turns its selected value
-/// into the actual rendered number key; it never sends a response itself.
 fn gate_permission_option_index(
     request: &ExtensionUiRequest,
     gate: &TurnGate,
@@ -459,8 +415,6 @@ fn gate_permission_matcher_allows_only_the_exact_owned_command() -> Result<(), S
         timeout: None,
     };
 
-    // This is the title/options shape captured from Claude's actual gate
-    // request. The matcher must select the rendered Allow option, not reply.
     assert_eq!(
         gate_permission_option_index(
             &select(exact_title.clone(), vec!["Deny".into(), "Allow".into()]),
@@ -468,10 +422,6 @@ fn gate_permission_matcher_allows_only_the_exact_owned_command() -> Result<(), S
         )?,
         1
     );
-    // Cursor renders its safe one-shot option first and wraps only the exact
-    // command in one backtick pair. Antigravity/ACP renders Allow second.
-    // Keep these indices explicit: the live UI must press the matching
-    // rendered number, never a hard-coded "2" or an Always variant.
     assert_eq!(
         gate_permission_option_index(
             &select(
@@ -546,9 +496,6 @@ fn wait_for_gate_tool(
                 app.extensions.active.dialog.clone(),
             )
         });
-        // A projected tool row can precede the shell process. Do not let the
-        // Escape controls race that start: the gate writes this witness from
-        // inside its actual command immediately before entering the loop.
         if connected && tool_seen && gate.has_started() {
             gate.assert_started()?;
             phase(&format!("observed:gate-tool:{}", gate.file_name()));
@@ -562,8 +509,6 @@ fn wait_for_gate_tool(
             "E2E_BLOCKED: gate permission disappeared before the rendered choice".to_owned()
         })?;
         let approval_key = (gate_permission_option_index(request, gate)? + 1).to_string();
-        // Exercise the rendered dialog's actual keyboard path. Do not inject
-        // an ExtensionResponse or approve any command other than this gate.
         cx.update(|window, cx| {
             let dialog_focus = app.read(cx).extensions.dialog_focus.clone();
             dialog_focus.focus(window, cx);
@@ -587,9 +532,6 @@ fn focus_composer(cx: &mut VisualTestContext, app: &gpui::Entity<FarcasterApp>) 
 }
 
 fn dispatch_keystroke(cx: &mut VisualTestContext, keystroke: Keystroke) {
-    // `simulate_input` and `simulate_keystrokes` call GPUI's unbounded test
-    // executor drain. A full FarcasterApp has permanent receiver tasks, so
-    // dispatch through the same Window path without draining those tasks.
     cx.update(|window, cx| {
         window.dispatch_keystroke(keystroke, cx);
         window.draw(cx).clear(cx);
@@ -621,7 +563,6 @@ fn type_and_enter(cx: &mut VisualTestContext, text: &str) {
 
 fn type_and_queue(cx: &mut VisualTestContext, text: &str) {
     type_text(cx, text);
-    // The actual composer binds Tab to SubmitFollowUp while a run is active.
     dispatch_named_key(cx, "tab");
 }
 
@@ -703,9 +644,6 @@ fn load_draft_configuration(
     cx: &mut VisualTestContext,
     app: &gpui::Entity<FarcasterApp>,
 ) -> Result<(), String> {
-    // This is the production path that starts catalog discovery. A staged
-    // draft begins in `Loading`, but bootstrap deliberately does not launch a
-    // configuration process until the runtime picker opens.
     phase("configuration-picker-open");
     cx.update(|window, cx| {
         app.update(cx, |app, cx| app.set_runtime_picker_open(true, window, cx));
@@ -718,9 +656,6 @@ fn load_draft_configuration(
         CONFIGURATION_TIMEOUT,
         |app| app.snapshot.configuration_status != ConfigurationStatus::Loading,
     );
-    // Restore the same app surface the real composer tests exercise, whether
-    // the catalog succeeded or failed. This also prevents picker focus from
-    // changing subsequent raw-key routing.
     cx.update(|window, cx| {
         app.update(cx, |app, cx| app.set_runtime_picker_open(false, window, cx));
         window.draw(cx).clear(cx);
@@ -749,9 +684,6 @@ fn with_live_app(
     ) -> Result<(), String>,
 ) -> Result<(), String> {
     let config = live_config()?;
-    // The UI app speaks to the installed harness directly. Its test process is
-    // not a registered Farcaster MCP caller, so do not let an inherited host
-    // MCP configuration add an unrelated server failure to model context.
     let _mcp = live_e2e_support::McpGuard::disabled();
     phase("config-validated");
     let case_dir = live_e2e_support::e2e_case_dir()?;
@@ -772,11 +704,6 @@ fn with_live_app(
         .map_err(|error| format!("save selected live harness in isolated state: {error}"))?;
     phase("state-store-seeded");
 
-    // FarcasterApp owns a foreground runtime-wake task. The real supervisor
-    // thread wakes it after native I/O; GPUI's default deterministic scheduler
-    // rejects that cross-thread wake at test teardown. This is GPUI's supported
-    // mixed deterministic/real-I/O mode. The case still owns all timing through
-    // bounded wall-clock waits and drains projection explicitly below.
     cx.executor().allow_parking();
     cx.update(|cx| {
         gpui_component::init(cx);
@@ -787,9 +714,6 @@ fn with_live_app(
     let (workgraph_updates, workgraph_rx) = async_channel::unbounded();
     let (worker_updates, worker_rx) = async_channel::unbounded();
     phase("window-creating");
-    // `add_window_view` unconditionally runs GPUI's scheduler to quiescence.
-    // Bootstrap owns permanent runtime/update receiver tasks, so use the same
-    // real window/app construction without that unbounded test-only drain.
     let window = cx.add_window(|window, cx| {
         FarcasterApp::new(
             project_path.clone(),
@@ -813,14 +737,9 @@ fn with_live_app(
     let window: AnyWindowHandle = window.into();
     let cx = VisualTestContext::from_window(window, cx).into_mut();
     phase("window-created");
-    // Keep actual subscription senders alive for the full app test. They are
-    // deliberately empty; the runtime/session supplies every observed event.
     let _updates = (workgraph_updates, worker_updates);
     focus_composer(cx, &app);
     phase("composer-focused");
-    // `NewSession` stages a disconnected draft; the first real composer
-    // prompt owns session startup. Waiting for `connected` here deadlocks a
-    // correct lazy-start app before it can send that prompt.
     wait_for(cx, &app, "the selected disconnected draft", |app| {
         app.snapshot.harness == Some(config.harness)
             && app.snapshot.project == project_path
@@ -828,30 +747,18 @@ fn with_live_app(
             && app.snapshot.session.is_none()
             && app.snapshot.selected_session.is_none()
     })?;
-    // Access modes can depend on the actual selected harness/model catalog.
-    // Do not assume a static adapter declaration covers this disconnected
-    // draft: open the real runtime picker to start production catalog loading,
-    // then fail safely if it cannot offer the explicitly required live policy.
     load_draft_configuration(cx, &app)?;
-    // No prompt has been sent yet. Force the shared live-test default
-    // (Sandboxed unless the caller explicitly set `...ACCESS_MODE=full`) before
-    // the bounded shell gate can run.
     require_live_access_mode(cx, &app, config.access_mode)?;
     if let Some(model) = config.model.as_deref() {
         wait_for(cx, &app, "the selected harness catalog", |app| {
             !app.snapshot.models.is_empty()
         })?;
         select_requested_model(cx, &app, model)?;
-        // A model can narrow the available modes. Revalidate then reassert
-        // the requested sandbox policy while still disconnected, before the
-        // first prompt starts any native harness process.
         require_live_access_mode(cx, &app, config.access_mode)?;
     }
     exercise(cx, &app, &project_path)
 }
 
-/// Proves first Escape reaches the actual root key route, interrupts an active
-/// native tool turn, and promotes both app input modes before the gate opens.
 #[gpui::test]
 #[ignore = "runs the selected installed harness and real model through the Farcaster GPUI app"]
 fn live_e2e_ui_first_escape_applies_steer_and_queue(cx: &mut TestAppContext) {
@@ -944,8 +851,6 @@ fn live_e2e_ui_first_escape_applies_steer_and_queue(cx: &mut TestAppContext) {
             cx.update(|_, cx| app.read(cx).composer.escape_armed.is_some()),
             "first Escape did not arm Abort after ApplySteering"
         );
-        // Keep the gate closed: an ordinary completion cannot explain these
-        // native tool/assistant transitions.
         wait_for(
             cx,
             app,
@@ -977,8 +882,6 @@ fn live_e2e_ui_first_escape_applies_steer_and_queue(cx: &mut TestAppContext) {
     .expect("live first-Escape UI E2E");
 }
 
-/// Uses a real platform held-key event. It must neither send another control
-/// command nor change the arm created by a prior distinct Escape.
 #[gpui::test]
 #[ignore = "runs the selected installed harness and real model through the Farcaster GPUI app"]
 fn live_e2e_ui_held_escape_does_not_double_apply(cx: &mut TestAppContext) {
@@ -1034,8 +937,6 @@ fn live_e2e_ui_held_escape_does_not_double_apply(cx: &mut TestAppContext) {
     .expect("live held-Escape UI E2E");
 }
 
-/// Proves that a second distinct Escape cancels both pending modes while the
-/// original native tool gate remains closed, then leaves the session reusable.
 #[gpui::test]
 #[ignore = "runs the selected installed harness and real model through the Farcaster GPUI app"]
 fn live_e2e_ui_second_escape_aborts_steer_and_queue(cx: &mut TestAppContext) {
@@ -1063,8 +964,6 @@ fn live_e2e_ui_second_escape_aborts_steer_and_queue(cx: &mut TestAppContext) {
             }),
             "Enter did not clear the composer for the abort-test steer"
         );
-        // As above, the real queue must render before the next UI key can
-        // submit a follow-up; `can_submit` does not prove delivery.
         wait_for_exact_queue(
             cx,
             app,
@@ -1102,9 +1001,6 @@ fn live_e2e_ui_second_escape_aborts_steer_and_queue(cx: &mut TestAppContext) {
             }),
             "admitted abort inputs reached the transcript before native delivery"
         );
-        // This is a real shell command started by the selected installed
-        // harness. The second Escape contract must stop it, not merely hide
-        // its late UI events.
         gate.assert_process_alive()?;
         focus_composer(cx, app);
         phase("abort:first-escape-dispatched");
@@ -1115,19 +1011,11 @@ fn live_e2e_ui_second_escape_aborts_steer_and_queue(cx: &mut TestAppContext) {
             cx.update(|_, cx| app.read(cx).composer.escape_armed.is_none()),
             "second distinct Escape did not consume the real app abort arm"
         );
-        // The gate stays closed until this assertion has observed the native
-        // abort outcome. Releasing it first would let natural completion hide
-        // a missing Abort control request.
         wait_for(cx, app, "second-Escape abort before gate release", |app| {
             !app.snapshot.conversation.running
         })?;
         gate.assert_still_closed()?;
         gate.assert_process_exited_after_abort()?;
-        // A harness can have streamed output before the second Escape wins.
-        // It must not add a new cancelled handoff after this confirmed stop.
-        // A row that appeared before stop remains only when its matching model
-        // effect proves native delivery; the app does not expose a receipt
-        // marker for every harness in this UI snapshot.
         let (
             steer_output_at_stop,
             queued_output_at_stop,

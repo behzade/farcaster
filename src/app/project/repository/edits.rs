@@ -276,7 +276,6 @@ impl FarcasterApp {
                         pending.error = Some(format!("{error}\nRefresh the review to try again."));
                     }
                 }
-                // A failed hook or command can still have changed repository state.
                 this.request_repository_refresh(cx);
                 this.notify_run_panel(cx);
                 cx.notify();

@@ -16,8 +16,6 @@ use super::{
     session_item_identity,
 };
 
-/// Archived chats are chat rows whatever they are — a draft that was filed away
-/// before anything was ever sent is still a chat.
 fn archived_item_identity(item: &ActiveSessionItem) -> String {
     match item {
         ActiveSessionItem::Draft(draft) => format!("draft:{}", draft.id),

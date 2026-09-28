@@ -621,7 +621,6 @@ fn restricted_parent_cannot_reuse_a_running_full_child_after_session_rebind() ->
         },
     )?;
 
-    // A restarted caller replaces a retired parent, never a still-live caller.
     drop(full_parent);
     let restricted_parent = registry.issue_with_access(
         temp.path(),

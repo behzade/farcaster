@@ -100,7 +100,6 @@ impl RuntimeOwner {
         self.publish_cached_sessions();
     }
 
-    // Refresh only Farcaster's stored catalog. Backend discovery belongs to import.
     pub(super) fn refresh_sessions(&mut self) {
         if !self.owns_session_catalog {
             let _ = self.event_tx.send(RuntimeEvent::RefreshCatalog);
@@ -236,8 +235,6 @@ impl RuntimeOwner {
                 &self.session_query,
             ),
             all_sessions,
-            // Pool snapshots are current lifecycle data. The projection merges
-            // them without clearing richer history-backed activities.
             activities: (!worker_activities.is_empty()).then_some((worker_activities, false)),
         }
     }

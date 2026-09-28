@@ -153,7 +153,6 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
             None,
         )?;
         ensure_success(&response)?;
-        // Interrupt returns a receipt directly, without a data envelope.
         serde_json::from_slice::<InterruptReceipt>(&response.body)
             .map(|receipt| receipt.interrupted)
             .map_err(|error| format!("decode OpenCode interrupt response: {error}"))

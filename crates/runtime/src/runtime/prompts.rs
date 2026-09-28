@@ -78,9 +78,6 @@ impl RuntimeOwner {
             || self.pending_prompt_target.is_some()
             || self.deferred_prompt.is_some();
         if queue_behind_pending && mode == PromptMode::Normal {
-            // A normal submission that arrives while another input is in
-            // flight is the next follow-up. It is still a valid outbox row;
-            // never turn this scheduling fact into a user-facing error.
             mode = PromptMode::FollowUp;
         }
         let was_running = self.active_snapshot().conversation.running;
@@ -505,7 +502,6 @@ impl RuntimeOwner {
             .process
             .as_ref()
             .is_some_and(|process| process.tracks_prompt_delivery(mode));
-        // File reads can fail before the backend accepts a request.
         self.pending_outbox_id = outbox_id;
         match self.process.as_mut().map(|process| process.send(request)) {
             Some(Ok(id)) => {
@@ -525,14 +521,9 @@ impl RuntimeOwner {
                 }
             }
             Some(Err(error)) => {
-                // Submission may fail locally (for example, an unreadable image or
-                // an unsupported mode). Only a transport failure event owns the
-                // session lifetime; rejecting this request must not end its turn.
                 self.finish_unsent_prompt(outbox_id, error);
             }
             None => {
-                // The process cannot accept this prompt. Leave it saved for
-                // an explicit user choice.
                 self.release_pending_outbox();
                 self.rollback_pending_prompt();
                 self.pending_prompt_id = None;

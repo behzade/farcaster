@@ -209,7 +209,6 @@ impl<R: BufRead, W: Write> CodexConnection<R, W> {
         if response.thread.id != thread_id {
             return Err("Codex resumed a different thread than requested".into());
         }
-        // Resume reports the effective cwd separately from stored thread metadata.
         if let Some(cwd) = response.cwd.take() {
             response.thread.cwd = cwd;
         }

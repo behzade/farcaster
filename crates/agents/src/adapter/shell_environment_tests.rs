@@ -128,7 +128,6 @@ if test "$#" -gt 0; then
     test "$1" = "-c"
     exec /bin/sh -c "$2"
 fi
-# Simulate environment loaded by fish_prompt, precmd, or PROMPT_COMMAND.
 export FIRST_PROMPT_VALUE=loaded
 exec /bin/sh
 "#;
@@ -155,7 +154,6 @@ fn capture_answers_a_query_over_the_real_pty_before_environment_capture() -> Tes
         &shell,
         r#"#!/bin/sh
 set -eu
-# Buffer the queued command, as fish does while waiting for terminal replies.
 IFS= read -r capture
 stty -echo -icanon min 0 time 10
 printf '\033[0c'
@@ -173,7 +171,6 @@ exec /bin/sh -c "$capture"
 
 #[test]
 fn terminal_answers_primary_attributes_across_read_boundaries() -> TestResult {
-    // Only primary requests get replies, not prompts, replies, or optional queries.
     let output = b"prompt> \x1b[?0c\x1b[>0c\x1b[6n\x1b]11;?\x1b\\\x1b[0c\x1b[c\x1b[0c";
     for split in 0..=output.len() {
         let mut terminal = CaptureTerminal::default();

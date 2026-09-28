@@ -535,7 +535,6 @@ fn jj_watcher_detects_metadata_only_commits_and_settles_after_refresh() {
     backend.snapshot().expect("test operation should succeed");
     assert_quiet();
     run_git(&repository, &home, &config, &["add", "file.txt"]);
-    // Staging does not change JJ's working-copy view.
     assert_quiet();
     for (program, arguments) in [
         (
@@ -579,8 +578,6 @@ fn jj_watcher_detects_metadata_only_commits_and_settles_after_refresh() {
         let refreshed = backend.snapshot().expect("test operation should succeed");
         assert!(refreshed.changes.is_empty());
         assert_ne!(refreshed.identity, initial.identity);
-        // Importing a Git commit may publish one JJ operation. Once imported,
-        // repeated reads must stop producing watcher events.
         std::thread::sleep(Duration::from_millis(200));
         while events.try_recv().is_ok() {}
         backend.snapshot().expect("test operation should succeed");
@@ -727,8 +724,6 @@ fn assert_untracked_symlink_totals(fifo: bool) {
     let mut snapshot = backend.snapshot().expect("capture Git snapshot");
     assert_eq!(snapshot.changes.len(), 1);
     if fifo {
-        // Git itself opens this destination, but unlike an in-process read its
-        // execution is bounded by the repository command timeout.
         assert!(matches!(
             backend.working_copy_totals(&mut snapshot),
             Err(RepositoryError::CommandTimedOut { .. })

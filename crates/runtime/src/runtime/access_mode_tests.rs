@@ -27,7 +27,6 @@ fn sandbox_changes_show_pending_requested_mode_for_every_native_adapter() {
             owner.access_mode_changes.make_due();
             owner.apply_queued_access_mode_change();
             assert_eq!(owner.snapshot.sandbox_state, SandboxState::Pending(current));
-            // Selecting the effective mode again cancels the transition.
             owner.set_access_mode(current);
             assert_eq!(owner.snapshot.sandbox_state, SandboxState::Active(current));
             assert!(owner.access_mode_changes.is_idle());

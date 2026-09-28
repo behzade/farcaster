@@ -74,7 +74,6 @@ pub(super) fn install(cx: &mut App) {
             MenuItem::action("Add Project…", AddProject),
             MenuItem::separator(),
             MenuItem::action("Close Surface or Archive Session", CloseCurrent),
-            // Closing the sole app window exits, so retain the active-work prompt.
             MenuItem::action("Close Window", CloseWindow),
         ]),
         Menu::new("Edit").items([
@@ -92,8 +91,6 @@ pub(super) fn install(cx: &mut App) {
             MenuItem::action("Terminal", ShowTerminal),
             MenuItem::action("Work Graph", ShowWorkGraph),
         ]),
-        // GPUI registers this name as the native Windows menu, allowing macOS
-        // to add its own window navigation and management items.
         Menu::new("Window").items([
             MenuItem::action("Minimize", MinimizeWindow),
             MenuItem::action("Zoom", ZoomWindow),

@@ -290,7 +290,6 @@ pub(crate) struct StartupTiming {
 }
 
 impl StartupTiming {
-    /// Record a once-per-launch stage even when detailed DEBUG timings are off.
     pub(crate) fn always(name: &'static str) -> Self {
         Self {
             name,
@@ -590,8 +589,6 @@ fn tracing_every_operation() -> bool {
     })
 }
 
-/// `main` installs the logger for the app binary. A test binary never runs it,
-/// so a traced phase would record and then discard its line.
 fn install_trace_logging() {
     if zlog::try_init(None).is_ok() {
         zlog::init_output_stderr();

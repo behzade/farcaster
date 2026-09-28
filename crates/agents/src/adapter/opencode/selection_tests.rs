@@ -253,7 +253,6 @@ fn resumed_worker_keeps_model_limits_and_effort_in_sync() -> Result<(), String> 
         );
         assert_eq!(state(&mut transport).thinking_level.as_deref(), Some("low"));
         assert_eq!(context_limit(&mut transport), 200000);
-        // A preset advertised only by another model must not be sent.
         assert!(
             transport
                 .send(SessionCommand::SelectReasoning {

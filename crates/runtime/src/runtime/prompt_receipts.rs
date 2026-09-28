@@ -29,8 +29,6 @@ impl PendingQueuedPrompt {
 }
 
 impl RuntimeOwner {
-    /// Successful admission waits for exact delivery. Terminal failure settles
-    /// composer ownership once, regardless of which in-flight slot owns it.
     pub(super) fn settle_prompt_response(
         &mut self,
         response: &agents::SessionResponse,
@@ -97,16 +95,12 @@ impl RuntimeOwner {
             recovery.map(PendingQueuedPrompt::recovery_prompt),
         );
         if !uncertain {
-            // Terminal rejection owns no future model receipt. Dismiss only its
-            // pending presentation, never a delivered transcript row.
             conversation_mut(self.active_snapshot_mut()).dismiss_pending_receipt(receipt_id);
         }
         self.emit_prompt_result(prompt.submission_id.as_deref(), &prompt.target, outcome);
         Some(outcome)
     }
 
-    /// Restore composer ownership only after durable cancellation. Otherwise
-    /// the saved queue owns the payload, including retries without a composer.
     pub(super) fn settle_undelivered_outbox(
         &mut self,
         outbox_id: Option<i64>,
@@ -140,8 +134,6 @@ impl RuntimeOwner {
         outcome
     }
 
-    /// The durable outbox owns recovery membership; cached cards only project it.
-    /// Call after delivery, cancellation, or native-history reconciliation.
     pub(super) fn reconcile_saved_prompts(&mut self) -> bool {
         if self.saved_prompts.is_empty() {
             return false;
@@ -183,15 +175,12 @@ impl RuntimeOwner {
         match result {
             Ok(prompts) => {
                 if let Some(mut prompt) = prompts.into_iter().find(|prompt| prompt.id == id) {
-                    // Storage does not retain the live composer's submission identity.
                     prompt.submission_id = submission_id.map(str::to_owned);
                     self.saved_prompts.push_back(prompt);
                 }
             }
             Err(error) => {
                 zlog::error!("Load pending prompt {id}: {error}");
-                // The secondary slot still owns the exact durable payload. A
-                // failed read must not orphan it when composer ownership ends.
                 if let Some(prompt) = fallback {
                     self.saved_prompts.push_back(prompt);
                 }
@@ -359,11 +348,7 @@ impl RuntimeOwner {
                     crate::agents::PromptOutcome::Accepted,
                 );
             }
-            // Recovered rows need the same delivery completion even when no
-            // live composer submission exists to receive a result.
             self.pending_prompt_result_emitted = true;
-            // Delivery completes the submission even when its admission reply
-            // arrived earlier. A later duplicate reply no longer owns this slot.
             if saved {
                 self.apply_response(crate::agents::SessionResponse::success(
                     Some(receipt_id.to_owned()),
@@ -384,8 +369,6 @@ impl RuntimeOwner {
         }
     }
 
-    /// A late receipt belongs to the old outbox row and exact composer submission,
-    /// never a newer submission to the same target.
     pub(super) fn reconcile_retired_prompt(&mut self, id: &str, delivered: bool) -> bool {
         let Some(retired) = self.retired_prompts.get(id).cloned() else {
             return false;
@@ -458,7 +441,6 @@ impl RuntimeOwner {
     }
 
     pub(super) fn release_pending_outbox(&mut self) {
-        // Delivery may be uncertain. Keep the row visible until the user acts.
         if let Some(id) = self.pending_outbox_id.take() {
             self.park_pending_outbox(id);
         }

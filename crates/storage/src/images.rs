@@ -5,7 +5,6 @@ use sha2::{Digest as _, Sha256};
 
 use super::{PromptImage, StateStore};
 
-// Only the hash is persisted, so moving the database and its images together works.
 #[derive(Deserialize, Serialize)]
 #[serde(untagged)]
 pub(super) enum StoredImage {
@@ -54,7 +53,6 @@ impl StateStore {
         let path = self.image_directory.join(&hash);
         std::fs::create_dir_all(&self.image_directory)
             .map_err(|error| format!("create image directory: {error}"))?;
-        // Publish complete bytes atomically; simultaneous writers can share a hash.
         if !path.exists() {
             let mut file = tempfile::NamedTempFile::new_in(&self.image_directory)
                 .map_err(|error| format!("create image: {error}"))?;
@@ -70,7 +68,6 @@ impl StateStore {
                 .and_then(|dir| dir.sync_all())
                 .map_err(|error| format!("sync image directory: {error}"))?;
         }
-        // Detect corruption rather than silently reusing the wrong bytes.
         if std::fs::read(&path).map_err(|error| format!("read saved image: {error}"))? != bytes {
             return Err(format!("Saved image {} is corrupt", path.display()));
         }

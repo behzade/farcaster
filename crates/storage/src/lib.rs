@@ -1,5 +1,3 @@
-//! SQLite adapter for application state and domain persistence ports.
-
 use farcaster_access as access;
 use farcaster_agent_protocol::extensions as protocol;
 use farcaster_agents as agents;

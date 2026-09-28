@@ -500,8 +500,6 @@ fn cursor_draft_keeps_model_and_tier_through_first_start() {
         Some("priority")
     );
 
-    // The missing test agent fails after startup resets the snapshot. The
-    // draft choice must remain visible and ready for a retry.
     owner.start_process(None);
     assert_eq!(owner.snapshot.session_identity().model, Some(&selected));
     assert_eq!(owner.snapshot.selected_service_tier(), Some("priority"));

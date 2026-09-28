@@ -5,7 +5,6 @@ use crate::agents::Backend;
 fn persisted_cross_project_parent_survives_catalog_refresh_and_family_queries() -> Result<(), String>
 {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
-    // Match persistence's canonical paths, including macOS /var -> /private/var.
     let root = temp
         .path()
         .canonicalize()
@@ -35,8 +34,6 @@ fn persisted_cross_project_parent_survives_catalog_refresh_and_family_queries() 
     let homonym = make_session("child-project", "parent", None);
     let imported = [parent.clone(), child.clone(), homonym.clone()];
     store.index_sessions(&imported, false)?;
-    // Existing databases can contain a resolved cross-project link. Do not
-    // replace it with a same-native-ID session in the child's project.
     store.connection.execute(
         "UPDATE sessions SET parent_id=(SELECT id FROM sessions WHERE locator=?1) WHERE locator=?2",
         params![parent.path.to_string_lossy(), child.path.to_string_lossy()],

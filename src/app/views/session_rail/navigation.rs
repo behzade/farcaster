@@ -140,7 +140,6 @@ impl FarcasterApp {
             &self.sessions.order,
         )
         .archived;
-        // A held key may advance again before the runtime publishes the selection.
         let selected = self
             .sessions
             .selected_draft
@@ -174,7 +173,6 @@ impl FarcasterApp {
             None => return,
         };
         let key = target.rail_identity();
-        // Browse archived history; never restore it or switch to its saved editor.
         match target {
             VisibleSessionTarget::Draft(draft) => {
                 self.resume_draft_restoring_center(draft.id, draft.project, false, window, cx)
@@ -194,7 +192,6 @@ impl FarcasterApp {
                 cx.notify();
             });
         } else {
-            // The expanded archive occupies the active list's space.
             self.reveal_active_session_row(key, cx);
         }
         self.recover_keyboard_focus(window, cx);

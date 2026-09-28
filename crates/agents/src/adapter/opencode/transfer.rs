@@ -46,7 +46,6 @@ fn move_with_client<T: OpenCodeHttpTransport>(
         directory: destination.into(),
         workspace_id: None,
     };
-    // Read every member before changing any of them. Use backend locations for rollback.
     let mut originals = family
         .iter()
         .map(|session| {
@@ -67,7 +66,6 @@ fn move_with_client<T: OpenCodeHttpTransport>(
     for (index, original) in originals.iter().enumerate() {
         if let Err(error) = move_and_wait(client, &original.id, &destination, timeout) {
             let mut failures = Vec::new();
-            // Include the failing request: the server may have accepted it before disconnecting.
             for session in originals[..=index].iter().rev() {
                 if let Err(rollback) =
                     move_and_wait(client, &session.id, &session.location, timeout)

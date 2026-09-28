@@ -153,7 +153,6 @@ pub(in crate::app) fn transcript_scratch_text(
 ) -> String {
     let mut sections = Vec::new();
     for row in project_rows(items).iter() {
-        // Export each message once, including all of its visual chunks.
         if matches!(
             row,
             TranscriptRow::MessageChunk { first: false, .. }
@@ -259,8 +258,6 @@ pub(crate) fn render(
     let visual_selection_active = list_state.selected_text().is_some();
     let jump = entity.clone();
     let row_entity = entity;
-    // Selection keys follow visual order, while disclosure keys retain source
-    // identity. Reviews can move behind later messages without reversing a drag.
     let selection_groups = rows.clone();
     let row_selection_groups = rows.clone();
     let selection_copy_rows = rows.clone();
@@ -376,7 +373,6 @@ fn transcript_context_menu(
 ) -> AnyElement {
     ContextMenuTrigger::new(format!("transcript-context-trigger-{row_index}"), content)
         .dropdown_menu_with_anchor(gpui::Anchor::TopLeft, move |menu, window, cx| {
-            // Capture before the popup takes focus or clears the highlight.
             let selected_text = selection_state.copy_selection_text(window, cx);
             let mut menu = menu.min_w(theme().size(190.0));
             if let Some(text) = selected_text {

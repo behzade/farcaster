@@ -62,7 +62,6 @@ impl Skills {
                 skill.enabled && !skill.name.is_empty() && Path::new(&skill.path).is_absolute()
             })
             .collect();
-        // Keep one entry per name, but omit names that refer to different paths.
         let mut paths = HashMap::new();
         let mut ambiguous = HashSet::new();
         skills.retain(|skill| match paths.get(&skill.name) {

@@ -5,7 +5,6 @@ fn abort_classifies_abandoned_refreshes_as_cancelled() -> TestResult {
     let project = tempdir()?;
     let command = queue_rpc_fixture(project.path())?;
     let mut rpc = PiRpcProcess::spawn(&command, project.path(), None)?;
-    // Do not poll: even a response buffered by the old reader is abandoned on restart.
     let state = rpc.send_request(SessionCommand::LoadState)?;
     let usage = rpc.send_request(SessionCommand::LoadUsage)?;
     rpc.send_request(SessionCommand::Abort)?;

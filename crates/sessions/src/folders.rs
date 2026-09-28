@@ -170,8 +170,6 @@ impl SessionFolders {
             .filter(|id| self.folders.iter().any(|folder| folder.id == *id))
     }
 
-    /// Old rail builds stored automatic project groups as custom folders.
-    /// Keep manually assigned groups as folders, preserving their IDs and members.
     pub fn separate_project_groups(&mut self) {
         self.folders.retain_mut(|folder| {
             if folder.project.take().is_none() {

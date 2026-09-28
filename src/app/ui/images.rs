@@ -8,7 +8,6 @@ use gpui::{Image, ImageFormat};
 
 use crate::conversation::EncodedImage;
 
-// Weak owners preserve allocation identity without retaining conversation data.
 struct CachedImage {
     encoded: Weak<EncodedImage>,
     image: Arc<Image>,

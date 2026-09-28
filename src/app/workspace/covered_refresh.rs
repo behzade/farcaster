@@ -9,10 +9,6 @@ pub(in crate::app) enum RefreshStep {
     Capture,
 }
 
-/// Decides when a covered native surface can be read back after its
-/// configuration changed. The surface counts the frames it renders, so a new
-/// frame is the signal that the change reached the screen; the poll budget only
-/// exists so a surface that never draws cannot stall the refresh.
 #[derive(Clone, Copy, Debug)]
 pub(in crate::app) struct CoveredRefresh {
     baseline: u64,

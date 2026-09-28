@@ -117,8 +117,6 @@ fn discovery_includes_native_children_and_reads_sidechain_history() {
     assert_eq!(history.messages[1]["content"][0]["text"], "Found it");
     assert!(child_id(parent, "../../outside").is_none());
 
-    // A warm child transcript still tracks changes to the child file, not just
-    // the parent transcript or the synthetic locator.
     let child_path = children.join("agent-a123.jsonl");
     let next = json!({"type":"assistant","uuid":"next","parentUuid":"a","isSidechain":true,
         "message":{"role":"assistant","model":"updated-model","content":"More findings"}});

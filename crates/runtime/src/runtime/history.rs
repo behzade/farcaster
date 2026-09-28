@@ -366,8 +366,6 @@ pub(super) fn annotate_history_presentations(
                     }
                     continue;
                 };
-                // Untracked backends never emit a later delivery id. If native
-                // history loaded, it is the source of truth — including steers.
                 if !history_was_empty
                     && message.get("deliveryTracked").and_then(Value::as_bool) != Some(true)
                 {

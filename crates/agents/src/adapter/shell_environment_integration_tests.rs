@@ -1,5 +1,3 @@
-//! Real-process contracts for shell capture. No user shell configuration is sourced.
-// Report timings for the opt-in shell integration checks.
 #![allow(clippy::print_stderr)]
 use super::*;
 use std::time::{Duration, Instant};
@@ -69,7 +67,6 @@ fn check_shell_capture(shell_name: &str) -> TestResult {
     let elapsed = started.elapsed();
     check_environment(environment, &project, &bin)?;
     eprintln!("real {shell_name} environment capture: {elapsed:?}");
-    // A regression ceiling, not a benchmark: fish previously waited ten seconds.
     assert!(elapsed < Duration::from_secs(5), "capture took {elapsed:?}");
     Ok(())
 }
@@ -92,7 +89,6 @@ set -gx CAPTURE_CONFIG_VALUE 'left=right
 snowman: ☃'
 set -gx CAPTURE_EMPTY ''
 set -gx CAPTURE_OVERRIDE configured
-# Model direnv-style first-prompt exports, including a project-local executable.
 function capture_first_prompt --on-event fish_prompt
     set -gx CAPTURE_PROMPT loaded
     set -gx CAPTURE_PROJECT "$PWD"
@@ -175,8 +171,6 @@ fn check_environment(environment: Environment, project: &Path, bin: &Path) -> Te
     let environment = with_project_path_handoff(environment);
     assert_eq!(value(&environment, PROJECT_PATH_HANDOFF)?, path);
 
-    // Consumer boundary: a child with only the captured environment must find
-    // the prompt-installed executable and receive its exports intact.
     let child = Command::new("/bin/sh")
         .args(["-c", "exec farcaster-capture-probe"])
         .env_clear()

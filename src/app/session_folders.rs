@@ -15,9 +15,6 @@ pub(in crate::app) struct FolderEdit {
     pub(in crate::app) session: Option<i64>,
 }
 
-/// The chats a folder holds, and every path that has to leave the rail with
-/// them. Root paths are deduplicated so a family is deleted once even though
-/// each of its subagents resolves to it.
 #[derive(Debug, Default, Eq, PartialEq)]
 pub(in crate::app) struct FolderDeletion {
     pub(in crate::app) roots: Vec<PathBuf>,

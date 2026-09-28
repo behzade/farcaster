@@ -42,8 +42,6 @@ fn failed_handoffs_restore_drafts_and_folder_membership(cx: &mut gpui::TestAppCo
                     app.change_draft_project(project.join("other"), window, cx);
                     assert_eq!(app.sessions.drafts[0], draft);
                     assert_eq!(app.project.path, project);
-                    // A submitted, materialized draft needs the archive command as
-                    // well as its UI save. Failure must not leave it half archived.
                     draft.submitted = true;
                     draft.session_path = Some(project.join("session"));
                     app.sessions.drafts[0] = draft.clone();
@@ -130,7 +128,6 @@ fn failed_save_blocks_normal_and_confirmed_quit(cx: &mut gpui::TestAppContext) {
                             assert!(app.lifecycle.pending_quit.is_some());
                             app.confirm_application_quit(window, cx);
                         }
-                        // Wait for the worker, then let the UI consume the quit result.
                         assert!(futures::executor::block_on(app.sessions.writer.flush()).is_err());
                     })
                 });

@@ -99,8 +99,6 @@ fn live_rows_with_their_own_artifact_render_without_hydration() -> Result<(), St
     let mut snapshot = snapshot(temp.path(), state);
     apply_snapshot(&mut snapshot);
     assert_eq!(cards(&snapshot), 1);
-    // The live row already carries its artifact, so the presentation keeps
-    // sharing the conversation's item unchanged.
     assert!(Arc::ptr_eq(
         snapshot.conversation.items.get(0).expect("tool row"),
         snapshot
@@ -168,8 +166,6 @@ fn a_replay_that_later_regains_its_result_rehydrates_away() -> Result<(), String
     snapshot.transcript_changed_from = Some(0);
     apply_snapshot(&mut snapshot);
     assert_eq!(cards(&snapshot), 1);
-    // The harness may attach the echoing result later; the row then carries
-    // its own artifact and the presentation resyncs without duplicating.
     let tool_index = snapshot
         .conversation
         .items
@@ -194,9 +190,6 @@ fn a_replay_that_later_regains_its_result_rehydrates_away() -> Result<(), String
 
 #[test]
 fn the_real_cursor_replay_payload_renders_the_review() -> Result<(), String> {
-    // Captured from agent acp session/load of the failing session: the
-    // submit_review row completes with rawOutput {"success":true} and no
-    // echoing artifact.
     let temp = tempfile::tempdir().expect("project");
     let spec = json!({
         "title": "README review debug",
@@ -251,8 +244,6 @@ fn the_real_cursor_replay_payload_renders_the_review() -> Result<(), String> {
 
 #[test]
 fn the_prompt_wrapped_update_arguments_render_the_review() -> Result<(), String> {
-    // Captured live: after the completed update merges in, the row's arguments
-    // are re-wrapped as {"prompt": ..., "arguments": {title, items}}.
     let temp = tempfile::tempdir().expect("project");
     let mut state = ConversationState::default();
     state.replace_history(&[

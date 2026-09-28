@@ -91,7 +91,6 @@ fn draft_background_keeps_composer_focus(cx: &mut gpui::TestAppContext) {
         }
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    // Blank space above the composer still focuses the input.
     cx.simulate_click(point(px(40.0), px(20.0)), Default::default());
     cx.update(|window, cx| {
         assert!(

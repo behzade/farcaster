@@ -1,5 +1,3 @@
-//! A session-scoped, authenticated rendezvous for blocking native hooks.
-//! Hooks carry no prompt text. The session owner alone selects and dispatches input.
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},

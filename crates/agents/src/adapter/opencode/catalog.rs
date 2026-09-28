@@ -48,14 +48,9 @@ pub fn load_history(path: &Path) -> Result<DiscoveredHistory, String> {
 
 fn load_history_uncached(locator: &str) -> Result<DiscoveredHistory, String> {
     with_server(|server| {
-        // Read pending inputs first. If one moves into history between the two
-        // reads it may appear in both sets, which safely resolves as delivered.
-        // The opposite order could briefly omit it from both sets.
         let inbox = match server.client().session_inbox(locator) {
             Ok(inbox) => Some(inbox),
             Err(error) => {
-                // History remains useful without an authoritative pending-input
-                // snapshot. The shared reconciler must not resolve missing IDs.
                 zlog::error!("Load OpenCode prompt delivery evidence: {error}");
                 None
             }

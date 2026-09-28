@@ -4,7 +4,6 @@ const MAX_BYTES: usize = 4 * 1024;
 const MAX_LINES: usize = 40;
 const TRUNCATION_NOTICE: &str = "\n\n[Preview truncated. Copy the tool activity for full details.]";
 
-/// Bounds work before Markdown parsing and text layout, including JSON serialization.
 #[derive(Default)]
 pub(super) struct ToolPreview {
     bytes: Vec<u8>,
@@ -26,8 +25,6 @@ impl ToolPreview {
     }
 
     fn text(&self) -> &str {
-        // A serializer can split UTF-8 across writes; only the final prefix needs
-        // to end on a character boundary.
         std::str::from_utf8(&self.bytes).unwrap_or_else(|error| {
             std::str::from_utf8(&self.bytes[..error.valid_up_to()])
                 .expect("valid_up_to marks a valid UTF-8 prefix")

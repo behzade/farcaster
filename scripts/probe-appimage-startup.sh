@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Exercise the packaged binary; no mocked graphics calls.
 set -euo pipefail
 
 appimage=$(realpath "${1:?usage: probe-appimage-startup.sh APPIMAGE LOG_DIR}")
@@ -53,8 +52,6 @@ for mode in baseline host-preload; do
     if [ "$mode" = host-preload ]; then
         extra_env+=("LD_PRELOAD=$host_wayland")
     fi
-    # Extract-and-run preserves AppRun's library setup and works without FUSE.
-    # LD_DEBUG writes per-process files, including dlopen and symbol failures.
     if timeout --signal=TERM --kill-after=3s 20s env \
         APPIMAGE_EXTRACT_AND_RUN=1 RUST_BACKTRACE=full WAYLAND_DEBUG=client \
         LD_DEBUG=libs,versions LD_DEBUG_OUTPUT="$logs/$mode/loader" \
@@ -84,7 +81,6 @@ for mode in baseline host-preload; do
     tail -25 "$startup"
 done
 
-# Record the actual bundle's libraries after testing, without changing it.
 mkdir "$probe_dir/extracted"
 (
     cd "$probe_dir/extracted"

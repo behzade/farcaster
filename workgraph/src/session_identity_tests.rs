@@ -163,7 +163,6 @@ fn remapping_uses_the_outer_transaction_and_tolerates_uninitialized_graphs() {
                 .session_id,
             "new"
         );
-        // Dropping the caller's transaction rolls back the graph change too.
     }
     assert_eq!(
         load(&connection).graph.tasks[0]

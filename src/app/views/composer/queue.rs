@@ -469,9 +469,6 @@ pub(super) fn pending_message_groups<'a>(
                 .any(|receipt| message.id == Some(&receipt.id) && receipt.unknown);
         }
     }
-    // Live submissions already come from the queue/composer projection. Receipt
-    // history restores rows only when viewing a saved session, not a second copy
-    // of each live submission.
     if !history_preview {
         return groups;
     }

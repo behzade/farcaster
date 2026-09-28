@@ -64,8 +64,6 @@ impl RuntimeOwner {
             cancel,
         };
         if let Err(error) = agents::CallerRegistry::shared().respond_to_child_input(response) {
-            // A lease can expire between projection and the user's answer. The
-            // parent transport is unrelated to that request's lifetime.
             zlog::warn!("Child input response rejected: {error}");
             let _ = self.event_tx.send(RuntimeEvent::ExtensionUiDismissed {
                 generation: self.process_generation,

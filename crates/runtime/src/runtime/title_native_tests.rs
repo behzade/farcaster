@@ -1,4 +1,3 @@
-//! Native title metadata travels through real HTTP/SSE and ACP adapters.
 use super::*;
 use crate::agents::Backend;
 use std::{

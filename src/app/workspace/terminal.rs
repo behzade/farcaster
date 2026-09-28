@@ -134,8 +134,6 @@ impl FarcasterApp {
         self.workspace.terminal.view = None;
     }
 
-    /// Lets a covered terminal keep rendering while an overlay presents it, so a
-    /// theme change is visible in the overlay instead of only after it closes.
     pub(in crate::app) fn set_terminal_hidden_rendering(
         &self,
         rendered: bool,

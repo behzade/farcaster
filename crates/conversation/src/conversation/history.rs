@@ -29,8 +29,6 @@ impl ConversationState {
         retained.sort_by_key(|(index, ..)| *index);
         self.items.clear();
         self.optimistic_user = None;
-        // Exact native IDs may prove delivery without repeating attachment
-        // bytes. Keep the submitted payload available during history replay.
         self.submitted_users.extend(
             retained
                 .iter()
@@ -60,8 +58,6 @@ impl ConversationState {
             }
             self.project_history_message(message);
         }
-        // Backend history need not contain input that was only admitted or whose
-        // receipt is uncertain. Reconcile by identity, never equal message text.
         for (_, id, _) in retained {
             if let Some(entry) = self.submitted_users.get(&id)
                 && entry.is_visible()

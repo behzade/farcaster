@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Bound one live test command and clean up only its process group."""
 
 import argparse
 import os
@@ -9,7 +8,6 @@ import sys
 
 
 def stop_group(process, grace):
-    # start_new_session makes this PID a group owned solely by this test.
     group = process.pid
     if group == os.getpgrp():
         raise RuntimeError("Refusing to terminate the runner's process group")
@@ -26,8 +24,6 @@ def stop_group(process, grace):
     except ProcessLookupError:
         pass
     except PermissionError:
-        # Some macOS restrictions also deny signalling an already-gone group.
-        # Do not call that proof that all descendants exited.
         print("E2E_CLEANUP_UNCONFIRMED: cannot signal the remaining test group", file=sys.stderr)
     process.wait()
 
@@ -59,8 +55,6 @@ def main():
     except KeyboardInterrupt:
         stop_group(process, args.grace)
         return 130
-    # Normal-case cleanup belongs to the Rust fixture, which owns and closes
-    # its real harness. The watchdog handles only timeouts and interruptions.
     return result if result >= 0 else 128 - result
 
 

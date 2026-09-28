@@ -12,7 +12,6 @@ fn only_submitted_chats_can_be_archived_but_legacy_drafts_can_be_restored() {
     draft.submitted = true;
     assert!(draft.set_archived(true));
     assert!(draft.set_archived(false));
-    // Existing archived drafts remain recoverable after upgrading.
     draft.submitted = false;
     draft.archived = true;
     assert!(draft.set_archived(false));

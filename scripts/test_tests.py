@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Check first-party coverage and the runner without building Rust packages."""
 
 import json
 import os

@@ -8,8 +8,6 @@ use std::{
 use super::catalog::SessionRootIndex;
 use crate::SessionSummary;
 
-/// A catalog whose relationships are indexed once per revision. Mutable access
-/// drops the index before any row, path, or parent can change.
 #[derive(Default)]
 pub struct SessionCatalog {
     sessions: Vec<SessionSummary>,
@@ -99,7 +97,6 @@ impl SessionCatalog {
             .filter_map(|(session, parent)| parent.is_none().then_some(session))
     }
 
-    /// Nearest parent first, excluding the starting session even in a cycle.
     pub fn ancestors(&self, session: &SessionSummary) -> Vec<&SessionSummary> {
         let relationships = self.relationships();
         let Some(&start) = relationships.by_path.get(&session.path) else {

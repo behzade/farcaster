@@ -45,8 +45,6 @@ pub fn append_app_proxy_environment(
     let Some(proxy) = configuration.app_proxy.as_ref() else {
         return;
     };
-    // The built-in MCP server uses loopback. A proxy that is down must not
-    // prevent an agent from connecting to this local server at startup.
     let mut bypass = OsString::new();
     for (_, value) in environment
         .iter()

@@ -46,7 +46,6 @@ impl BackendAdapter for ClaudeAdapter {
         })?;
         let command = self.launch_configuration(config);
         let (mut worker, locator, metadata) = super::spawn_main(&command, &launch)?;
-        // Apply the saved selection before the transport reports it as active.
         if let Some(history) = &history {
             if let Some((provider, model)) = &history.model {
                 worker.select_model(provider, model)?;

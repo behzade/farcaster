@@ -299,10 +299,6 @@ pub fn spawn_main(
     ))
 }
 
-/// Resolve the model a main session runs with. `FARCASTER_OPENCODE_MODEL` only
-/// decides sessions Farcaster starts from scratch; a resumed session keeps the
-/// model saved on it, and a fork keeps the model inherited from the session it
-/// was forked from.
 fn resolve_session_model<T: super::contract::OpenCodeHttpTransport>(
     client: &mut super::client::OpenCodeClient<T>,
     launch: &crate::SessionLaunch,
@@ -404,7 +400,6 @@ fn load_main_metadata(
                 .and_then(Value::as_str)
                 .unwrap_or("opencode");
             let model_efforts = model_variant_efforts(model);
-            // The meter tracks the input budget rather than combined input/output capacity.
             Some(json!({
                 "id": id,
                 "name": model.get("name").and_then(Value::as_str).unwrap_or(id),
@@ -446,7 +441,6 @@ fn load_main_metadata(
     let commands = super::commands::catalog(client.commands(directory)?)?;
     Ok(crate::adapter::main_session::MainSessionMetadata {
         models,
-        // OpenCode presets are model-specific; there is no global fallback list.
         commands,
         modes,
         ..Default::default()
@@ -1622,9 +1616,6 @@ impl WorkerSession for OpenCodeWorkerSession {
         let native_ids = self
             .pending_deliveries
             .iter()
-            // Normal prompts also enter OpenCode's native queue. If Escape
-            // wins before delivery, resume only drains steers; promote the
-            // pending normal input too or its response never completes.
             .filter(|(_, delivery)| {
                 matches!(
                     delivery.mode,
@@ -1639,8 +1630,6 @@ impl WorkerSession for OpenCodeWorkerSession {
             native_ids.iter().map(String::as_str),
         );
         if interrupted == Some(true) {
-            // The interrupted execution resumes on the server. Settling here
-            // would clear the composer's pending steering and follow-ups.
             self.steering_interrupts += 1;
             self.generation = self.generation.saturating_add(1);
             self.completions = None;
@@ -1761,8 +1750,6 @@ fn opencode_child_activity(
     if id.is_empty() || id == parent_id {
         return Ok(None);
     }
-    // The event stream includes other sessions. Resolve the native parent before
-    // publishing a child, including when we attached after that child was created.
     let child = lookup_session(id)?;
     let execution = child.model.map(|selection| crate::WorkerModelSelection {
         model: Some((selection.provider_id, selection.id)),
@@ -1843,7 +1830,6 @@ fn opencode_form_prompt(form: &Value, field: &Value) -> String {
             .or_else(|| text(&form["title"]))
             .unwrap_or_else(|| "OpenCode question".into()),
     ];
-    // OpenCode's question tool stores the question in the field description.
     if let Some(description) = text(&field["description"]) {
         sections.push(description);
     }
@@ -1985,7 +1971,6 @@ fn opencode_permission_tool<'a>(
         return None;
     }
     let tool = tools.get(source.get("id")?.as_str()?)?;
-    // Call IDs alone can repeat across messages or child sessions.
     if tool.native.get("sessionID")?.as_str()? != data.get("sessionID")?.as_str()?
         || tool.native.get("assistantMessageID")?.as_str()? != source.get("messageID")?.as_str()?
     {
@@ -2175,7 +2160,6 @@ fn configure_queue_hook(
         include_str!("queue_hook.js"),
     )
     .map_err(|e| e.to_string())?;
-    // Append to the user's plugins rather than replacing them.
     let existing = command
         .get_envs()
         .find(|(name, _)| *name == "OPENCODE_CONFIG_CONTENT")

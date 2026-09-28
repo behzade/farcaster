@@ -10,8 +10,6 @@ mod tasks;
 #[path = "bootstrap_tests.rs"]
 mod tests;
 
-/// Warm the next likely chat when its adapter supports passive cached history.
-/// The adapter retains control of freshness and whether warming is safe.
 fn warm_recent_history(
     sessions: &[SessionSummary],
     project: &Path,
@@ -179,9 +177,6 @@ impl FarcasterApp {
         let (composer_images, composer_pastes) =
             composer::attachments::restore(&persisted.composer_sessions);
 
-        // Paint the chats Farcaster already knows instead of an empty rail that
-        // fills once the runtime answers. The catalog is a stored read, so the
-        // first frame can show it; the runtime's own catalog reconciles into it.
         let catalog_seed_timing =
             crate::app::infrastructure::performance::StartupTiming::new("app.seed_session_catalog");
         let remembered_catalog = crate::app::persistence::open()

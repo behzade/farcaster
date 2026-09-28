@@ -106,8 +106,6 @@ pub(super) struct ModelSelection {
     pub parameters: Vec<(String, String)>,
 }
 
-/// Keep effort and service tier separate; expand remaining model parameters
-/// into model choices without exposing native configuration commands.
 pub(super) fn metadata(
     profile: &AcpProfile,
     response: &Value,

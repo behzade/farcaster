@@ -1,4 +1,3 @@
-# Generated for a specific release by scripts/package-arch-source.sh.
 pkgname=farcaster
 pkgver=@VERSION@
 pkgrel=1

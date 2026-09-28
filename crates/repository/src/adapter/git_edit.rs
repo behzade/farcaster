@@ -24,8 +24,6 @@ pub(super) fn apply(
         .collect::<Vec<_>>();
     match action {
         RepositoryEdit::Commit => {
-            // --only commits current contents of these paths and preserves unrelated staged files.
-            // Git requires new paths to be known to the index first. Intent-to-add stores no content.
             if !untracked.is_empty() {
                 run(backend, &["add", "--intent-to-add"], &untracked)?;
             }
@@ -48,7 +46,6 @@ pub(super) fn apply(
                 run(backend, args, &tracked)?;
             }
             for path in untracked {
-                // Never recursively delete a directory, ignored files, or submodule contents.
                 std::fs::remove_file(backend.location.workspace_root.join(&path)).map_err(
                     |source| RepositoryError::Io {
                         context: format!("Delete {}", path.display()),

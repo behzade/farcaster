@@ -1,5 +1,3 @@
-//! Dialog textarea behavior: Enter submits, Shift+Enter inserts a newline.
-
 use gpui::{
     AppContext as _, Context, Div, Entity, InteractiveElement as _, ParentElement as _,
     Styled as _, Subscription, Window, div,
@@ -23,7 +21,6 @@ pub(crate) fn create_submit_textarea<T: 'static>(
 }
 
 pub(crate) fn submit_textarea(input: Textarea) -> Div {
-    // Consume Enter after PressEnter is emitted, preventing a fallback newline.
     div()
         .w_full()
         .on_action(|_: &Enter, _, _| {})

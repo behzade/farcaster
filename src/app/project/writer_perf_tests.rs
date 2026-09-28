@@ -1,6 +1,3 @@
-//! Compares synchronous registry/folder saves with the UI's queued saves.
-//! Report enqueue and flush time separately; timing is diagnostic, not a pass
-//! threshold. Every sample verifies the resulting state in SQLite.
 #![allow(clippy::print_stderr)]
 
 use super::*;
@@ -31,7 +28,6 @@ fn save(cx: &mut VisualTestContext, app: &Entity<FarcasterApp>, queued: bool) ->
                     .unwrap()
                     .save_session_folders(&app.sessions.folders)
                     .expect("save folders inline");
-                // Include the same view update as save_session_folders above.
                 app.notify_session_rail(cx);
             }
         });
@@ -77,7 +73,6 @@ fn folder_and_registry_writes_leave_the_click_path(cx: &mut gpui::TestAppContext
                     app.project.excluded = vec![paths[1].clone()];
                 })
             });
-            // Warm both paths before measuring, including schema and journal setup.
             save(cx, app, false);
             save(cx, app, true);
             settle(cx, app);
@@ -85,7 +80,6 @@ fn folder_and_registry_writes_leave_the_click_path(cx: &mut gpui::TestAppContext
             let mut handoff = Vec::new();
             let mut flush = Vec::new();
             for index in 0..WRITES {
-                // Alternate the order; both paths save the same number of rows.
                 for queued in [index % 2 == 0, index % 2 != 0] {
                     let selected = usize::from(queued);
                     cx.update(|_, cx| {
@@ -110,7 +104,6 @@ fn folder_and_registry_writes_leave_the_click_path(cx: &mut gpui::TestAppContext
                     assert_saved(cx, app);
                 }
             }
-            // A burst may coalesce. Verify the final state after its barrier.
             let started = Instant::now();
             for index in 0..WRITES {
                 cx.update(|_, cx| {

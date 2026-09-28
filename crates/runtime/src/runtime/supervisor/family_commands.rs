@@ -35,8 +35,6 @@ impl Supervisor {
                 "Could not stop the whole session family: {message}"
             ));
         }
-        // A storage merge can also occur while workers refresh their bindings.
-        // Release this request's fence before a retry uses the new keys.
         if let Err(message) = self.require_current_family_keys(&project, &worker_keys) {
             if let Err(cleanup) = self
                 .host
@@ -344,8 +342,6 @@ impl Supervisor {
         }
         if let RuntimeCommand::DeleteSessionFamily { path } = &command {
             let result = (|| {
-                // A catalog flag can be stale. Confirm every worker and actor stopped
-                // before discarding queued prompts or touching session files.
                 self.stop_session_family_work(path, false)?;
                 self.discard_family_queue(path)?;
                 let family = session_family_for_path(&self.catalog_sessions, path)
@@ -551,7 +547,6 @@ impl Supervisor {
                         generation: self.catalog_generation,
                         message,
                     });
-                    // A backend may have completed part of a move before reporting an error.
                     if let Some(catalog) = self.actors.get(&self.catalog_key) {
                         catalog.send(RuntimeCommand::RefreshSessions);
                     }

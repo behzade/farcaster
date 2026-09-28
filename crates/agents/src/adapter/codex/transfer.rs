@@ -99,8 +99,6 @@ fn persist_folders(
     rollouts: &[(String, PathBuf)],
     directory: &str,
 ) -> Result<(), String> {
-    // Never replace or truncate a native rollout: another Codex process can
-    // retain an append handle even while this server reports the thread idle.
     for (id, path) in rollouts {
         let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
         let header = BufReader::new(file)
@@ -149,11 +147,9 @@ fn with_server<T>(
     let stdin = child.stdin.take().expect("piped stdin");
     let stdout = child.stdout.take().expect("piped stdout");
     let (finished, wait) = mpsc::channel();
-    // A missing notification must not leave the supervisor waiting forever.
     let watchdog = thread::spawn(move || {
         let expired = wait.recv_timeout(Duration::from_secs(30)).is_err();
         if !expired {
-            // EOF lets Codex flush its rollout and catalog before exiting.
             let deadline = std::time::Instant::now() + Duration::from_secs(5);
             while std::time::Instant::now() < deadline {
                 if let Ok(Some(status)) = child.try_wait() {
@@ -199,7 +195,6 @@ fn inspect_family<R: BufRead, W: Write>(
 ) -> Result<Vec<(String, PathBuf)>, String> {
     let mut rollouts = Vec::new();
     for session in family {
-        // A fresh server must load an existing thread before inspecting its work.
         let response = request(connection, "thread/resume", json!({"threadId":session.id}))?;
         let stored = &response["thread"];
         if stored["id"].as_str() != Some(&session.id) {

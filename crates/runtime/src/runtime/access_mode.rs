@@ -5,7 +5,6 @@ const ACCESS_MODE_CHANGE_DEBOUNCE: Duration = Duration::from_millis(500);
 #[derive(Default)]
 pub(super) struct AccessModeChangeState {
     queued: Option<HarnessAccessMode>,
-    // Keep the preference when a harness or an incomplete catalog forces a fallback.
     fallback_preference: Option<HarnessAccessMode>,
     apply_due: Option<Instant>,
     restart_pending: bool,

@@ -87,9 +87,9 @@ pub use supervisor::TestRuntime;
 use supervisor::{SessionEventSender, SessionRuntimeHandle};
 #[cfg(test)]
 use supervisor::{
-    SupervisorSessionAction, UiEventSender, actor_key_for_command, changed_external_documents,
-    command_targets_catalog, initial_draft_command, is_view_only_selection,
-    publish_session_status_if_changed, route_session_discovery, target_command_needs_actor_message,
+    SupervisorSessionAction, UiEventSender, actor_key_for_command, command_targets_catalog,
+    initial_draft_command, is_view_only_selection, publish_session_status_if_changed,
+    route_session_discovery, target_command_needs_actor_message,
 };
 pub use types::{ConfigurationStatus, RuntimeCommand, RuntimeEvent, RuntimeSnapshot, TaskSettings};
 

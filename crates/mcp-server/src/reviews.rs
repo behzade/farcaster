@@ -10,22 +10,16 @@ use crate::review_domain::{Review, ReviewLocation, resolve_path};
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Params {
-    /// Short review title (at most 200 bytes).
     title: String,
-    /// 1–100 suggested locations. Not an exhaustive or verified changeset.
     items: Vec<Location>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct Location {
-    /// Project-relative file path, without traversal.
     path: String,
-    /// Optional inclusive, 1-based start line.
     start_line: Option<u32>,
-    /// Optional inclusive end line; requires start_line.
     end_line: Option<u32>,
-    /// What to inspect here (at most 1000 bytes, single line).
     note: String,
 }
 
@@ -50,8 +44,6 @@ pub(super) fn submit(
     for item in &review.items {
         resolve_path(&caller.project, &item.path)?;
     }
-    // Keep the same ID in the journal and MCP response so preserved backend
-    // results can be deduplicated without collapsing repeated submissions.
     Ok(serde_json::json!({
         "farcaster_review": {
             "version": 1,

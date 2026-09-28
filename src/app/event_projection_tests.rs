@@ -49,8 +49,6 @@ fn review_button_survives_switching_back_to_a_resident_history_snapshot(
                     json!({"role":"toolResult", "toolCallId":"review", "isError":false,
                         "content":[{"type":"text", "text":"{\"success\":true}"}]}),
                 ]);
-                // Runtime snapshots carry hydrated presentation rows while the
-                // backend conversation retains the original lossy tool result.
                 assert!(artifact::from_item(&conversation.items[0]).is_none());
                 let mut presentation = TranscriptPresentation::from(&conversation);
                 let mut row = conversation.items[0].as_ref().clone();
@@ -75,8 +73,6 @@ fn review_button_survives_switching_back_to_a_resident_history_snapshot(
                         }),
                         false,
                     ),
-                    // The supervisor returns its cached snapshot with no dirty
-                    // suffix and a new selection generation.
                     (generation + 2, loaded.clone(), true),
                     (generation + 2, loaded, true),
                 ] {
@@ -507,7 +503,6 @@ fn prompt_result_follows_submission_through_draft_promotion() {
             );
             let resolved = Some((outcome, Some(path)));
             assert_eq!(pending[submission_id].result, resolved);
-            // An unrelated reply must not resolve or overwrite this submission.
             record_pending_prompt_result_for_submission(
                 &mut pending,
                 Some("submission-other"),
@@ -597,7 +592,6 @@ fn promoted_draft_completion_clears_status_and_saved_attachments(cx: &mut gpui::
                         session_key
                     );
                     assert!(!app.sessions.submitted_drafts.contains_key("completion"));
-                    // Startup would restore the attachment while its UI receipt is unresolved.
                     assert_eq!(
                         attachments::restore(&app.composer.sessions).0[&session_key].len(),
                         1
@@ -605,7 +599,6 @@ fn promoted_draft_completion_clears_status_and_saved_attachments(cx: &mut gpui::
                 });
             });
 
-            // The actor still addresses the original draft after the rail promotes it.
             runtime.send_event(RuntimeEvent::PromptResult {
                 submission_id: Some(submission_id.into()),
                 target: target.into(),
@@ -651,9 +644,6 @@ fn unknown_activity_then_real_rejection_resolves_the_original_payload_once(
         ),
         cx,
         |cx, app, runtime, _| {
-            // A session target keeps this fixture clear of draft persistence. The
-            // offline composer store is also a no-op, so this test cannot reach
-            // user state or start an agent process.
             let submission_id = "submission-unknown";
             let session = PathBuf::from("/sessions/unknown");
             let target = session_target(&session);
@@ -1210,8 +1200,6 @@ fn a_loading_chat_keeps_the_transcript_it_last_showed(cx: &mut gpui::TestAppCont
                 assert_eq!(app.read(cx).snapshot.conversation.items.len(), 2);
             });
 
-            // Selecting the same chat again clears the runtime's snapshot until
-            // the history load finishes.
             runtime.send_event(RuntimeEvent::Snapshot {
                 generation: 2,
                 snapshot: Arc::new(RuntimeSnapshot {

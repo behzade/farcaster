@@ -189,8 +189,6 @@ impl WorkerSessionTransport {
     }
 
     fn finish_prompt_ack(&mut self, id: String, result: Result<(), String>) {
-        // A terminal unknown already handed the payload to recovery. A later
-        // error cannot remove it or restore it over a newer composer submission.
         if result.is_err()
             && self
                 .pending_prompts
@@ -202,7 +200,6 @@ impl WorkerSessionTransport {
         let Some(PendingPrompt { requested_mode, .. }) = self.pending_prompts.remove(&id) else {
             return;
         };
-        // A committed input is stronger evidence than a delayed request error.
         let result = if self
             .prompt_deliveries
             .iter()
@@ -248,9 +245,6 @@ impl WorkerSessionTransport {
             self.enqueue_message(mode, message, id.clone());
         }
         if awaiting_delivery_proof {
-            // Admission is not delivery proof. Keep the pending prompt and
-            // defer the terminal reply until delivery proves admission, or
-            // until an abort cancellation terminally rejects it.
             self.pending_prompts.insert(
                 id,
                 PendingPrompt {
@@ -320,9 +314,6 @@ impl WorkerSessionTransport {
             .get(&id)
             .is_some_and(|prompt| prompt.state == PendingPromptState::Unknown)
         {
-            // DeliveryUnknown is already terminal and owned by durable
-            // recovery. Do not emit a second terminal response, but release
-            // transport correlation now that cancellation is definitive.
             self.pending_prompts.remove(&id);
             self.prompt_deliveries
                 .retain(|delivery| delivery.request_id != id);
@@ -442,8 +433,6 @@ impl WorkerSessionTransport {
     }
 
     fn stop_queue(&mut self) {
-        // Sending an interrupt does not establish input rejection. Keep receipt
-        // correlation for late replies while removing cancelled execution intent.
         for delivery in &mut self.prompt_deliveries {
             delivery.aborted = true;
             if !delivery.acknowledged && !delivery.delivered {
@@ -540,8 +529,6 @@ impl WorkerSessionTransport {
                 return;
             }
             WorkerActivity::PeerInputDelivered { message } => {
-                // Later deltas must start below this reply instead of extending
-                // the assistant block above it.
                 self.finish_assistant_message(None);
                 json!({
                     "type": "peer_message",
@@ -793,7 +780,6 @@ impl WorkerSessionTransport {
                 .is_some_and(|prompt| prompt.state == PendingPromptState::Admitted)
             && let Some(PendingPrompt { requested_mode, .. }) = self.pending_prompts.remove(id)
         {
-            // A delivery-tracked admission was held; this is its delivery proof.
             self.finish_prompt_success(id, requested_mode);
         }
         self.finish_assistant_message(None);
@@ -955,7 +941,6 @@ impl SessionTransport for WorkerSessionTransport {
                 images,
             } => {
                 let requested_mode = mode;
-                // Backends without live steering still admit Enter as a follow-up.
                 let mode = if mode == PromptMode::Steer && !super::supports_steering(self.harness) {
                     PromptMode::FollowUp
                 } else {
@@ -966,8 +951,6 @@ impl SessionTransport for WorkerSessionTransport {
                     PromptMode::Steer => WorkerSendMode::Steer,
                     PromptMode::FollowUp => WorkerSendMode::Queue,
                 };
-                // Inline attachment data before dispatch: a later cancellation
-                // must not depend on a temporary composer file still existing.
                 let images = images
                     .into_iter()
                     .map(|image| image.into_inline())

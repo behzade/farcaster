@@ -54,7 +54,6 @@ impl RepositoryOperations for ObservationOperations {
         if self.totals_error {
             return Err(RepositoryError::InvalidRepository("totals failed".into()));
         }
-        // Prove that the returned snapshot includes changes made during totals.
         snapshot.captured_at += std::time::Duration::from_secs(1);
         Ok((Some(3), Some(2)))
     }

@@ -410,7 +410,6 @@ fn restoring_rejected_text_leaves_composer_history_alone() {
 
     let _ = restore_rejected_text(&mut sessions, target, &rejected);
 
-    // If restoring rewrote history, the newest entry would be "restored text".
     assert_eq!(
         sessions
             .previous_history(ComposerSnapshot::default())

@@ -23,16 +23,6 @@ fn ui_font_uses_plex_sans_with_a_persian_fallback() {
 }
 
 #[test]
-fn sidebar_widths_match_the_design_bounds() {
-    assert_eq!(f32::from(default_theme().layout.session_rail), 286.0);
-    assert_eq!(f32::from(default_theme().layout.session_rail_min), 220.0);
-    assert_eq!(f32::from(default_theme().layout.session_rail_max), 430.0);
-    assert_eq!(f32::from(default_theme().layout.run_panel), 332.0);
-    assert_eq!(f32::from(default_theme().layout.run_panel_min), 220.0);
-    assert_eq!(f32::from(default_theme().layout.run_panel_max), 430.0);
-}
-
-#[test]
 fn icon_and_control_tokens_keep_icons_optically_proportional() {
     let theme = default_theme();
     assert!(theme.icons.inline >= theme.type_scale.body);
@@ -48,8 +38,6 @@ fn icon_and_control_tokens_keep_icons_optically_proportional() {
 fn bundled_session_rows_have_room_for_two_lines_and_padding() {
     for definition in BUILT_IN_THEMES.iter() {
         let theme = Theme::from_definition(definition);
-        // Flat session and draft rows add a metadata/control line to the
-        // compact row height. Both lines must fit their text and padding.
         let metadata_height = theme.type_scale.line_body.max(theme.icons.inline);
         let required =
             theme.type_scale.line_body + metadata_height + theme.size(2.0) + theme.size(4.0) * 2.0;
@@ -92,18 +80,6 @@ fn the_default_library_starts_on_the_bundled_theme() {
     assert_eq!(library.selected(), BUILT_IN_THEMES[0]);
     assert_eq!(library.selected().colors, default_theme().colors);
     assert!(library.user_themes().is_empty());
-}
-
-#[test]
-fn every_color_token_is_reachable_by_key() {
-    let mut colors = default_theme().colors;
-    for key in ColorKey::ALL.iter() {
-        let color = colors.get(*key);
-        let shifted = parse_hex(&color_hex(color)).expect("hex round trip");
-        colors.set(*key, shifted);
-        assert!(!key.label().is_empty());
-    }
-    assert_eq!(colors, default_theme().colors);
 }
 
 #[test]

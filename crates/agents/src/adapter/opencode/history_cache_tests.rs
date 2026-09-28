@@ -85,7 +85,6 @@ fn main_wal_and_missing_files_invalidate_history() {
     read();
     read();
     assert_eq!(calls.get(), 1);
-    // Model, message and inbox changes may all land in the WAL only.
     std::fs::write(&wal, "inbox").unwrap();
     read();
     std::fs::write(&wal, "inbox and model").unwrap();

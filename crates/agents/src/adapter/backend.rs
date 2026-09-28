@@ -177,8 +177,6 @@ pub(super) trait BackendAdapter: Sync {
             prompt_deliveries: history.prompt_deliveries,
         })
     }
-    /// Opt in only when loading is passive and primes the foreground cache.
-    /// Active protocol loads remain foreground-only by default.
     fn supports_history_warming(&self) -> bool {
         false
     }

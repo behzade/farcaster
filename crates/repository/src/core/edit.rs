@@ -68,7 +68,6 @@ impl RepositoryBackend {
             }
         }
         let mut paths = selected.clone();
-        // A rename is one whole-file operation, even if Git reports its ends separately.
         loop {
             let before = paths.len();
             for change in &snapshot.changes {
@@ -136,7 +135,6 @@ impl RepositoryBackend {
         {
             return Err(RepositoryError::InvalidPath(path.to_path_buf()));
         }
-        // Reject symlinked ancestors; the leaf itself may be a tracked symlink.
         let mut parent = path.parent();
         while let Some(path) = parent.filter(|path| !path.as_os_str().is_empty()) {
             if fs::symlink_metadata(self.location.workspace_root.join(path))

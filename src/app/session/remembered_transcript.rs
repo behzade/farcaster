@@ -1,10 +1,3 @@
-//! The transcript a session last showed, so selecting it again paints that
-//! instead of clearing to an empty pane while the history loads.
-//!
-//! Keyed by session path and stamped by the session file, so a session that
-//! moved on is never served from what it used to be. A live session is written
-//! as it runs, so its stamp stops matching and its stale rows are never shown.
-
 use super::remembered::{Remembered, Stamp};
 use super::*;
 use std::sync::{Mutex, MutexGuard};
@@ -34,8 +27,6 @@ pub(in crate::app) fn remember(snapshot: &Arc<RuntimeSnapshot>) {
     cache().remember(path, stamp, snapshot);
 }
 
-/// What to show for `snapshot` while its history loads: the last read of that
-/// same session, or `snapshot` itself when nothing is remembered for it.
 pub(in crate::app) fn stand_in(snapshot: Arc<RuntimeSnapshot>) -> Arc<RuntimeSnapshot> {
     if snapshot.status != "Loading history" || !snapshot.conversation.items.is_empty() {
         return snapshot;

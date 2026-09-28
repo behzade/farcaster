@@ -18,7 +18,6 @@ pub type Environment = Vec<(OsString, OsString)>;
 
 static SHELL_ENVIRONMENTS: OnceLock<Mutex<HashMap<PathBuf, Environment>>> = OnceLock::new();
 
-/// Supply an isolated fixture's environment without invoking the account shell.
 #[cfg(feature = "test-support")]
 pub fn set_test_project_environment(project: &Path, environment: Environment) {
     SHELL_ENVIRONMENTS
@@ -136,7 +135,6 @@ fn capture_login_shell_environment(shell: &Path, project: &Path) -> Result<Envir
         .current_dir(project)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        // Avoid an undrained script pipe; shell diagnostics travel through the PTY.
         .stderr(Stdio::null());
     let mut child = command
         .spawn()
@@ -190,8 +188,6 @@ fn capture_terminal_output(child: &mut std::process::Child) -> Result<Vec<u8>, S
     Ok(captured)
 }
 
-/// Complete fish's terminal-query barrier without advertising optional features
-/// or changing shell initialization. This is not a full terminal emulator.
 #[derive(Default)]
 struct CaptureTerminal {
     tail: Vec<u8>,
@@ -206,7 +202,6 @@ impl CaptureTerminal {
             }
             self.tail.push(byte);
             if self.tail.ends_with(START_MARKER) {
-                // Exported values are data, even if they contain escape sequences.
                 self.capturing_environment = true;
                 break;
             }

@@ -6,7 +6,6 @@ use crate::agents::Backend;
 mod tests;
 
 impl StateStore {
-    /// Persist a user dismissal without claiming that the backend delivered the input.
     pub fn dismiss_prompt_receipt(&self, session: &Path, receipt_id: &str) -> Result<(), String> {
         let session = crate::sessions::normalize_session_path(session);
         self.connection.execute(
@@ -103,8 +102,6 @@ impl StateStore {
         self.prompts_in_state("pending")
     }
 
-    /// Keep the exact outbox/request link so native history can settle a
-    /// delivery that outlives this process.
     pub fn record_prompt_dispatch(&self, outbox_id: i64, receipt_id: &str) -> Result<(), String> {
         self.connection.execute(
             "INSERT INTO session_events(session_id,seq,t,schema_version,body)
@@ -415,8 +412,6 @@ impl StateStore {
             .map_err(|error| format!("commit prompt delivery reconciliation: {error}"))
     }
 
-    /// Record transport admission without claiming that the model consumed the
-    /// input. The row remains retryable until `complete_delivered_prompt`.
     pub fn record_prompt_acceptance(
         &mut self,
         id: i64,
@@ -530,7 +525,6 @@ impl StateStore {
         if let Some(outbox_id) = outbox_id {
             record_prompt_delivery(&transaction, outbox_id, receipt_id, true, true)?;
         }
-        // A receipt can still settle accepted history after its outbox row is gone.
         transaction
             .execute(
                 "INSERT INTO session_events(session_id, seq, t, schema_version, body)
@@ -570,9 +564,6 @@ impl StateStore {
     }
 }
 
-// Keep every outbox acknowledgement in the same transaction as its payload,
-// presentation and receipt. The pending guard makes repeats harmless and keeps
-// cancelled prompts cancelled.
 fn record_prompt_delivery(
     transaction: &Transaction<'_>,
     id: i64,
@@ -627,8 +618,6 @@ fn record_prompt_delivery(
                   WHERE o.id=?1 AND o.display_message IS NOT NULL AND o.invocation IS NOT NULL",
                 [id],
             ).map_err(|error| format!("save prompt presentation {id}: {error}"))?;
-        // Acceptance and consumption must commit together. A crash between
-        // separate transactions would restore delivered input as pending.
         transaction.execute(
                 "INSERT INTO session_events(session_id, seq, t, schema_version, body)
                  SELECT o.session_id,

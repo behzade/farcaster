@@ -322,7 +322,6 @@ impl TranscriptRowUpdate {
     }
 }
 
-// Item-only entry point used by the transcript benchmark and projection tests.
 #[allow(dead_code)]
 pub(crate) fn update_rows_incremental(
     previous_rows: &PersistentVec<TranscriptRow>,
@@ -353,8 +352,6 @@ fn update_rows_with_run(
         && items.len() >= previous_items.len()
         && !previous_rows.is_empty()
     {
-        // Active-run rows are in source order. Completed handoffs remain a
-        // shared prefix; only the changed source suffix needs markdown work.
         let active_row = previous_rows.partition_point(|row| row.item_end() <= active);
         let mut keep = previous_rows.partition_point(|row| row.item_end() <= dirty);
         if keep > active_row {
@@ -380,9 +377,6 @@ fn update_rows_with_run(
             unchanged_prefix_rows: keep,
         };
     }
-    // Review handoffs deliberately reorder source items. Keep the monotonic
-    // incremental fast path for ordinary transcripts; compare visual rows for
-    // review transcripts, including state-only settlement updates.
     if previous_rows
         .iter()
         .any(|row| matches!(row, TranscriptRow::Review { .. }))

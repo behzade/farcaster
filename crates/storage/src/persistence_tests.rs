@@ -148,7 +148,6 @@ fn preferred_harness_survives_reopen_and_overrides_session_history()
     );
     draft.submitted = true;
     store.allocate_app_session_id(&draft)?;
-    // An unused startup draft must not reset the inferred preference.
     let empty = DraftSession::new(
         Some(Backend::Pi),
         "empty".into(),
@@ -217,13 +216,11 @@ fn startup_draft_text_survives_quit_without_switching() -> Result<(), Box<dyn st
         let mut registry = store.load_registry()?;
         registry.projects.push(project.clone());
 
-        // Match startup: register the allocated draft before saving the registry.
         let mut draft = DraftSession::new(Some(Backend::Pi), "startup".into(), 0, project, 1);
         draft.app_session_id = store.allocate_app_session_id(&draft)?;
         registry.drafts.push(draft);
         store.save_registry(&registry)?;
 
-        // Save synchronously without switching targets to exclude shutdown races.
         store.save_composer_session(&record)?;
     }
 
@@ -1558,8 +1555,6 @@ fn schema_v3_migrates_with_running_default_false_and_preserves_session_identity(
         "ALTER TABLE drafts ADD COLUMN submitted INTEGER NOT NULL DEFAULT 0;
          ALTER TABLE drafts ADD COLUMN session_path TEXT;",
     )?;
-    // v2 -> v3 predates the is_running column; a real v3 database carries a
-    // settled session row with no running state recorded.
     let session_path = temp.path().canonicalize()?.join("v3-session.jsonl");
     connection.execute(
         "INSERT INTO sessions(
@@ -1590,9 +1585,6 @@ fn schema_v3_migrates_with_running_default_false_and_preserves_session_identity(
         !cached[0].is_running,
         "missing is_running must default to false"
     );
-    // The default is on its own here: modified_ms is in the future, so only
-    // the is_running=0 default branch settles the row during the v9 backfill
-    // and the migrated catalog reports it archived rather than live.
     assert!(cached[0].archived);
     Ok(())
 }
@@ -1612,8 +1604,6 @@ fn schema_v4_migrates_with_a_writable_provisional_title_column()
          UPDATE meta SET value='4' WHERE key='schema_version';",
     )?;
 
-    // The migration itself adds provisional_title; prove the new column is the
-    // registry's title source by writing through it and reopening.
     let mut store = StateStore::open_at(&database)?;
     assert_eq!(database_schema_version(&database)?, crate::SCHEMA_VERSION);
     assert_eq!(store.load_registry()?.drafts[0].title, None);

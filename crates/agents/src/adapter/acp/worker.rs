@@ -346,8 +346,6 @@ fn setup_connection(
     {
         metadata.commands = commands;
     }
-    // ACP session/resume retains backend context without replaying the transcript.
-    // Only session/load supplies authoritative history, including an empty replay.
     let history = (resume.is_some() && profile.resume_method == "session/load").then(|| {
         let mut history = super::catalog::discovered_history(
             profile,
@@ -575,8 +573,6 @@ impl AcpWorkerSession {
         Ok(())
     }
 
-    /// Cursor spends seconds on every set_config_option, even when the value is
-    /// already in effect, so unchanged values are never sent.
     fn set_config_option(&mut self, config_id: &str, value: &str) -> Result<(), String> {
         if self
             .config_ids
@@ -593,7 +589,6 @@ impl AcpWorkerSession {
         if response.get("configOptions").is_some() {
             self.refresh_configuration(&response);
         } else {
-            // Without the updated options, dependent values may have changed.
             self.config_ids.current.clear();
             self.config_ids
                 .current
@@ -721,8 +716,6 @@ impl AcpWorkerSession {
                         .map(ToString::to_string)
                         .unwrap_or_default()
                 );
-                // Each plan snapshot replaces the previous result in the same
-                // tool row, including revisions after an earlier completion.
                 if let Some(state) = self.tool_states.get_mut(&id) {
                     state.finished = false;
                 }
@@ -733,7 +726,6 @@ impl AcpWorkerSession {
                 )
             }
             "user_message_chunk" => {
-                // The first valid live user echo proves admission before any model output.
                 serde_json::from_value::<ContentBlock>(update.get("content")?.clone()).ok()?;
                 self.acknowledge_current_prompt_started();
                 self.events.pop_front()
@@ -960,9 +952,6 @@ impl AcpWorkerSession {
     }
 
     fn acknowledge_current_prompt_before(&mut self, event: WorkerEvent) -> WorkerEvent {
-        // Translating one native update can queue follow-on events, such as a
-        // tool finish after its metadata change. Delivery must precede all of
-        // those execution events so the transcript keeps one assistant turn.
         let deferred = std::mem::take(&mut self.events);
         self.acknowledge_current_prompt_started();
         self.events.push_back(event);
@@ -1620,8 +1609,6 @@ impl WorkerSession for AcpWorkerSession {
                     .reply_deadline
                     .is_some_and(|deadline| Instant::now() >= deadline)
                 {
-                    // Apply this last frame, including any delivery receipt,
-                    // before failing a stream that never became idle.
                     self.post_reply_frames = POST_REPLY_DRAIN_LIMIT;
                 }
             }
@@ -1701,7 +1688,6 @@ impl WorkerSession for AcpWorkerSession {
 
     fn close(&mut self) -> Result<(), String> {
         let mut errors = Vec::new();
-        // Cursor accepts session/close but omits the capability in initialize.
         if (self.features.close || self.profile.backend == Backend::Cursor)
             && self
                 .child

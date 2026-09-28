@@ -35,8 +35,6 @@ impl PiSandboxAdapter for Nono {
         let expected = mode_name(mode)?;
         let request = json!({"requestId": request_id, "files": expected, "network": expected});
         let command = json!({"type": "prompt", "message": format!("/{control} {request}")});
-        // get_commands established this as an extension command before we send it.
-        // It must complete locally and never start an agent turn.
         process.confirm_control(command, Duration::from_secs(15), |event| match event {
             SessionEvent::Interaction(ExtensionUiRequest::SetStatus { key, text, .. })
                 if key == STATUS_KEY =>
@@ -108,8 +106,6 @@ fn control_command(commands: &[PiCommand]) -> Result<Option<&str>, String> {
 }
 
 fn is_nono_source(path: &Path) -> bool {
-    // Inspect only the owner of a command Pi actually loaded, never scan extension
-    // folders or infer identity from a command name or directory called sandbox.
     if !path.is_absolute() {
         return false;
     }

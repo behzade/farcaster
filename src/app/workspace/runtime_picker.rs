@@ -264,7 +264,6 @@ impl FarcasterApp {
         let search_focus = search.read(cx).focus_handle(cx);
         let selected_id = selected.map(|model| (model.provider.clone(), model.id.clone()));
         let highlighted = self.workspace.runtime_picker.highlighted;
-        // Only the results pane grows. The outer scroll is a fallback for short windows.
         let (width, height, list_height) = layout::dimensions(
             f32::from(window.viewport_size().width),
             f32::from(window.viewport_size().height),
