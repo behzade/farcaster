@@ -13,8 +13,8 @@ impl EditorBackend for ZedBackend {
         &self,
         _app: &mut FarcasterApp,
         request: EditorRequest,
-        _window: &mut Window,
-        _cx: &mut Context<FarcasterApp>,
+        window: &mut Window,
+        cx: &mut Context<FarcasterApp>,
     ) -> Result<(), String> {
         let project = match &request {
             EditorRequest::Project(project)
@@ -38,14 +38,23 @@ impl EditorBackend for ZedBackend {
                 diff,
             } => {
                 if diff {
-                    let base = external_editor::head_tempfile(&path, "Zed")?;
-                    let args = [
-                        "--wait".into(),
-                        "--diff".into(),
-                        base.path().to_string_lossy().into_owned(),
-                        path.to_string_lossy().into_owned(),
-                    ];
-                    external_editor::launch(&program, "Zed", &project, &args, Some(base))
+                    external_editor::prepare_diff(
+                        project.clone(),
+                        path.clone(),
+                        "Zed",
+                        window,
+                        cx,
+                        move |_, base, _, _| {
+                            let args = [
+                                "--wait".into(),
+                                "--diff".into(),
+                                base.path().to_string_lossy().into_owned(),
+                                path.to_string_lossy().into_owned(),
+                            ];
+                            external_editor::launch(&program, "Zed", &project, &args, Some(base))
+                        },
+                    );
+                    Ok(())
                 } else {
                     external_editor::launch(
                         &program,

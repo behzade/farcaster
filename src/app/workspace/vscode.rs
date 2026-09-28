@@ -14,8 +14,8 @@ impl EditorBackend for VsCodeBackend {
         &self,
         _app: &mut FarcasterApp,
         request: EditorRequest,
-        _window: &mut Window,
-        _cx: &mut Context<FarcasterApp>,
+        window: &mut Window,
+        cx: &mut Context<FarcasterApp>,
     ) -> Result<(), String> {
         match request {
             EditorRequest::Project(project) => open_project(&project),
@@ -26,7 +26,15 @@ impl EditorBackend for VsCodeBackend {
                 diff,
             } => {
                 if diff {
-                    open_diff(&project, &path)
+                    external_editor::prepare_diff(
+                        project.clone(),
+                        path.clone(),
+                        "VS Code",
+                        window,
+                        cx,
+                        move |_, base, _, _| open_diff(&project, &path, base),
+                    );
+                    Ok(())
                 } else {
                     open_locations(&project, &[(path, line)])
                 }
@@ -58,8 +66,7 @@ fn open_locations(project: &Path, locations: &[(PathBuf, Option<u64>)]) -> Resul
     launch(project, &arguments, None)
 }
 
-fn open_diff(project: &Path, path: &Path) -> Result<(), String> {
-    let base = external_editor::head_tempfile(path, "VS Code")?;
+fn open_diff(project: &Path, path: &Path, base: tempfile::NamedTempFile) -> Result<(), String> {
     let arguments = [
         "--wait".to_owned(),
         "--diff".to_owned(),

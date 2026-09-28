@@ -60,14 +60,35 @@ impl EditorBackend for TerminalBackend {
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "File".into());
                 if diff {
-                    let base = external_editor::head_tempfile(&path, choice.label())?;
-                    let mut args = match kind {
-                        EditorChoice::Vim => vec!["-d".into()],
-                        EditorChoice::Helix => vec!["--vsplit".into()],
-                        _ => Vec::new(),
-                    };
-                    args.extend([base.path().as_os_str().to_owned(), path.into_os_string()]);
-                    (project, format!("Diff: {title}"), args, Some(base))
+                    external_editor::prepare_diff(
+                        project.clone(),
+                        path.clone(),
+                        choice.label(),
+                        window,
+                        cx,
+                        move |app, base, window, cx| {
+                            let mut args = match kind {
+                                EditorChoice::Vim => vec!["-d".into()],
+                                EditorChoice::Helix => vec!["--vsplit".into()],
+                                _ => Vec::new(),
+                            };
+                            args.extend([
+                                base.path().as_os_str().to_owned(),
+                                path.into_os_string(),
+                            ]);
+                            app.activate_terminal_editor(
+                                project,
+                                choice,
+                                command,
+                                format!("Diff: {title}"),
+                                args,
+                                Some(base),
+                                window,
+                                cx,
+                            )
+                        },
+                    );
+                    return Ok(());
                 } else {
                     let args = command.file_arguments(&path, line);
                     (project, title, args, None)

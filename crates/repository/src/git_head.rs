@@ -1,21 +1,33 @@
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::path::{Path, PathBuf};
+
+use crate::adapter::{RepositoryOptions, process::CommandRunner};
 
 pub fn git_head_contents(path: &Path) -> Result<Vec<u8>, String> {
+    git_head_contents_with_options(path, RepositoryOptions::default())
+}
+
+fn git_head_contents_with_options(
+    path: &Path,
+    options: RepositoryOptions,
+) -> Result<Vec<u8>, String> {
     let parent = path
         .ancestors()
         .skip(1)
         .find(|parent| parent.is_dir())
         .ok_or("File has no parent directory")?;
+    let runner = CommandRunner::new(options.timeout, options.output_limit, options.environment);
     let git = |directory: &Path, args: &[&std::ffi::OsStr]| {
-        Command::new("git")
-            .arg("-C")
-            .arg(directory)
-            .args(args)
-            .output()
-            .map_err(|error| format!("Read Git HEAD: {error}"))
+        let arguments = args
+            .iter()
+            .map(|arg| arg.to_os_string())
+            .collect::<Vec<_>>();
+        let output = runner
+            .run(&options.git_executable, &arguments, directory)
+            .map_err(|error| format!("Read Git HEAD: {error}"))?;
+        if output.stdout_truncated {
+            return Err("Read Git HEAD: output exceeded repository limit".to_owned());
+        }
+        Ok(output)
     };
     let root = git(parent, &["rev-parse".as_ref(), "--show-toplevel".as_ref()])?;
     if !root.status.success() {

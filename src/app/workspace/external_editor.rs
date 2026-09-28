@@ -1,10 +1,49 @@
 use std::{
     io::Write as _,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
 use crate::repository::git_head_contents;
+use gpui::{Context, Window};
+
+use super::FarcasterApp;
+
+pub(super) fn prepare_diff(
+    project: PathBuf,
+    path: PathBuf,
+    editor: &'static str,
+    window: &mut Window,
+    cx: &mut Context<FarcasterApp>,
+    open: impl FnOnce(
+        &mut FarcasterApp,
+        tempfile::NamedTempFile,
+        &mut Window,
+        &mut Context<FarcasterApp>,
+    ) -> Result<(), String>
+    + 'static,
+) {
+    let prepared = cx
+        .background_executor()
+        .spawn(async move { head_tempfile(&path, editor) });
+    cx.spawn_in(window, async move |weak, cx| {
+        let prepared = prepared.await;
+        let _ = weak.update_in(cx, |app, window, cx| {
+            if app.workspace_project() != project {
+                return;
+            }
+            let result = if app.project.repository.execution_allowed {
+                prepared.and_then(|base| open(app, base, window, cx))
+            } else {
+                Err("Project trust changed while preparing the diff.".into())
+            };
+            if let Err(error) = result {
+                app.notify_workspace_error(editor, error, cx);
+            }
+        });
+    })
+    .detach();
+}
 
 pub(super) fn location(path: &Path, line: Option<u64>) -> String {
     match line {
@@ -13,7 +52,7 @@ pub(super) fn location(path: &Path, line: Option<u64>) -> String {
     }
 }
 
-pub(super) fn head_tempfile(path: &Path, editor: &str) -> Result<tempfile::NamedTempFile, String> {
+fn head_tempfile(path: &Path, editor: &str) -> Result<tempfile::NamedTempFile, String> {
     let suffix = path
         .extension()
         .and_then(|extension| extension.to_str())
@@ -58,3 +97,7 @@ pub(super) fn launch(
     });
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "external_editor_tests.rs"]
+mod tests;
