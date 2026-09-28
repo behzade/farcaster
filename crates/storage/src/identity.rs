@@ -124,6 +124,10 @@ pub(super) fn merge_session(tx: &Transaction<'_>, keep: i64, other: i64) -> Resu
     } else {
         None
     };
+    // Explicit intent wins over snapshots in either merge direction. Across
+    // rows, use the latest intent time, then the higher durable ID for ties;
+    // event sequences are local to a session. Read the chosen row's current
+    // value so subsequent merges retain the decision after events move.
     for sql in [
         "UPDATE sessions SET
            profile_id=COALESCE(profile_id,(SELECT profile_id FROM sessions WHERE id=?2)),
@@ -135,9 +139,14 @@ pub(super) fn merge_session(tx: &Transaction<'_>, keep: i64, other: i64) -> Resu
            timestamp=COALESCE((SELECT timestamp FROM sessions WHERE id=?2),timestamp),
            modified_ms=MAX(modified_ms,(SELECT modified_ms FROM sessions WHERE id=?2)),
            archived_at=CASE WHEN EXISTS(
-             SELECT 1 FROM session_events WHERE session_id=?1
+             SELECT 1 FROM session_events WHERE session_id IN (?1,?2)
                AND json_extract(body,'$.type')='session_archive_intent'
-           ) THEN archived_at ELSE COALESCE(archived_at,(SELECT archived_at FROM sessions WHERE id=?2)) END,
+           ) THEN (
+             SELECT s.archived_at FROM sessions s
+               JOIN session_events e ON e.session_id=s.id
+              WHERE s.id IN (?1,?2) AND json_extract(e.body,'$.type')='session_archive_intent'
+              ORDER BY e.t DESC, s.id DESC, e.seq DESC LIMIT 1
+           ) ELSE COALESCE(archived_at,(SELECT archived_at FROM sessions WHERE id=?2)) END,
            record_coverage=CASE
              WHEN record_coverage='complete' OR (SELECT record_coverage FROM sessions WHERE id=?2)='complete' THEN 'complete'
              WHEN record_coverage='partial' OR (SELECT record_coverage FROM sessions WHERE id=?2)='partial' THEN 'partial'

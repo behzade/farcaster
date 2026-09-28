@@ -474,33 +474,36 @@ impl StateStore {
 
     pub fn set_session_archived(&self, path: &Path, archived: bool) -> Result<(), String> {
         let locator = crate::sessions::normalize_session_path(path);
-        let archived_at = archived.then_some(now_ms()).map(u64_to_i64);
-        let updated = self
-            .connection
-            .execute(
-                "UPDATE sessions SET archived_at=?2 WHERE locator=?1",
-                params![locator.to_string_lossy(), archived_at],
-            )
-            .map_err(|error| format!("update archived state for {}: {error}", path.display()))?;
-        if updated > 0 {
-            return Ok(());
-        }
-        let legacy_locators = legacy_session_locator_index(&self.connection)?;
-        let Some(id) = legacy_session_id_from_index(&legacy_locators, &locator, None, None)? else {
-            return Ok(());
-        };
-        self.connection
-            .execute(
-                "UPDATE sessions SET locator=?2, archived_at=?3 WHERE id=?1",
-                params![id, locator.to_string_lossy(), archived_at],
-            )
-            .map(|_| ())
-            .map_err(|error| {
-                format!(
-                    "update legacy archived state for {}: {error}",
-                    path.display()
-                )
+        let tx = Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)
+            .map_err(|error| format!("start session archive intent: {error}"))?;
+        let mut ids = tx
+            .prepare("SELECT id FROM sessions WHERE locator=?1")
+            .and_then(|mut statement| {
+                statement
+                    .query_map([locator.to_string_lossy()], |row| row.get::<_, i64>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()
             })
+            .map_err(|error| format!("find session to archive {}: {error}", path.display()))?;
+        if ids.is_empty() {
+            let legacy_locators = legacy_session_locator_index(&tx)?;
+            let Some(id) = legacy_session_id_from_index(&legacy_locators, &locator, None, None)?
+            else {
+                return Ok(());
+            };
+            tx.execute(
+                "UPDATE sessions SET locator=?2 WHERE id=?1",
+                params![id, locator.to_string_lossy()],
+            )
+            .map_err(|error| {
+                format!("update legacy archived locator {}: {error}", path.display())
+            })?;
+            ids.push(id);
+        }
+        for id in ids {
+            super::session_state::apply_archive_intent(&tx, id, archived)?;
+        }
+        tx.commit()
+            .map_err(|error| format!("commit session archive intent: {error}"))
     }
 }
 
@@ -572,7 +575,10 @@ fn upsert_bound_session(
                 "UPDATE sessions SET
                    project_id=?2, harness=?3, locator=?4, backend_id=?5, profile_id=?19, title=?6,
                    first_user_message=?7, search_text=?8, timestamp=?9, modified_ms=?10,
-                   archived_at=COALESCE(archived_at, ?11), message_count=?12,
+                   archived_at=CASE WHEN EXISTS(
+                     SELECT 1 FROM session_events WHERE session_id=?1
+                       AND json_extract(body,'$.type')='session_archive_intent'
+                   ) THEN archived_at ELSE COALESCE(archived_at, ?11) END, message_count=?12,
                    input_tokens=?13, output_tokens=?14, cache_read_tokens=?15,
                    cache_write_tokens=?16, total_tokens=?17, cost_micros=?18
                  WHERE id=?1",

@@ -1,6 +1,6 @@
 use super::*;
 
-/// Queued UI snapshots. Explicit archive intent uses `set_app_session_archived`.
+/// Queued UI snapshots. Archive methods record explicit intent separately.
 #[derive(Clone, Default)]
 pub struct SessionStateChanges {
     pub projects: Option<projects::ProjectList>,
@@ -26,31 +26,7 @@ impl StateStore {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| format!("start session archive intent: {error}"))?;
-        let now = u64_to_i64(now_ms());
-        let updated = tx
-            .execute(
-                "UPDATE sessions SET archived_at=?2 WHERE id=?1",
-                params![app_session_id.get(), archived.then_some(now)],
-            )
-            .map_err(|error| format!("apply session archive intent: {error}"))?;
-        if updated == 0 {
-            return Err("The chat is no longer available to archive".into());
-        }
-        // A NULL archive value alone cannot distinguish an explicit unarchive
-        // from an old snapshot. Binding uses this marker to retain the current
-        // row's decision when merging a separately discovered session.
-        tx.execute(
-            "INSERT INTO session_events(session_id,seq,t,schema_version,body)
-             SELECT ?1, COALESCE(MAX(seq),0)+1, ?2, 1,
-                    json_object('type','session_archive_intent','archived',json(?3))
-               FROM session_events WHERE session_id=?1",
-            params![
-                app_session_id.get(),
-                now,
-                if archived { "true" } else { "false" }
-            ],
-        )
-        .map_err(|error| format!("record session archive intent: {error}"))?;
+        apply_archive_intent(&tx, app_session_id.get(), archived)?;
         tx.commit()
             .map_err(|error| format!("commit session archive intent: {error}"))
     }
@@ -82,6 +58,35 @@ impl StateStore {
         tx.commit()
             .map_err(|error| format!("commit session state save: {error}"))
     }
+}
+
+pub(super) fn apply_archive_intent(
+    tx: &Transaction<'_>,
+    session_id: i64,
+    archived: bool,
+) -> Result<(), String> {
+    let now = u64_to_i64(now_ms());
+    let updated = tx
+        .execute(
+            "UPDATE sessions SET archived_at=?2 WHERE id=?1",
+            params![session_id, archived.then_some(now)],
+        )
+        .map_err(|error| format!("apply session archive intent: {error}"))?;
+    if updated == 0 {
+        return Err("The chat is no longer available to archive".into());
+    }
+    // A NULL archive value alone cannot distinguish an explicit unarchive
+    // from an old snapshot. Merges and snapshots use this marker to preserve
+    // the explicit decision.
+    tx.execute(
+        "INSERT INTO session_events(session_id,seq,t,schema_version,body)
+         SELECT ?1, COALESCE(MAX(seq),0)+1, ?2, 1,
+                json_object('type','session_archive_intent','archived',json(?3))
+           FROM session_events WHERE session_id=?1",
+        params![session_id, now, if archived { "true" } else { "false" }],
+    )
+    .map_err(|error| format!("record session archive intent: {error}"))?;
+    Ok(())
 }
 
 fn update_draft(tx: &Transaction<'_>, draft: &DraftSession) -> Result<(), String> {
