@@ -1784,7 +1784,9 @@ impl<M: InputModeKind> InputBaseState<M> {
             cx.stop_propagation();
         }
 
-        self.diagnostic_popover = None;
+        if self.diagnostic_popover.take().is_some() {
+            cx.notify();
+        }
     }
 
     pub(super) fn update_scroll_offset(
@@ -1811,8 +1813,10 @@ impl<M: InputModeKind> InputBaseState<M> {
             offset.y.clamp(safe_y_range.start, safe_y_range.end)
         };
         offset.x = offset.x.clamp(safe_x_range.start, safe_x_range.end);
-        self.scroll_handle.set_offset(offset);
-        cx.notify();
+        if self.scroll_handle.offset() != offset {
+            self.scroll_handle.set_offset(offset);
+            cx.notify();
+        }
     }
 
     /// Scroll to make the given offset visible.

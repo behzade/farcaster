@@ -10,6 +10,7 @@ use gpui::{
 #[path = "list/height_index.rs"]
 mod height_index;
 use self::height_index::HeightIndex;
+use crate::app::infrastructure::performance::{OperationKind, OperationTiming};
 use crate::app::ui::theme::theme;
 
 type RenderRow = dyn FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static;
@@ -439,6 +440,8 @@ impl Element for TranscriptList {
                     .into_iter()
                     .map(|index| {
                         let mut element = (self.render_row)(index, window, cx);
+                        let _layout_timing =
+                            OperationTiming::new(OperationKind::TranscriptLayout, 1);
                         let height = element
                             .layout_as_root(available, window, cx)
                             .height
@@ -476,6 +479,8 @@ impl Element for TranscriptList {
         let mut row_y =
             bounds.top() + self.state.0.borrow().heights.prefix(visible_range.start) - scroll_y;
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
+            let _timing =
+                OperationTiming::new(OperationKind::TranscriptPrepaint, visible_range.len());
             for index in visible_range {
                 let mut row = frame_rows
                     .remove(&index)
@@ -610,6 +615,7 @@ impl Element for TranscriptList {
         });
 
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
+            let _timing = OperationTiming::new(OperationKind::TranscriptPaint, prepaint.rows.len());
             for row in &mut prepaint.rows {
                 row.paint(window, cx);
             }

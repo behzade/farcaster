@@ -4,6 +4,7 @@ use gpui::{Context, IntoElement as _, ListAlignment, ListState, Pixels, Render, 
 
 use super::super::session_rail::session_row_height;
 use super::super::{FarcasterApp, SessionRailKind};
+use crate::app::infrastructure::performance::{OperationKind, OperationTiming, Timing};
 use crate::app::ui::theme::theme;
 
 pub(crate) struct SessionRailView {
@@ -14,6 +15,8 @@ pub(crate) struct SessionRailView {
     width: Pixels,
     resize_start: Option<(Pixels, Pixels)>,
     grouped: bool,
+    #[cfg(test)]
+    render_count: usize,
 }
 
 pub(crate) struct InactiveSessionRailView {
@@ -38,6 +41,8 @@ impl SessionRailView {
             width: theme().layout.session_rail,
             resize_start: None,
             grouped: false,
+            #[cfg(test)]
+            render_count: 0,
         }
     }
 
@@ -82,8 +87,12 @@ impl InactiveSessionRailView {
 
 impl Render for SessionRailView {
     fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
-        let _timing =
-            crate::app::infrastructure::performance::Timing::new("render.session_sidebar");
+        let _timing = Timing::new("render.session_sidebar");
+        let _operation = OperationTiming::new(OperationKind::SessionSidebar, 1);
+        #[cfg(test)]
+        {
+            self.render_count += 1;
+        }
         let Some(app) = self.app.upgrade() else {
             return gpui::div().into_any_element();
         };
@@ -109,8 +118,7 @@ impl Render for SessionRailView {
 
 impl Render for InactiveSessionRailView {
     fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
-        let _timing =
-            crate::app::infrastructure::performance::Timing::new("render.inactive_session_sidebar");
+        let _timing = Timing::new("render.inactive_session_sidebar");
         let Some(app) = self.app.upgrade() else {
             return gpui::div().into_any_element();
         };

@@ -1,5 +1,46 @@
 use super::*;
 
+#[gpui::test]
+fn transcript_redraws_reuse_sidebar_until_search_changes(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::transcript_redraws_reuse_sidebar_until_search_changes"
+        ),
+        cx,
+        |cx, app, _, _| {
+            let (rail, transcript, search) = cx.update(|_, cx| {
+                let app = app.read(cx);
+                (
+                    app.views.session_rail.clone(),
+                    app.views.transcript.clone(),
+                    app.navigation.search.clone(),
+                )
+            });
+            let mut previous_renders = 0;
+            for query in ["", "changed search"] {
+                cx.update(|window, cx| {
+                    search.update(cx, |search, cx| search.set_value(query, window, cx));
+                });
+                for _ in 0..3 {
+                    cx.update(|window, cx| window.draw(cx).clear(cx));
+                }
+                let renders = cx.update(|_, cx| rail.read(cx).render_count);
+                assert!(
+                    renders > previous_renders,
+                    "search edits must redraw the sidebar"
+                );
+                for _ in 0..3 {
+                    cx.update(|_, cx| transcript.update(cx, |_, cx| cx.notify()));
+                    cx.update(|window, cx| window.draw(cx).clear(cx));
+                }
+                assert_eq!(cx.update(|_, cx| rail.read(cx).render_count), renders);
+                previous_renders = renders;
+            }
+        },
+    );
+}
+
 #[test]
 fn first_archive_expansion_does_not_scroll_past_the_selected_row() {
     let list = ListState::new(12, ListAlignment::Top, gpui::px(0.0))

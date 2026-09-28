@@ -48,7 +48,7 @@ thread_local! {
     static SCROLL_TIMING: RefCell<ScrollTimingState> = RefCell::default();
 }
 
-const OPERATION_COUNT: usize = 9;
+const OPERATION_COUNT: usize = 13;
 static OPERATION_CALLS: [AtomicU64; OPERATION_COUNT] =
     [const { AtomicU64::new(0) }; OPERATION_COUNT];
 static OPERATION_TOTAL_NS: [AtomicU64; OPERATION_COUNT] =
@@ -69,6 +69,10 @@ pub(crate) enum OperationKind {
     StateDatabase,
     HistoryLoad,
     RuntimeDrain,
+    TranscriptLayout,
+    TranscriptPrepaint,
+    TranscriptPaint,
+    SessionSidebar,
 }
 
 impl OperationKind {
@@ -82,11 +86,15 @@ impl OperationKind {
         Self::StateDatabase,
         Self::HistoryLoad,
         Self::RuntimeDrain,
+        Self::TranscriptLayout,
+        Self::TranscriptPrepaint,
+        Self::TranscriptPaint,
+        Self::SessionSidebar,
     ];
 
     const fn label(self) -> &'static str {
         match self {
-            Self::TranscriptRow => "Transcript row layout",
+            Self::TranscriptRow => "Transcript row build",
             Self::MarkdownParse => "Markdown cache miss",
             Self::ThinkingAssembly => "Thinking text assembly",
             Self::FullProjection => "Full transcript projection",
@@ -95,12 +103,19 @@ impl OperationKind {
             Self::StateDatabase => "State database open/schema",
             Self::HistoryLoad => "Session history load",
             Self::RuntimeDrain => "Runtime event drain",
+            Self::TranscriptLayout => "Transcript row layout",
+            Self::TranscriptPrepaint => "Transcript row prepaint",
+            Self::TranscriptPaint => "Transcript row paint",
+            Self::SessionSidebar => "Session sidebar build",
         }
     }
 
     const fn work_label(self) -> &'static str {
         match self {
-            Self::TranscriptRow => "rows",
+            Self::TranscriptRow
+            | Self::TranscriptLayout
+            | Self::TranscriptPrepaint
+            | Self::TranscriptPaint => "rows",
             Self::MarkdownParse => "bytes",
             Self::ThinkingAssembly => "chunks",
             Self::FullProjection | Self::ComposerHistory => "items",
@@ -108,6 +123,7 @@ impl OperationKind {
             Self::StateDatabase => "opens",
             Self::HistoryLoad => "entries",
             Self::RuntimeDrain => "events",
+            Self::SessionSidebar => "renders",
         }
     }
 }
@@ -254,7 +270,7 @@ impl OperationTiming {
     pub(crate) fn new(kind: OperationKind, work: usize) -> Self {
         Self {
             kind,
-            started_at: DETAILED.load(Ordering::Relaxed).then(Instant::now),
+            started_at: MONITORING.load(Ordering::Relaxed).then(Instant::now),
             work: work as u64,
         }
     }
@@ -627,7 +643,7 @@ fn should_report_high_latency(
 
 fn log_high_latency(summary: &PerformanceSummary) {
     zlog::warn!(
-        "PERF_SLOW interval_ms={:.2} frames={} draw_p95_ms={:.2} draw_max_ms={:.2} dirty_to_draw_p95_ms={:.2} dirty_requests_avg={:.1} dirty_requests_max={} scrolling={} scroll_events={} transcript_remeasured={} markdown_cache_hits={}",
+        "PERF_SLOW interval_ms={:.2} frames={} draw_p95_ms={:.2} draw_max_ms={:.2} dirty_to_draw_p95_ms={:.2} dirty_requests_avg={:.1} dirty_requests_max={} scrolling={} scroll_events={} transcript_remeasured={} markdown_cache_hits={} operations={:?}",
         summary.sample_interval.as_secs_f64() * 1_000.0,
         summary.frame_count,
         summary.draw_p95.as_secs_f64() * 1_000.0,
@@ -639,6 +655,7 @@ fn log_high_latency(summary: &PerformanceSummary) {
         summary.scroll_events,
         summary.transcript_rows_remeasured,
         summary.markdown_cache_hits,
+        active_operations(summary),
     );
 }
 
