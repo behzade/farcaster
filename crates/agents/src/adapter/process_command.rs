@@ -3,6 +3,20 @@ use std::path::{Path, PathBuf};
 use crate::AgentLaunchConfig;
 
 impl AgentLaunchConfig {
+    pub(super) fn for_worker(
+        &self,
+        backend: crate::Backend,
+        launch: &crate::WorkerLaunch,
+    ) -> Result<Self, String> {
+        let mut command = self.clone();
+        command.profile_id = launch.harness_profile_id.clone();
+        command.access_mode = launch.access_mode;
+        command.app_proxy = launch.app_proxy.clone();
+        command.prompt_boundary_url = None;
+        command.validate_profile_backend(backend)?;
+        Ok(command)
+    }
+
     pub fn locator_root(&self) -> Option<PathBuf> {
         let root = self.session_locator_root.as_ref()?;
         Some(

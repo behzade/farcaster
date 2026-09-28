@@ -14,6 +14,23 @@ impl Supervisor {
             return;
         };
         let key = if let Some(session) = session {
+            let config = match configuration_for_target(
+                &self.process_command,
+                self.catalog_state.as_ref(),
+                LaunchTarget::Session(&session.path),
+            ) {
+                Ok(config) => config,
+                Err(error) => {
+                    self.report_configuration_error(error);
+                    let _ = self.event_tx.send(RuntimeEvent::PromptResult {
+                        submission_id: Some(submission_id.clone()),
+                        target: target.clone(),
+                        outcome: crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+                        session: Some(session.path.clone()),
+                    });
+                    return;
+                }
+            };
             let access_mode = saved_access_mode(self.catalog_state.as_ref(), &session.path);
             let select = RuntimeCommand::SelectSession {
                 path: session.path.clone(),
@@ -43,7 +60,7 @@ impl Supervisor {
                     select,
                     &self.configurations,
                     access_mode,
-                    agents::profile_id_from_locator(&session.path).as_deref(),
+                    config.profile_id.as_deref(),
                 );
             }
             self.actor_paths.insert(session.path.clone(), key.clone());
@@ -126,11 +143,24 @@ impl Supervisor {
         self.actors.insert(key, actor);
     }
 
-    fn request_configuration(&mut self, harness: Backend, project: PathBuf, target: &str) {
+    fn request_configuration(
+        &mut self,
+        harness: Backend,
+        project: PathBuf,
+        target: &str,
+        launch_target: Option<LaunchTarget<'_>>,
+    ) {
         let Some(sender) = &self.configuration_tx else {
             return;
         };
-        let process_command = self.configuration_process_command(harness, &project, target);
+        let process_command =
+            match self.configuration_process_command(harness, &project, target, launch_target) {
+                Ok(config) => config,
+                Err(error) => {
+                    self.report_configuration_error(error);
+                    return;
+                }
+            };
         let profile_id = process_command.profile_id.clone();
         if !self
             .configuration_requests
@@ -173,34 +203,50 @@ impl Supervisor {
         harness: Backend,
         project: &std::path::Path,
         target: &str,
-    ) -> AgentLaunchConfig {
-        let mut command = self.process_command.clone();
-        command.profile_id = crate::sessions::draft_id(target)
-            .and_then(|id| {
-                self.catalog_state.as_ref().and_then(|state| {
-                    state
-                        .with(|store| store.draft_profile_id(id))
-                        .ok()
-                        .flatten()
-                })
-            })
+        launch_target: Option<LaunchTarget<'_>>,
+    ) -> Result<AgentLaunchConfig, String> {
+        let launch_target = launch_target
             .or_else(|| {
-                crate::sessions::session_path(target).and_then(agents::profile_id_from_locator)
-            });
+                self.latest
+                    .get(target)
+                    .and_then(|snapshot| snapshot.selected_session.as_deref())
+                    .or_else(|| {
+                        self.actor_paths
+                            .iter()
+                            .find_map(|(path, key)| (key == target).then_some(path.as_path()))
+                    })
+                    .or_else(|| crate::sessions::session_path(target))
+                    .map(LaunchTarget::Session)
+                    .or_else(|| crate::sessions::draft_id(target).map(LaunchTarget::Draft))
+            })
+            .ok_or_else(|| format!("Missing launch target: {target}"))?;
+        let mut command = configuration_for_target(
+            &self.process_command,
+            self.catalog_state.as_ref(),
+            launch_target,
+        )?;
         if let Some((requested_harness, requested_project, requested_mode)) =
             self.requested_access_modes.get(target)
             && *requested_harness == harness
             && requested_project.as_path() == project
         {
             command.access_mode = *requested_mode;
-            return command;
+            return Ok(command);
         }
         if let Some(snapshot) = self.latest.get(target).filter(|snapshot| {
             snapshot.harness == Some(harness) && snapshot.project.as_path() == project
         }) {
             command.access_mode = snapshot.access_mode;
         }
-        command
+        Ok(command)
+    }
+
+    fn report_configuration_error(&self, error: String) {
+        let _ = self.event_tx.send(RuntimeEvent::SystemNotification {
+            title: "Farcaster: Harness configuration unavailable".into(),
+            body: error,
+            target: None,
+        });
     }
 
     pub(super) fn process_next_command(&mut self) -> bool {
@@ -223,7 +269,7 @@ impl Supervisor {
                 }
                 if let RuntimeCommand::LoadConfiguration { harness, project } = &command {
                     let selected = self.selected.clone();
-                    self.request_configuration(*harness, project.clone(), &selected);
+                    self.request_configuration(*harness, project.clone(), &selected, None);
                     return true;
                 }
                 if self.handle_session_family_command(&command) {
@@ -335,8 +381,24 @@ impl Supervisor {
                         }
                         _ => requested_key,
                     };
+                    let profile_id = match configuration_for_target(
+                        &self.process_command,
+                        self.catalog_state.as_ref(),
+                        LaunchTarget::for_command(&command).expect("routed session target"),
+                    ) {
+                        Ok(config) => config.profile_id,
+                        Err(error) => {
+                            self.report_configuration_error(error);
+                            return true;
+                        }
+                    };
                     if let Some(harness) = harness {
-                        self.request_configuration(harness, project.clone(), &key);
+                        self.request_configuration(
+                            harness,
+                            project.clone(),
+                            &key,
+                            LaunchTarget::for_command(&command),
+                        );
                     }
                     self.clock = self.clock.saturating_add(1);
                     self.last_touch.insert(key.clone(), self.clock);
@@ -361,10 +423,6 @@ impl Supervisor {
                     self.selected_project = project.clone();
                     self.selected_session = next_selected_session;
                     let resident_snapshot = self.latest.get(&key).cloned();
-                    let profile_id = harness.and_then(|harness| {
-                        self.configuration_process_command(harness, &project, &key)
-                            .profile_id
-                    });
                     let access_mode = match &command {
                         RuntimeCommand::ForkSession { path, .. }
                         | RuntimeCommand::SelectSession { path, .. }

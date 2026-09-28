@@ -620,7 +620,7 @@ impl LiveChildFixture {
             },
             Some(token.into()),
             &self.profiles,
-            |execution, _, mode| (execution.harness == self.harness).then_some(mode),
+            |execution, _, _, mode| (execution.harness == self.harness).then_some(mode),
         )
     }
 

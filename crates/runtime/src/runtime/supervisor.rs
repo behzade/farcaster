@@ -583,16 +583,26 @@ impl Supervisor {
             let access_mode = initial_session
                 .as_ref()
                 .and_then(|session| saved_access_mode(catalog_state.as_ref(), &session.path));
-            send_configured_command(
-                actor,
-                initial_command,
-                &configurations,
-                access_mode,
-                initial_session
-                    .as_ref()
-                    .and_then(|session| agents::profile_id_from_locator(&session.path))
-                    .as_deref(),
-            );
+            match configuration_for_target(
+                &process_command,
+                catalog_state.as_ref(),
+                LaunchTarget::for_command(&initial_command).expect("initial session target"),
+            ) {
+                Ok(config) => send_configured_command(
+                    actor,
+                    initial_command,
+                    &configurations,
+                    access_mode,
+                    config.profile_id.as_deref(),
+                ),
+                Err(error) => {
+                    let _ = event_tx.send(RuntimeEvent::SystemNotification {
+                        title: "Farcaster: Harness configuration unavailable".into(),
+                        body: error,
+                        target: None,
+                    });
+                }
+            }
         }
         let (configuration_tx, configuration_rx) = mpsc::channel();
         let published_statuses = HashMap::<String, (Option<PathBuf>, String)>::new();

@@ -202,7 +202,7 @@ impl Supervisor {
             },
             &self.configurations,
             saved_access_mode(self.catalog_state.as_ref(), &session.path),
-            agents::profile_id_from_locator(&session.path).as_deref(),
+            session.profile_id.as_deref(),
         );
         self.generation = self.generation.saturating_add(1);
         self.selected = key.clone();

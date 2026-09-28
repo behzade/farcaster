@@ -34,6 +34,7 @@ impl WorkerSessionFactory for Factory {
             launch.parent_worker_id.clone(),
             launch.access_mode,
         )?;
+        identity.set_harness_profile_id(launch.harness_profile_id.clone());
         identity.bind(format!("session-{}", launch.worker_id));
         self.launches
             .lock()
@@ -59,6 +60,64 @@ impl WorkerSession for Session {
     fn close(&mut self) -> Result<(), String> {
         Ok(())
     }
+}
+
+#[test]
+fn inherit_carries_harness_profile_but_explicit_presets_use_base_configuration()
+-> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let launches = Arc::new(Mutex::new(Vec::new()));
+    let factory: Arc<dyn WorkerSessionFactory> = Arc::new(Factory {
+        launches: launches.clone(),
+    });
+    let pool = WorkerPool::new(
+        std::collections::BTreeMap::from([(Backend::Codex, factory)]),
+        Backend::Codex,
+        temp.path().to_owned(),
+        2,
+    )?;
+    let parent = CallerRegistry::shared().issue_with_access(
+        temp.path(),
+        CallerProfile {
+            backend: Backend::Codex,
+            provider: Some("openai".into()),
+            model: Some("parent-model".into()),
+            effort: Some("high".into()),
+        },
+        None,
+        crate::agents::HarnessAccessMode::Full,
+    );
+    parent.set_harness_profile_id(Some("custom-harness".into()));
+    parent.bind("profile-parent");
+    for (index, preset, expected) in [(0, None, Some("custom-harness")), (1, Some("oracle"), None)]
+    {
+        let result = super::send(
+            &pool,
+            SendParams {
+                to: Some(format!("child-{index}")),
+                message: "inspect".into(),
+                profile: preset.map(str::to_owned),
+            },
+            Some(parent.token().into()),
+            &configured_profiles(),
+            |_, profile_id, _, mode| {
+                assert_eq!(profile_id, expected);
+                Some(mode)
+            },
+        )?;
+        assert_eq!(
+            result["assignment"]["harness_profile_id"].as_str(),
+            expected
+        );
+        wait_until("worker launch", || launches.lock().unwrap().len() > index)?;
+        assert_eq!(
+            launches.lock().unwrap()[index]
+                .harness_profile_id
+                .as_deref(),
+            expected
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -89,7 +148,7 @@ fn worker_send_routes_across_harnesses_and_reuses_the_original_assignment() -> R
     parent.bind("/sessions/parent.jsonl");
     let token = Some(parent.token().to_owned());
     let send = |pool, params, token, profiles: &crate::agents::WorkerProfiles| {
-        super::send(pool, params, token, profiles, |model, _, mode| {
+        super::send(pool, params, token, profiles, |model, _, _, mode| {
             (model.harness == Backend::Codex).then_some(mode)
         })
     };
@@ -264,7 +323,7 @@ fn worker_send_retry_reuses_a_pending_named_child_reservation() -> Result<(), St
             },
             token.clone(),
             &profiles,
-            |model, _, mode| (model.harness == Backend::Codex).then_some(mode),
+            |model, _, _, mode| (model.harness == Backend::Codex).then_some(mode),
         )
     };
 
@@ -457,7 +516,7 @@ fn restricted_parent_cannot_reuse_a_running_full_child_after_session_rebind() ->
         },
         Some(restricted_parent.token().into()),
         &configured_profiles(),
-        |model, _, mode| (model.harness == Backend::Codex).then_some(mode),
+        |model, _, _, mode| (model.harness == Backend::Codex).then_some(mode),
     )
     .expect_err("restricted parent must not reuse a Full child");
     assert!(error.contains("restricted parent cannot reuse"), "{error}");
@@ -505,7 +564,7 @@ fn restrictive_cross_backend_launch_errors_instead_of_using_auto() -> Result<(),
         },
         Some(parent.token().into()),
         &configured_profiles(),
-        |model, _, mode| (model.harness == Backend::Pi).then_some(mode),
+        |model, _, _, mode| (model.harness == Backend::Pi).then_some(mode),
     )?;
     assert_eq!(result["pending"], true);
     let failure = wait_worker_failed(&pool)?;
@@ -644,7 +703,7 @@ fn worker_send_resumes_a_named_child_after_idle_process_retirement() -> Result<(
             },
             token.clone(),
             &tasks,
-            |model, _, mode| (model.harness == Backend::Codex).then_some(mode),
+            |model, _, _, mode| (model.harness == Backend::Codex).then_some(mode),
         )?;
         assert_eq!(result["created"], true);
         wait_for_event_senders(&events, index + 1)?;
@@ -673,7 +732,7 @@ fn worker_send_resumes_a_named_child_after_idle_process_retirement() -> Result<(
         },
         token,
         &tasks,
-        |model, _, mode| (model.harness == Backend::Codex).then_some(mode),
+        |model, _, _, mode| (model.harness == Backend::Codex).then_some(mode),
     )?;
     assert_eq!(result["created"], false);
     assert_eq!(result["pending"], true);
@@ -742,6 +801,74 @@ fn wait_worker_idle(pool: &WorkerPool) -> Result<(), String> {
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
+}
+
+#[test]
+fn inherited_models_are_validated_against_the_named_harness_catalog() {
+    let project = std::path::Path::new("/profile-catalog");
+    let model = crate::agents::WorkerExecution {
+        harness: Backend::Codex,
+        provider: "openai".into(),
+        model: "custom-only".into(),
+        effort: None,
+        service_tier: None,
+    };
+    let catalogs = [None, Some("named".to_owned())].map(|profile_id| {
+        let id = if profile_id.is_some() {
+            "custom-only"
+        } else {
+            "base-only"
+        };
+        crate::storage::CachedConfigurationCatalog {
+            harness: Backend::Codex,
+            profile_id,
+            project: project.into(),
+            catalog: crate::agents::ConfigurationCatalog {
+                models: vec![
+                    serde_json::from_value(serde_json::json!({
+                        "id": id, "name": id, "provider": "openai", "contextWindow": 1000,
+                        "reasoning": false
+                    }))
+                    .unwrap(),
+                ],
+                ..Default::default()
+            },
+        }
+    });
+    assert!(
+        child_access_mode_for_profile(
+            &model,
+            Some("named"),
+            project,
+            crate::agents::HarnessAccessMode::Full,
+            &[Backend::Codex],
+            &catalogs,
+        )
+        .is_some()
+    );
+    assert!(
+        child_access_mode(
+            &model,
+            project,
+            crate::agents::HarnessAccessMode::Full,
+            &[Backend::Codex],
+            &catalogs,
+        )
+        .is_none()
+    );
+    let mut builtin = model;
+    builtin.model = "base-only".into();
+    assert!(
+        child_access_mode_for_profile(
+            &builtin,
+            Some("named"),
+            project,
+            crate::agents::HarnessAccessMode::Full,
+            &[Backend::Codex],
+            &catalogs,
+        )
+        .is_none()
+    );
 }
 
 #[test]

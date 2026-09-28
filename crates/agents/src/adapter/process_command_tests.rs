@@ -67,12 +67,48 @@ fn command_uses_profile_executable_and_data_directory() -> Result<(), String> {
         && value == Some(profile.data_directory.as_ref().unwrap().as_os_str())));
     assert_eq!(
         config.locator_root(),
-        Some(project.path().join("locators/profiles").join(profile.id))
+        Some(project.path().join("locators/profiles").join(&profile.id))
     );
     assert!(
         config
             .validate_profile_backend(crate::Backend::Claude)
             .is_err()
+    );
+    let mut base = config.clone();
+    base.profile_id = None;
+    base.prompt_boundary_url = Some("http://parent-hook".into());
+    let mut launch = crate::WorkerLaunch {
+        harness_profile_id: config.profile_id.clone(),
+        slot: None,
+        worker_id: "worker".into(),
+        worker_name: "worker".into(),
+        project: project.path().into(),
+        parent_session: "parent".into(),
+        parent_worker_id: None,
+        context: crate::WorkerContext::Fresh,
+        provider: None,
+        model: None,
+        effort: None,
+        service_tier: None,
+        access_mode: crate::HarnessAccessMode::Full,
+        app_proxy: Some("http://child-proxy".into()),
+        ephemeral: false,
+    };
+    let inherited = base.for_worker(crate::Backend::Codex, &launch)?;
+    assert_eq!(inherited.profile_id, config.profile_id);
+    assert_eq!(inherited.access_mode, launch.access_mode);
+    assert_eq!(inherited.app_proxy, launch.app_proxy);
+    assert_eq!(inherited.prompt_boundary_url, None);
+    let command = inherited.command(project.path())?;
+    assert_eq!(command.get_program(), executable.canonicalize().unwrap());
+    assert!(command.get_envs().any(|(key, value)| key == "CODEX_HOME"
+        && value == Some(profile.data_directory.as_ref().unwrap().as_os_str())));
+    assert!(base.for_worker(crate::Backend::Claude, &launch).is_err());
+    launch.harness_profile_id = None;
+    let explicit = config.for_worker(crate::Backend::Claude, &launch)?;
+    assert_eq!(
+        explicit.profile_id, None,
+        "explicit presets must not inherit a stale profile"
     );
     Ok(())
 }

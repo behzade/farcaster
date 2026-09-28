@@ -69,9 +69,7 @@ impl WorkerSessionFactory for AcpWorkerFactory {
                 self.profile.name, self.profile.backend
             ));
         }
-        let mut command = self.command.clone();
-        command.access_mode = launch.access_mode;
-        command.app_proxy = launch.app_proxy.clone();
+        let command = self.command.for_worker(self.profile.backend, &launch)?;
         let caller_identity = crate::core::CallerRegistry::shared()
             .issue_as_with_access(
                 &launch.project,
@@ -88,6 +86,7 @@ impl WorkerSessionFactory for AcpWorkerFactory {
                 launch.access_mode,
             )?
             .with_slot(launch.slot.clone());
+        caller_identity.set_harness_profile_id(command.profile_id.clone());
         let resume = match &launch.context {
             crate::WorkerContext::Fresh => None,
             crate::WorkerContext::Session { .. } => {
@@ -141,6 +140,7 @@ pub fn spawn_main(
         launch.wake.clone(),
         command.access_mode,
     );
+    caller_identity.set_harness_profile_id(command.profile_id.clone());
     let resume = match &launch.start {
         crate::SessionStart::New => None,
         crate::SessionStart::Resume(_) => Some(

@@ -46,9 +46,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
         if launch.provider.is_some() != launch.model.is_some() {
             return Err("OpenCode worker provider and model must be supplied together".into());
         }
-        let mut command = self.command.clone();
-        command.access_mode = launch.access_mode;
-        command.app_proxy = launch.app_proxy.clone();
+        let command = self.command.for_worker(Backend::OpenCode, &launch)?;
         let mut prepared = command.command(&launch.project)?;
         let caller_identity = crate::core::CallerRegistry::shared()
             .issue_as_with_access(
@@ -66,6 +64,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
                 launch.access_mode,
             )?
             .with_slot(launch.slot.clone());
+        caller_identity.set_harness_profile_id(command.profile_id.clone());
         let password = worker_password()?;
         configure_opencode_server(&mut prepared, launch.access_mode)?;
         let mut child = prepared
@@ -200,6 +199,7 @@ pub fn spawn_main(
         launch.wake.clone(),
         command.access_mode,
     );
+    caller_identity.set_harness_profile_id(command.profile_id.clone());
     if farcaster_mcp::enabled() {
         configure_farcaster_mcp(&mut prepared, caller_identity.token())?;
     }

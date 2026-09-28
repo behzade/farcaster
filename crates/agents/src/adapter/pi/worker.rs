@@ -36,9 +36,7 @@ impl WorkerSessionFactory for PiWorkerFactory {
         if launch.ephemeral {
             return Err("Pi workers do not expose isolated ephemeral inference".into());
         }
-        let mut command = self.command.clone();
-        command.access_mode = launch.access_mode;
-        command.app_proxy = launch.app_proxy.clone();
+        let mut command = self.command.for_worker(crate::Backend::Pi, &launch)?;
         super::process::launch_selection(
             &mut command,
             launch.provider.as_deref().zip(launch.model.as_deref()),

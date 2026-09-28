@@ -90,7 +90,7 @@ fn assert_persisted_child_reuse(profile: &str) -> Result<(), String> {
             execution: Some(assignment.execution.clone()),
             routing: Some(crate::agents::WorkerRouting {
                 name: "research".into(),
-                assignment,
+                assignment: assignment.clone(),
                 access_mode: crate::agents::HarnessAccessMode::Sandboxed,
             }),
         },
@@ -143,7 +143,10 @@ fn assert_persisted_child_reuse(profile: &str) -> Result<(), String> {
         },
         Some(parent.token().into()),
         &crate::agents::WorkerProfiles::default(),
-        |execution, _, mode| (execution.harness == Backend::Codex).then_some(mode),
+        |execution, profile_id, _, mode| {
+            assert_eq!(profile_id, assignment.harness_profile_id.as_deref());
+            (execution.harness == Backend::Codex).then_some(mode)
+        },
     )?;
 
     assert_eq!(result["created"], false);
@@ -152,6 +155,7 @@ fn assert_persisted_child_reuse(profile: &str) -> Result<(), String> {
     let launch = resumed
         .recv_timeout(Duration::from_secs(1))
         .map_err(|_| "resumed worker did not launch")?;
+    assert_eq!(launch.harness_profile_id, assignment.harness_profile_id);
     assert!(matches!(
         launch.context,
         crate::agents::WorkerContext::Resume { session_locator }

@@ -35,8 +35,9 @@ impl RuntimeOwner {
         {
             return;
         }
-        self.bind_history_selection(path.clone(), project.clone());
-        self.refresh_history(path, project, HistoryLoadKind::Selection);
+        if self.bind_history_selection(path.clone(), project.clone()) {
+            self.refresh_history(path, project, HistoryLoadKind::Selection);
+        }
     }
 
     fn covers_live_session(&self, path: &std::path::Path) -> bool {
@@ -70,7 +71,18 @@ impl RuntimeOwner {
         }
     }
 
-    fn bind_history_selection(&mut self, path: PathBuf, project: PathBuf) {
+    fn bind_history_selection(&mut self, path: PathBuf, project: PathBuf) -> bool {
+        let profile_id = match configuration_for_target(
+            &self.process_command,
+            self.state.as_ref(),
+            LaunchTarget::Session(&path),
+        ) {
+            Ok(config) => config.profile_id,
+            Err(error) => {
+                self.fail(error);
+                return false;
+            }
+        };
         self.bind_external_session_identity(&path);
         if self.parked_snapshot.is_none()
             && self.snapshot.selected_session.as_deref() != Some(path.as_path())
@@ -83,10 +95,12 @@ impl RuntimeOwner {
         self.project = project.clone();
         self.snapshot.project = project;
         self.snapshot.selected_session = Some(path);
+        self.snapshot.profile_id = profile_id;
         self.snapshot.status = "Loading history".into();
         self.snapshot.conversation = Default::default();
         self.transcript_changed_from = Some(0);
         self.publish();
+        true
     }
 
     pub(super) fn refresh_session_document(&mut self, path: PathBuf, project: PathBuf) {
@@ -118,8 +132,11 @@ impl RuntimeOwner {
         let failed_path = path.clone();
         let failed_project = project.clone();
         let harness = self.harness;
-        let mut config = self.process_command.clone();
-        config.profile_id = agents::profile_id_from_locator(&path);
+        let config = configuration_for_target(
+            &self.process_command,
+            self.state.as_ref(),
+            LaunchTarget::Session(&path),
+        );
         let host = self.host.clone();
         if let Err(error) = thread::Builder::new()
             .name("farcaster-history".into())
@@ -128,7 +145,7 @@ impl RuntimeOwner {
                 let result = harness
                     .ok_or_else(|| "Choose a backend before loading history.".to_owned())
                     .and_then(|harness| {
-                        agents::load_session_history_for_profile(&config, harness, &path, &project)
+                        agents::load_session_history_for_profile(&config?, harness, &path, &project)
                     });
                 if let Ok(history) = &result {
                     operation.set_work(history.messages.len());
@@ -171,13 +188,12 @@ impl RuntimeOwner {
     }
 
     pub(super) fn stage_draft(&mut self, id: &str, harness: Option<Backend>, project: PathBuf) {
-        let profile_id = match self
-            .state
-            .as_ref()
-            .map(|state| state.with(|store| store.draft_profile_id(id)))
-            .transpose()
-        {
-            Ok(profile_id) => profile_id.flatten(),
+        let config = match configuration_for_target(
+            &self.process_command,
+            self.state.as_ref(),
+            LaunchTarget::Draft(id),
+        ) {
+            Ok(config) => config,
             Err(error) => {
                 conversation_mut(&mut self.snapshot)
                     .push_local_error("Load harness profile", error);
@@ -189,16 +205,17 @@ impl RuntimeOwner {
             && self.parked_snapshot.is_none()
             && !self.snapshot.history_preview
             && self.harness == harness
-            && self.process_command.profile_id == profile_id
+            && self.process_command.profile_id == config.profile_id
             && self.project == project;
         if unchanged {
+            self.snapshot.profile_id = config.profile_id;
             self.publish();
             return;
         }
 
         self.reset_process_runtime();
         self.harness = harness;
-        self.process_command.profile_id = profile_id;
+        self.process_command = config;
         self.project = project.clone();
         self.session_id = None;
         self.pending_prompt_target = None;
@@ -208,6 +225,7 @@ impl RuntimeOwner {
         self.deferred_prompt = None;
         self.pending_session_controls = PendingSessionControls::default();
         reset_snapshot_for_process(&mut self.snapshot, project, None, "Ready".into());
+        self.snapshot.profile_id = self.process_command.profile_id.clone();
         self.publish();
     }
 
@@ -224,6 +242,18 @@ impl RuntimeOwner {
             self.start_pending_document_refresh();
             return;
         }
+        let profile_id = match configuration_for_target(
+            &self.process_command,
+            self.state.as_ref(),
+            LaunchTarget::Session(&result.path),
+        ) {
+            Ok(config) => config.profile_id,
+            Err(error) => {
+                self.fail(error);
+                self.start_pending_document_refresh();
+                return;
+            }
+        };
         self.bind_external_session_identity(&result.path);
         let refreshing_visible_history = result.kind == HistoryLoadKind::DocumentRefresh
             && self.snapshot.history_preview
@@ -234,6 +264,7 @@ impl RuntimeOwner {
                 self.project = result.project.clone();
                 self.snapshot.project = result.project;
                 self.snapshot.selected_session = Some(result.path);
+                self.snapshot.profile_id = profile_id;
                 self.snapshot.status = "Could not load history".into();
                 conversation_mut(&mut self.snapshot).push_local_error("History unavailable", error);
                 self.publish();
@@ -275,6 +306,7 @@ impl RuntimeOwner {
         drop(projection);
         self.transcript_changed_from = Some(0);
         self.snapshot = RuntimeSnapshot {
+            profile_id,
             connected: true,
             status: "Ready".into(),
             project: result.project,

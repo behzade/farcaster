@@ -37,7 +37,7 @@ fn inherited_children_snapshot_caller_and_keep_assignment_on_reuse() -> Result<(
             },
             Some(caller.token().into()),
             &profiles,
-            |_, _, mode| Some(mode),
+            |_, _, _, mode| Some(mode),
         )
     };
     for (name, profile) in [("implicit", None), ("explicit", Some("inherit"))] {
@@ -106,7 +106,7 @@ fn inheritance_fails_without_known_or_available_caller_model() -> Result<(), Str
             },
             Some(caller.token().into()),
             &crate::agents::WorkerProfiles::default(),
-            |_, _, _| None,
+            |_, _, _, _| None,
         )
     };
     assert!(

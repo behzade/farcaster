@@ -5,6 +5,7 @@ mod command_queue;
 mod commands;
 mod documents;
 mod history;
+mod launch_context;
 mod notifications;
 mod process;
 mod projection;
@@ -18,6 +19,7 @@ mod status;
 pub use crate::agents::HarnessAccessMode;
 use access_mode::AccessModeChangeState;
 use history::annotate_history_presentations;
+use launch_context::{LaunchTarget, configuration_for_target};
 use notifications::interaction_notification;
 #[cfg(test)]
 use process::startup_commands;

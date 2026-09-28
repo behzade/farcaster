@@ -33,7 +33,7 @@ fn refresh_history_preserves_config_and_selects_profile_from_locator() {
         .process_command
         .profiles
         .replace(vec![agents::HarnessProfile {
-            id: profile_id,
+            id: profile_id.clone(),
             name: "Custom Claude".into(),
             backend: Backend::Claude,
             executable: PathBuf::from("claude"),
@@ -53,7 +53,10 @@ fn refresh_history_preserves_config_and_selects_profile_from_locator() {
             .expect("history worker result");
         assert_eq!(result.path, locator);
         assert_eq!(result.project, temp.path());
-        let history = result.result.expect("profile-aware runtime history");
+        let history = result
+            .result
+            .as_ref()
+            .expect("profile-aware runtime history");
         assert_eq!(history.messages.len(), 1);
         assert_eq!(
             history.messages[0]["content"][0]["text"],
@@ -62,6 +65,11 @@ fn refresh_history_preserves_config_and_selects_profile_from_locator() {
         assert_eq!(
             owner.process_command.profile_id.as_deref(),
             Some(active_profile.as_str())
+        );
+        owner.apply_history(result);
+        assert_eq!(
+            owner.snapshot.profile_id.as_deref(),
+            Some(profile_id.as_str())
         );
     }
 }

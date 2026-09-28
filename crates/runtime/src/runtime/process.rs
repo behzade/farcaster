@@ -135,7 +135,17 @@ impl RuntimeOwner {
         preserve_transcript: bool,
     ) {
         if let Some(path) = session.as_ref().or(fork.as_ref()) {
-            self.process_command.profile_id = agents::profile_id_from_locator(path);
+            self.process_command = match configuration_for_target(
+                &self.process_command,
+                self.state.as_ref(),
+                LaunchTarget::Session(path),
+            ) {
+                Ok(config) => config,
+                Err(error) => {
+                    self.fail(error);
+                    return;
+                }
+            };
         }
         let preserve_transcript = preserve_transcript
             || self.deferred_prompt.is_some()
@@ -229,6 +239,7 @@ impl RuntimeOwner {
                 self.pending_prompt_item = preserved_prompt_item;
             }
         }
+        self.active_snapshot_mut().profile_id = self.process_command.profile_id.clone();
         // Startup still needs the catalog that validated the launch mode. Clearing it
         // here makes the loading snapshot treat supported modes as unavailable.
         if let Some((
@@ -655,10 +666,6 @@ impl RuntimeOwner {
         snapshot.live_status = session_badge_status(&active_snapshot.conversation).into();
         snapshot.transcript_changed_from = self.transcript_changed_from.take();
         self.review_projection.apply(&mut snapshot);
-        snapshot.profile_id = snapshot.selected_session.as_deref().map_or_else(
-            || self.process_command.profile_id.clone(),
-            agents::profile_id_from_locator,
-        );
         let _ = self.event_tx.send(RuntimeEvent::Snapshot {
             generation: self.process_generation,
             snapshot: Arc::new(snapshot),

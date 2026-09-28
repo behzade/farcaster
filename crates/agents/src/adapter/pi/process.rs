@@ -321,6 +321,7 @@ impl PiRpcProcess {
         } else {
             registry.issue_with_access(project, profile, wake.clone(), command.access_mode)
         };
+        caller_identity.set_harness_profile_id(command.profile_id.clone());
         let mut steering_extension = tempfile::Builder::new()
             .prefix("farcaster-extension-")
             .suffix(".mjs")

@@ -50,9 +50,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
         if launch.provider.is_some() != launch.model.is_some() {
             return Err("Codex worker provider and model must be supplied together".into());
         }
-        let mut command = self.command.clone();
-        command.access_mode = launch.access_mode;
-        command.app_proxy = launch.app_proxy.clone();
+        let command = self.command.for_worker(Backend::Codex, &launch)?;
         let mut prepared = command.command(&launch.project)?;
         configure_service_tier(&mut prepared, launch.service_tier.as_deref())?;
         let caller_identity = crate::core::CallerRegistry::shared().issue_as_with_access(
@@ -75,6 +73,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             caller_identity
         }
         .with_slot(launch.slot.clone());
+        caller_identity.set_harness_profile_id(command.profile_id.clone());
         configure_codex_app_server(&mut prepared, launch.access_mode);
         let mut child = prepared
             .stdin(Stdio::piped())
@@ -237,6 +236,7 @@ pub fn spawn_main(
         launch.wake.clone(),
         command.access_mode,
     );
+    caller_identity.set_harness_profile_id(command.profile_id.clone());
     configure_codex_app_server(&mut prepared, command.access_mode);
     if farcaster_mcp::enabled() {
         configure_farcaster_mcp(&mut prepared, caller_identity.token());

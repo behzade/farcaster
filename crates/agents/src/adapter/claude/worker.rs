@@ -42,9 +42,7 @@ impl WorkerSessionFactory for ClaudeWorkerFactory {
             WorkerContext::Resume { session_locator } => (session_locator.clone(), true),
         };
         uuid::Uuid::parse_str(&id).map_err(|_| "Claude requires a UUID session id")?;
-        let mut command = self.command.clone();
-        command.access_mode = launch.access_mode;
-        command.app_proxy = launch.app_proxy.clone();
+        let command = self.command.for_worker(BACKEND, &launch)?;
         let caller = CallerRegistry::shared()
             .issue_as_with_access(
                 &launch.project,
@@ -61,6 +59,7 @@ impl WorkerSessionFactory for ClaudeWorkerFactory {
                 launch.access_mode,
             )?
             .with_slot(launch.slot);
+        caller.set_harness_profile_id(command.profile_id.clone());
         // Child sessions use the shared parent/inbox path, never the Farcaster MCP server.
         let process = Process::spawn(
             &command,
@@ -132,6 +131,7 @@ pub fn spawn_main(
         launch.wake.clone(),
         command.access_mode,
     );
+    caller.set_harness_profile_id(command.profile_id.clone());
     let process = Process::spawn(
         command,
         &launch.project,

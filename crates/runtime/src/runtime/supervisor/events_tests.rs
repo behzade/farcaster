@@ -488,7 +488,8 @@ fn access_mode_command_precedes_catalog_load_when_actor_snapshot_is_delayed() {
     assert_eq!(
         fixture
             .supervisor
-            .configuration_process_command(Backend::OpenCode, &project, "draft:open")
+            .configuration_process_command(Backend::OpenCode, &project, "draft:open", None)
+            .expect("configuration")
             .access_mode,
         Sandboxed
     );
@@ -499,7 +500,9 @@ fn access_mode_command_precedes_catalog_load_when_actor_snapshot_is_delayed() {
                 Backend::OpenCode,
                 std::path::Path::new("/other"),
                 "draft:open",
+                None,
             )
+            .expect("configuration")
             .access_mode,
         Auto,
         "an unrelated project must not inherit the selected actor policy"

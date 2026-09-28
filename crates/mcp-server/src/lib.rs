@@ -165,12 +165,15 @@ impl FarcasterMcp {
         let pool = self.workers.clone();
         let store = self.store.clone();
         let value = tokio::task::spawn_blocking(move || {
-            let (profiles, catalogs) = with_store(&store, |store| {
+            let (profiles, catalogs, harness_profiles) = with_store(&store, |store| {
                 Ok((
                     store.load_worker_profiles()?,
                     store.load_configuration_catalogs()?,
+                    store.load_harness_profiles()?,
                 ))
             })?;
+            let launch_profiles = std::sync::Arc::new(crate::agents::HarnessProfiles::default());
+            launch_profiles.replace(harness_profiles)?;
             let backends = crate::agents::backend_statuses()
                 .into_iter()
                 .filter(|backend| backend.available)
@@ -181,12 +184,26 @@ impl FarcasterMcp {
                 params,
                 caller_token,
                 &profiles,
-                |model, project, parent_access_mode| {
-                    workers::child_access_mode(
+                |model, profile_id, project, parent_access_mode| {
+                    let profile_backend;
+                    let available = if let Some(profile_id) = profile_id {
+                        let config = crate::agents::AgentLaunchConfig {
+                            profiles: launch_profiles.clone(),
+                            profile_id: Some(profile_id.to_owned()),
+                            ..Default::default()
+                        };
+                        crate::agents::validate_launch(&config, model.harness, project).ok()?;
+                        profile_backend = [model.harness];
+                        &profile_backend[..]
+                    } else {
+                        &backends[..]
+                    };
+                    workers::child_access_mode_for_profile(
                         model,
+                        profile_id,
                         project,
                         parent_access_mode,
-                        &backends,
+                        available,
                         &catalogs,
                     )
                 },

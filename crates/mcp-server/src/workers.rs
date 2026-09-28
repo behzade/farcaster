@@ -18,6 +18,7 @@ pub fn send(
     tasks: &crate::agents::WorkerProfiles,
     route: impl Fn(
         &crate::agents::WorkerExecution,
+        Option<&str>,
         &std::path::Path,
         crate::agents::HarnessAccessMode,
     ) -> Option<crate::agents::HarnessAccessMode>,
@@ -36,6 +37,7 @@ pub fn send_configurable(
     tasks: &crate::agents::WorkerProfiles,
     route: impl Fn(
         &crate::agents::WorkerExecution,
+        Option<&str>,
         &std::path::Path,
         crate::agents::HarnessAccessMode,
     ) -> Option<crate::agents::HarnessAccessMode>,
@@ -118,7 +120,14 @@ pub fn send_configurable(
         &to,
         params.message.clone(),
         params.profile.as_deref(),
-        |assignment, access_mode| route(&assignment.execution, &caller.project, access_mode),
+        |assignment, access_mode| {
+            route(
+                &assignment.execution,
+                assignment.harness_profile_id.as_deref(),
+                &caller.project,
+                access_mode,
+            )
+        },
     )? {
         return Ok(serde_json::json!({
             "worker": to,
@@ -153,8 +162,13 @@ pub fn send_configurable(
         execution
             .validate()
             .map_err(|error| format!("cannot inherit: {error}"))?;
-        let access_mode = route(&execution, &caller.project, requested_access_mode)
-            .ok_or("cannot inherit: caller model or harness is unavailable for worker creation")?;
+        let access_mode = route(
+            &execution,
+            caller.harness_profile_id.as_deref(),
+            &caller.project,
+            requested_access_mode,
+        )
+        .ok_or("cannot inherit: caller model or harness is unavailable for worker creation")?;
         (
             crate::agents::WorkerAssignment {
                 profile: "inherit".into(),
@@ -175,11 +189,11 @@ pub fn send_configurable(
         let selected = definition
             .models
             .first()
-            .filter(|model| route(model, &caller.project, requested_access_mode).is_some())
+            .filter(|model| route(model, None, &caller.project, requested_access_mode).is_some())
             .cloned()
             .map(Ok)
             .unwrap_or_else(|| configure(profile, &caller))?;
-        let access_mode = route(&selected, &caller.project, requested_access_mode)
+        let access_mode = route(&selected, None, &caller.project, requested_access_mode)
             .ok_or("selected worker model is unavailable for worker creation")?;
         (
             crate::agents::WorkerAssignment {
@@ -269,7 +283,18 @@ pub(super) fn child_access_mode(
     backends: &[crate::agents::Backend],
     catalogs: &[crate::storage::CachedConfigurationCatalog],
 ) -> Option<crate::agents::HarnessAccessMode> {
-    if !model_available(model, project, backends, catalogs) {
+    child_access_mode_for_profile(model, None, project, parent_access_mode, backends, catalogs)
+}
+
+pub(super) fn child_access_mode_for_profile(
+    model: &crate::agents::WorkerExecution,
+    profile_id: Option<&str>,
+    project: &std::path::Path,
+    parent_access_mode: crate::agents::HarnessAccessMode,
+    backends: &[crate::agents::Backend],
+    catalogs: &[crate::storage::CachedConfigurationCatalog],
+) -> Option<crate::agents::HarnessAccessMode> {
+    if !model_available_for_profile(model, profile_id, project, backends, catalogs) {
         return None;
     }
     if parent_access_mode == crate::agents::HarnessAccessMode::Full {
@@ -278,7 +303,9 @@ pub(super) fn child_access_mode(
     let catalogs_for_harness = catalogs
         .iter()
         .filter(|entry| {
-            entry.profile_id.is_none() && entry.harness == model.harness && entry.project == project
+            entry.profile_id.as_deref() == profile_id
+                && entry.harness == model.harness
+                && entry.project == project
         })
         .collect::<Vec<_>>();
     let catalog_model = catalogs_for_harness.iter().find_map(|entry| {
@@ -324,8 +351,19 @@ pub(super) fn child_access_mode(
     }
 }
 
+#[cfg(test)]
 pub(super) fn model_available(
     model: &crate::agents::WorkerExecution,
+    project: &std::path::Path,
+    backends: &[crate::agents::Backend],
+    catalogs: &[crate::storage::CachedConfigurationCatalog],
+) -> bool {
+    model_available_for_profile(model, None, project, backends, catalogs)
+}
+
+fn model_available_for_profile(
+    model: &crate::agents::WorkerExecution,
+    profile_id: Option<&str>,
     project: &std::path::Path,
     backends: &[crate::agents::Backend],
     catalogs: &[crate::storage::CachedConfigurationCatalog],
@@ -336,7 +374,9 @@ pub(super) fn model_available(
     let mut catalogs = catalogs
         .iter()
         .filter(|entry| {
-            entry.profile_id.is_none() && entry.harness == model.harness && entry.project == project
+            entry.profile_id.as_deref() == profile_id
+                && entry.harness == model.harness
+                && entry.project == project
         })
         .peekable();
     // Without a catalog, allow the installed harness to validate the configured IDs.
