@@ -5,10 +5,13 @@ use super::*;
 use crate::runtime::tests::owner_without_process;
 
 #[derive(Default)]
-struct Recorder(Rc<RefCell<Vec<SessionCommand>>>);
+struct Recorder(Rc<RefCell<Vec<SessionCommand>>>, Option<String>);
 
 impl SessionTransport for Recorder {
     fn send(&mut self, command: SessionCommand) -> Result<String, String> {
+        if let Some(error) = &self.1 {
+            return Err(error.clone());
+        }
         let mut commands = self.0.borrow_mut();
         commands.push(command);
         Ok(format!("request-{}", commands.len()))
@@ -91,7 +94,7 @@ fn ready_owner(
 ) -> Result<(RuntimeOwner, Rc<RefCell<Vec<SessionCommand>>>), String> {
     let (mut owner, _) = owner_without_process(root.into());
     let sent = Rc::new(RefCell::new(Vec::new()));
-    owner.process = Some(Box::new(Recorder(sent.clone())));
+    owner.process = Some(Box::new(Recorder(sent.clone(), None)));
     owner.state = Some(SharedStateStore::open_at(database)?);
     owner.active_session = Some(root.join("session.jsonl"));
     owner.snapshot.session = Some(empty_session());
@@ -879,11 +882,20 @@ fn secondary_terminal_failure_releases_its_submission_without_blocking_later_res
 }
 
 #[test]
-fn current_and_secondary_rejections_return_one_composer_result_and_cancel_outbox()
--> Result<(), String> {
-    use agents::{PromptOutcome, SessionResponse};
+fn current_and_secondary_recovery_uses_rejection_reason_not_wording() -> Result<(), String> {
+    use agents::{PromptOutcome, RejectionReason, SessionResponse};
     for secondary in [false, true] {
-        for cancelled in [false, true] {
+        for (reason, message) in [
+            (None, "cancelled before delivery"),
+            (Some(RejectionReason::Authentication), "sign in again"),
+            (Some(RejectionReason::Configuration), "choose another model"),
+            (Some(RejectionReason::Permission), "operation denied"),
+            (
+                Some(RejectionReason::Other),
+                "auth service transport closed; config unavailable",
+            ),
+        ] {
+            let recover = reason == Some(RejectionReason::Other);
             let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
             let database = temp.path().join("state.sqlite3");
             let (mut owner, _) = ready_owner(temp.path(), &database)?;
@@ -917,17 +929,17 @@ fn current_and_secondary_rejections_return_one_composer_result_and_cancel_outbox
             } else {
                 PromptMode::Normal
             };
-            owner.apply_response(if cancelled {
+            owner.apply_response(if reason.is_none() {
                 SessionResponse::cancelled(
                     request.into(),
                     SessionOperation::Prompt(mode),
                     "cancelled before delivery".into(),
                 )
             } else {
-                SessionResponse::failure(
-                    Some(request.into()),
-                    SessionOperation::Prompt(mode),
-                    "invalid API key".into(),
+                SessionResponse::prompt_rejected(
+                    request.into(),
+                    mode,
+                    agents::PromptRejection::new(reason.unwrap(), message),
                 )
             });
             let results = events
@@ -941,13 +953,21 @@ fn current_and_secondary_rejections_return_one_composer_result_and_cancel_outbox
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            assert_eq!(results, [PromptOutcome::RejectedBeforeAcceptance]);
-            assert!(owner.saved_prompts.is_empty());
-            assert!(
+            assert_eq!(
+                results,
+                [if recover {
+                    PromptOutcome::DeliveryUnknown
+                } else {
+                    PromptOutcome::RejectedBeforeAcceptance
+                }]
+            );
+            assert_eq!(owner.saved_prompts.is_empty(), !recover);
+            assert_eq!(
                 StateStore::open_at(&database)?
                     .queued_prompts()?
                     .iter()
-                    .all(|prompt| prompt.message != "restore me")
+                    .any(|prompt| prompt.message == "restore me"),
+                recover
             );
             assert!(!owner.pending_queued_prompts.contains_key(request));
         }
@@ -1356,7 +1376,7 @@ fn startup_failure_settles_deferred_outbox_with_or_without_controls() -> Result<
             assert!(owner.pending_submission_id.is_none());
             assert!(owner.pending_outbox_id.is_none());
             assert!(owner.can_deliver_queued(PromptMode::Normal));
-            owner.process = Some(Box::new(Recorder(sent.clone())));
+            owner.process = Some(Box::new(Recorder(sent.clone(), None)));
             owner.active_session = Some(temp.path().join("session.jsonl"));
             owner.startup_state_loaded = true;
             owner.startup_history_loaded = true;
@@ -1467,5 +1487,46 @@ fn deferred_cancellation_failure_keeps_one_recovery_payload() -> Result<(), Stri
             );
         }
     }
+    Ok(())
+}
+
+#[test]
+fn unclassified_secondary_send_error_keeps_the_prompt_recoverable() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let (mut owner, sent) = ready_owner(temp.path(), &database)?;
+    let (sender, events) = mpsc::channel();
+    owner.event_tx.sender = sender;
+    owner.send_prompt_for_submission(
+        "first".into(),
+        "session:one".into(),
+        PromptMode::Normal,
+        "working".into(),
+        vec![],
+        false,
+    );
+    owner.process = Some(Box::new(Recorder(
+        sent.clone(),
+        Some("auth service config connection lost".into()),
+    )));
+    owner.send_prompt_for_submission(
+        "second".into(),
+        "session:one".into(),
+        PromptMode::Normal,
+        "keep me".into(),
+        vec![],
+        false,
+    );
+    assert!(events.try_iter().any(|event| matches!(event,
+        RuntimeEvent::PromptResult { submission_id: Some(id), outcome: agents::PromptOutcome::DeliveryUnknown, .. } if id == "second"
+    )));
+    assert_eq!(owner.saved_prompts.len(), 1);
+    assert!(
+        StateStore::open_at(&database)?
+            .queued_prompts()?
+            .iter()
+            .any(|prompt| prompt.message == "keep me")
+    );
+    assert_eq!(sent_messages(&sent), ["working"]);
     Ok(())
 }

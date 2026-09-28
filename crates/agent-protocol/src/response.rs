@@ -27,6 +27,19 @@ impl SessionResponse {
                 operation,
                 message,
                 kind: SessionResponseErrorKind::RejectedBeforeAcceptance,
+                rejection_reason: RejectionReason::Other,
+            }),
+        }
+    }
+
+    pub fn prompt_rejected(id: String, mode: PromptMode, rejection: PromptRejection) -> Self {
+        Self {
+            id: Some(id),
+            result: Err(SessionResponseError {
+                operation: SessionOperation::Prompt(mode),
+                message: rejection.message,
+                kind: SessionResponseErrorKind::RejectedBeforeAcceptance,
+                rejection_reason: rejection.reason,
             }),
         }
     }
@@ -38,6 +51,7 @@ impl SessionResponse {
                 operation,
                 message,
                 kind: SessionResponseErrorKind::Cancelled,
+                rejection_reason: RejectionReason::Other,
             }),
         }
     }
@@ -49,6 +63,7 @@ impl SessionResponse {
                 operation: SessionOperation::Prompt(mode),
                 message,
                 kind: SessionResponseErrorKind::DeliveryUnknown,
+                rejection_reason: RejectionReason::Other,
             }),
         }
     }
@@ -67,6 +82,50 @@ pub struct SessionResponseError {
     pub operation: SessionOperation,
     pub message: String,
     pub kind: SessionResponseErrorKind,
+    pub rejection_reason: RejectionReason,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RejectionReason {
+    Authentication,
+    Configuration,
+    Permission,
+    #[default]
+    Other,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{message}")]
+pub struct PromptRejection {
+    pub reason: RejectionReason,
+    pub message: String,
+}
+
+impl PromptRejection {
+    pub fn new(reason: RejectionReason, message: impl Into<String>) -> Self {
+        Self {
+            reason,
+            message: message.into(),
+        }
+    }
+}
+
+impl From<String> for PromptRejection {
+    fn from(message: String) -> Self {
+        Self::new(RejectionReason::Other, message)
+    }
+}
+
+impl From<&str> for PromptRejection {
+    fn from(message: &str) -> Self {
+        Self::from(message.to_owned())
+    }
+}
+
+impl From<PromptRejection> for String {
+    fn from(rejection: PromptRejection) -> Self {
+        rejection.message
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

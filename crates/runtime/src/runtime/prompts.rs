@@ -5,7 +5,6 @@ use crate::{
     protocol::{PromptImage, PromptMode},
 };
 
-use super::prompt_receipts::is_user_actionable_prompt_error;
 use super::{RuntimeEvent, RuntimeOwner, can_send_prompt, conversation_mut};
 
 #[cfg(test)]
@@ -168,35 +167,30 @@ impl RuntimeOwner {
                         );
                     }
                     Err(error) => {
-                        if is_user_actionable_prompt_error(&error) {
-                            if self.cancel_outbox_or_park(outbox_id) {
-                                self.reject_prompt(&submission_id, &target, error);
-                            }
-                        } else {
-                            self.emit_prompt_result(
-                                Some(&submission_id),
-                                &target,
-                                PromptOutcome::DeliveryUnknown,
-                            );
-                            self.save_outbox_for_recovery(
-                                outbox_id,
-                                Some(&submission_id),
-                                Some(QueuedPrompt {
-                                    id: outbox_id,
-                                    submission_id: Some(submission_id.clone()),
-                                    target,
-                                    harness,
-                                    project: self.project.clone(),
-                                    session: self.active_session.clone(),
-                                    mode,
-                                    message,
-                                    display_message,
-                                    invocation,
-                                    images,
-                                }),
-                            );
-                            self.publish();
-                        }
+                        zlog::warn!("Prompt dispatch failed: {error}");
+                        self.emit_prompt_result(
+                            Some(&submission_id),
+                            &target,
+                            PromptOutcome::DeliveryUnknown,
+                        );
+                        self.save_outbox_for_recovery(
+                            outbox_id,
+                            Some(&submission_id),
+                            Some(QueuedPrompt {
+                                id: outbox_id,
+                                submission_id: Some(submission_id.clone()),
+                                target,
+                                harness,
+                                project: self.project.clone(),
+                                session: self.active_session.clone(),
+                                mode,
+                                message,
+                                display_message,
+                                invocation,
+                                images,
+                            }),
+                        );
+                        self.publish();
                     }
                 }
                 return;

@@ -366,8 +366,9 @@ pub enum SessionOperation {
 
 mod response;
 pub use response::{
-    PromptOutcome, SessionContextUsage, SessionHistory, SessionResponse, SessionResponseErrorKind,
-    SessionResponsePayload, SessionUsage, SessionUsageTokens,
+    PromptOutcome, PromptRejection, RejectionReason, SessionContextUsage, SessionHistory,
+    SessionResponse, SessionResponseErrorKind, SessionResponsePayload, SessionUsage,
+    SessionUsageTokens,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

@@ -77,7 +77,8 @@ struct ControlledPromptState {
         String,
         Vec<crate::extensions::PromptImage>,
     )>,
-    acks: VecDeque<(String, Result<(), String>)>,
+    acks: VecDeque<(String, Result<(), crate::PromptRejection>)>,
+    rejection: Option<crate::PromptRejection>,
     events: VecDeque<WorkerEvent>,
     can_cancel_before_delivery: bool,
     aborts: usize,
@@ -107,7 +108,10 @@ impl WorkerSession for ControlledPromptWorker {
         text: String,
         mode: WorkerSendMode,
         images: Vec<crate::extensions::PromptImage>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, crate::PromptRejection> {
+        if let Some(rejection) = self.0.lock().expect("test lock").rejection.take() {
+            return Err(rejection);
+        }
         self.0
             .lock()
             .expect("test lock should not be poisoned")
@@ -115,7 +119,7 @@ impl WorkerSession for ControlledPromptWorker {
             .push((id, mode, text, images));
         Ok(false)
     }
-    fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), String>)> {
+    fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), crate::PromptRejection>)> {
         self.0
             .lock()
             .expect("test lock should not be poisoned")
@@ -971,7 +975,7 @@ impl WorkerSession for FatalAfterWriteWorker {
         message: String,
         mode: WorkerSendMode,
         images: Vec<crate::extensions::PromptImage>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, crate::PromptRejection> {
         self.send_with_images(message, mode, images)?;
         Ok(false)
     }
@@ -1022,7 +1026,13 @@ fn prompt_response_does_not_precede_worker_rejection() {
         .lock()
         .expect("test lock should not be poisoned")
         .acks
-        .push_back((id.clone(), Err("native backend rejected the prompt".into())));
+        .push_back((
+            id.clone(),
+            Err(crate::PromptRejection::new(
+                crate::RejectionReason::Authentication,
+                "native backend rejected the prompt",
+            )),
+        ));
     let rejection = transport.poll().expect("rejection activity");
     assert!(
         matches!(rejection, SessionEvent::Activity(activity)
@@ -1042,6 +1052,10 @@ fn prompt_response_does_not_precede_worker_rejection() {
         crate::SessionResponseErrorKind::RejectedBeforeAcceptance
     );
     assert_eq!(error.message, "native backend rejected the prompt");
+    assert_eq!(
+        error.rejection_reason,
+        crate::RejectionReason::Authentication
+    );
     assert!(transport.poll().is_none());
 }
 
@@ -1377,7 +1391,7 @@ impl WorkerSession for SteeringWorker {
         message: String,
         mode: WorkerSendMode,
         images: Vec<crate::extensions::PromptImage>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, crate::PromptRejection> {
         self.send_with_images(message, mode, images)?;
         Ok(true)
     }
@@ -1466,12 +1480,12 @@ impl WorkerSession for DeliveryBeforeAckWorker {
         _: String,
         _: WorkerSendMode,
         _: Vec<crate::extensions::PromptImage>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, crate::PromptRejection> {
         self.submitted_id = Some(id);
         Ok(false)
     }
 
-    fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), String>)> {
+    fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), crate::PromptRejection>)> {
         self.acknowledged
             .then(|| {
                 (
@@ -1819,7 +1833,7 @@ impl WorkerSession for IdleWorker {
         message: String,
         mode: WorkerSendMode,
         images: Vec<crate::extensions::PromptImage>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, crate::PromptRejection> {
         self.send_with_images(message, mode, images)?;
         Ok(true)
     }
@@ -2487,4 +2501,46 @@ fn malformed_worker_catalogs_fail_without_dropping_invalid_entries() {
     assert!(
         matches!(transport.poll(), Some(SessionEvent::Response(response)) if response.result.is_ok())
     );
+}
+
+#[test]
+fn synchronous_prompt_rejections_preserve_reason_and_unclassified_retry_path() {
+    for reason in [
+        crate::RejectionReason::Permission,
+        crate::RejectionReason::Other,
+    ] {
+        let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState {
+            rejection: Some(crate::PromptRejection::new(reason, "request denied")),
+            ..Default::default()
+        }));
+        let mut transport = WorkerSessionTransport::new(
+            std::path::Path::new("/locators"),
+            Backend::Codex,
+            "thread-1".into(),
+            Box::new(ControlledPromptWorker(backend)),
+            MainSessionMetadata::default(),
+            None,
+        )
+        .expect("transport");
+        let result = transport.send(SessionCommand::Prompt {
+            mode: PromptMode::Normal,
+            message: "work".into(),
+            images: vec![],
+        });
+        if reason == crate::RejectionReason::Other {
+            assert_eq!(result, Err("request denied".into()));
+            assert!(transport.poll().is_none());
+        } else {
+            let id = result.expect("correlated rejection");
+            let Some(SessionEvent::Response(response)) = transport.poll() else {
+                panic!("missing rejection response");
+            };
+            assert_eq!(response.id, Some(id));
+            let error = response.result.expect_err("rejection");
+            assert_eq!(error.rejection_reason, reason);
+            assert_eq!(error.message, "request denied");
+        }
+        assert!(transport.pending_prompts.is_empty());
+        assert!(transport.prompt_deliveries.is_empty());
+    }
 }

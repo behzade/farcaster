@@ -233,21 +233,28 @@ mod exchange {
     fn sdk_routes_errors_and_reports_eof() {
         let (connection, peer) = connect(|mut peer| {
             peer.initialize();
-            let request = peer.read();
-            peer.write(json!({"jsonrpc":"2.0", "id":request["id"], "error":{"code":-32602, "message":"bad model", "data":{"model":"missing"}}}));
+            for code in [-32602, -32000] {
+                let request = peer.read();
+                peer.write(json!({"jsonrpc":"2.0", "id":request["id"], "error":{"code":code, "message":"request denied"}}));
+            }
         });
         connection
             .initialize(&PROFILE)
             .expect("test operation should succeed");
-        let id = connection
-            .send_request(
-                "session/set_config_option",
-                json!({"sessionId":"one", "configId":"model", "value":"missing"}),
-            )
-            .expect("test operation should succeed");
-        assert!(
-            matches!(next(&connection).expect("test operation should succeed"), AcpInbound::Error {id: response_id, message} if response_id == id && message.contains("bad model"))
-        );
+        for reason in [
+            crate::RejectionReason::Other,
+            crate::RejectionReason::Authentication,
+        ] {
+            let id = connection
+                .send_request(
+                    "session/set_config_option",
+                    json!({"sessionId":"one", "configId":"model", "value":"missing"}),
+                )
+                .expect("test operation should succeed");
+            assert!(
+                matches!(next(&connection).expect("test operation should succeed"), AcpInbound::Error {id: response_id, rejection} if response_id == id && rejection.message.contains("request denied") && rejection.reason == reason)
+            );
+        }
         assert!(next(&connection).is_err());
         peer.join().expect("test operation should succeed");
     }

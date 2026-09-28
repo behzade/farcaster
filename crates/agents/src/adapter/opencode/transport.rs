@@ -106,22 +106,30 @@ impl OpenCodeTcpTransport {
         request: &OpenCodeHttpRequest,
     ) -> Result<BufReader<TcpStream>, OpenCodePromptDispatchError> {
         let host = self.endpoint.host_str().ok_or_else(|| {
-            OpenCodePromptDispatchError::Unsent("OpenCode endpoint has no host".into())
+            OpenCodePromptDispatchError::Unsent(crate::PromptRejection::new(
+                crate::RejectionReason::Configuration,
+                "OpenCode endpoint has no host",
+            ))
         })?;
         let port = self.endpoint.port_or_known_default().ok_or_else(|| {
-            OpenCodePromptDispatchError::Unsent("OpenCode endpoint has no port".into())
+            OpenCodePromptDispatchError::Unsent(crate::PromptRejection::new(
+                crate::RejectionReason::Configuration,
+                "OpenCode endpoint has no port",
+            ))
         })?;
         let mut stream = TcpStream::connect((host, port)).map_err(|error| {
-            OpenCodePromptDispatchError::Unsent(format!("connect to OpenCode server: {error}"))
+            OpenCodePromptDispatchError::Unsent(
+                format!("connect to OpenCode server: {error}").into(),
+            )
         })?;
         let timeout = Some(Duration::from_secs(15));
         stream
             .set_read_timeout(timeout)
             .and_then(|()| stream.set_write_timeout(timeout))
             .map_err(|error| {
-                OpenCodePromptDispatchError::Unsent(format!(
-                    "configure OpenCode connection timeout: {error}"
-                ))
+                OpenCodePromptDispatchError::Unsent(
+                    format!("configure OpenCode connection timeout: {error}").into(),
+                )
             })?;
         stream
             .write_all(&encode_request(

@@ -188,7 +188,7 @@ impl WorkerSessionTransport {
         })
     }
 
-    fn finish_prompt_ack(&mut self, id: String, result: Result<(), String>) {
+    fn finish_prompt_ack(&mut self, id: String, result: Result<(), crate::PromptRejection>) {
         if result.is_err()
             && self
                 .pending_prompts
@@ -219,8 +219,7 @@ impl WorkerSessionTransport {
             }
             self.prompt_deliveries
                 .retain(|delivery| delivery.request_id != id);
-            let response =
-                SessionResponse::failure(Some(id), SessionOperation::Prompt(requested_mode), error);
+            let response = SessionResponse::prompt_rejected(id, requested_mode, error);
             self.pending.push_back(SessionEvent::Response(response));
             return;
         }
@@ -964,8 +963,25 @@ impl SessionTransport for WorkerSessionTransport {
                 let defer_response_until_delivery =
                     delivery_tracked && self.worker.can_cancel_prompt_before_delivery(worker_mode);
                 let accepted =
-                    self.worker
-                        .submit_prompt(id.clone(), message, worker_mode, images)?;
+                    match self
+                        .worker
+                        .submit_prompt(id.clone(), message, worker_mode, images)
+                    {
+                        Ok(accepted) => accepted,
+                        Err(rejection) if rejection.reason == crate::RejectionReason::Other => {
+                            return Err(rejection.message);
+                        }
+                        Err(rejection) => {
+                            self.pending.push_back(SessionEvent::Response(
+                                SessionResponse::prompt_rejected(
+                                    id.clone(),
+                                    requested_mode,
+                                    rejection,
+                                ),
+                            ));
+                            return Ok(id);
+                        }
+                    };
                 self.pending_prompts.insert(
                     id.clone(),
                     PendingPrompt {

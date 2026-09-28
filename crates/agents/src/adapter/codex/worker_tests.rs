@@ -1407,7 +1407,7 @@ fn local_steer_recovery_distinguishes_idle_from_pending_start_through_the_transp
             None,
         )
         .expect("transport");
-        assert_eq!(transport.steer_error_recovery(&error), expected);
+        assert_eq!(transport.steer_error_recovery(&error.message), expected);
         for unrelated in [
             "permission denied: Codex worker has not reported its active turn",
             "Codex worker has not reported its active turn: transport closed",

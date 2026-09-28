@@ -1582,7 +1582,7 @@ fn acp_prompt_ack_uses_execution_evidence_and_rejects_unadmitted_errors() {
     cases.push((
         AcpInbound::Error {
             id: AcpRequestId::Number(1),
-            message: "rejected".into(),
+            rejection: "rejected".into(),
         },
         false,
     ));
@@ -2074,7 +2074,7 @@ fn acp_user_message_chunk_commits_delivery_before_a_cancel_or_error() {
         },
         AcpInbound::Error {
             id: AcpRequestId::Number(1),
-            message: "failed after admission".into(),
+            rejection: "failed after admission".into(),
         },
     ] {
         let mut session = inert_session();
@@ -2160,7 +2160,7 @@ fn acp_user_message_chunk_malformed_content_preserves_cancel_and_error_recovery(
             let terminal = if rejected {
                 AcpInbound::Error {
                     id: AcpRequestId::Number(1),
-                    message: "prompt rejected".into(),
+                    rejection: "prompt rejected".into(),
                 }
             } else {
                 AcpInbound::Response {
@@ -2524,13 +2524,22 @@ fn acp_pre_execution_rejection_is_request_local() {
         .connection
         .restore_queued(VecDeque::from([AcpInbound::Error {
             id: AcpRequestId::Number(1),
-            message: "prompt rejected".into(),
+            rejection: crate::PromptRejection::new(
+                crate::RejectionReason::Authentication,
+                "prompt rejected",
+            ),
         }]));
 
     assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
     assert_eq!(
         session.poll_prompt_ack(),
-        Some(("prompt".into(), Err("prompt rejected".into())))
+        Some((
+            "prompt".into(),
+            Err(crate::PromptRejection::new(
+                crate::RejectionReason::Authentication,
+                "prompt rejected"
+            ))
+        ))
     );
     assert!(session.current_prompt.is_none());
 }

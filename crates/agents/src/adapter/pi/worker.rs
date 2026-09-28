@@ -114,10 +114,10 @@ struct PiWorkerSession {
     pending_inputs: HashMap<String, InputKind>,
     prompt_requests: HashMap<String, PendingPrompt>,
     pending_deliveries: VecDeque<PendingPrompt>,
-    prompt_acks: VecDeque<(String, Result<(), String>)>,
+    prompt_acks: VecDeque<(String, Result<(), crate::PromptRejection>)>,
     pending_session_events: VecDeque<SessionEvent>,
     pending_worker_events: VecDeque<WorkerEvent>,
-    delivery_ack_ready: VecDeque<(String, Result<(), String>)>,
+    delivery_ack_ready: VecDeque<(String, Result<(), crate::PromptRejection>)>,
     delivery_activity_returned: bool,
     terminal: bool,
 }
@@ -165,12 +165,12 @@ impl WorkerSession for PiWorkerSession {
         message: String,
         mode: WorkerSendMode,
         images: Vec<crate::extensions::PromptImage>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, crate::PromptRejection> {
         self.send_prompt(Some(id), message, mode, images)?;
         Ok(false)
     }
 
-    fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), String>)> {
+    fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), crate::PromptRejection>)> {
         self.pump();
         if self.delivery_activity_returned {
             self.delivery_activity_returned = false;
@@ -417,8 +417,13 @@ impl PiWorkerSession {
             Err(error) if prompt.reports_ack => {
                 self.pending_deliveries
                     .retain(|pending| pending.submission_id != prompt.submission_id);
-                self.prompt_acks
-                    .push_back((prompt.submission_id, Err(error.to_string())));
+                self.prompt_acks.push_back((
+                    prompt.submission_id,
+                    Err(crate::PromptRejection::new(
+                        error.rejection_reason,
+                        error.message,
+                    )),
+                ));
             }
             Err(error) => {
                 if prompt.mode == PromptMode::Normal && !self.run_active {

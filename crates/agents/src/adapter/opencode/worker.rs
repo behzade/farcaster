@@ -684,9 +684,10 @@ impl OpenCodeWorkerSession {
         if let Some((name, text)) = super::commands::invocation(&message, &self.commands) {
             use super::contract::OpenCodePromptDispatchError::Unsent;
             if mode != WorkerSendMode::Prompt {
-                return Err(Unsent(format!(
-                    "Run /{name} as a command rather than a queued or steering message"
-                )));
+                return Err(Unsent(
+                    format!("Run /{name} as a command rather than a queued or steering message")
+                        .into(),
+                ));
             }
             if name == "compact" && (!text.trim().is_empty() || !files.is_empty()) {
                 return Err(Unsent("Usage: /compact (without attachments)".into()));
@@ -1034,8 +1035,10 @@ impl OpenCodeWorkerSession {
                             let retry_id = Self::next_internal_prompt_id();
                             if let Err(error) = self.requeue_cancelled_steer(&retry_id, delivery) {
                                 let error = match error {
-                                    super::contract::OpenCodePromptDispatchError::Unsent(error)
-                                    | super::contract::OpenCodePromptDispatchError::Unknown(
+                                    super::contract::OpenCodePromptDispatchError::Unsent(error) => {
+                                        error.message
+                                    }
+                                    super::contract::OpenCodePromptDispatchError::Unknown(
                                         error,
                                     ) => error,
                                 };
@@ -1481,7 +1484,7 @@ impl WorkerSession for OpenCodeWorkerSession {
             Vec::new(),
         ) {
             Ok(_) => Ok(()),
-            Err(super::contract::OpenCodePromptDispatchError::Unsent(error)) => Err(error),
+            Err(super::contract::OpenCodePromptDispatchError::Unsent(error)) => Err(error.message),
             Err(super::contract::OpenCodePromptDispatchError::Unknown(error)) => {
                 self.pending.push_back(WorkerEvent::PromptDeliveryUnknown {
                     submission_id: native_id,
@@ -1513,7 +1516,7 @@ impl WorkerSession for OpenCodeWorkerSession {
             images,
         ) {
             Ok(_) => Ok(()),
-            Err(super::contract::OpenCodePromptDispatchError::Unsent(error)) => Err(error),
+            Err(super::contract::OpenCodePromptDispatchError::Unsent(error)) => Err(error.message),
             Err(super::contract::OpenCodePromptDispatchError::Unknown(error)) => {
                 self.pending.push_back(WorkerEvent::PromptDeliveryUnknown {
                     submission_id: native_id,
@@ -1530,7 +1533,7 @@ impl WorkerSession for OpenCodeWorkerSession {
         message: String,
         mode: WorkerSendMode,
         images: Vec<crate::extensions::PromptImage>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, crate::PromptRejection> {
         let images = images
             .into_iter()
             .map(crate::extensions::PromptImage::into_inline)

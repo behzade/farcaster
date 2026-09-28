@@ -30,13 +30,13 @@ pub trait OpenCodeHttpTransport {
         request: OpenCodeHttpRequest,
     ) -> Result<OpenCodeHttpResponse, OpenCodePromptDispatchError> {
         self.execute(request)
-            .map_err(OpenCodePromptDispatchError::Unsent)
+            .map_err(|error| OpenCodePromptDispatchError::Unsent(error.into()))
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OpenCodePromptDispatchError {
-    Unsent(String),
+    Unsent(crate::PromptRejection),
     Unknown(String),
 }
 

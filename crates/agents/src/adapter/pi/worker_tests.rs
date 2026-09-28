@@ -39,7 +39,7 @@ fn queue_worker(
 fn wait_for_prompt_acks(
     worker: &mut dyn WorkerSession,
     count: usize,
-) -> Vec<(String, Result<(), String>)> {
+) -> Vec<(String, Result<(), crate::PromptRejection>)> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     let mut acknowledgements = Vec::new();
     while std::time::Instant::now() < deadline && acknowledgements.len() < count {

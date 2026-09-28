@@ -800,7 +800,7 @@ struct CodexWorkerSession {
     handoff: Option<Handoff>,
     batch_deliveries: HashMap<String, Vec<BatchInput>>,
     normal_start_clients: HashMap<CodexRequestId, String>,
-    prompt_acks: VecDeque<(String, Result<(), String>)>,
+    prompt_acks: VecDeque<(String, Result<(), crate::PromptRejection>)>,
     acknowledged_prompts: HashSet<String>,
     queued_inbound: VecDeque<Result<CodexInbound, String>>,
     peer_messages: VecDeque<PeerMessage>,
@@ -887,7 +887,7 @@ impl WorkerSession for CodexWorkerSession {
         message: String,
         mode: WorkerSendMode,
         images: Vec<crate::extensions::PromptImage>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, crate::PromptRejection> {
         self.ensure_abort_cleanup_finished()?;
         if self.dispatch_command(&message, mode, &images, Some(id.clone()))? {
             return Ok(false);
@@ -898,7 +898,7 @@ impl WorkerSession for CodexWorkerSession {
         Ok(false)
     }
 
-    fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), String>)> {
+    fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), crate::PromptRejection>)> {
         self.prompt_acks.pop_front()
     }
 
@@ -1302,7 +1302,7 @@ impl WorkerSession for CodexWorkerSession {
                     if let Some(prompt) = rejected_prompt.as_ref()
                         && !retry_handoff_steer
                     {
-                        self.record_prompt_ack(prompt.clone(), Err(error.message.clone()));
+                        self.record_prompt_ack(prompt.clone(), Err(error.message.clone().into()));
                     }
                     match self.pending.remove(&id) {
                         Some(PendingRequest::Command(request)) => {
@@ -2159,7 +2159,7 @@ impl CodexWorkerSession {
         cleanup.completion.take()
     }
 
-    fn record_prompt_ack(&mut self, id: String, result: Result<(), String>) {
+    fn record_prompt_ack(&mut self, id: String, result: Result<(), crate::PromptRejection>) {
         if self.acknowledged_prompts.insert(id.clone()) {
             self.prompt_acks.push_back((id, result));
         }

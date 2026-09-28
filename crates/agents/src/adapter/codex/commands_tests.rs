@@ -8,7 +8,11 @@ fn read(sent: &mut BufReader<std::process::ChildStdout>) -> Value {
     serde_json::from_str(&line).expect("decode fixture request")
 }
 
-fn submit(session: &mut CodexWorkerSession, id: &str, command: &str) -> Result<bool, String> {
+fn submit(
+    session: &mut CodexWorkerSession,
+    id: &str,
+    command: &str,
+) -> Result<bool, crate::PromptRejection> {
     session.submit_prompt(
         id.into(),
         command.into(),

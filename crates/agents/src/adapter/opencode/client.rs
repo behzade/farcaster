@@ -113,7 +113,7 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         body: Value,
     ) -> Result<OpenCodeHttpResponse, OpenCodePromptDispatchError> {
         let body = serde_json::to_vec(&body)
-            .map_err(|error| OpenCodePromptDispatchError::Unsent(error.to_string()))?;
+            .map_err(|error| OpenCodePromptDispatchError::Unsent(error.to_string().into()))?;
         let response = self.transport.execute_prompt(OpenCodeHttpRequest {
             method: OpenCodeHttpMethod::Post,
             path,
@@ -122,7 +122,14 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         if !(200..300).contains(&response.status) {
             let error = ensure_success(&response).expect_err("non-success response");
             return Err(if (400..500).contains(&response.status) {
-                OpenCodePromptDispatchError::Unsent(error)
+                OpenCodePromptDispatchError::Unsent(crate::PromptRejection::new(
+                    match response.status {
+                        401 => crate::RejectionReason::Authentication,
+                        403 => crate::RejectionReason::Permission,
+                        _ => crate::RejectionReason::Other,
+                    },
+                    error,
+                ))
             } else {
                 OpenCodePromptDispatchError::Unknown(error)
             });

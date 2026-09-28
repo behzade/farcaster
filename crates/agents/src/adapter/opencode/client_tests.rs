@@ -48,8 +48,8 @@ fn body(request: &OpenCodeHttpRequest) -> Value {
 
 fn prompt_error(error: super::contract::OpenCodePromptDispatchError) -> String {
     match error {
-        super::contract::OpenCodePromptDispatchError::Unsent(error)
-        | super::contract::OpenCodePromptDispatchError::Unknown(error) => error,
+        super::contract::OpenCodePromptDispatchError::Unsent(error) => error.message,
+        super::contract::OpenCodePromptDispatchError::Unknown(error) => error,
     }
 }
 
@@ -187,21 +187,26 @@ fn slash_commands_use_native_endpoints_and_preserve_attachments() -> Result<(), 
 
 #[test]
 fn command_failures_distinguish_rejection_from_uncertain_execution() {
-    for (status, unknown) in [(400, false), (404, false), (500, true)] {
+    for (status, reason) in [
+        (400, Some(crate::RejectionReason::Other)),
+        (401, Some(crate::RejectionReason::Authentication)),
+        (403, Some(crate::RejectionReason::Permission)),
+        (404, Some(crate::RejectionReason::Other)),
+        (500, None),
+    ] {
         let mut client = OpenCodeClient::new(FakeTransport::with_responses([response(
             status,
-            json!({"_tag":"CommandExecutionError", "message":"failed"}),
+            json!({"_tag":"CommandExecutionError", "message":"auth config access failed"}),
         )]));
         let error = client
             .run_command("session-1", "review", "", vec![])
             .expect_err("failure");
-        assert_eq!(
-            matches!(
-                error,
-                super::contract::OpenCodePromptDispatchError::Unknown(_)
-            ),
-            unknown
-        );
+        match error {
+            super::contract::OpenCodePromptDispatchError::Unsent(rejection) => {
+                assert_eq!(Some(rejection.reason), reason)
+            }
+            super::contract::OpenCodePromptDispatchError::Unknown(_) => assert_eq!(reason, None),
+        }
     }
 }
 

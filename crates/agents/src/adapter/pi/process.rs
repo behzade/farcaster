@@ -1354,7 +1354,13 @@ fn remap_response(
 ) -> SessionResponse {
     match response.result {
         Ok(_) => SessionResponse::success(response.id, payload),
-        Err(error) => SessionResponse::failure(response.id, operation, error.to_string()),
+        Err(mut error) => {
+            error.operation = operation;
+            SessionResponse {
+                id: response.id,
+                result: Err(error),
+            }
+        }
     }
 }
 

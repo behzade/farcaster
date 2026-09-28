@@ -287,10 +287,10 @@ pub trait WorkerSession: Send {
         _message: String,
         _mode: WorkerSendMode,
         _images: Vec<crate::extensions::PromptImage>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, crate::PromptRejection> {
         Err("worker backend does not implement prompt acknowledgements".into())
     }
-    fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), String>)> {
+    fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), crate::PromptRejection>)> {
         None
     }
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String>;

@@ -287,7 +287,7 @@ struct ClaudeSession {
     active: bool,
     active_uuid: Option<String>,
     dispatched: HashMap<String, DispatchedPrompt>,
-    prompt_acks: VecDeque<(String, Result<(), String>)>,
+    prompt_acks: VecDeque<(String, Result<(), crate::PromptRejection>)>,
     closed: bool,
     queued: VecDeque<Prompt>,
     handoff_pending: bool,
@@ -798,13 +798,13 @@ impl WorkerSession for ClaudeSession {
         message: String,
         mode: WorkerSendMode,
         images: Vec<crate::extensions::PromptImage>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, crate::PromptRejection> {
         let prompt = self.prompt(Some(&id), message, mode, images)?;
         self.admit(prompt, mode)?;
         Ok(false)
     }
 
-    fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), String>)> {
+    fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), crate::PromptRejection>)> {
         self.prompt_acks.pop_front()
     }
 

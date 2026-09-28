@@ -10,7 +10,7 @@ pub(super) enum AcpInbound {
     },
     Error {
         id: AcpRequestId,
-        message: String,
+        rejection: crate::PromptRejection,
     },
     Notification {
         method: String,

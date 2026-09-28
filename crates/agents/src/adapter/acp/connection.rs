@@ -222,7 +222,15 @@ impl AcpConnection {
                     },
                     Err(error) => AcpInbound::Error {
                         id: response_id,
-                        message: error.to_string(),
+                        rejection: crate::PromptRejection::new(
+                            match error.code {
+                                agent_client_protocol::ErrorCode::AuthRequired => {
+                                    crate::RejectionReason::Authentication
+                                }
+                                _ => crate::RejectionReason::Other,
+                            },
+                            error.to_string(),
+                        ),
                     },
                 }))
             })

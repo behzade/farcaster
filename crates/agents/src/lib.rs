@@ -34,13 +34,13 @@ pub use contract::extensions;
 pub use contract::{
     AccountUsage, AccountUsageWindow, Backend, ConfigurationCatalog, DiscoveredHistory,
     DiscoveredSession, DiscoveredUsage, HarnessAccessMode, PeerMessage, PromptOutcome,
-    PromptPresentation, QueuedPrompt, SandboxState, ServiceTierApplication, ServiceTierPolicy,
-    SessionActivityKind, SessionCommand, SessionContextUsage, SessionEvent, SessionGoal,
-    SessionHistory, SessionInbox, SessionLaunch, SessionMetadata, SessionOperation,
-    SessionResponse, SessionResponseErrorKind, SessionResponsePayload, SessionStart,
-    SessionTransport, SessionUsage, SessionUsageTokens, StartWorker, SteerErrorRecovery,
-    WorkerContext, WorkerInput, WorkerInputResponse, effort_rank, model_efforts, valid_worker_name,
-    validate_child_access,
+    PromptPresentation, PromptRejection, QueuedPrompt, RejectionReason, SandboxState,
+    ServiceTierApplication, ServiceTierPolicy, SessionActivityKind, SessionCommand,
+    SessionContextUsage, SessionEvent, SessionGoal, SessionHistory, SessionInbox, SessionLaunch,
+    SessionMetadata, SessionOperation, SessionResponse, SessionResponseErrorKind,
+    SessionResponsePayload, SessionStart, SessionTransport, SessionUsage, SessionUsageTokens,
+    StartWorker, SteerErrorRecovery, WorkerContext, WorkerInput, WorkerInputResponse, effort_rank,
+    model_efforts, valid_worker_name, validate_child_access,
 };
 
 #[derive(Clone, Default)]

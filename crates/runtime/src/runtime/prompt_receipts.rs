@@ -83,7 +83,7 @@ impl RuntimeOwner {
         let uncertain = error.kind == SessionResponseErrorKind::DeliveryUnknown;
         let recover = uncertain
             || (error.kind == SessionResponseErrorKind::RejectedBeforeAcceptance
-                && !is_user_actionable_prompt_error(&error.message));
+                && error.rejection_reason == agents::RejectionReason::Other);
         if uncertain {
             self.retired_prompts
                 .insert(receipt_id.to_owned(), prompt.clone());
@@ -516,22 +516,4 @@ impl RuntimeOwner {
             }
         }
     }
-}
-
-pub(super) fn is_user_actionable_prompt_error(message: &str) -> bool {
-    let message = message.to_ascii_lowercase();
-    [
-        "auth",
-        "unauthorized",
-        "forbidden",
-        "permission",
-        "access",
-        "credential",
-        "configuration",
-        "configured",
-        "config",
-        "api key",
-    ]
-    .iter()
-    .any(|needle| message.contains(needle))
 }
