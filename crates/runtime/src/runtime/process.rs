@@ -406,13 +406,19 @@ impl RuntimeOwner {
             }
             SessionEvent::Interaction(request) => self.apply_interaction(request),
             SessionEvent::Activity(event) => {
-                if self.apply_cancelled_prompt(event.value()) {
-                    return SnapshotChange::Immediate;
+                if event.kind() == &SessionActivityKind::PromptDelivery {
+                    let Some(delivery) = event.prompt_delivery() else {
+                        zlog::warn!("Ignoring malformed prompt delivery event");
+                        return SnapshotChange::None;
+                    };
+                    if self.apply_cancelled_prompt(delivery) {
+                        return SnapshotChange::Immediate;
+                    }
+                    if let Some(change) = self.apply_retired_prompt_delivery(delivery) {
+                        return change;
+                    }
+                    self.apply_prompt_delivery_receipt(delivery);
                 }
-                if let Some(change) = self.apply_retired_prompt_delivery(event.value()) {
-                    return change;
-                }
-                self.apply_prompt_delivery_receipt(event.value());
                 let settled = event.kind() == &SessionActivityKind::AgentSettled;
                 let conversation = &self.active_snapshot().conversation;
                 let notify_completion = settled
@@ -428,7 +434,18 @@ impl RuntimeOwner {
                 let (changed_from, snapshot_changed, live_status_changed) = {
                     let snapshot = self.active_snapshot_mut();
                     let (changed_from, conversation_state_changed) =
-                        conversation_mut(snapshot).reduce_deferred_with_change(event.value());
+                        if let Some(delivery) = event.prompt_delivery() {
+                            (
+                                conversation_mut(snapshot).record_prompt_delivery(
+                                    &delivery.submission_id,
+                                    delivery.message.as_ref(),
+                                    delivery.status,
+                                ),
+                                false,
+                            )
+                        } else {
+                            conversation_mut(snapshot).reduce_deferred_with_change(event.value())
+                        };
                     let context_changed =
                         update_context_from_event(&mut snapshot.stats, event.value());
                     let tokens_changed =

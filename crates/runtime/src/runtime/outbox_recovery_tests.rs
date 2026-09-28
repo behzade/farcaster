@@ -1530,3 +1530,51 @@ fn unclassified_secondary_send_error_keeps_the_prompt_recoverable() -> Result<()
     assert_eq!(sent_messages(&sent), ["working"]);
     Ok(())
 }
+
+#[test]
+fn malformed_delivery_cannot_settle_current_or_queued_input() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let (mut owner, _) = ready_owner(temp.path(), &database)?;
+    let (sender, events) = mpsc::channel();
+    owner.event_tx.sender = sender;
+    for id in ["first", "second"] {
+        owner.send_prompt_for_submission(
+            id.into(),
+            "session:one".into(),
+            PromptMode::Normal,
+            "same".into(),
+            vec![],
+            false,
+        );
+    }
+    for id in ["request-1", "request-2"] {
+        for invalid in [
+            json!({"type":"prompt_delivery", "submissionId":id}),
+            json!({"type":"prompt_delivery", "submissionId":id, "status":"future_status"}),
+            json!({"type":"prompt_delivery", "submissionId":id, "status":"delivered", "message":{"queued":"true"}}),
+            json!({"type":"prompt_delivery", "submissionId":"", "status":"cancelled"}),
+        ] {
+            owner.apply_process_item(SessionEvent::Activity(invalid.into()));
+        }
+    }
+    assert_eq!(owner.pending_prompt_id.as_deref(), Some("request-1"));
+    assert!(owner.pending_queued_prompts.contains_key("request-2"));
+    assert_eq!(
+        outbox_rows(&database)?,
+        vec![("same".into(), "pending".into()); 2]
+    );
+    assert!(
+        !events
+            .try_iter()
+            .any(|event| matches!(event, RuntimeEvent::PromptResult { .. }))
+    );
+    for id in ["request-2", "request-1"] {
+        owner.apply_process_item(delivered(id, "same"));
+    }
+    assert_eq!(
+        outbox_rows(&database)?,
+        vec![("same".into(), "acked".into()); 2]
+    );
+    Ok(())
+}

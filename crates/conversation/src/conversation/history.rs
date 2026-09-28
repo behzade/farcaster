@@ -43,14 +43,18 @@ impl ConversationState {
             if message.get("role").and_then(Value::as_str) == Some("user")
                 && let Some(id) = message.get("submissionId").and_then(Value::as_str)
             {
-                self.record_prompt_delivery(
-                    id,
-                    message,
-                    message
-                        .get("deliveryStatus")
-                        .and_then(Value::as_str)
-                        .unwrap_or("delivered"),
-                );
+                let status = message
+                    .get("deliveryStatus")
+                    .cloned()
+                    .unwrap_or_else(|| Value::String("delivered".into()));
+                if let (Ok(message), Ok(status)) = (
+                    serde_json::from_value::<farcaster_agent_protocol::DeliveredMessage>(
+                        message.clone(),
+                    ),
+                    serde_json::from_value::<farcaster_agent_protocol::DeliveryStatus>(status),
+                ) {
+                    self.record_prompt_delivery(id, Some(&message), status);
+                }
                 continue;
             }
             if message.get("role").and_then(Value::as_str) == Some("assistant") {

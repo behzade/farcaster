@@ -377,12 +377,13 @@ fn cold_history_restores_queued_receipt_identity_without_claiming_delivery()
     );
     for receipt in &history[1..] {
         assert_eq!(receipt["content"][1]["data"], ONE_PIXEL_PNG);
+        let message = serde_json::from_value(receipt.clone()).expect("receipt message");
         conversation.record_prompt_delivery(
             receipt["submissionId"]
                 .as_str()
                 .expect("receipt submission ID"),
-            receipt,
-            "delivered",
+            Some(&message),
+            agents::DeliveryStatus::Delivered,
         );
     }
     assert_eq!(conversation.items.len(), 2);
@@ -495,8 +496,9 @@ fn reopened_accepted_queue_receipts_stay_off_transcript_until_delivery()
         let id = receipt["submissionId"]
             .as_str()
             .expect("receipt submission ID");
-        state.record_prompt_delivery(id, receipt, "delivered");
-        state.record_prompt_delivery(id, receipt, "delivered");
+        let message = serde_json::from_value(receipt.clone()).expect("receipt message");
+        state.record_prompt_delivery(id, Some(&message), agents::DeliveryStatus::Delivered);
+        state.record_prompt_delivery(id, Some(&message), agents::DeliveryStatus::Delivered);
     }
     assert_eq!(state.items.len(), 2);
     assert!(

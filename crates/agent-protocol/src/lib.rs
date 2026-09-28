@@ -3,6 +3,9 @@ use std::{path::PathBuf, thread, time::SystemTime};
 pub use farcaster_contracts::{Backend, WorkerInput, WorkerStatus};
 use serde::{Deserialize, Serialize};
 
+mod delivery;
+pub use delivery::{DeliveredMessage, DeliveredRole, DeliveryStatus, PromptDelivery};
+
 mod effort;
 pub mod extensions;
 pub use effort::{effort_rank, model_efforts};
@@ -150,6 +153,7 @@ pub enum SessionActivityKind {
     MessageUpdated,
     MessageEnded,
     PeerMessage,
+    PromptDelivery,
     ToolStarted,
     ToolUpdated,
     ToolMetadataChanged,
@@ -177,6 +181,7 @@ impl SessionActivityKind {
             "message_update" => Self::MessageUpdated,
             "message_end" => Self::MessageEnded,
             "peer_message" => Self::PeerMessage,
+            "prompt_delivery" => Self::PromptDelivery,
             "tool_execution_start" => Self::ToolStarted,
             "tool_execution_update" => Self::ToolUpdated,
             "tool_metadata_changed" => Self::ToolMetadataChanged,
@@ -202,9 +207,14 @@ impl SessionActivityKind {
 pub struct SessionActivity {
     kind: SessionActivityKind,
     value: serde_json::Value,
+    delivery: Option<PromptDelivery>,
 }
 
 impl SessionActivity {
+    pub fn prompt_delivery(&self) -> Option<&PromptDelivery> {
+        self.delivery.as_ref()
+    }
+
     pub fn kind(&self) -> &SessionActivityKind {
         &self.kind
     }
@@ -221,7 +231,24 @@ impl From<serde_json::Value> for SessionActivity {
             .and_then(serde_json::Value::as_str)
             .map(SessionActivityKind::from_name)
             .unwrap_or_else(|| SessionActivityKind::Other(String::new()));
-        Self { kind, value }
+        let delivery = (kind == SessionActivityKind::PromptDelivery)
+            .then(|| serde_json::from_value(value.clone()).ok())
+            .flatten();
+        Self {
+            kind,
+            value,
+            delivery,
+        }
+    }
+}
+
+impl From<PromptDelivery> for SessionActivity {
+    fn from(delivery: PromptDelivery) -> Self {
+        Self {
+            kind: SessionActivityKind::PromptDelivery,
+            value: serde_json::to_value(&delivery).expect("delivery contains only JSON values"),
+            delivery: Some(delivery),
+        }
     }
 }
 

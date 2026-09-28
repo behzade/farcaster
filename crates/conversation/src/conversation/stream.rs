@@ -40,16 +40,12 @@ impl ConversationState {
             .and_then(Value::as_str)
             .unwrap_or_default();
         if kind == "prompt_delivery" {
+            let delivery: farcaster_agent_protocol::PromptDelivery =
+                serde_json::from_value(event.clone()).ok()?;
             return self.record_prompt_delivery(
-                event
-                    .get("submissionId")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-                event.get("message").unwrap_or(&Value::Null),
-                event
-                    .get("status")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
+                &delivery.submission_id,
+                delivery.message.as_ref(),
+                delivery.status,
             );
         }
         let previous_len = self.items.len();

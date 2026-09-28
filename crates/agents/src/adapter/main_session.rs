@@ -10,10 +10,10 @@ use std::{
 use serde_json::{Value, json};
 
 use crate::{
-    SessionCommand, SessionEvent, SessionHistory, SessionOperation, SessionResponse,
-    SessionResponsePayload as Payload, SessionTransport, TokenUsage, ToolReviewState,
-    WorkerActivity, WorkerEvent, WorkerInput, WorkerInputResponse, WorkerSendMode, WorkerSession,
-    WorkerUsage,
+    DeliveredMessage, DeliveryStatus, SessionCommand, SessionEvent, SessionHistory,
+    SessionOperation, SessionResponse, SessionResponsePayload as Payload, SessionTransport,
+    TokenUsage, ToolReviewState, WorkerActivity, WorkerEvent, WorkerInput, WorkerInputResponse,
+    WorkerSendMode, WorkerSession, WorkerUsage,
     extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptMode},
 };
 
@@ -65,17 +65,19 @@ struct PromptDelivery {
 }
 
 impl PromptDelivery {
-    fn event(&self, status: &str) -> SessionEvent {
-        activity(json!({
-            "type": "prompt_delivery", "submissionId": self.request_id, "status": status,
-            "message": {"role": "user", "content": self.content,
-                "promptMode": match self.mode {
-                    PromptMode::Normal => "normal",
-                    PromptMode::Steer => "steer",
-                    PromptMode::FollowUp => "follow_up",
-                },
-                "queued": self.mode != PromptMode::Normal, "deliveryTracked": self.delivery_tracked},
-        }))
+    fn event(&self, status: DeliveryStatus) -> SessionEvent {
+        SessionEvent::Activity(
+            crate::contract::PromptDelivery {
+                submission_id: self.request_id.clone(),
+                status,
+                message: Some(DeliveredMessage::user(
+                    self.content.clone(),
+                    self.mode,
+                    self.delivery_tracked,
+                )),
+            }
+            .into(),
+        )
     }
 }
 
@@ -215,7 +217,8 @@ impl WorkerSessionTransport {
                 .iter()
                 .find(|delivery| delivery.request_id == id)
             {
-                self.pending.push_back(delivery.event("rejected"));
+                self.pending
+                    .push_back(delivery.event(DeliveryStatus::Rejected));
             }
             self.prompt_deliveries
                 .retain(|delivery| delivery.request_id != id);
@@ -233,7 +236,8 @@ impl WorkerSessionTransport {
             let newly_admitted = !delivery.acknowledged;
             delivery.acknowledged = true;
             if newly_admitted && !delivery.delivered {
-                self.pending.push_back(delivery.event("accepted"));
+                self.pending
+                    .push_back(delivery.event(DeliveryStatus::Accepted));
                 if !delivery.aborted {
                     enqueue = Some((delivery.mode, delivery.message.clone()));
                 }
@@ -292,7 +296,8 @@ impl WorkerSessionTransport {
             .find(|delivery| delivery.request_id == id)
         {
             delivery.aborted = true;
-            self.pending.push_back(delivery.event("unknown"));
+            self.pending
+                .push_back(delivery.event(DeliveryStatus::Unknown));
         }
         self.pending.push_back(SessionEvent::Response(
             SessionResponse::prompt_delivery_unknown(id, mode, error),
@@ -327,7 +332,8 @@ impl WorkerSessionTransport {
             .find(|delivery| delivery.request_id == id)
         {
             delivery.aborted = true;
-            self.pending.push_back(delivery.event("rejected"));
+            self.pending
+                .push_back(delivery.event(DeliveryStatus::Rejected));
         }
         self.prompt_deliveries
             .retain(|delivery| delivery.request_id != id);
@@ -435,7 +441,8 @@ impl WorkerSessionTransport {
         for delivery in &mut self.prompt_deliveries {
             delivery.aborted = true;
             if !delivery.acknowledged && !delivery.delivered {
-                self.pending.push_back(delivery.event("unknown"));
+                self.pending
+                    .push_back(delivery.event(DeliveryStatus::Unknown));
             }
         }
         if self.steering.is_empty() && self.follow_up.is_empty() {
@@ -782,14 +789,24 @@ impl WorkerSessionTransport {
             self.finish_prompt_success(id, requested_mode);
         }
         self.finish_assistant_message(None);
-        let message =
-            json!({"role":"user", "content":content, "queued":mode != WorkerSendMode::Prompt});
         if let Some(id) = submission_id {
-            self.pending.push_back(activity(json!({
-                "type": "prompt_delivery", "submissionId": id, "status": "delivered", "message": message,
-            })));
+            self.pending.push_back(SessionEvent::Activity(
+                crate::contract::PromptDelivery {
+                    submission_id: id,
+                    status: DeliveryStatus::Delivered,
+                    message: Some(DeliveredMessage {
+                        role: Some(crate::contract::DeliveredRole::User),
+                        content,
+                        queued: mode != WorkerSendMode::Prompt,
+                        ..Default::default()
+                    }),
+                }
+                .into(),
+            ));
             return;
         }
+        let message =
+            json!({"role":"user", "content":content, "queued":mode != WorkerSendMode::Prompt});
         for event_type in ["message_start", "message_end"] {
             self.pending
                 .push_back(activity(json!({"type":event_type, "message":message})));

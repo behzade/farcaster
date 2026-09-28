@@ -185,6 +185,15 @@ fn project_transport_without_failures(
     while let Some(event) = transport.poll() {
         match event {
             SessionEvent::Activity(event) => {
+                if let Some(delivery) = event.prompt_delivery() {
+                    conversation.record_prompt_delivery(
+                        &delivery.submission_id,
+                        delivery.message.as_ref(),
+                        delivery.status,
+                    );
+                } else {
+                    conversation.reduce(event.value());
+                }
                 let event = event.value();
                 if event["type"] == "prompt_delivery" {
                     projection.deliveries.push((
@@ -199,7 +208,6 @@ fn project_transport_without_failures(
                     ));
                     projection.delivery_events.push(event.clone());
                 }
-                conversation.reduce(event);
             }
             SessionEvent::Response(response) => projection.responses.push(response),
             SessionEvent::Failure(error) => panic!("unexpected session failure: {error}"),

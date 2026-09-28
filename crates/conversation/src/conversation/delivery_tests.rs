@@ -1,4 +1,5 @@
 use super::*;
+use farcaster_agent_protocol::DeliveryStatus;
 use serde_json::json;
 
 fn delivery(id: &str, text: &str, status: &str) -> Value {
@@ -107,10 +108,10 @@ fn unknown_normal_input_adopts_its_bound_optimistic_row_and_keeps_images() {
     let item = state.push_local_user_with_prompt_images("local input".into(), &[image], false);
     state.bind_submitted_prompt("normal", &item);
     state.reduce(&json!({"type":"message_start", "message":{"role":"assistant", "content":[]}}));
-    state.record_prompt_delivery("normal", &Value::Null, "unknown");
+    state.record_prompt_delivery("normal", None, DeliveryStatus::Unknown);
     assert_eq!(state.items[0].label, "Delivery unknown");
     assert_eq!(state.items[0].images.len(), 1);
-    state.record_prompt_delivery("normal", &Value::Null, "accepted");
+    state.record_prompt_delivery("normal", None, DeliveryStatus::Accepted);
     assert_eq!(
         state
             .items
@@ -124,23 +125,23 @@ fn unknown_normal_input_adopts_its_bound_optimistic_row_and_keeps_images() {
 
 #[test]
 fn ordinary_user_echo_reconciles_a_bound_row_after_receipt_changes() {
-    for status in ["accepted", "unknown"] {
+    for status in [DeliveryStatus::Accepted, DeliveryStatus::Unknown] {
         let mut state = ConversationState::default();
         let image = PromptImage::new("AQID".into(), "image/png".into());
         let original = state.push_local_user_with_prompt_images("look".into(), &[image], false);
         state.bind_submitted_prompt("normal", &original);
-        state.record_prompt_delivery("normal", &Value::Null, status);
+        state.record_prompt_delivery("normal", None, status);
         let message = json!({"role":"user", "content":[
             {"type":"text", "text":"look"}, {"type":"image", "data":"AQID", "mimeType":"image/png"}
         ]});
         for kind in ["message_start", "message_end"] {
             state.reduce(&json!({"type":kind, "message":message}));
         }
-        state.record_prompt_delivery("normal", &Value::Null, "accepted");
+        state.record_prompt_delivery("normal", None, DeliveryStatus::Accepted);
         assert_eq!(
             state.items.len(),
             1,
-            "ordinary echo must retain the bound identity after {status}"
+            "ordinary echo must retain the bound identity after {status:?}"
         );
         assert_eq!(state.items[0].images.len(), 1);
         assert!(state.items[0].label.is_empty());

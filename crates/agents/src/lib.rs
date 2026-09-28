@@ -32,10 +32,10 @@ pub use adapter::{delegated_worker_access_mode, worker_access_modes};
 pub use contract::WorkerStatus;
 pub use contract::extensions;
 pub use contract::{
-    AccountUsage, AccountUsageWindow, Backend, ConfigurationCatalog, DiscoveredHistory,
-    DiscoveredSession, DiscoveredUsage, HarnessAccessMode, PeerMessage, PromptOutcome,
-    PromptPresentation, PromptRejection, QueuedPrompt, RejectionReason, SandboxState,
-    ServiceTierApplication, ServiceTierPolicy, SessionActivityKind, SessionCommand,
+    AccountUsage, AccountUsageWindow, Backend, ConfigurationCatalog, DeliveredMessage,
+    DeliveryStatus, DiscoveredHistory, DiscoveredSession, DiscoveredUsage, HarnessAccessMode,
+    PeerMessage, PromptOutcome, PromptPresentation, PromptRejection, QueuedPrompt, RejectionReason,
+    SandboxState, ServiceTierApplication, ServiceTierPolicy, SessionActivityKind, SessionCommand,
     SessionContextUsage, SessionEvent, SessionGoal, SessionHistory, SessionInbox, SessionLaunch,
     SessionMetadata, SessionOperation, SessionResponse, SessionResponseErrorKind,
     SessionResponsePayload, SessionStart, SessionTransport, SessionUsage, SessionUsageTokens,

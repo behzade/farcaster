@@ -1,4 +1,6 @@
 use super::*;
+use agents::contract::PromptDelivery;
+use agents::{DeliveredMessage, DeliveryStatus};
 
 #[derive(Clone)]
 pub(super) struct RetiredPrompt {
@@ -71,8 +73,8 @@ impl RuntimeOwner {
             }
             conversation_mut(self.active_snapshot_mut()).record_prompt_delivery(
                 receipt_id,
-                &Value::Null,
-                "delivered",
+                None,
+                DeliveryStatus::Delivered,
             );
             return Some(PromptOutcome::Accepted);
         }
@@ -188,15 +190,11 @@ impl RuntimeOwner {
         }
     }
 
-    pub(super) fn apply_cancelled_prompt(&mut self, event: &Value) -> bool {
-        if event.get("type").and_then(Value::as_str) != Some("prompt_delivery")
-            || event.get("status").and_then(Value::as_str) != Some("cancelled")
-        {
+    pub(super) fn apply_cancelled_prompt(&mut self, event: &PromptDelivery) -> bool {
+        if event.status != DeliveryStatus::Cancelled {
             return false;
         }
-        let Some(id) = event.get("submissionId").and_then(Value::as_str) else {
-            return false;
-        };
+        let id = event.submission_id.as_str();
         let pending = self.pending_queued_prompts.remove(id);
         let retired = self.retired_prompts.remove(id);
         let current = self.pending_prompt_id.as_deref() == Some(id);
@@ -248,29 +246,19 @@ impl RuntimeOwner {
 
     pub(super) fn apply_retired_prompt_delivery(
         &mut self,
-        event: &Value,
+        event: &PromptDelivery,
     ) -> Option<SnapshotChange> {
-        if event.get("type").and_then(Value::as_str) != Some("prompt_delivery") {
-            return None;
-        }
-        let receipt_id = event.get("submissionId").and_then(Value::as_str)?;
+        let receipt_id = event.submission_id.as_str();
         let retired = self.retired_prompts.get(receipt_id).cloned()?;
-        let status = event
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if status == "delivered" {
+        if event.status == DeliveryStatus::Delivered {
             self.reconcile_retired_prompt(receipt_id, true);
             if retired.session == self.active_session && !retired.delivered {
-                let mut message = event.get("message").cloned().unwrap_or_default();
-                if !message.is_object() {
-                    message = json!({});
-                }
-                message["queued"] = true.into();
+                let mut message = event.message.clone().unwrap_or_default();
+                message.queued = true;
                 conversation_mut(self.active_snapshot_mut()).record_prompt_delivery(
                     receipt_id,
-                    &message,
-                    "delivered",
+                    Some(&message),
+                    DeliveryStatus::Delivered,
                 );
                 return Some(SnapshotChange::Immediate);
             }
@@ -278,15 +266,11 @@ impl RuntimeOwner {
         Some(SnapshotChange::None)
     }
 
-    pub(super) fn apply_prompt_delivery_receipt(&mut self, event: &Value) {
-        if event.get("type").and_then(Value::as_str) != Some("prompt_delivery")
-            || event.get("status").and_then(Value::as_str) != Some("delivered")
-        {
+    pub(super) fn apply_prompt_delivery_receipt(&mut self, event: &PromptDelivery) {
+        if event.status != DeliveryStatus::Delivered {
             return;
         }
-        let Some(receipt_id) = event.get("submissionId").and_then(Value::as_str) else {
-            return;
-        };
+        let receipt_id = event.submission_id.as_str();
         let current = self.pending_prompt_id.as_deref() == Some(receipt_id);
         let queued = self.pending_queued_prompts.get(receipt_id).cloned();
         let outbox_id = if current {
@@ -413,8 +397,15 @@ impl RuntimeOwner {
         if self.active_session == retired.session && !retired.delivered {
             conversation_mut(self.active_snapshot_mut()).record_prompt_delivery(
                 id,
-                &json!({"queued":true}),
-                if delivered { "delivered" } else { "accepted" },
+                Some(&DeliveredMessage {
+                    queued: true,
+                    ..Default::default()
+                }),
+                if delivered {
+                    DeliveryStatus::Delivered
+                } else {
+                    DeliveryStatus::Accepted
+                },
             );
             if self.parked_snapshot.is_none() {
                 self.publish();

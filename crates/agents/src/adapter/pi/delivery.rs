@@ -57,21 +57,18 @@ impl Deliveries {
         match event["type"].as_str()? {
             "message_start" => Some(SessionEvent::Stderr(String::new())),
             "message_end" => {
+                let mut message: crate::DeliveredMessage =
+                    serde_json::from_value(message.clone()).ok()?;
                 let (id, mode, _) = self.0.remove(index)?;
-                let mut message = message.clone();
-                message["queued"] = (mode != PromptMode::Normal).into();
-                message["deliveryTracked"] = true.into();
-                message["promptMode"] = match mode {
-                    PromptMode::Normal => "normal",
-                    PromptMode::Steer => "steer",
-                    PromptMode::FollowUp => "follow_up",
-                }
-                .into();
+                message.queued = mode != PromptMode::Normal;
+                message.delivery_tracked = true;
+                message.prompt_mode = Some(mode);
                 Some(SessionEvent::Activity(
-                    json!({
-                        "type":"prompt_delivery", "submissionId":id,
-                        "status":"delivered", "message":message,
-                    })
+                    crate::contract::PromptDelivery {
+                        submission_id: id,
+                        status: crate::DeliveryStatus::Delivered,
+                        message: Some(message),
+                    }
                     .into(),
                 ))
             }

@@ -1,5 +1,5 @@
 use super::*;
-use farcaster_agent_protocol::extensions::PromptMode;
+use farcaster_agent_protocol::{DeliveredMessage, DeliveryStatus, extensions::PromptMode};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PendingReceipt {
@@ -87,21 +87,21 @@ impl ConversationState {
     pub fn record_prompt_delivery(
         &mut self,
         id: &str,
-        message: &Value,
-        status: &str,
+        message: Option<&DeliveredMessage>,
+        status: DeliveryStatus,
     ) -> Option<usize> {
-        if status == "cancelled" {
+        if status == DeliveryStatus::Cancelled {
             self.dismiss_pending_receipt(id);
             return None;
         }
-        if id.is_empty() || !matches!(status, "accepted" | "delivered" | "unknown" | "rejected") {
+        if id.is_empty() {
             return None;
         }
         let previous = self.submitted_users.get(id).cloned();
         let index = previous
             .as_ref()
             .and_then(|entry| self.items.position(|item| Arc::ptr_eq(item, &entry.item)));
-        if status == "rejected" {
+        if status == DeliveryStatus::Rejected {
             if previous
                 .as_ref()
                 .is_none_or(|entry| entry.accepted || entry.delivered)
@@ -120,11 +120,11 @@ impl ConversationState {
         } else {
             let order = self.next_submission_order;
             self.next_submission_order = order.saturating_add(1);
-            let optimistic = (message.get("queued").and_then(Value::as_bool) != Some(true))
+            let optimistic = (!message.is_some_and(|message| message.queued))
                 .then(|| self.optimistic_user.clone())
                 .flatten();
             let item = optimistic.or_else(|| {
-                project_message_items(message)
+                project_message_items(&message?.value())
                     .into_iter()
                     .find(|item| item.kind == TranscriptKind::User)
                     .map(Arc::new)
@@ -133,24 +133,17 @@ impl ConversationState {
                 item,
                 accepted: false,
                 delivered: false,
-                delivery_tracked: message.get("deliveryTracked").and_then(Value::as_bool)
-                    == Some(true),
+                delivery_tracked: message.is_some_and(|message| message.delivery_tracked),
                 unknown: false,
-                queued: message.get("queued").and_then(Value::as_bool) == Some(true),
-                mode: match message.get("promptMode").and_then(Value::as_str) {
-                    Some("normal") => Some(PromptMode::Normal),
-                    Some("steer") => Some(PromptMode::Steer),
-                    Some("follow_up") => Some(PromptMode::FollowUp),
-                    _ => None,
-                },
+                queued: message.is_some_and(|message| message.queued),
+                mode: message.and_then(|message| message.prompt_mode),
                 order,
             }
         };
-        entry.delivery_tracked |=
-            message.get("deliveryTracked").and_then(Value::as_bool) == Some(true);
-        entry.accepted |= status == "accepted" || status == "delivered";
-        entry.delivered |= status == "delivered";
-        entry.unknown = !entry.accepted && status == "unknown";
+        entry.delivery_tracked |= message.is_some_and(|message| message.delivery_tracked);
+        entry.accepted |= status == DeliveryStatus::Accepted || status == DeliveryStatus::Delivered;
+        entry.delivered |= status == DeliveryStatus::Delivered;
+        entry.unknown = !entry.accepted && status == DeliveryStatus::Unknown;
         if !entry.is_visible() {
             self.submitted_users.insert(id.to_owned(), entry);
             return None;

@@ -5,8 +5,8 @@ use serde_json::{Value, json};
 use super::handler::IdempotencyBookkeeping;
 use super::prompt_boundary::{Boundary, PromptBoundary};
 use crate::{
-    SessionCommand, SessionEvent, SessionOperation, SessionResponse,
-    SessionResponsePayload as Payload, SessionTransport, SteerErrorRecovery,
+    DeliveredMessage, DeliveryStatus, SessionCommand, SessionEvent, SessionOperation,
+    SessionResponse, SessionResponsePayload as Payload, SessionTransport, SteerErrorRecovery,
     extensions::{ExtensionUiResponse, PromptImage, PromptMode},
 };
 
@@ -29,17 +29,18 @@ struct Input {
 }
 
 impl Input {
-    fn receipt(&self, status: &str) -> SessionEvent {
+    fn receipt(&self, status: DeliveryStatus) -> crate::contract::PromptDelivery {
         let mut content = vec![json!({"type":"text", "text":self.message})];
-        content.extend(self.images.iter().map(|image| {
-            json!({
-                "type":"image", "data":image.data, "mimeType":image.mime_type,
-            })
-        }));
-        activity(json!({"type":"prompt_delivery", "submissionId":self.id,
-            "status":status, "message":{"role":"user", "content":content,
-                "queued":true, "deliveryTracked":true,
-                "promptMode": if self.mode == PromptMode::Steer {"steer"} else {"follow_up"}}}))
+        content.extend(
+            self.images.iter().map(
+                |image| json!({"type":"image", "data":image.data, "mimeType":image.mime_type}),
+            ),
+        );
+        crate::contract::PromptDelivery {
+            submission_id: self.id.clone(),
+            status,
+            message: Some(DeliveredMessage::user(content.into(), self.mode, true)),
+        }
     }
 }
 
@@ -179,7 +180,9 @@ impl QueuedSession {
             Err(error) => {
                 for input in inputs {
                     self.admission_resolved(&input.id);
-                    self.pending.push_back(input.receipt("rejected"));
+                    self.pending.push_back(SessionEvent::Activity(
+                        input.receipt(DeliveryStatus::Rejected).into(),
+                    ));
                     self.pending
                         .push_back(SessionEvent::Response(SessionResponse::failure(
                             Some(input.id),
@@ -288,13 +291,14 @@ impl QueuedSession {
                             Ok(payload) => {
                                 *payload = Payload::Prompt(input.requested_mode);
                                 if !dispatch.tracks_delivery {
-                                    let SessionEvent::Activity(receipt) = input.receipt("accepted")
-                                    else {
-                                        unreachable!()
-                                    };
-                                    let mut receipt = receipt.value().clone();
-                                    receipt["message"]["deliveryTracked"] = false.into();
-                                    self.pending.push_back(activity(receipt));
+                                    let mut receipt = input.receipt(DeliveryStatus::Accepted);
+                                    receipt
+                                        .message
+                                        .as_mut()
+                                        .expect("input message")
+                                        .delivery_tracked = false;
+                                    self.pending
+                                        .push_back(SessionEvent::Activity(receipt.into()));
                                 }
                             }
                             Err(error) => {
@@ -322,6 +326,46 @@ impl QueuedSession {
                 }
             }
             SessionEvent::Activity(value) => {
+                if value.kind() == &crate::SessionActivityKind::PromptDelivery {
+                    let receipt = value.prompt_delivery()?;
+                    let id = &receipt.submission_id;
+                    if self.bookkeeping.contains(id) {
+                        return None;
+                    }
+                    if let Some(dispatch) = self.dispatched.get_mut(id) {
+                        let status = receipt.status;
+                        dispatch.delivered |= status == DeliveryStatus::Delivered;
+                        if status == DeliveryStatus::Delivered {
+                            self.bookkeeping.record_reached_model(id.clone());
+                        }
+                        let resolved = matches!(
+                            status,
+                            DeliveryStatus::Accepted
+                                | DeliveryStatus::Delivered
+                                | DeliveryStatus::Rejected
+                                | DeliveryStatus::Unknown
+                        );
+                        let input_ids = dispatch
+                            .inputs
+                            .iter()
+                            .map(|input| input.id.clone())
+                            .collect::<Vec<_>>();
+                        for input in &dispatch.inputs {
+                            self.pending
+                                .push_back(SessionEvent::Activity(input.receipt(status).into()));
+                        }
+                        if dispatch.responded && dispatch.delivered {
+                            self.dispatched.remove(id);
+                        }
+                        if resolved {
+                            for input_id in input_ids {
+                                self.admission_resolved(&input_id);
+                            }
+                        }
+                        return None;
+                    }
+                    return Some(event);
+                }
                 let mut body = value.value().clone();
                 match body["type"].as_str() {
                     Some("agent_start") => self.running = true,
@@ -360,50 +404,6 @@ impl QueuedSession {
                         self.queue_changed();
                         return None;
                     }
-                    Some("prompt_delivery") => {
-                        if body["submissionId"]
-                            .as_str()
-                            .is_some_and(|id| self.bookkeeping.contains(id))
-                        {
-                            return None;
-                        }
-                        if let Some(id) = body["submissionId"].as_str().map(str::to_owned)
-                            && let Some(dispatch) = self.dispatched.get_mut(&id)
-                        {
-                            let status = body["status"].as_str().unwrap_or("unknown").to_owned();
-                            dispatch.delivered |= status == "delivered";
-                            if status == "delivered" {
-                                self.bookkeeping.record_reached_model(id.clone());
-                            }
-                            let resolved = matches!(
-                                status.as_str(),
-                                "accepted" | "delivered" | "rejected" | "unknown"
-                            );
-                            let input_ids = dispatch
-                                .inputs
-                                .iter()
-                                .map(|input| input.id.clone())
-                                .collect::<Vec<_>>();
-                            for input in &dispatch.inputs {
-                                let SessionEvent::Activity(receipt) = input.receipt(&status) else {
-                                    unreachable!()
-                                };
-                                let mut member = body.clone();
-                                member["submissionId"] = input.id.clone().into();
-                                member["message"] = receipt.value()["message"].clone();
-                                self.pending.push_back(activity(member));
-                            }
-                            if dispatch.responded && dispatch.delivered {
-                                self.dispatched.remove(&id);
-                            }
-                            if resolved {
-                                for input_id in input_ids {
-                                    self.admission_resolved(&input_id);
-                                }
-                            }
-                            return None;
-                        }
-                    }
                     _ => {}
                 }
             }
@@ -417,7 +417,9 @@ impl QueuedSession {
 
     fn cancel_local(&mut self) {
         for input in self.queue.drain(..) {
-            self.pending.push_back(input.receipt("cancelled"));
+            self.pending.push_back(SessionEvent::Activity(
+                input.receipt(DeliveryStatus::Cancelled).into(),
+            ));
             self.pending
                 .push_back(SessionEvent::Response(SessionResponse::cancelled(
                     input.id,
@@ -466,7 +468,9 @@ impl SessionTransport for QueuedSession {
     fn cancel_prompt(&mut self, id: &str) -> Result<(), String> {
         if let Some(index) = self.queue.iter().position(|input| input.id == id) {
             let input = self.queue.remove(index).expect("located input");
-            self.pending.push_back(input.receipt("cancelled"));
+            self.pending.push_back(SessionEvent::Activity(
+                input.receipt(DeliveryStatus::Cancelled).into(),
+            ));
             self.pending
                 .push_back(SessionEvent::Response(SessionResponse::cancelled(
                     input.id,
@@ -538,7 +542,9 @@ impl SessionTransport for QueuedSession {
             SessionCommand::Abort => {
                 self.cancel_local();
                 for input in self.stopped_batch.drain(..) {
-                    self.pending.push_back(input.receipt("cancelled"));
+                    self.pending.push_back(SessionEvent::Activity(
+                        input.receipt(DeliveryStatus::Cancelled).into(),
+                    ));
                     self.pending
                         .push_back(SessionEvent::Response(SessionResponse::cancelled(
                             input.id,
