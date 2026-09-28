@@ -7,6 +7,22 @@ use super::super::{
     AccountUsage, PeerMessage, SessionGoal, WorkerContext, WorkerInput, WorkerInputResponse,
 };
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerSnapshot {
+    pub id: String,
+    pub backend: crate::Backend,
+    pub project: PathBuf,
+    /// Canonical child ownership at publication time. Unknown identities stay unassigned.
+    pub session_key: Option<farcaster_sessions::SessionKey>,
+    /// Native adapter identity used for display and resume, not ownership matching.
+    pub session_locator: Option<String>,
+    pub status: crate::contract::WorkerStatus,
+    pub output: Option<String>,
+    pub error: Option<String>,
+    pub pending_input: Option<WorkerInput>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkerActivityState {

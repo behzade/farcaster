@@ -7,7 +7,7 @@ use std::{
 use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-use farcaster_contracts::{WorkerSnapshot, WorkerStatus};
+use farcaster_contracts::WorkerStatus;
 
 use crate::{SessionSummary, UsageSummary};
 
@@ -85,14 +85,16 @@ impl AgentActivity {
         }
     }
 
-    pub fn from_worker_snapshot(session: &SessionSummary, snapshot: &WorkerSnapshot) -> Self {
+    pub fn from_worker_status(
+        session: &SessionSummary,
+        status: WorkerStatus,
+        has_output: bool,
+    ) -> Self {
         let mut activity = Self::limited_fallback(session);
-        activity.lifecycle = match snapshot.status {
+        activity.lifecycle = match status {
             WorkerStatus::Pending | WorkerStatus::Running => AgentLifecycle::Working,
             WorkerStatus::NeedsInput => AgentLifecycle::NeedsInput,
-            WorkerStatus::Idle if snapshot.output.is_some() => {
-                AgentLifecycle::Completed(AgentOutcome::Complete)
-            }
+            WorkerStatus::Idle if has_output => AgentLifecycle::Completed(AgentOutcome::Complete),
             WorkerStatus::Idle => AgentLifecycle::Unknown,
             WorkerStatus::Failed => AgentLifecycle::Completed(AgentOutcome::Failed),
             WorkerStatus::Stopped => AgentLifecycle::Completed(AgentOutcome::Incomplete),

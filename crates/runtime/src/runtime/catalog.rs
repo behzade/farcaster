@@ -253,7 +253,11 @@ fn worker_activities(
             let session = session_for_worker_snapshot(sessions, &snapshot)?;
             Some((
                 crate::agent_activity::agent_activity_key(&session.path),
-                AgentActivity::from_worker_snapshot(session, &snapshot),
+                AgentActivity::from_worker_status(
+                    session,
+                    snapshot.status,
+                    snapshot.output.is_some(),
+                ),
             ))
         })
         .collect()
@@ -281,13 +285,15 @@ fn session_for_worker_snapshot<'a>(
     sessions: &'a [SessionSummary],
     snapshot: &agents::WorkerSnapshot,
 ) -> Option<&'a SessionSummary> {
-    let locator = snapshot.session_locator.as_deref()?;
-    sessions.iter().find(|session| {
-        session.parent_session.is_some()
+    let key = snapshot.session_key.as_ref()?;
+    let mut matches = sessions.iter().filter(|session| {
+        (session.parent_session.is_some() || session.parent_app_session_id.is_some())
             && session.harness == snapshot.backend
             && session.project == snapshot.project
-            && (session.id == locator || session.path == std::path::Path::new(locator))
-    })
+            && session.key() == *key
+    });
+    let session = matches.next()?;
+    matches.next().is_none().then_some(session)
 }
 
 fn unknown_import_candidates(

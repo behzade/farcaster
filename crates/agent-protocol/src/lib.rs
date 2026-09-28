@@ -1,6 +1,6 @@
 use std::{path::PathBuf, thread, time::SystemTime};
 
-pub use farcaster_contracts::{Backend, WorkerInput, WorkerSnapshot, WorkerStatus};
+pub use farcaster_contracts::{Backend, WorkerInput, WorkerStatus};
 use serde::{Deserialize, Serialize};
 
 mod effort;

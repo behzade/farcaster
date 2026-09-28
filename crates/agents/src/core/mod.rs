@@ -27,5 +27,5 @@ pub use prompt_store::{
 pub use worker::{
     ChildSessionOutcome, TokenUsage, ToolReviewState, WorkerActivity, WorkerActivityState,
     WorkerEvent, WorkerLaunch, WorkerModelSelection, WorkerSendMode, WorkerSession,
-    WorkerSessionFactory, WorkerUsage,
+    WorkerSessionFactory, WorkerSnapshot, WorkerUsage,
 };

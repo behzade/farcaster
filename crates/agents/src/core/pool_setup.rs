@@ -1,10 +1,11 @@
+use super::super::worker::WorkerSnapshot;
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Condvar, Mutex, atomic::Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::contract::{StartWorker, WorkerSnapshot, WorkerStatus};
+use crate::contract::{StartWorker, WorkerStatus};
 
 use super::super::{
     CallerRegistry, WorkerAssignment,

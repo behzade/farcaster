@@ -61,6 +61,7 @@ fn pool_snapshot_maps_to_persisted_child_and_projects_needs_input() {
         id: "worker-1".into(),
         backend: child.harness,
         project: child.project.clone(),
+        session_key: Some(child.key()),
         session_locator: Some(child.path.to_string_lossy().into_owned()),
         status: agents::WorkerStatus::NeedsInput,
         output: None,
@@ -71,7 +72,8 @@ fn pool_snapshot_maps_to_persisted_child_and_projects_needs_input() {
     let sessions = [parent, child.clone()];
     let matched = session_for_worker_snapshot(&sessions, &snapshot)
         .expect("pool child should match its catalog row");
-    let activity = AgentActivity::from_worker_snapshot(matched, &snapshot);
+    let activity =
+        AgentActivity::from_worker_status(matched, snapshot.status, snapshot.output.is_some());
 
     assert_eq!(matched.id, child.id);
     assert_eq!(
@@ -82,7 +84,7 @@ fn pool_snapshot_maps_to_persisted_child_and_projects_needs_input() {
 }
 
 #[test]
-fn pool_snapshot_native_id_can_match_a_synthetic_child_locator() {
+fn pool_snapshot_key_matches_a_synthetic_child_locator() {
     let mut child = summary(Path::new("/locators/codex-cli/native-child"));
     child.id = "native-child".into();
     child.harness = Backend::Codex;
@@ -91,6 +93,7 @@ fn pool_snapshot_native_id_can_match_a_synthetic_child_locator() {
         id: "worker-1".into(),
         backend: Backend::Codex,
         project: child.project.clone(),
+        session_key: Some(child.key()),
         session_locator: Some("native-child".into()),
         status: agents::WorkerStatus::Idle,
         output: Some("done".into()),
@@ -99,8 +102,9 @@ fn pool_snapshot_native_id_can_match_a_synthetic_child_locator() {
     };
 
     let matched = session_for_worker_snapshot(std::slice::from_ref(&child), &snapshot)
-        .expect("native id should match the stored backend id");
-    let activity = AgentActivity::from_worker_snapshot(matched, &snapshot);
+        .expect("canonical identity should match the stored child");
+    let activity =
+        AgentActivity::from_worker_status(matched, snapshot.status, snapshot.output.is_some());
 
     assert_eq!(
         activity.lifecycle,
@@ -111,7 +115,7 @@ fn pool_snapshot_native_id_can_match_a_synthetic_child_locator() {
 }
 
 #[test]
-fn pool_snapshot_native_id_is_scoped_by_backend_and_project() {
+fn pool_snapshot_key_is_scoped_by_backend_and_project() {
     let mut wrong_project = summary(Path::new("/other/child"));
     wrong_project.id = "shared-child".into();
     wrong_project.harness = Backend::Codex;
@@ -127,6 +131,7 @@ fn pool_snapshot_native_id_is_scoped_by_backend_and_project() {
         id: "worker-1".into(),
         backend: Backend::Codex,
         project: expected.project.clone(),
+        session_key: Some(expected.key()),
         session_locator: Some("shared-child".into()),
         status: agents::WorkerStatus::Running,
         output: None,
@@ -151,6 +156,7 @@ fn idle_pool_snapshot_without_a_settled_output_stays_unknown() {
         id: "worker-1".into(),
         backend: child.harness,
         project: child.project.clone(),
+        session_key: Some(child.key()),
         session_locator: Some(child.path.to_string_lossy().into_owned()),
         status: agents::WorkerStatus::Idle,
         output: None,
@@ -158,7 +164,8 @@ fn idle_pool_snapshot_without_a_settled_output_stays_unknown() {
         pending_input: None,
     };
 
-    let activity = AgentActivity::from_worker_snapshot(&child, &snapshot);
+    let activity =
+        AgentActivity::from_worker_status(&child, snapshot.status, snapshot.output.is_some());
 
     assert_eq!(
         activity.lifecycle,
@@ -204,14 +211,32 @@ struct CatalogWorkerFactory {
 }
 
 struct CatalogWorkerSession {
+    identity: agents::CallerIdentity,
     events: mpsc::Receiver<agents::WorkerEvent>,
 }
 
 impl agents::WorkerSessionFactory for CatalogWorkerFactory {
-    fn create(&self, _: agents::WorkerLaunch) -> Result<Box<dyn agents::WorkerSession>, String> {
+    fn create(
+        &self,
+        launch: agents::WorkerLaunch,
+    ) -> Result<Box<dyn agents::WorkerSession>, String> {
         let (sender, events) = mpsc::channel();
         *self.events.lock().map_err(|_| "events unavailable")? = Some(sender);
-        Ok(Box::new(CatalogWorkerSession { events }))
+        let identity = agents::CallerRegistry::shared().issue_as_with_access(
+            &launch.project,
+            agents::CallerProfile {
+                backend: Backend::Pi,
+                provider: None,
+                model: None,
+                effort: None,
+            },
+            None,
+            launch.worker_id,
+            launch.worker_name,
+            launch.parent_worker_id,
+            launch.access_mode,
+        )?;
+        Ok(Box::new(CatalogWorkerSession { identity, events }))
     }
 }
 
@@ -229,7 +254,11 @@ impl agents::WorkerSession for CatalogWorkerSession {
     }
 
     fn poll(&mut self) -> Option<agents::WorkerEvent> {
-        self.events.try_recv().ok()
+        let event = self.events.try_recv().ok()?;
+        if let agents::WorkerEvent::SessionChanged { locator } = &event {
+            self.identity.bind(locator.clone());
+        }
+        Some(event)
     }
 
     fn close(&mut self) -> Result<(), String> {
@@ -336,4 +365,80 @@ fn pool_run_status_projects_through_catalog_matching_into_child_activity() {
             crate::agent_activity::AgentOutcome::Complete
         )
     );
+}
+
+#[test]
+fn canonical_activity_is_profile_exact_in_either_row_order_and_after_merge() {
+    let mut base = summary(Path::new("/catalog/base/native"));
+    base.harness = Backend::Codex;
+    base.id = "same-native-id".into();
+    base.app_session_id = 41;
+    base.parent_app_session_id = Some(10);
+    let mut named = base.clone();
+    named.app_session_id = 99;
+    named.profile_id = Some("named".into());
+    named.path = "/catalog/named/native".into();
+    let mut snapshot = agents::WorkerSnapshot {
+        id: "worker".into(),
+        backend: Backend::Codex,
+        project: base.project.clone(),
+        session_key: Some(base.key()),
+        session_locator: Some(base.id.clone()),
+        status: agents::WorkerStatus::NeedsInput,
+        output: None,
+        error: None,
+        pending_input: None,
+    };
+    for merged in [false, true] {
+        if merged {
+            base.app_session_id = 84;
+            snapshot.session_key = Some(base.key());
+        }
+        for rows in [[base.clone(), named.clone()], [named.clone(), base.clone()]] {
+            let activities = worker_activities(&rows, vec![snapshot.clone()]);
+            assert_eq!(activities.len(), 1);
+            assert_eq!(activities.values().next().unwrap().session_path, base.path);
+            assert_eq!(
+                activities.values().next().unwrap().lifecycle,
+                crate::agent_activity::AgentLifecycle::NeedsInput
+            );
+        }
+    }
+    // A stale, missing, or duplicated key cannot fall back to the shared native ID.
+    snapshot.session_key = Some(crate::sessions::SessionKey::App(
+        crate::sessions::AppSessionId::new(41).unwrap(),
+    ));
+    assert!(worker_activities(&[base.clone(), named.clone()], vec![snapshot.clone()]).is_empty());
+    snapshot.session_key = None;
+    assert!(worker_activities(&[base.clone(), named], vec![snapshot.clone()]).is_empty());
+    snapshot.session_key = Some(base.key());
+    assert!(worker_activities(&[base.clone(), base], vec![snapshot]).is_empty());
+}
+
+#[test]
+fn locator_activity_keeps_profile_scope_when_native_id_and_path_match() {
+    let mut base = summary(Path::new("/native/shared.jsonl"));
+    base.parent_session = Some("parent".into());
+    let mut named = base.clone();
+    named.profile_id = Some("named".into());
+    let snapshot = agents::WorkerSnapshot {
+        id: "worker".into(),
+        backend: named.harness,
+        project: named.project.clone(),
+        session_key: Some(named.key()),
+        session_locator: Some(named.id.clone()),
+        status: agents::WorkerStatus::Running,
+        output: None,
+        error: None,
+        pending_input: None,
+    };
+    for rows in [[base.clone(), named.clone()], [named.clone(), base.clone()]] {
+        assert_eq!(
+            session_for_worker_snapshot(&rows, &snapshot)
+                .unwrap()
+                .profile_id
+                .as_deref(),
+            Some("named")
+        );
+    }
 }

@@ -1,3 +1,4 @@
+use super::worker::WorkerSnapshot;
 use crate::Backend;
 use farcaster_sessions::SessionKey;
 use std::{
@@ -19,7 +20,7 @@ use super::{
     run::RunCommand,
     worker::{WorkerLaunch, WorkerSessionFactory},
 };
-use crate::contract::{StartWorker, WorkerContext, WorkerSnapshot, WorkerStatus};
+use crate::contract::{StartWorker, WorkerContext, WorkerStatus};
 
 #[path = "pool_setup.rs"]
 mod setup;
@@ -233,6 +234,7 @@ impl WorkerPool {
                 id: id.clone(),
                 backend: family.child_backend,
                 project: project.clone(),
+                session_key: family.child_key.clone(),
                 session_locator: Some(family.child_session.clone()),
                 status: WorkerStatus::Idle,
                 output: None,
@@ -570,6 +572,7 @@ impl WorkerPool {
             id: id.clone(),
             backend: request.backend,
             project,
+            session_key: None,
             session_locator: None,
             status: WorkerStatus::Pending,
             output: None,
@@ -1058,9 +1061,16 @@ fn finish_run(record: &mut WorkerRecord, command: RunCommand) -> Result<(), Stri
 }
 
 fn snapshot(record: &WorkerRecord) -> Result<WorkerSnapshot, String> {
-    record
+    let mut snapshot = record
         .snapshot
         .lock()
-        .map(|snapshot| snapshot.clone())
-        .map_err(|_| "worker state is unavailable".to_owned())
+        .map_err(|_| "worker state is unavailable")?
+        .clone();
+    snapshot.session_key = record
+        .session_binding
+        .lock()
+        .map_err(|_| "worker session binding is unavailable")?
+        .as_ref()
+        .and_then(|identity| identity.key.clone());
+    Ok(snapshot)
 }

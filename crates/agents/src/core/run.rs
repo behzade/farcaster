@@ -1,3 +1,4 @@
+use super::worker::WorkerSnapshot;
 use std::{
     sync::{
         Arc, Mutex,
@@ -10,7 +11,7 @@ use std::{
 
 use super::caller::WorkerParent;
 use super::worker::{WorkerEvent, WorkerSession};
-use crate::contract::{WorkerSnapshot, WorkerStatus};
+use crate::contract::WorkerStatus;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 

@@ -1,8 +1,4 @@
-use std::path::PathBuf;
-
 use serde::Serialize;
-
-use crate::Backend;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,17 +24,4 @@ impl WorkerStatus {
     pub const fn terminal(self) -> bool {
         matches!(self, Self::Failed | Self::Stopped)
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkerSnapshot {
-    pub id: String,
-    pub backend: Backend,
-    pub project: PathBuf,
-    pub session_locator: Option<String>,
-    pub status: WorkerStatus,
-    pub output: Option<String>,
-    pub error: Option<String>,
-    pub pending_input: Option<WorkerInput>,
 }

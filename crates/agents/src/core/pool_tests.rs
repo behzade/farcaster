@@ -1858,3 +1858,57 @@ fn finishing_refreshed_stop_releases_prior_equivalent_fence_only() -> Result<(),
     );
     Ok(())
 }
+
+#[test]
+fn restored_snapshot_reads_merged_child_binding_without_a_session_event() -> Result<(), String> {
+    use farcaster_sessions::{AppSessionId, SessionKey};
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let factory = Arc::new(FakeFactory::default());
+    let (pool, _) = pool(factory.clone(), project.path(), 1)?;
+    let assignment = assignment();
+    pool.restore_families([WorkerFamilyLink {
+        project: project.path().into(),
+        child_backend: Backend::Pi,
+        child_session: "/sessions/restored-child.jsonl".into(),
+        parent_backend: Backend::Pi,
+        parent_session: "/sessions/parent.jsonl".into(),
+        child_key: Some(SessionKey::App(AppSessionId::new(41).unwrap())),
+        parent_key: Some(SessionKey::App(AppSessionId::new(10).unwrap())),
+        execution: Some(assignment.execution.clone()),
+        routing: Some(WorkerRouting {
+            name: "restored".into(),
+            assignment: assignment.clone(),
+            access_mode: crate::HarnessAccessMode::Auto,
+        }),
+    }])?;
+    let child = CallerRegistry::shared().issue(
+        project.path(),
+        CallerProfile {
+            backend: Backend::Pi,
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    child.set_harness_profile_id(assignment.harness_profile_id);
+    child.bind("/sessions/restored-child.jsonl");
+    for id in [41, 84] {
+        child.bind_execution_for_test(crate::ExecutionBinding {
+            session_record: id,
+            turn_id: "binding".into(),
+            prompt_id: None,
+        });
+        let snapshot = pool.snapshots()?.remove(0);
+        assert_eq!(
+            snapshot.session_key,
+            AppSessionId::new(id).map(SessionKey::App)
+        );
+        assert_eq!(
+            snapshot.session_locator.as_deref(),
+            Some("/sessions/restored-child.jsonl")
+        );
+    }
+    assert_eq!(factory.creates.load(std::sync::atomic::Ordering::SeqCst), 0);
+    Ok(())
+}
