@@ -4,11 +4,74 @@ use rusqlite::{Connection, params};
 
 use super::relocate_snapshot_session_locators;
 
+#[cfg(unix)]
+#[test]
+fn snapshot_relocation_normalizes_symlinked_ancestors() -> Result<(), Box<dyn Error>> {
+    let root = tempfile::tempdir()?;
+    let real = root.path().join("real");
+    let alias = root.path().join("alias");
+    std::fs::create_dir(&real)?;
+    std::os::unix::fs::symlink(&real, &alias)?;
+    let source = alias.join("source");
+    let destination = alias.join("private");
+    std::fs::create_dir(&source)?;
+    std::fs::create_dir(&destination)?;
+    let suffix = "session-locators/project/codex-cli/session";
+    let source_db = source.join("state.sqlite3");
+    let destination_db = destination.join("state.sqlite3");
+    let mut store = crate::StateStore::open_at(&source_db)?;
+    let session = crate::sessions::SessionSummary::import(crate::sessions::SessionImport {
+        id: "session".into(),
+        harness: crate::agents::Backend::Codex,
+        path: source.join(suffix),
+        project: root.path().into(),
+        title: "fixture".into(),
+        first_user_message: String::new(),
+        timestamp: String::new(),
+        parent_session: None,
+        modified: std::time::SystemTime::now(),
+        message_count: 0,
+        usage: Default::default(),
+        archived: false,
+        is_running: false,
+        search: String::new(),
+    });
+    store.replace_sessions(&[session])?;
+    let before = store.cached_sessions("")?;
+    assert_eq!(before.len(), 1);
+    assert_eq!(before[0].path, source.canonicalize()?.join(suffix));
+    assert_ne!(before[0].path, source.join(suffix));
+    assert!(!source.join("session-locators").exists());
+
+    crate::snapshot_database(&source_db, &destination_db)?;
+    assert_eq!(
+        relocate_snapshot_session_locators(&destination_db, &source, &destination)?,
+        1
+    );
+    let snapshot = crate::StateStore::open_at(&destination_db)?;
+    let mut expected = before[0].clone();
+    expected.path = destination.canonicalize()?.join(suffix);
+    assert_eq!(snapshot.cached_sessions("")?, vec![expected]);
+    assert_eq!(store.cached_sessions("")?, before);
+    assert_eq!(
+        relocate_snapshot_session_locators(&destination_db, &source, &destination)?,
+        0
+    );
+    Ok(())
+}
+
 #[test]
 fn legacy_snapshot_migrates_then_relocates_without_changing_source() -> Result<(), Box<dyn Error>> {
     let root = tempfile::tempdir()?;
+    #[cfg(unix)]
+    let source = {
+        let alias = root.path().join("alias");
+        std::os::unix::fs::symlink(root.path().canonicalize()?, &alias)?;
+        alias.join("source")
+    };
+    #[cfg(not(unix))]
     let source = root.path().join("source");
-    let destination = root.path().join("private");
+    let destination = root.path().canonicalize()?.join("private");
     std::fs::create_dir(&source)?;
     std::fs::create_dir(&destination)?;
     let source_db = source.join("state.sqlite3");
@@ -132,7 +195,7 @@ fn relocation_preserves_profile_archive_and_related_rows() -> Result<(), Box<dyn
     let root = tempfile::tempdir()?;
     let database = root.path().join("state.sqlite3");
     let source = root.path().join("source");
-    let destination = root.path().join("private");
+    let destination = root.path().canonicalize()?.join("private");
     let connection = fixture(&database)?;
     let suffix = "profiles/0123456789abcdef0123456789abcdef/project-hash/codex-cli/child%2Fid";
     let parent_locator = source.join("session-locators/project-hash/codex-cli/parent");
@@ -259,7 +322,7 @@ fn relocation_conflict_rolls_back_every_change() -> Result<(), Box<dyn Error>> {
     let root = tempfile::tempdir()?;
     let database = root.path().join("state.sqlite3");
     let source = root.path().join("source");
-    let destination = root.path().join("private");
+    let destination = root.path().canonicalize()?.join("private");
     let connection = fixture(&database)?;
     let first = source.join("session-locators/codex-cli/first");
     let second = source.join("session-locators/codex-cli/second");

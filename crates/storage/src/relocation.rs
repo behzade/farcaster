@@ -25,6 +25,9 @@ pub fn relocate_snapshot_session_locators(
     let destination_root = std::path::absolute(destination_data_directory)
         .map_err(|error| format!("resolve destination app data directory: {error}"))?
         .join("session-locators");
+    // Match the writer's path contract, including ancestors of missing locators.
+    let normalized_source_root = crate::sessions::normalize_session_path(&source_root);
+    let destination_root = crate::sessions::normalize_session_path(&destination_root);
     // Do not let StateStore create a fresh database when a snapshot is missing.
     if !std::fs::metadata(database)
         .map_err(|error| format!("inspect snapshot for relocation: {error}"))?
@@ -48,7 +51,12 @@ pub fn relocate_snapshot_session_locators(
         .map_err(|error| format!("decode snapshot locators: {error}"))?;
     let mut changed = 0;
     for (id, locator) in locators {
-        let Ok(suffix) = Path::new(&locator).strip_prefix(&source_root) else {
+        let path = Path::new(&locator);
+        let Ok(suffix) = path
+            .strip_prefix(&normalized_source_root)
+            // Legacy rows can still contain the supplied lexical source prefix.
+            .or_else(|_| path.strip_prefix(&source_root))
+        else {
             continue;
         };
         if suffix.as_os_str().is_empty()
