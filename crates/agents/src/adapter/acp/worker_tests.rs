@@ -1225,7 +1225,8 @@ fn cursor_access_configures_sandbox_and_approvals() {
 
 #[cfg(unix)]
 #[test]
-fn cursor_model_catalog_is_reused_across_processes_and_access_modes() -> Result<(), String> {
+fn cursor_model_catalog_reuses_identical_launches_and_isolates_access_arguments()
+-> Result<(), String> {
     use std::os::unix::fs::PermissionsExt as _;
 
     const SCRIPT: &str = r#"#!/bin/sh
@@ -1248,7 +1249,12 @@ done
     std::fs::write(&executable, SCRIPT).map_err(|error| error.to_string())?;
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
         .map_err(|error| error.to_string())?;
-    for access_mode in [HarnessAccessMode::Sandboxed, HarnessAccessMode::Full] {
+    for (access_mode, expected_catalog_requests) in [
+        (HarnessAccessMode::Sandboxed, 1),
+        (HarnessAccessMode::Sandboxed, 1),
+        (HarnessAccessMode::Full, 2),
+        (HarnessAccessMode::Full, 2),
+    ] {
         let command = AgentLaunchConfig {
             program: executable.clone(),
             access_mode,
@@ -1264,19 +1270,20 @@ done
         )?;
         assert_eq!(metadata.models.len(), 1);
         session.close()?;
+        let requests = std::fs::read_to_string(executable.with_extension("requests"))
+            .map_err(|error| error.to_string())?;
+        assert!(
+            !requests.contains("authenticate"),
+            "Cursor ACP must not send authenticate"
+        );
+        assert_eq!(
+            requests
+                .matches("\"method\":\"cursor/list_available_models\"")
+                .count(),
+            expected_catalog_requests,
+            "catalog requests after {access_mode:?} launch"
+        );
     }
-    let requests = std::fs::read_to_string(executable.with_extension("requests"))
-        .map_err(|error| error.to_string())?;
-    assert!(
-        !requests.contains("authenticate"),
-        "Cursor ACP must not send authenticate"
-    );
-    assert_eq!(
-        requests
-            .matches("\"method\":\"cursor/list_available_models\"")
-            .count(),
-        1
-    );
     Ok(())
 }
 
