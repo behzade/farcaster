@@ -185,6 +185,7 @@ done
     };
     let factory = AcpWorkerFactory::new(command, super::super::super::antigravity::PROFILE.clone());
     let mut worker = factory.create(WorkerLaunch {
+        harness_profile_id: None,
         slot: None,
         worker_id: "resumed-worker".into(),
         worker_name: "resumed".into(),

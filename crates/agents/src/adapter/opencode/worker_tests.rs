@@ -171,6 +171,7 @@ fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() -> Result
     .map_err(|error| error.to_string())?;
     let factory = OpenCodeWorkerFactory::new(AgentLaunchConfig::test_script(&script, Vec::new()));
     let mut worker = factory.create(WorkerLaunch {
+        harness_profile_id: None,
         slot: None,
         worker_id: "resumed-worker".into(),
         worker_name: "resumed".into(),

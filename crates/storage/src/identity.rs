@@ -215,23 +215,21 @@ pub(super) fn repair_profiled_caller_placeholders(
     connection: &mut Connection,
     locator_root: &Path,
 ) -> Result<(), String> {
-    let possible: bool = connection
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM sessions s JOIN sessions profile
-                 ON profile.project_id=s.project_id AND profile.harness=s.harness
-                AND profile.backend_id=s.backend_id AND profile.profile_id IS NOT NULL
-               WHERE s.profile_id IS NULL AND s.backend_id IS NOT NULL
-                 AND s.title='' AND s.first_user_message='' AND s.message_count=0)",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|error| format!("check caller session placeholders: {error}"))?;
-    if !possible {
-        return Ok(());
-    }
     let tx = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| format!("repair caller session identity: {error}"))?;
+    // New default-profile callers use this same locator shape. Repair only rows
+    // present before this identity boundary, never registrations on later opens.
+    let repaired: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM meta WHERE key='profiled_caller_identity_repaired_v1')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("check caller identity repair: {error}"))?;
+    if repaired {
+        return Ok(());
+    }
     let placeholders = {
         let mut statement = tx
             .prepare(
@@ -268,7 +266,9 @@ pub(super) fn repair_profiled_caller_placeholders(
         let expected = family_locator_root(locator_root, Path::new(&project))
             .join(&harness)
             .join(encoded);
-        if Path::new(&locator) != expected {
+        if crate::sessions::normalize_session_path(Path::new(&locator))
+            != crate::sessions::normalize_session_path(&expected)
+        {
             continue;
         }
         let targets = {
@@ -296,6 +296,11 @@ pub(super) fn repair_profiled_caller_placeholders(
             .map_err(|error| format!("restore profiled archive state: {error}"))?;
         }
     }
+    tx.execute(
+        "INSERT INTO meta(key,value) VALUES('profiled_caller_identity_repaired_v1','1')",
+        [],
+    )
+    .map_err(|error| format!("mark caller identity repair: {error}"))?;
     tx.commit()
         .map_err(|error| format!("commit caller session repair: {error}"))
 }

@@ -1,4 +1,5 @@
 use crate::Backend;
+use farcaster_sessions::{AppSessionId, NativeSessionIdentity, SessionKey};
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -22,6 +23,10 @@ pub struct WorkerFamilyLink {
     pub child_session: String,
     pub parent_backend: Backend,
     pub parent_session: String,
+    #[serde(default)]
+    pub child_key: Option<SessionKey>,
+    #[serde(default)]
+    pub parent_key: Option<SessionKey>,
     #[serde(default)]
     pub execution: Option<super::WorkerExecution>,
     #[serde(default)]
@@ -56,6 +61,7 @@ pub struct CallerRegistry {
     expired_inputs: Arc<Mutex<Vec<inputs::ExpiredInput>>>,
     session_sink: Arc<Mutex<Option<SessionRecordSink>>>,
     execution_sink: Arc<Mutex<Option<ExecutionSink>>>,
+    bindings: Arc<Mutex<Vec<std::sync::Weak<Mutex<Option<CallerSession>>>>>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -74,6 +80,9 @@ pub struct CallerContext {
     pub session: String,
     /// The indexed Farcaster path, when known.
     pub session_locator: Option<PathBuf>,
+    /// Explicit launch profile; native session paths need not encode it.
+    pub harness_profile_id: Option<String>,
+    pub app_session_id: Option<AppSessionId>,
     pub backend: Backend,
     pub provider: Option<String>,
     pub model: Option<String>,
@@ -91,6 +100,7 @@ struct RegisteredCaller {
     project: PathBuf,
     session: Option<String>,
     session_locator: Option<PathBuf>,
+    harness_profile_id: Option<String>,
     backend: Backend,
     provider: Option<String>,
     model: Option<String>,
@@ -98,17 +108,61 @@ struct RegisteredCaller {
     access_mode: crate::HarnessAccessMode,
     parent_worker_id: Option<String>,
     parent_session: Option<CallerSession>,
+    binding: SessionBinding,
     assignment: Option<super::WorkerAssignment>,
     activity: WorkerActivityState,
     inbox: mpsc::Sender<PeerMessage>,
     wake: Option<thread::Thread>,
 }
 
+pub(super) type SessionBinding = Arc<Mutex<Option<CallerSession>>>;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct CallerSession {
-    project: PathBuf,
-    backend: Backend,
-    session: String,
+pub(super) struct CallerSession {
+    pub(super) native: NativeSessionIdentity,
+    pub(super) key: Option<SessionKey>,
+}
+
+impl CallerSession {
+    pub(super) fn from_context(context: &CallerContext) -> Self {
+        let key = context.app_session_id.map(SessionKey::App).or_else(|| {
+            context
+                .session_locator
+                .as_deref()
+                .or_else(|| {
+                    Path::new(&context.session)
+                        .is_absolute()
+                        .then(|| Path::new(&context.session))
+                })
+                .map(|path| SessionKey::Locator {
+                    harness: context.backend,
+                    profile_id: context.harness_profile_id.clone(),
+                    path: farcaster_sessions::normalize_session_path(path),
+                })
+        });
+        Self {
+            native: NativeSessionIdentity {
+                project: context.project.clone(),
+                harness: context.backend,
+                profile_id: context.harness_profile_id.clone(),
+                id: context.session.clone(),
+            },
+            key,
+        }
+    }
+
+    pub(super) fn same_session(&self, other: &Self) -> bool {
+        if self.native.project != other.native.project
+            || self.native.harness != other.native.harness
+        {
+            return false;
+        }
+        match (&self.key, &other.key) {
+            (Some(left), Some(right)) => left == right,
+            (None, None) => self.native == other.native,
+            _ => false,
+        }
+    }
 }
 
 pub struct CallerIdentity {
@@ -161,14 +215,26 @@ impl CallerRegistry {
         }
         let sink = self.session_sink.lock().ok().and_then(|sink| sink.clone());
         let Some(sink) = sink else { return };
-        let result = self.resolve(token).and_then(|context| sink(&context));
+        let Some(context) = self
+            .callers
+            .lock()
+            .ok()
+            .and_then(|callers| callers.get(token).and_then(RegisteredCaller::context))
+        else {
+            return;
+        };
+        let result = sink(&context);
         match result {
             Ok(record) => {
                 if let Ok(mut callers) = self.callers.lock()
                     && let Some(caller) = callers.get_mut(token)
+                    && caller.session.as_deref() == Some(context.session.as_str())
+                    && caller.session_locator == context.session_locator
+                    && caller.harness_profile_id == context.harness_profile_id
                 {
                     caller.session_record = Some(record);
                 }
+                self.refresh_family(token);
             }
             Err(error) => {
                 zlog::error!("Register caller session: {error}");
@@ -186,6 +252,92 @@ impl CallerRegistry {
         }
     }
 
+    // Replace snapshots only after an exact live binding or storage resolution.
+    // Pool/report handles share this binding, so App ID merges update them too.
+    fn refresh_family(&self, token: &str) {
+        let Some((worker_id, session, old_ids, live_ids, children)) = (|| {
+            let mut callers = self.callers.lock().ok()?;
+            let caller = callers.get_mut(token)?;
+            let worker_id = caller.worker_id.clone();
+            let session = caller.session_key()?;
+            let previous = caller.binding.lock().ok()?.clone();
+            let mut bindings = self.bindings.lock().ok()?;
+            bindings.retain(|binding| binding.strong_count() > 0);
+            // Retained handles from an earlier process follow only an explicit
+            // binding transition from the same exact identity.
+            let previous = previous.as_ref().unwrap_or(&session);
+            for binding in bindings.iter().filter_map(std::sync::Weak::upgrade) {
+                if let Ok(mut value) = binding.lock()
+                    && previous.native == session.native
+                    && value
+                        .as_ref()
+                        .is_some_and(|value| value.same_session(previous))
+                {
+                    *value = Some(session.clone());
+                }
+            }
+            *caller.binding.lock().ok()? = Some(session.clone());
+            drop(bindings);
+            self.track_binding(&caller.binding);
+            let live_ids = callers
+                .values()
+                .map(|caller| caller.worker_id.clone())
+                .collect::<std::collections::HashSet<_>>();
+            let mut old_ids = Vec::new();
+            let mut children = Vec::new();
+            for (token, child) in callers.iter_mut() {
+                let exact = child.parent_worker_id.as_deref() == Some(&worker_id);
+                let restart = child
+                    .parent_worker_id
+                    .as_ref()
+                    .is_some_and(|id| !live_ids.contains(id))
+                    && child
+                        .parent_session
+                        .as_ref()
+                        .is_some_and(|parent| parent.same_session(&session));
+                if exact || restart {
+                    if restart
+                        && let Some(old_id) = child.parent_worker_id.replace(worker_id.clone())
+                    {
+                        old_ids.push(old_id);
+                    }
+                    let changed = child.parent_session.as_ref() != Some(&session);
+                    child.parent_session = Some(session.clone());
+                    if changed || restart {
+                        children.push(token.clone());
+                    }
+                }
+            }
+            Some((worker_id, session, old_ids, live_ids, children))
+        })() else {
+            return;
+        };
+        if let Ok(mut inputs) = self.inputs.lock() {
+            for input in inputs.iter_mut().filter(|input| {
+                input.parent_id == worker_id
+                    || old_ids.contains(&input.parent_id)
+                    || (!live_ids.contains(&input.parent_id)
+                        && input.parent_session.same_session(&session))
+            }) {
+                input.parent_id.clone_from(&worker_id);
+                input.parent_session = session.clone();
+            }
+        }
+        if let Ok(mut expired) = self.expired_inputs.lock() {
+            for input in expired.iter_mut().filter(|input| {
+                input.parent_id == worker_id
+                    || old_ids.contains(&input.parent_id)
+                    || (!live_ids.contains(&input.parent_id) && input.parent.same_session(&session))
+            }) {
+                input.parent_id.clone_from(&worker_id);
+                input.parent = session.clone();
+            }
+        }
+        for child in children {
+            self.persist_family(&child);
+        }
+    }
+
     fn persist_family(&self, token: &str) {
         let link = (|| {
             let callers = self.callers.lock().ok()?;
@@ -198,8 +350,10 @@ impl CallerRegistry {
                 project: child.project.clone(),
                 child_backend: child.backend,
                 child_session: child.session.clone()?,
-                parent_backend: parent.backend,
-                parent_session: parent.session.clone(),
+                parent_backend: parent.native.harness,
+                parent_session: parent.native.id.clone(),
+                parent_key: parent.key.clone(),
+                child_key: child.session_key().and_then(|session| session.key),
                 execution: child.provider.as_ref().zip(child.model.as_ref()).map(
                     |(provider, model)| super::WorkerExecution {
                         harness: child.backend,
@@ -264,6 +418,7 @@ impl CallerRegistry {
                     project,
                     session: None,
                     session_locator: None,
+                    harness_profile_id: None,
                     backend: profile.backend,
                     provider: profile.provider,
                     model: profile.model,
@@ -271,6 +426,7 @@ impl CallerRegistry {
                     access_mode,
                     parent_worker_id: None,
                     parent_session: None,
+                    binding: Arc::default(),
                     assignment: None,
                     activity: WorkerActivityState::Starting,
                     inbox,
@@ -355,6 +511,7 @@ impl CallerRegistry {
                 project,
                 session: None,
                 session_locator: None,
+                harness_profile_id: None,
                 backend: profile.backend,
                 provider: profile.provider,
                 model: profile.model,
@@ -362,6 +519,7 @@ impl CallerRegistry {
                 access_mode,
                 parent_worker_id,
                 parent_session,
+                binding: Arc::default(),
                 assignment: None,
                 activity: WorkerActivityState::Starting,
                 inbox,
@@ -379,6 +537,7 @@ impl CallerRegistry {
     }
 
     pub fn resolve(&self, token: &str) -> Result<CallerContext, String> {
+        self.bind_record(token);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
             if let Some(context) = self
@@ -406,18 +565,32 @@ impl CallerRegistry {
             .ok_or_else(|| "unknown Farcaster caller".to_owned())
     }
 
-    pub fn session_caller(
-        &self,
-        project: &Path,
-        backend: Backend,
-        session: &str,
-    ) -> Option<(String, CallerProfile)> {
+    pub(super) fn track_binding(&self, binding: &SessionBinding) {
+        if let Ok(mut bindings) = self.bindings.lock() {
+            bindings.retain(|binding| binding.strong_count() > 0);
+            let weak = Arc::downgrade(binding);
+            if !bindings.iter().any(|binding| binding.ptr_eq(&weak)) {
+                bindings.push(weak);
+            }
+        }
+    }
+
+    pub(super) fn has_worker(&self, id: &str) -> bool {
+        self.callers
+            .lock()
+            .ok()
+            .is_some_and(|callers| callers.values().any(|caller| caller.worker_id == id))
+    }
+
+    pub fn session_caller(&self, key: &SessionKey) -> Option<(String, CallerProfile)> {
         let callers = self.callers.lock().ok()?;
-        let caller = callers.values().find(|caller| {
-            caller.project == project
-                && caller.backend == backend
-                && caller.session.as_deref() == Some(session)
-        })?;
+        let caller = unique_caller(callers.values().filter(|caller| {
+            caller
+                .session_key()
+                .and_then(|session| session.key)
+                .as_ref()
+                == Some(key)
+        }))?;
         Some((
             caller.worker_name.clone(),
             CallerProfile {
@@ -429,33 +602,29 @@ impl CallerRegistry {
         ))
     }
 
-    pub fn session_worker_profile(
-        &self,
-        project: &Path,
-        backend: Backend,
-        session: &str,
-    ) -> Option<String> {
-        self.callers.lock().ok()?.values().find_map(|caller| {
-            (caller.project == project
-                && caller.backend == backend
-                && caller.session.as_deref() == Some(session))
-            .then(|| {
-                caller
-                    .assignment
-                    .as_ref()
-                    .map(|assignment| assignment.profile.clone())
-            })
-            .flatten()
-        })
+    pub fn session_worker_profile(&self, key: &SessionKey) -> Option<String> {
+        let callers = self.callers.lock().ok()?;
+        unique_caller(callers.values().filter(|caller| {
+            caller
+                .session_key()
+                .and_then(|session| session.key)
+                .as_ref()
+                == Some(key)
+        }))?
+        .assignment
+        .as_ref()
+        .map(|assignment| assignment.profile.clone())
     }
 
     pub fn session_parent(&self, backend: Backend, session: &str) -> Option<String> {
         let callers = self.callers.lock().ok()?;
-        let child = callers.values().find(|caller| {
-            caller.backend == backend && caller.session.as_deref() == Some(session)
-        })?;
+        let child = unique_caller(callers.values().filter(|caller| {
+            caller.backend == backend
+                && caller.harness_profile_id.is_none()
+                && caller.session.as_deref() == Some(session)
+        }))?;
         let parent = child.parent_session.as_ref()?;
-        (parent.backend == child.backend).then(|| parent.session.clone())
+        (parent.native.harness == child.backend).then(|| parent.native.id.clone())
     }
 
     pub fn set_assignment(
@@ -488,15 +657,21 @@ impl CallerRegistry {
             .callers
             .lock()
             .map_err(|_| "worker caller registry is unavailable")?;
-        Ok(callers
+        let Some(parent) = callers
             .values()
-            .find(|child| child.belongs_to(parent) && child.worker_name.eq_ignore_ascii_case(name))
-            .and_then(|child| {
-                child
-                    .assignment
-                    .clone()
-                    .map(|assignment| (assignment, child.access_mode))
-            }))
+            .find(|caller| caller.worker_id == parent.worker_id)
+        else {
+            return Ok(None);
+        };
+        Ok(unique_caller(callers.values().filter(|child| {
+            child.belongs_to(parent, &callers) && child.worker_name.eq_ignore_ascii_case(name)
+        }))
+        .and_then(|child| {
+            child
+                .assignment
+                .clone()
+                .map(|assignment| (assignment, child.access_mode))
+        }))
     }
 
     pub fn native_parent_session(&self, worker_id: &str, backend: Backend) -> Option<String> {
@@ -524,19 +699,19 @@ impl CallerRegistry {
             Some(parent_id) => callers
                 .values()
                 .find(|candidate| {
-                    candidate.worker_id == parent_id
-                        && candidate.project == caller.project
-                        && candidate.session.is_some()
+                    candidate.worker_id == parent_id && candidate.project == caller.project
                 })
                 .or_else(|| {
                     caller.parent_session.as_ref().and_then(|parent| {
-                        callers
-                            .values()
-                            .find(|candidate| candidate.session_key().as_ref() == Some(parent))
+                        unique_caller(callers.values().filter(|candidate| {
+                            candidate
+                                .session_key()
+                                .is_some_and(|key| key.same_session(parent))
+                        }))
                     })
                 }),
             None => callers.values().find(|candidate| {
-                candidate.belongs_to_registered(caller)
+                candidate.belongs_to(caller, &callers)
                     && candidate.worker_name.eq_ignore_ascii_case(to)
             }),
         };
@@ -560,6 +735,8 @@ impl RegisteredCaller {
             project: self.project.clone(),
             session: self.session.clone()?,
             session_locator: self.session_locator.clone(),
+            harness_profile_id: self.harness_profile_id.clone(),
+            app_session_id: self.session_record.and_then(AppSessionId::new),
             backend: self.backend,
             provider: self.provider.clone(),
             model: self.model.clone(),
@@ -570,27 +747,27 @@ impl RegisteredCaller {
     }
 
     fn session_key(&self) -> Option<CallerSession> {
-        Some(CallerSession {
-            project: self.project.clone(),
-            backend: self.backend,
-            session: self.session.clone()?,
-        })
+        self.context()
+            .map(|context| CallerSession::from_context(&context))
     }
 
-    fn belongs_to(&self, parent: &CallerContext) -> bool {
-        self.parent_worker_id.as_deref() == Some(parent.worker_id.as_str())
-            || self.parent_session.as_ref().is_some_and(|session| {
-                session.project == parent.project
-                    && session.backend == parent.backend
-                    && session.session == parent.session
-            })
-    }
-
-    fn belongs_to_registered(&self, parent: &RegisteredCaller) -> bool {
-        self.parent_worker_id.as_deref() == Some(parent.worker_id.as_str())
-            || parent
-                .session_key()
-                .is_some_and(|session| self.parent_session.as_ref() == Some(&session))
+    fn belongs_to(
+        &self,
+        parent: &RegisteredCaller,
+        callers: &HashMap<String, RegisteredCaller>,
+    ) -> bool {
+        if let Some(parent_id) = &self.parent_worker_id {
+            if callers
+                .values()
+                .any(|caller| &caller.worker_id == parent_id)
+            {
+                return parent_id == &parent.worker_id;
+            }
+        }
+        self.parent_session
+            .as_ref()
+            .zip(parent.session_key().as_ref())
+            .is_some_and(|(child_parent, candidate)| child_parent.same_session(candidate))
     }
 
     fn send_message(&self, from: String, message: String) -> Result<(), String> {
@@ -642,6 +819,7 @@ impl CallerIdentity {
             caller.session_record = Some(execution.session_record);
             caller.execution = Some(execution);
         }
+        self.registry.refresh_family(&self.token);
     }
 
     /// Called at execution dispatch, never when a queued prompt is admitted.
@@ -693,6 +871,7 @@ impl CallerIdentity {
             caller.session_record = Some(binding.session_record);
             caller.execution = Some(binding);
         }
+        self.registry.refresh_family(&self.token);
     }
     pub fn with_slot(mut self, slot: Option<super::WorkerSlot>) -> Self {
         self.slot = slot;
@@ -723,56 +902,45 @@ impl CallerIdentity {
         self.bind_with_locator(session_locator, None);
     }
 
+    /// Set the resolved launch profile before binding a native session.
+    pub fn set_harness_profile_id(&self, profile_id: Option<String>) {
+        if let Ok(mut callers) = self.registry.callers.lock()
+            && let Some(caller) = callers.get_mut(&self.token)
+            && caller.harness_profile_id != profile_id
+        {
+            caller.harness_profile_id = profile_id;
+            caller.session_record = None;
+            caller.execution = None;
+        }
+    }
+
     pub fn bind_with_locator(&self, session: impl Into<String>, locator: Option<PathBuf>) {
         let session = session.into();
-        let mut changed = false;
-        let mut rebound = None;
-        if let Ok(mut callers) = self.registry.callers.lock() {
-            let session_key = if let Some(context) = callers.get_mut(&self.token) {
-                changed = context.session.as_deref() != Some(session.as_str())
-                    || context.session_locator != locator;
-                if changed {
-                    context.session_record = None;
-                    context.execution = None;
-                }
-                context.session = Some(session);
-                context.session_locator = locator;
-                context.activity = WorkerActivityState::Idle;
-                (context.parent_worker_id.is_none()).then(|| {
-                    (
-                        context.worker_id.clone(),
-                        context.session_key().expect("bound caller has a session"),
-                    )
-                })
-            } else {
-                None
-            };
-            if let Some((worker_id, session_key)) = session_key {
-                let mut old_ids = Vec::new();
-                for child in callers.values_mut().filter(|caller| {
-                    caller.parent_session.as_ref() == Some(&session_key)
-                        && caller.parent_worker_id.as_deref() != Some(worker_id.as_str())
-                }) {
-                    if let Some(old_id) = child.parent_worker_id.replace(worker_id.clone()) {
-                        old_ids.push(old_id);
-                    }
-                }
-                rebound = Some((old_ids, worker_id));
-            }
-        }
-        if let Some((old_ids, worker_id)) = rebound
-            && let Ok(mut inputs) = self.registry.inputs.lock()
+        let before = self.registry.callers.lock().ok().and_then(|callers| {
+            callers
+                .get(&self.token)
+                .and_then(RegisteredCaller::session_key)
+        });
+        if let Ok(mut callers) = self.registry.callers.lock()
+            && let Some(context) = callers.get_mut(&self.token)
         {
-            for input in inputs
-                .iter_mut()
-                .filter(|input| old_ids.contains(&input.parent_id))
-            {
-                input.parent_id.clone_from(&worker_id);
+            if context.session.as_deref() != Some(&session) || context.session_locator != locator {
+                context.session_record = None;
+                context.execution = None;
             }
+            context.session = Some(session);
+            context.session_locator = locator;
+            context.activity = WorkerActivityState::Idle;
         }
-        if changed {
+        self.registry.bind_record(&self.token);
+        self.registry.refresh_family(&self.token);
+        let after = self.registry.callers.lock().ok().and_then(|callers| {
+            callers
+                .get(&self.token)
+                .and_then(RegisteredCaller::session_key)
+        });
+        if before != after {
             self.registry.persist_family(&self.token);
-            self.registry.bind_record(&self.token);
         }
     }
 
@@ -838,17 +1006,18 @@ impl CallerIdentity {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct WorkerParent {
     pub(super) id: String,
     pub(super) project: PathBuf,
     pub(super) child_name: String,
     pub(super) backend: Option<Backend>,
-    session: String,
+    pub(super) binding: SessionBinding,
 }
 
 impl WorkerParent {
-    pub(super) fn new(id: String, project: PathBuf, child_name: String, session: String) -> Self {
-        let backend = CallerRegistry::shared()
+    pub(super) fn new(id: String, project: PathBuf, child_name: String, _session: String) -> Self {
+        let (backend, binding) = CallerRegistry::shared()
             .callers
             .lock()
             .ok()
@@ -856,25 +1025,34 @@ impl WorkerParent {
                 callers
                     .values()
                     .find(|caller| caller.worker_id == id && caller.project == project)
-                    .map(|caller| caller.backend)
-            });
+                    .map(|caller| (Some(caller.backend), caller.binding.clone()))
+            })
+            .unwrap_or_default();
         Self {
             id,
             project,
             child_name,
             backend,
-            session,
+            binding,
         }
     }
 
-    fn matches(&self, caller: &RegisteredCaller) -> bool {
-        (caller.worker_id == self.id && caller.project == self.project)
-            || (caller.project == self.project
-                && caller.session.as_deref() == Some(self.session.as_str())
-                && self
-                    .backend
-                    .as_ref()
-                    .is_some_and(|backend| caller.backend == *backend))
+    fn find<'a>(
+        &self,
+        callers: &'a HashMap<String, RegisteredCaller>,
+    ) -> Option<&'a RegisteredCaller> {
+        if let Some(exact) = callers
+            .values()
+            .find(|caller| caller.worker_id == self.id && caller.project == self.project)
+        {
+            return Some(exact);
+        }
+        let session = self.binding.lock().ok()?.clone()?;
+        unique_caller(callers.values().filter(|caller| {
+            caller
+                .session_key()
+                .is_some_and(|candidate| candidate.same_session(&session))
+        }))
     }
 
     pub(super) fn report(&self, message: String) {
@@ -882,7 +1060,7 @@ impl WorkerParent {
         let Ok(callers) = registry.callers.lock() else {
             return;
         };
-        let Some(parent) = callers.values().find(|caller| self.matches(caller)) else {
+        let Some(parent) = self.find(&callers) else {
             zlog::warn!("Parent unavailable for worker {} report", self.child_name);
             return;
         };
@@ -898,6 +1076,13 @@ impl Drop for CallerIdentity {
             callers.remove(&self.token);
         }
     }
+}
+
+fn unique_caller<'a>(
+    mut callers: impl Iterator<Item = &'a RegisteredCaller>,
+) -> Option<&'a RegisteredCaller> {
+    let caller = callers.next()?;
+    callers.next().is_none().then_some(caller)
 }
 
 fn canonical_project(project: &Path) -> PathBuf {

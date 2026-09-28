@@ -57,11 +57,42 @@ struct WorkerRecord {
     assignment: Option<super::WorkerAssignment>,
     restored_access_mode: Option<crate::HarnessAccessMode>,
     parent_backend: Option<Backend>,
+    parent_binding: super::caller::SessionBinding,
     cleanup_confirmed: Arc<AtomicBool>,
     setup_done: Arc<(Mutex<bool>, Condvar)>,
     setup_cancelled: Arc<Mutex<bool>>,
     setup_stop_requested: Arc<AtomicBool>,
     pending_messages: Vec<crate::PeerMessage>,
+}
+
+impl WorkerRecord {
+    fn matches_parent(
+        &self,
+        worker_id: Option<&str>,
+        binding: &super::caller::SessionBinding,
+    ) -> bool {
+        if let Some(saved) = self.launch.parent_worker_id.as_deref()
+            && super::CallerRegistry::shared().has_worker(saved)
+        {
+            return Some(saved) == worker_id;
+        }
+        let left = self
+            .parent_binding
+            .lock()
+            .ok()
+            .and_then(|value| value.clone());
+        let right = binding.lock().ok().and_then(|value| value.clone());
+        left.zip(right)
+            .is_some_and(|(left, right)| left.same_session(&right))
+    }
+
+    fn matches_context(&self, parent: &super::CallerContext) -> bool {
+        let identity = super::caller::CallerSession::from_context(parent);
+        self.matches_parent(
+            Some(&parent.worker_id),
+            &Arc::new(Mutex::new(Some(identity))),
+        )
+    }
 }
 
 struct ReservedStart {
@@ -151,10 +182,28 @@ impl WorkerPool {
                     continue;
                 }
             };
+            let parent_identity = super::caller::CallerSession {
+                native: farcaster_sessions::NativeSessionIdentity {
+                    project: project.clone(),
+                    harness: family.parent_backend,
+                    profile_id: family.parent_key.as_ref().and_then(|key| match key {
+                        farcaster_sessions::SessionKey::Locator { profile_id, .. } => {
+                            profile_id.clone()
+                        }
+                        _ => None,
+                    }),
+                    id: family.parent_session.clone(),
+                },
+                key: family.parent_key.clone(),
+            };
             if state.records.values().any(|record| {
                 record.launch.project == project
-                    && record.launch.parent_session == family.parent_session
-                    && record.parent_backend == Some(family.parent_backend)
+                    && record
+                        .parent_binding
+                        .lock()
+                        .ok()
+                        .and_then(|binding| binding.clone())
+                        .is_some_and(|identity| identity.same_session(&parent_identity))
                     && record
                         .launch
                         .worker_name
@@ -185,6 +234,8 @@ impl WorkerPool {
                 error: None,
                 pending_input: None,
             };
+            let parent_binding = Arc::new(Mutex::new(Some(parent_identity)));
+            super::CallerRegistry::shared().track_binding(&parent_binding);
             state.records.insert(
                 id.clone(),
                 WorkerRecord {
@@ -206,6 +257,7 @@ impl WorkerPool {
                         model: Some(routing.assignment.execution.model.clone()),
                         effort: routing.assignment.execution.effort.clone(),
                         service_tier: routing.assignment.execution.service_tier.clone(),
+                        harness_profile_id: routing.assignment.harness_profile_id.clone(),
                         access_mode: routing.access_mode,
                         app_proxy: None,
                         ephemeral: false,
@@ -213,6 +265,7 @@ impl WorkerPool {
                     assignment: Some(routing.assignment),
                     restored_access_mode: Some(routing.access_mode),
                     parent_backend: Some(family.parent_backend),
+                    parent_binding,
                     cleanup_confirmed: Arc::new(AtomicBool::new(true)),
                     setup_done: Arc::new((Mutex::new(true), Condvar::new())),
                     setup_cancelled: Arc::new(Mutex::new(false)),
@@ -407,6 +460,10 @@ impl WorkerPool {
             )
         });
         let parent_backend = parent.as_ref().and_then(|parent| parent.backend);
+        let parent_binding = parent
+            .as_ref()
+            .map(|parent| parent.binding.clone())
+            .unwrap_or_default();
         let prompt = if parent.is_some() {
             format!(
                 "You are a Farcaster child worker. Your final answer is automatically sent to your parent after each turn. Farcaster MCP is not available in this child session.\n\n{}",
@@ -431,11 +488,9 @@ impl WorkerPool {
             return Err("worker session family is stopping".into());
         }
         if deduplicate_child
-            && let Some(parent_backend) = parent_backend
             && let Some(record) = state.records.values_mut().find(|record| {
                 record.launch.project == project
-                    && record.launch.parent_session == request.parent_session
-                    && record.parent_backend == Some(parent_backend)
+                    && record.matches_parent(request.parent_worker_id.as_deref(), &parent_binding)
                     && record
                         .launch
                         .worker_name
@@ -485,6 +540,9 @@ impl WorkerPool {
             service_tier: assignment
                 .as_ref()
                 .and_then(|assignment| assignment.execution.service_tier.clone()),
+            harness_profile_id: assignment
+                .as_ref()
+                .and_then(|assignment| assignment.harness_profile_id.clone()),
             access_mode: request.access_mode,
             app_proxy,
             ephemeral: false,
@@ -510,6 +568,7 @@ impl WorkerPool {
                 assignment: assignment.clone(),
                 restored_access_mode: None,
                 parent_backend,
+                parent_binding,
                 cleanup_confirmed: Arc::new(AtomicBool::new(false)),
                 setup_done: Arc::new((Mutex::new(false), Condvar::new())),
                 setup_cancelled: Arc::new(Mutex::new(false)),
@@ -714,8 +773,7 @@ impl WorkerPool {
             }
             let Some(id) = state.records.iter().find_map(|(id, record)| {
                 (record.launch.project == parent.project
-                    && record.launch.parent_session == parent.session
-                    && record.parent_backend == Some(parent.backend)
+                    && record.matches_context(parent)
                     && record.launch.worker_name.eq_ignore_ascii_case(name)
                     && record.thread.is_none()
                     && snapshot(record).is_ok_and(|snapshot| snapshot.status == WorkerStatus::Idle))
@@ -784,6 +842,7 @@ impl WorkerPool {
                 record.launch.worker_name.clone(),
                 parent.session.clone(),
             );
+            record.parent_binding = worker_parent.binding.clone();
             let prompt = crate::PeerMessage {
                 from: parent.worker_name.clone(),
                 message,
@@ -826,8 +885,7 @@ fn find_pending_child<'a>(
 ) -> Option<&'a mut WorkerRecord> {
     state.records.values_mut().find(|record| {
         record.launch.project == parent.project
-            && record.launch.parent_session == parent.session
-            && record.parent_backend == Some(parent.backend)
+            && record.matches_context(parent)
             && record.launch.worker_name.eq_ignore_ascii_case(name)
             && snapshot(record).is_ok_and(|snapshot| snapshot.status == WorkerStatus::Pending)
     })

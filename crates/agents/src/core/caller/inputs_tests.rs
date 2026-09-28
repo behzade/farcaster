@@ -209,3 +209,60 @@ fn delivered_input_expiry_is_drained_by_stable_parent_session() -> Result<(), St
     );
     Ok(())
 }
+
+#[test]
+fn profile_binding_keeps_input_and_expiry_with_its_parent() -> Result<(), String> {
+    let registry = CallerRegistry::default();
+    let issue = |profile: &str| {
+        let caller = registry.issue(
+            Path::new("/project"),
+            CallerProfile {
+                backend: Backend::Pi,
+                provider: None,
+                model: None,
+                effort: None,
+            },
+            None,
+        );
+        caller.set_harness_profile_id(Some(profile.into()));
+        caller.bind("/same/native/session.jsonl");
+        caller
+    };
+    let first = issue("one");
+    let caller = registry.resolve(first.token())?;
+    let scope = CallerSession::from_context(&caller).native;
+    let (responses, _) = mpsc::channel();
+    let lease = registry.request_profile_input(
+        &caller,
+        WorkerInput {
+            id: "approval".into(),
+            prompt: "Choose".into(),
+            options: vec![],
+            secret: false,
+        },
+        responses,
+    )?;
+    let second = issue("two");
+    let other = CallerSession::from_context(&registry.resolve(second.token())?).native;
+    assert!(registry.take_child_inputs_for_session(&other).is_empty());
+    assert!(
+        registry
+            .take_child_inputs(&scope.project, scope.harness, &scope.id)
+            .is_empty()
+    );
+    let shown = registry.take_child_inputs_for_session(&scope);
+    assert_eq!(shown.len(), 1);
+    drop(first);
+    let _replacement = issue("one");
+    drop(lease);
+    assert!(
+        registry
+            .take_expired_child_inputs_for_session(&other)
+            .is_empty()
+    );
+    assert_eq!(
+        registry.take_expired_child_inputs_for_session(&scope),
+        vec![shown[0].id.clone()]
+    );
+    Ok(())
+}

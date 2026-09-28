@@ -58,6 +58,8 @@ fn caller(project: &Path, id: &str) -> CallerContext {
         project: project.to_owned(),
         session: format!("backend://{id}"),
         session_locator: None,
+        harness_profile_id: None,
+        app_session_id: None,
         backend: Backend::Pi,
         provider: None,
         model: None,

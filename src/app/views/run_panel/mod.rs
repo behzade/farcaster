@@ -49,7 +49,7 @@ pub(super) struct WorkerListView<'a> {
 
 pub(in crate::app) const RECENT_WORKERS: usize = 3;
 pub(in crate::app) type WorkerProfileNames =
-    std::collections::HashMap<(std::path::PathBuf, crate::agents::Backend, String), String>;
+    std::collections::HashMap<crate::sessions::SessionKey, String>;
 
 fn run_panel_agent_rows<'a>(
     sessions: &'a crate::sessions::SessionCatalog,

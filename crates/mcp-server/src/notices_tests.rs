@@ -8,6 +8,8 @@ fn caller(id: &str, name: &str) -> CallerContext {
         project: "/project".into(),
         session: format!("session-{id}"),
         session_locator: None,
+        harness_profile_id: None,
+        app_session_id: None,
         backend: Backend::Pi,
         provider: None,
         model: None,

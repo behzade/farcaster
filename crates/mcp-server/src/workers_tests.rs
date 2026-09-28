@@ -359,6 +359,7 @@ fn nested_parent_policy_reaches_the_grandchild_factory_launch() -> Result<(), St
     child.bind("nested-parent-session");
     let child = registry.resolve(child.token())?;
     let assignment = crate::agents::WorkerAssignment {
+        harness_profile_id: None,
         profile: "nested".into(),
         execution: crate::agents::WorkerExecution {
             harness: Backend::Codex,
@@ -426,6 +427,7 @@ fn restricted_parent_cannot_reuse_a_running_full_child_after_session_rebind() ->
     registry.set_assignment(
         "full-child-id",
         crate::agents::WorkerAssignment {
+            harness_profile_id: None,
             profile: "oracle".into(),
             execution: crate::agents::WorkerExecution {
                 harness: Backend::Codex,
@@ -437,6 +439,8 @@ fn restricted_parent_cannot_reuse_a_running_full_child_after_session_rebind() ->
         },
     )?;
 
+    // A restarted caller replaces a retired parent, never a still-live caller.
+    drop(full_parent);
     let restricted_parent = registry.issue_with_access(
         temp.path(),
         profile,

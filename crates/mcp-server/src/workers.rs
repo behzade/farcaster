@@ -158,6 +158,7 @@ pub fn send_configurable(
         (
             crate::agents::WorkerAssignment {
                 profile: "inherit".into(),
+                harness_profile_id: caller.harness_profile_id.clone(),
                 execution,
             },
             access_mode,
@@ -183,6 +184,7 @@ pub fn send_configurable(
         (
             crate::agents::WorkerAssignment {
                 profile: profile.into(),
+                harness_profile_id: None,
                 execution: selected,
             },
             access_mode,

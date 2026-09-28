@@ -64,6 +64,7 @@ pub(super) fn generate_worker_title(
         .unwrap_or_default()
         .as_nanos();
     let mut session = factory.create(WorkerLaunch {
+        harness_profile_id: config.profile_id.clone(),
         slot: None,
         worker_id: format!("title-{nonce}"),
         worker_name: "session-title".into(),

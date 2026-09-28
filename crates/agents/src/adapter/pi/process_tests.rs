@@ -168,6 +168,7 @@ fn installed_pi_child_model_does_not_replace_the_users_selected_default() -> Tes
     let mut saved_locator = None;
     for index in 0..2 {
         let mut child = factory.create(WorkerLaunch {
+            harness_profile_id: None,
             slot: None,
             worker_id: format!("model-child-{index}"),
             worker_name: format!("model-child-{index}"),

@@ -1,6 +1,46 @@
 use super::*;
 use crate::agents::Backend;
 
+fn family_session_id(
+    transaction: &rusqlite::Transaction<'_>,
+    key: Option<&crate::sessions::SessionKey>,
+    harness: Backend,
+    legacy: &str,
+    project_id: i64,
+    locator_root: &Path,
+) -> Result<i64, String> {
+    use crate::sessions::SessionKey;
+    let resolved: Option<i64> = match key {
+        Some(SessionKey::App(id)) => transaction
+            .query_row(
+                "SELECT id FROM sessions WHERE id=?1 AND harness=?2 AND project_id=?3",
+                params![id.get(), harness.as_str(), project_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?,
+        Some(SessionKey::Locator {
+            harness: keyed_harness,
+            profile_id,
+            path,
+        }) => {
+            if *keyed_harness != harness {
+                return Err("worker family backend does not match its session key".into());
+            }
+            transaction.query_row(
+                "SELECT id FROM sessions WHERE locator=?1 AND harness=?2 AND project_id=?3 AND profile_id IS ?4",
+                params![path.to_string_lossy().as_ref(), harness.as_str(), project_id, profile_id], |row| row.get(0),
+            ).optional().map_err(|error| error.to_string())?
+        }
+        None => {
+            return ensure_locator_session(transaction, harness, legacy, project_id, locator_root);
+        }
+    };
+    resolved.ok_or_else(|| {
+        "worker family session key is no longer indexed; rebind before saving".into()
+    })
+}
+
 fn stored_family_identity(
     locator_root: &Path,
     project: &Path,
@@ -200,15 +240,17 @@ impl StateStore {
             .ok_or("state image directory has no parent")?
             .join("session-locators");
         let locator_root = super::identity::family_locator_root(&locator_root, &link.project);
-        let parent_id = ensure_locator_session(
+        let parent_id = family_session_id(
             &transaction,
+            link.parent_key.as_ref(),
             link.parent_backend,
             &link.parent_session,
             project_id,
             &locator_root,
         )?;
-        let child_id = ensure_locator_session(
+        let child_id = family_session_id(
             &transaction,
+            link.child_key.as_ref(),
             link.child_backend,
             &link.child_session,
             project_id,
@@ -297,7 +339,7 @@ impl StateStore {
         let query = format!(
             "SELECT child.harness, child.locator, child.backend_id,
                         parent.harness, parent.locator, parent.backend_id,
-                        p.path, f.execution_json, f.routing_json
+                        p.path, f.execution_json, f.routing_json, child.id, parent.id
                    FROM worker_families f
                    JOIN sessions child ON child.id = f.child_id
                    JOIN sessions parent ON parent.id = child.parent_id
@@ -320,6 +362,8 @@ impl StateStore {
                     row.get::<_, String>(6)?,
                     row.get::<_, Option<String>>(7)?,
                     row.get::<_, Option<String>>(8)?,
+                    row.get::<_, i64>(9)?,
+                    row.get::<_, i64>(10)?,
                 ))
             })
             .map_err(|error| error.to_string())?
@@ -334,6 +378,8 @@ impl StateStore {
                     project,
                     execution,
                     routing,
+                    child_id,
+                    parent_id,
                 ) = row.map_err(|error| error.to_string())?;
                 let execution = execution.and_then(|value| {
                     serde_json::from_str(&value)
@@ -368,6 +414,10 @@ impl StateStore {
                         parent_backend_id,
                     ),
                     parent_backend,
+                    child_key: crate::sessions::AppSessionId::new(child_id)
+                        .map(crate::sessions::SessionKey::App),
+                    parent_key: crate::sessions::AppSessionId::new(parent_id)
+                        .map(crate::sessions::SessionKey::App),
                     execution,
                     routing,
                 })

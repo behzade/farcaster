@@ -2007,6 +2007,8 @@ fn worker_identity_binds_a_discovered_locator_without_creating_a_second_session(
     let database = temp.path().join("gui.sqlite3");
     let mut store = StateStore::open_at(&database)?;
     store.save_worker_family(&crate::agents::WorkerFamilyLink {
+        child_key: None,
+        parent_key: None,
         project: temp.path().to_path_buf(),
         parent_backend: Backend::Pi,
         parent_session: "parent".into(),
@@ -2276,6 +2278,8 @@ fn cross_harness_worker_families_survive_reopen() -> Result<(), String> {
         service_tier: None,
     };
     let link = crate::agents::WorkerFamilyLink {
+        child_key: None,
+        parent_key: None,
         project: temp.path().to_owned(),
         child_backend: Backend::OpenCode,
         child_session: "child-session".into(),
@@ -2285,6 +2289,7 @@ fn cross_harness_worker_families_survive_reopen() -> Result<(), String> {
         routing: Some(crate::agents::WorkerRouting {
             name: "research".into(),
             assignment: crate::agents::WorkerAssignment {
+                harness_profile_id: None,
                 profile: "fast".into(),
                 execution,
             },
@@ -2299,10 +2304,18 @@ fn cross_harness_worker_families_survive_reopen() -> Result<(), String> {
         .project
         .canonicalize()
         .map_err(|error| error.to_string())?;
-    assert_eq!(
-        StateStore::open_at(&database)?.load_worker_families()?,
-        vec![persisted_link]
-    );
+    let restored = StateStore::open_at(&database)?.load_worker_families()?;
+    assert!(matches!(
+        restored[0].parent_key,
+        Some(crate::sessions::SessionKey::App(_))
+    ));
+    assert!(matches!(
+        restored[0].child_key,
+        Some(crate::sessions::SessionKey::App(_))
+    ));
+    persisted_link.parent_key = restored[0].parent_key.clone();
+    persisted_link.child_key = restored[0].child_key.clone();
+    assert_eq!(restored, vec![persisted_link]);
     let mut session = session_from_cached(
         link.child_session.clone(),
         PathBuf::from(&link.child_session),
@@ -2372,6 +2385,8 @@ fn legacy_worker_family_project_alias_is_normalized_on_read() -> Result<(), Stri
     symlink(&project, &alias).map_err(|error| error.to_string())?;
     let project = project.canonicalize().map_err(|error| error.to_string())?;
     let link = crate::agents::WorkerFamilyLink {
+        child_key: None,
+        parent_key: None,
         project: project.clone(),
         child_backend: Backend::Codex,
         child_session: "child".into(),
@@ -2392,10 +2407,11 @@ fn legacy_worker_family_project_alias_is_normalized_on_read() -> Result<(), Stri
         .map_err(|error| error.to_string())?;
     drop(connection);
 
-    assert_eq!(
-        StateStore::open_at(&database)?.load_worker_families()?,
-        vec![link]
-    );
+    let restored = StateStore::open_at(&database)?.load_worker_families()?;
+    let mut expected = link;
+    expected.parent_key = restored[0].parent_key.clone();
+    expected.child_key = restored[0].child_key.clone();
+    assert_eq!(restored, vec![expected]);
     Ok(())
 }
 

@@ -79,37 +79,12 @@ impl FarcasterApp {
         let state = lifecycle_label(activity.lifecycle);
         let role = activity.role.clone();
         let registry = crate::agents::CallerRegistry::shared();
-        let caller = registry
-            .session_caller(&session.project, session.harness, &session.id)
-            .or_else(|| {
-                registry.session_caller(
-                    &session.project,
-                    session.harness,
-                    &session.path.to_string_lossy(),
-                )
-            });
+        let key = session.key();
+        let caller = registry.session_caller(&key);
         let mut hover_details = session_hover_details(session, state, "", 0);
         let profile_name = registry
-            .session_worker_profile(&session.project, session.harness, &session.id)
-            .or_else(|| {
-                registry.session_worker_profile(
-                    &session.project,
-                    session.harness,
-                    &session.path.to_string_lossy(),
-                )
-            })
-            .or_else(|| {
-                saved_profiles
-                    .get(&(session.project.clone(), session.harness, session.id.clone()))
-                    .or_else(|| {
-                        saved_profiles.get(&(
-                            session.project.clone(),
-                            session.harness,
-                            session.path.to_string_lossy().into_owned(),
-                        ))
-                    })
-                    .cloned()
-            });
+            .session_worker_profile(&key)
+            .or_else(|| saved_profiles.get(&key).cloned());
         if let Some(profile) = &profile_name {
             hover_details
                 .rows

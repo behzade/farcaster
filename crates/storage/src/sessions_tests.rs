@@ -295,6 +295,8 @@ fn imported_orphan_child_is_exposed_as_a_root() -> Result<(), String> {
         "child"
     );
     store.save_worker_family(&crate::agents::WorkerFamilyLink {
+        child_key: None,
+        parent_key: None,
         project: temp.path().to_path_buf(),
         parent_backend: Backend::Codex,
         parent_session: "not-imported-parent".into(),
@@ -769,6 +771,8 @@ fn worker_family_native_ids_get_loadable_unique_locators() -> Result<(), String>
     parent.path = temp.path().join("session-locators/codex-cli/parent");
     store.update_session_metadata(&parent)?;
     store.save_worker_family(&crate::agents::WorkerFamilyLink {
+        child_key: None,
+        parent_key: None,
         project: temp.path().to_path_buf(),
         parent_backend: Backend::Codex,
         parent_session: "parent".into(),
@@ -790,6 +794,8 @@ fn worker_family_native_ids_get_loadable_unique_locators() -> Result<(), String>
     crate::agents::validate_session_move(std::slice::from_ref(child))?;
     let other_project = temp.path().join("other-project");
     store.save_worker_family(&crate::agents::WorkerFamilyLink {
+        child_key: None,
+        parent_key: None,
         project: other_project.clone(),
         parent_backend: Backend::Codex,
         parent_session: "parent".into(),
@@ -799,6 +805,8 @@ fn worker_family_native_ids_get_loadable_unique_locators() -> Result<(), String>
         routing: None,
     })?;
     store.save_worker_family(&crate::agents::WorkerFamilyLink {
+        child_key: None,
+        parent_key: None,
         project: temp.path().to_path_buf(),
         parent_backend: Backend::Codex,
         parent_session: "parent".into(),
@@ -864,6 +872,8 @@ fn live_metadata_merges_family_placeholder_without_losing_related_state() -> Res
     let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
     let project = temp.path().to_path_buf();
     store.save_worker_family(&crate::agents::WorkerFamilyLink {
+        child_key: None,
+        parent_key: None,
         project: project.clone(),
         parent_backend: Backend::Codex,
         parent_session: "parent".into(),
@@ -873,6 +883,7 @@ fn live_metadata_merges_family_placeholder_without_losing_related_state() -> Res
         routing: Some(crate::agents::WorkerRouting {
             name: "research".into(),
             assignment: crate::agents::WorkerAssignment {
+                harness_profile_id: None,
                 profile: "fast".into(),
                 execution: crate::agents::WorkerExecution {
                     harness: Backend::Codex,
@@ -1216,6 +1227,8 @@ fn v12_migration_preserves_native_id_worker_family_links() -> Result<(), String>
         .map_err(|error| error.to_string())?;
     }
     let link = crate::agents::WorkerFamilyLink {
+        child_key: None,
+        parent_key: None,
         project: "/project".into(),
         parent_backend: Backend::Pi,
         parent_session: "/sessions/parent.jsonl".into(),
@@ -1526,5 +1539,71 @@ fn schema_v14_upgrade_preserves_retryable_outbox_rows() -> Result<(), String> {
         })
         .map_err(|error| error.to_string())?;
     assert_eq!(foreign_key_errors, 0);
+    Ok(())
+}
+
+#[test]
+fn worker_family_keys_keep_equal_native_ids_in_separate_profiles() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let mut store = StateStore::open_at(&database)?;
+    let mut expected = Vec::new();
+    for profile in [
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+    ] {
+        let mut indexed = Vec::new();
+        for id in ["same-parent", "same-child"] {
+            let mut update = metadata(id);
+            update.profile_id = Some(profile.into());
+            update.project = temp.path().into();
+            update.path = temp
+                .path()
+                .join("session-locators/profiles")
+                .join(profile)
+                .join("codex-cli")
+                .join(id);
+            indexed.push(store.update_session_metadata(&update)?);
+        }
+        let execution = crate::agents::WorkerExecution {
+            harness: Backend::Codex,
+            provider: "openai".into(),
+            model: "test".into(),
+            effort: None,
+            service_tier: None,
+        };
+        let link = crate::agents::WorkerFamilyLink {
+            project: temp.path().into(),
+            child_backend: Backend::Codex,
+            child_session: "same-child".into(),
+            parent_backend: Backend::Codex,
+            parent_session: "same-parent".into(),
+            child_key: Some(indexed[1].key()),
+            parent_key: Some(indexed[0].key()),
+            execution: Some(execution.clone()),
+            routing: Some(crate::agents::WorkerRouting {
+                name: "review".into(),
+                assignment: crate::agents::WorkerAssignment {
+                    profile: "inherit".into(),
+                    harness_profile_id: Some(profile.into()),
+                    execution,
+                },
+                access_mode: crate::agents::HarnessAccessMode::Sandboxed,
+            }),
+        };
+        store.save_worker_family(&link)?;
+        expected.push((indexed[0].key(), indexed[1].key()));
+    }
+    drop(store);
+    let restored = StateStore::open_at(&database)?.load_worker_routes()?;
+    assert_eq!(restored.len(), 2);
+    for (parent, child) in expected {
+        assert!(
+            restored
+                .iter()
+                .any(|link| link.parent_key.as_ref() == Some(&parent)
+                    && link.child_key.as_ref() == Some(&child))
+        );
+    }
     Ok(())
 }

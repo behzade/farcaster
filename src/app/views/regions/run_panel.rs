@@ -119,10 +119,7 @@ impl Render for RunPanelView {
                     .into_iter()
                     .filter_map(|family| {
                         let profile = family.routing?.assignment.profile;
-                        Some((
-                            (family.project, family.child_backend, family.child_session),
-                            profile,
-                        ))
+                        Some((family.child_key?, profile))
                     })
                     .collect();
             }

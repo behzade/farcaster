@@ -1,5 +1,16 @@
 use super::*;
 
+#[test]
+fn worker_assignment_preserves_harness_profile_and_accepts_legacy_routes() {
+    let legacy = serde_json::json!({"profile": "inherit", "execution": execution("model")});
+    let mut assignment: WorkerAssignment = serde_json::from_value(legacy).unwrap();
+    assert_eq!(assignment.harness_profile_id, None);
+    assignment.harness_profile_id = Some("named-harness".into());
+    let restored: WorkerAssignment =
+        serde_json::from_value(serde_json::to_value(&assignment).unwrap()).unwrap();
+    assert_eq!(restored, assignment);
+}
+
 fn execution(model: &str) -> WorkerExecution {
     WorkerExecution {
         harness: Backend::Codex,

@@ -14,11 +14,12 @@ pub(super) struct PendingInput {
     original_id: String,
     delivered: bool,
     responses: mpsc::Sender<WorkerInputResponse>,
-    parent_session: CallerSession,
+    pub(super) parent_session: CallerSession,
 }
 
 pub(super) struct ExpiredInput {
-    parent: CallerSession,
+    pub(super) parent: CallerSession,
+    pub(super) parent_id: String,
     id: String,
 }
 
@@ -44,13 +45,14 @@ impl Drop for InputLease {
             if let Ok(mut expired) = self.registry.expired_inputs.lock() {
                 expired.push(ExpiredInput {
                     parent: pending.parent_session.clone(),
+                    parent_id: pending.parent_id.clone(),
                     id: pending.input.id,
                 });
             }
             if let Ok(callers) = self.registry.callers.lock()
                 && let Some(parent) = callers
                     .values()
-                    .find(|caller| caller.session_key().as_ref() == Some(&pending.parent_session))
+                    .find(|caller| caller.worker_id == pending.parent_id)
                 && let Some(wake) = &parent.wake
             {
                 wake.unpark();
@@ -111,16 +113,27 @@ impl CallerRegistry {
         backend: Backend,
         session: &str,
     ) -> Vec<WorkerInput> {
-        let project = canonical_project(project);
+        self.take_child_inputs_for_session(&NativeSessionIdentity {
+            project: canonical_project(project),
+            harness: backend,
+            profile_id: None,
+            id: session.into(),
+        })
+    }
+
+    pub fn take_child_inputs_for_session(
+        &self,
+        identity: &NativeSessionIdentity,
+    ) -> Vec<WorkerInput> {
         let Ok(callers) = self.callers.lock() else {
             return Vec::new();
         };
-        let Some(parent) = callers.values().find(|caller| {
-            caller.project == project
-                && caller.backend == backend
-                && caller.session.as_deref() == Some(session)
-                && caller.parent_worker_id.is_none()
-        }) else {
+        let Some(parent) = unique_caller(callers.values().filter(|caller| {
+            caller.parent_worker_id.is_none()
+                && caller
+                    .session_key()
+                    .is_some_and(|key| key.native == *identity)
+        })) else {
             return Vec::new();
         };
         let Ok(mut inputs) = self.inputs.lock() else {
@@ -161,10 +174,28 @@ impl CallerRegistry {
         backend: Backend,
         session: &str,
     ) -> Vec<String> {
-        let parent = CallerSession {
+        self.take_expired_child_inputs_for_session(&NativeSessionIdentity {
             project: canonical_project(project),
-            backend: backend.to_owned(),
-            session: session.to_owned(),
+            harness: backend,
+            profile_id: None,
+            id: session.into(),
+        })
+    }
+
+    pub fn take_expired_child_inputs_for_session(
+        &self,
+        identity: &NativeSessionIdentity,
+    ) -> Vec<String> {
+        let Ok(callers) = self.callers.lock() else {
+            return Vec::new();
+        };
+        let Some(parent) = unique_caller(callers.values().filter(|caller| {
+            caller.parent_worker_id.is_none()
+                && caller
+                    .session_key()
+                    .is_some_and(|key| key.native == *identity)
+        })) else {
+            return Vec::new();
         };
         let Ok(mut expired) = self.expired_inputs.lock() else {
             return Vec::new();
@@ -172,7 +203,7 @@ impl CallerRegistry {
         let mut ids = Vec::new();
         let mut index = 0;
         while index < expired.len() {
-            if expired[index].parent == parent {
+            if expired[index].parent_id == parent.worker_id {
                 ids.push(expired.remove(index).id);
             } else {
                 index += 1;
@@ -197,11 +228,7 @@ impl CallerRegistry {
             let parent = callers
                 .values()
                 .find(|caller| caller.worker_id == *parent_id && caller.project == child.project)
-                .or_else(|| {
-                    direct
-                        .then(|| callers.values().find(|caller| child.matches(caller)))
-                        .flatten()
-                })
+                .or_else(|| direct.then(|| child.find(&callers)).flatten())
                 .ok_or("parent worker is unavailable")?;
             direct = false;
             match &parent.parent_worker_id {

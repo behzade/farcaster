@@ -323,6 +323,7 @@ impl WorkerProfiles {
         }
         Ok(WorkerAssignment {
             profile: profile.into(),
+            harness_profile_id: None,
             execution: execution.clone(),
         })
     }
@@ -331,6 +332,9 @@ impl WorkerProfiles {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WorkerAssignment {
     pub profile: String,
+    /// Named harness configuration retained by inherited workers and restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness_profile_id: Option<String>,
     pub execution: WorkerExecution,
 }
 

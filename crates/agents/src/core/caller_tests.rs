@@ -28,6 +28,18 @@ fn process_metadata_identity_is_available_before_session_binding() {
 }
 
 #[test]
+fn native_file_session_keeps_explicit_launch_profile() {
+    let registry = CallerRegistry::default();
+    let caller = identity(&registry, Path::new("/project"), Backend::Pi);
+    caller.set_harness_profile_id(Some("custom-pi".into()));
+    caller.bind("/native/sessions/session.jsonl");
+    let bound = context(&registry, &caller);
+    assert_eq!(bound.harness_profile_id.as_deref(), Some("custom-pi"));
+    assert_eq!(bound.session, "/native/sessions/session.jsonl");
+    assert!(bound.session_locator.is_none());
+}
+
+#[test]
 fn transient_identity_keeps_its_locator_without_persisting_a_session() {
     let registry = CallerRegistry::default();
     let registrations = Arc::new(Mutex::new(0));
@@ -145,7 +157,7 @@ fn top_level_workers_receive_distinct_human_names() {
 fn resolves_session_with_the_project_and_profile_that_launched_it() {
     let registry = CallerRegistry::default();
     let identity = identity(&registry, Path::new("/project/two"), Backend::Pi);
-    identity.bind("session-2");
+    identity.bind_with_locator("session-2", Some("/project/two/session-2".into()));
     identity.select_model("anthropic", "sonnet");
     identity.select_effort("high");
 
@@ -158,7 +170,11 @@ fn resolves_session_with_the_project_and_profile_that_launched_it() {
     assert_eq!(resolved.effort.as_deref(), Some("high"));
     assert_eq!(resolved.parent_worker_id, None);
     let caller = registry
-        .session_caller(Path::new("/project/two"), Backend::Pi, "session-2")
+        .session_caller(&SessionKey::Locator {
+            harness: Backend::Pi,
+            profile_id: None,
+            path: "/project/two/session-2".into(),
+        })
         .expect("bound caller");
     assert_eq!(caller.0, resolved.worker_name);
     assert_eq!(caller.1.provider, resolved.provider);
@@ -166,12 +182,20 @@ fn resolves_session_with_the_project_and_profile_that_launched_it() {
     assert_eq!(caller.1.effort, resolved.effort);
     assert!(
         registry
-            .session_caller(Path::new("/other"), Backend::Pi, "session-2")
+            .session_caller(&SessionKey::Locator {
+                harness: Backend::Pi,
+                profile_id: None,
+                path: "/other/session-2".into()
+            })
             .is_none()
     );
     assert!(
         registry
-            .session_caller(Path::new("/project/two"), Backend::Codex, "session-2")
+            .session_caller(&SessionKey::Locator {
+                harness: Backend::Codex,
+                profile_id: None,
+                path: "/project/two/session-2".into()
+            })
             .is_none()
     );
 }
@@ -320,8 +344,8 @@ fn foreign_parents_keep_farcaster_links_but_not_native_ancestry() -> Result<(), 
         "inspect".into(),
         Some(context.worker_id.clone()),
     )?;
-    child.bind("opencode-child");
-    child.bind("opencode-child");
+    child.bind_with_locator("opencode-child", Some("/project/opencode-child".into()));
+    child.bind_with_locator("opencode-child", Some("/project/opencode-child".into()));
     assert_eq!(
         registry
             .native_parent_session(&context.worker_id, Backend::Pi)
@@ -354,6 +378,7 @@ fn foreign_parents_keep_farcaster_links_but_not_native_ancestry() -> Result<(), 
         &worker_id,
         crate::WorkerAssignment {
             profile: "fast".into(),
+            harness_profile_id: None,
             execution: crate::WorkerExecution {
                 harness: Backend::OpenCode,
                 provider: "opencode-go".into(),
@@ -374,7 +399,11 @@ fn foreign_parents_keep_farcaster_links_but_not_native_ancestry() -> Result<(), 
     assert_eq!(routed.name, "inspect");
     assert_eq!(routed.assignment.profile, "fast");
     assert_eq!(
-        registry.session_worker_profile(Path::new("/project"), Backend::OpenCode, "opencode-child"),
+        registry.session_worker_profile(&SessionKey::Locator {
+            harness: Backend::OpenCode,
+            profile_id: None,
+            path: "/project/opencode-child".into()
+        }),
         Some("fast".into())
     );
     child.select_model("opencode-go", "glm-5.3-flash");
@@ -429,5 +458,279 @@ fn queued_child_message_waits_for_capacity_without_being_lost() -> Result<(), St
     assert!(concurrency.reserve().is_err(), "delivery reserves capacity");
     assert_eq!(child.try_recv().expect("second message").message, "second");
     assert!(child.try_recv().is_none());
+    Ok(())
+}
+
+#[test]
+fn profiled_parent_binding_cannot_take_another_live_family() -> Result<(), String> {
+    let registry = CallerRegistry::default();
+    let first = identity(&registry, Path::new("/project"), Backend::Codex);
+    first.set_harness_profile_id(Some("one".into()));
+    first.bind_with_locator("copied-id", Some("/profiles/one/session".into()));
+    let first_context = context(&registry, &first);
+    let first_child = child(&registry, &first_context, "review")?;
+    first_child.bind("first-child");
+
+    let second = identity(&registry, Path::new("/project"), Backend::Codex);
+    second.set_harness_profile_id(Some("two".into()));
+    second.bind_with_locator("copied-id", Some("/profiles/two/session".into()));
+    assert_eq!(
+        registry.send(second.token(), "review", "wrong".into())?,
+        None
+    );
+    let second_child = child(&registry, &context(&registry, &second), "review")?;
+    second_child.bind("second-child");
+    registry.send(first.token(), "review", "first".into())?;
+    registry.send(second.token(), "review", "second".into())?;
+    assert_eq!(
+        first_child.try_recv().expect("first child").message,
+        "first"
+    );
+    assert_eq!(
+        second_child.try_recv().expect("second child").message,
+        "second"
+    );
+    registry.send(first_child.token(), "parent", "report".into())?;
+    assert_eq!(first.try_recv().expect("first parent").message, "report");
+    assert!(second.try_recv().is_none());
+    drop(first);
+    let replacement = identity(&registry, Path::new("/project"), Backend::Codex);
+    replacement.set_harness_profile_id(Some("one".into()));
+    replacement.bind_with_locator("copied-id", Some("/profiles/one/session".into()));
+    registry.send(first_child.token(), "parent", "resumed".into())?;
+    assert_eq!(
+        replacement.try_recv().expect("replacement").message,
+        "resumed"
+    );
+    assert!(second.try_recv().is_none());
+    Ok(())
+}
+
+#[test]
+fn live_worker_precedes_same_session_restart_candidate() -> Result<(), String> {
+    let registry = CallerRegistry::default();
+    let first = identity(&registry, Path::new("/project"), Backend::Pi);
+    first.bind("/sessions/same.jsonl");
+    let owned = child(&registry, &context(&registry, &first), "review")?;
+    owned.bind("child");
+    let second = identity(&registry, Path::new("/project"), Backend::Pi);
+    second.bind("/sessions/same.jsonl");
+    assert_eq!(
+        registry.send(second.token(), "review", "wrong".into())?,
+        None
+    );
+    registry.send(owned.token(), "parent", "exact".into())?;
+    assert_eq!(
+        first.try_recv().expect("exact live parent").message,
+        "exact"
+    );
+    assert!(second.try_recv().is_none());
+    let callers = registry.callers.lock().expect("registry");
+    let registered = callers.get(first.token()).expect("first");
+    let report = WorkerParent {
+        id: registered.worker_id.clone(),
+        project: registered.project.clone(),
+        child_name: "review".into(),
+        backend: Some(registered.backend),
+        binding: registered.binding.clone(),
+    };
+    assert_eq!(
+        report.find(&callers).expect("recipient").worker_id,
+        registered.worker_id
+    );
+    Ok(())
+}
+
+#[test]
+fn binding_promotes_early_children_and_shared_handles_after_app_id_merge() -> Result<(), String> {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    let registry = CallerRegistry::default();
+    let parent = identity(&registry, Path::new("/project"), Backend::Pi);
+    let parent_id = parent.worker_identity().expect("early identity").0;
+    let early = registry.issue_as(
+        Path::new("/project"),
+        CallerProfile {
+            backend: Backend::Codex,
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+        new_worker_id(),
+        "early".into(),
+        Some(parent_id.clone()),
+    )?;
+    early.bind("child");
+    parent.bind("/sessions/parent.jsonl");
+    let binding = registry
+        .callers
+        .lock()
+        .expect("registry")
+        .get(parent.token())
+        .expect("parent")
+        .binding
+        .clone();
+    assert!(matches!(
+        binding
+            .lock()
+            .expect("binding")
+            .as_ref()
+            .expect("bound")
+            .key,
+        Some(SessionKey::Locator { .. })
+    ));
+    let record = Arc::new(AtomicI64::new(41));
+    let current = record.clone();
+    registry.set_execution_sinks(
+        Some(Arc::new(move |caller| {
+            Ok(if caller.worker_id == parent_id {
+                current.load(Ordering::SeqCst)
+            } else {
+                100
+            })
+        })),
+        None,
+    );
+    parent.bind("/sessions/parent.jsonl");
+    assert!(
+        registry
+            .session_caller(&SessionKey::App(AppSessionId::new(41).expect("id")))
+            .is_some()
+    );
+    record.store(84, Ordering::SeqCst);
+    let current = context(&registry, &parent);
+    assert_eq!(current.app_session_id.map(AppSessionId::get), Some(84));
+    assert_eq!(
+        binding
+            .lock()
+            .expect("binding")
+            .as_ref()
+            .expect("bound")
+            .key,
+        Some(SessionKey::App(AppSessionId::new(84).expect("id")))
+    );
+    let callers = registry.callers.lock().expect("registry");
+    assert_eq!(
+        callers
+            .get(early.token())
+            .expect("child")
+            .parent_session
+            .as_ref()
+            .expect("parent binding")
+            .key,
+        Some(SessionKey::App(AppSessionId::new(84).expect("id")))
+    );
+    drop(callers);
+    assert!(
+        registry
+            .session_caller(&SessionKey::App(AppSessionId::new(41).expect("id")))
+            .is_none()
+    );
+    drop(parent);
+    let replacement = identity(&registry, Path::new("/project"), Backend::Pi);
+    registry.set_execution_sinks(Some(Arc::new(|_| Ok(84))), None);
+    replacement.bind("/sessions/parent.jsonl");
+    registry.send(early.token(), "parent", "after merge".into())?;
+    assert_eq!(
+        replacement.try_recv().expect("replacement report").message,
+        "after merge"
+    );
+    Ok(())
+}
+
+#[test]
+fn retained_report_binding_follows_replacement_then_merge_but_not_another_session()
+-> Result<(), String> {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    let registry = CallerRegistry::default();
+    let record = Arc::new(AtomicI64::new(41));
+    let current = record.clone();
+    registry.set_execution_sinks(
+        Some(Arc::new(move |caller| {
+            Ok(if caller.session == "/sessions/a.jsonl" {
+                current.load(Ordering::SeqCst)
+            } else {
+                99
+            })
+        })),
+        None,
+    );
+    let first = identity(&registry, Path::new("/project"), Backend::Pi);
+    first.bind("/sessions/a.jsonl");
+    let first_context = context(&registry, &first);
+    let original_binding = registry
+        .callers
+        .lock()
+        .expect("registry")
+        .get(first.token())
+        .expect("first")
+        .binding
+        .clone();
+    let report = WorkerParent {
+        id: first_context.worker_id.clone(),
+        project: first_context.project.clone(),
+        child_name: "review".into(),
+        backend: Some(Backend::Pi),
+        binding: original_binding.clone(),
+    };
+    let (responses, _) = mpsc::channel();
+    let lease = registry.request_profile_input(
+        &first_context,
+        crate::WorkerInput {
+            id: "question".into(),
+            prompt: "Proceed?".into(),
+            options: vec![],
+            secret: false,
+        },
+        responses,
+    )?;
+    drop(first);
+    let replacement = identity(&registry, Path::new("/project"), Backend::Pi);
+    replacement.bind("/sessions/a.jsonl");
+    record.store(84, Ordering::SeqCst);
+    let replacement_context = context(&registry, &replacement);
+    assert_eq!(
+        original_binding
+            .lock()
+            .expect("binding")
+            .as_ref()
+            .expect("bound")
+            .key,
+        Some(SessionKey::App(AppSessionId::new(84).expect("id")))
+    );
+    let callers = registry.callers.lock().expect("registry");
+    assert_eq!(
+        report.find(&callers).expect("report recipient").worker_id,
+        replacement_context.worker_id
+    );
+    drop(callers);
+    let scope = CallerSession::from_context(&replacement_context).native;
+    let inputs = registry.take_child_inputs_for_session(&scope);
+    assert_eq!(inputs.len(), 1);
+    drop(lease);
+    assert_eq!(
+        registry.take_expired_child_inputs_for_session(&scope),
+        vec![inputs[0].id.clone()]
+    );
+
+    let unrelated = identity(&registry, Path::new("/project"), Backend::Pi);
+    unrelated.bind("/sessions/a.jsonl");
+    unrelated.bind("/sessions/b.jsonl");
+    assert_eq!(
+        original_binding
+            .lock()
+            .expect("binding")
+            .as_ref()
+            .expect("bound")
+            .key,
+        Some(SessionKey::App(AppSessionId::new(84).expect("id")))
+    );
+    drop(replacement);
+    assert!(
+        report
+            .find(&registry.callers.lock().expect("registry"))
+            .is_none(),
+        "unrelated session must not receive old report"
+    );
     Ok(())
 }

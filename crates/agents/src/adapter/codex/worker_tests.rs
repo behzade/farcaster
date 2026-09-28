@@ -149,6 +149,7 @@ done
     std::fs::write(&script, SCRIPT).map_err(|error| error.to_string())?;
     let factory = CodexWorkerFactory::new(AgentLaunchConfig::test_script(&script, Vec::new()));
     let mut worker = factory.create(WorkerLaunch {
+        harness_profile_id: None,
         slot: None,
         worker_id: "resumed-worker".into(),
         worker_name: "resumed".into(),

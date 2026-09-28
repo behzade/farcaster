@@ -14,19 +14,20 @@ impl RuntimeOwner {
         }) else {
             return;
         };
-        for id in agents::CallerRegistry::shared().take_expired_child_inputs(
-            &self.project,
-            backend,
-            &locator,
-        ) {
+        let identity = sessions::NativeSessionIdentity {
+            project: sessions::normalize_session_path(&self.project),
+            harness: backend,
+            profile_id: self.process_command.profile_id.clone(),
+            id: locator,
+        };
+        for id in agents::CallerRegistry::shared().take_expired_child_inputs_for_session(&identity)
+        {
             let _ = self.event_tx.send(RuntimeEvent::ExtensionUiDismissed {
                 generation: self.process_generation,
                 id,
             });
         }
-        for input in
-            agents::CallerRegistry::shared().take_child_inputs(&self.project, backend, &locator)
-        {
+        for input in agents::CallerRegistry::shared().take_child_inputs_for_session(&identity) {
             let _ = self.event_tx.send(RuntimeEvent::ExtensionUi {
                 generation: self.process_generation,
                 request: child_interaction(input),

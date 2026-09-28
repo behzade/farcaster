@@ -74,6 +74,7 @@ fn expired_child_lease_dismisses_the_dialog_and_late_answers_keep_parent_alive()
         None,
     );
     let path = temp.path().join("parent.jsonl");
+    parent.set_harness_profile_id(Some("11111111-1111-4111-8111-111111111111".into()));
     parent.bind(path.to_string_lossy());
     let caller = registry.resolve(parent.token())?;
     let (child_events, receiver) = mpsc::channel();
@@ -125,6 +126,7 @@ fn expired_child_lease_dismisses_the_dialog_and_late_answers_keep_parent_alive()
     let closed = std::rc::Rc::new(std::cell::Cell::new(0));
     owner.process = Some(Box::new(ParentTransport(closed.clone())));
     owner.active_session = Some(path);
+    owner.process_command.profile_id = Some("11111111-1111-4111-8111-111111111111".into());
     Arc::make_mut(&mut owner.snapshot.conversation).running = true;
     owner.publish_child_inputs();
     let request = events

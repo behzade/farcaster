@@ -221,6 +221,7 @@ fn request(project: &std::path::Path) -> StartWorker {
 fn assignment() -> super::WorkerAssignment {
     super::WorkerAssignment {
         profile: "test-profile".into(),
+        harness_profile_id: None,
         execution: super::WorkerExecution {
             harness: Backend::Pi,
             provider: "test-provider".into(),
@@ -374,6 +375,7 @@ fn restricted_parent_cannot_queue_to_a_pending_full_child() -> Result<(), String
             message: "initial".into(),
         },
     )?;
+    drop(full_parent);
     let restricted_parent = CallerRegistry::shared().issue_with_access(
         project.path(),
         profile,
@@ -1346,6 +1348,11 @@ fn idle_processes_are_bounded_and_a_retired_child_resumes_its_session() -> Resul
         crate::HarnessAccessMode::Full,
     );
     parent.bind("/sessions/parent.jsonl");
+    parent.bind_execution_for_test(crate::ExecutionBinding {
+        session_record: 41,
+        turn_id: "before-restart".into(),
+        prompt_id: None,
+    });
     let parent_context = CallerRegistry::shared().resolve(parent.token())?;
     let mut first_worker_id = None;
 
@@ -1401,19 +1408,8 @@ fn idle_processes_are_bounded_and_a_retired_child_resumes_its_session() -> Resul
         .is_none(),
         "an equal native session string from another backend must not resume the child"
     );
-    let restricted_parent = CallerRegistry::shared().issue_with_access(
-        project.path(),
-        CallerProfile {
-            backend: Backend::Pi,
-            provider: None,
-            model: None,
-            effort: None,
-        },
-        None,
-        crate::HarnessAccessMode::Auto,
-    );
-    restricted_parent.bind("/sessions/parent.jsonl");
-    let restricted_context = CallerRegistry::shared().resolve(restricted_parent.token())?;
+    parent.set_access_mode(crate::HarnessAccessMode::Auto);
+    let restricted_context = CallerRegistry::shared().resolve(parent.token())?;
     let error = pool
         .resume_child(
             &restricted_context,
@@ -1429,6 +1425,30 @@ fn idle_processes_are_bounded_and_a_retired_child_resumes_its_session() -> Resul
         10
     );
 
+    drop(parent);
+    let replacement = CallerRegistry::shared().issue_with_access(
+        project.path(),
+        CallerProfile {
+            backend: Backend::Pi,
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+        crate::HarnessAccessMode::Full,
+    );
+    replacement.bind("/sessions/parent.jsonl");
+    replacement.bind_execution_for_test(crate::ExecutionBinding {
+        session_record: 41,
+        turn_id: "replacement".into(),
+        prompt_id: None,
+    });
+    replacement.bind_execution_for_test(crate::ExecutionBinding {
+        session_record: 84,
+        turn_id: "merged".into(),
+        prompt_id: None,
+    });
+    let parent_context = CallerRegistry::shared().resolve(replacement.token())?;
     pool.set_app_proxy(Some("https://resume-proxy.example:8443".into()))?;
     let (create_gate, create_changed) = &*factory.create_gate;
     *create_gate.lock().map_err(|_| "create gate")? = true;
@@ -1533,4 +1553,63 @@ fn wait_for_worker_status(pool: &WorkerPool, id: &str, status: WorkerStatus) -> 
         }
         std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+#[test]
+fn restored_child_keeps_route_through_parent_binding_and_merge_before_first_resume()
+-> Result<(), String> {
+    use farcaster_sessions::{AppSessionId, SessionKey};
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let factory = Arc::new(FakeFactory::default());
+    let (pool, _updates) = pool(factory.clone(), project.path(), 1)?;
+    pool.restore_families([WorkerFamilyLink {
+        project: project.path().into(),
+        child_backend: Backend::Pi,
+        child_session: "/sessions/restored-child.jsonl".into(),
+        parent_backend: Backend::Pi,
+        parent_session: "/sessions/restored-parent.jsonl".into(),
+        child_key: Some(SessionKey::App(AppSessionId::new(51).expect("child id"))),
+        parent_key: Some(SessionKey::App(AppSessionId::new(41).expect("parent id"))),
+        execution: Some(assignment().execution),
+        routing: Some(WorkerRouting {
+            name: "restored".into(),
+            assignment: assignment(),
+            access_mode: crate::HarnessAccessMode::Auto,
+        }),
+    }])?;
+    let registry = CallerRegistry::shared();
+    let parent = registry.issue(
+        project.path(),
+        CallerProfile {
+            backend: Backend::Pi,
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    parent.bind("/sessions/restored-parent.jsonl");
+    for id in [41, 84] {
+        parent.bind_execution_for_test(crate::ExecutionBinding {
+            session_record: id,
+            turn_id: "binding".into(),
+            prompt_id: None,
+        });
+    }
+    let context = registry.resolve(parent.token())?;
+    assert!(
+        pool.resume_child(&context, "restored", "continue".into(), None, |_, mode| {
+            Some(mode)
+        })?
+        .is_some()
+    );
+    let id = pool.snapshots()?[0].id.clone();
+    wait_for_worker_status(&pool, &id, WorkerStatus::Running)?;
+    assert_eq!(
+        factory.launches.lock().map_err(|_| "launches")?[0].context,
+        WorkerContext::Resume {
+            session_locator: "/sessions/restored-child.jsonl".into()
+        }
+    );
+    Ok(())
 }

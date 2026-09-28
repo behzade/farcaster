@@ -34,6 +34,8 @@ impl WorkerSendMode {
 
 #[derive(Clone, Debug)]
 pub struct WorkerLaunch {
+    /// Named harness configuration; independent of the worker preset.
+    pub harness_profile_id: Option<String>,
     pub slot: Option<super::WorkerSlot>,
     pub worker_id: String,
     pub worker_name: String,

@@ -68,6 +68,7 @@ fn assert_persisted_child_reuse(profile: &str) -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
     let assignment = crate::agents::WorkerAssignment {
+        harness_profile_id: (profile == "inherit").then(|| "original-harness".into()),
         profile: profile.into(),
         execution: crate::agents::WorkerExecution {
             harness: Backend::Codex,
@@ -79,6 +80,8 @@ fn assert_persisted_child_reuse(profile: &str) -> Result<(), String> {
     };
     crate::storage::StateStore::open_at(&database)?.save_worker_family(
         &crate::agents::WorkerFamilyLink {
+            child_key: None,
+            parent_key: None,
             project: temp.path().to_owned(),
             child_backend: Backend::Codex,
             child_session: "saved-child-session".into(),
@@ -101,7 +104,11 @@ fn assert_persisted_child_reuse(profile: &str) -> Result<(), String> {
         temp.path().to_owned(),
         1,
     )?;
-    pool.restore_families(crate::storage::StateStore::open_at(&database)?.load_worker_routes()?)?;
+    let families = crate::storage::StateStore::open_at(&database)?.load_worker_routes()?;
+    let Some(crate::sessions::SessionKey::App(parent_id)) = families[0].parent_key else {
+        return Err("persisted family has no canonical parent".into());
+    };
+    pool.restore_families(families)?;
     let parent = CallerRegistry::shared().issue_with_access(
         temp.path(),
         CallerProfile {
@@ -114,6 +121,19 @@ fn assert_persisted_child_reuse(profile: &str) -> Result<(), String> {
         crate::agents::HarnessAccessMode::Full,
     );
     parent.bind("saved-parent-session");
+    let context = CallerRegistry::shared().resolve(parent.token())?;
+    let session_record =
+        crate::storage::StateStore::open_at(&database)?.register_caller_session(&context)?;
+    parent.bind_execution_for_test(crate::agents::ExecutionBinding {
+        session_record,
+        turn_id: "restored-parent".into(),
+        prompt_id: None,
+    });
+    parent.bind_execution_for_test(crate::agents::ExecutionBinding {
+        session_record: parent_id.get(),
+        turn_id: "resumed-parent-turn".into(),
+        prompt_id: None,
+    });
     let result = send(
         &pool,
         SendParams {
