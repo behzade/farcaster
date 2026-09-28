@@ -250,32 +250,6 @@ pub(super) fn delegated_access_mode(
     }
 }
 
-#[cfg(test)]
-fn resolve_child(
-    profiles: &crate::agents::WorkerProfiles,
-    profile: &str,
-    project: &std::path::Path,
-    parent_access_mode: crate::agents::HarnessAccessMode,
-    route: impl Fn(
-        &crate::agents::WorkerExecution,
-        &std::path::Path,
-        crate::agents::HarnessAccessMode,
-    ) -> Option<crate::agents::HarnessAccessMode>,
-) -> Result<
-    (
-        crate::agents::WorkerAssignment,
-        crate::agents::HarnessAccessMode,
-    ),
-    String,
-> {
-    let assignment = profiles.resolve(profile, |model| {
-        route(model, project, parent_access_mode).is_some()
-    })?;
-    let access_mode = route(&assignment.execution, project, parent_access_mode)
-        .ok_or("selected worker model no longer supports the required child access mode")?;
-    Ok((assignment, access_mode))
-}
-
 pub(super) fn child_access_mode(
     model: &crate::agents::WorkerExecution,
     project: &std::path::Path,
@@ -349,16 +323,6 @@ pub(super) fn child_access_mode_for_profile(
         | crate::agents::HarnessAccessMode::Sandboxed
         | crate::agents::HarnessAccessMode::Full => None,
     }
-}
-
-#[cfg(test)]
-pub(super) fn model_available(
-    model: &crate::agents::WorkerExecution,
-    project: &std::path::Path,
-    backends: &[crate::agents::Backend],
-    catalogs: &[crate::storage::CachedConfigurationCatalog],
-) -> bool {
-    model_available_for_profile(model, None, project, backends, catalogs)
 }
 
 fn model_available_for_profile(

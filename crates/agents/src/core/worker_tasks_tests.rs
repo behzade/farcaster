@@ -59,29 +59,18 @@ fn built_ins_have_limits_and_no_default_models() {
             .iter()
             .all(|profile| profile.models.is_empty())
     );
-    assert!(profiles.resolve("standard", |_| true).is_err());
 }
 
 #[test]
 fn one_route_and_positive_limit_are_required() {
     let mut profiles = WorkerProfiles::default();
     profiles.profiles[0].models.push(execution("first"));
-    assert_eq!(
-        profiles
-            .resolve("smartest", |_| true)
-            .unwrap()
-            .execution
-            .model,
-        "first"
-    );
+    assert!(profiles.validate().is_ok());
     profiles.profiles[0].models.push(execution("second"));
     assert!(profiles.validate().is_err());
     profiles.profiles[0].models.pop();
     profiles.profiles[0].limit = 0;
     assert!(profiles.validate().is_err());
-    profiles.profiles[0].limit = 1;
-    profiles.profiles[0].enabled = false;
-    assert!(profiles.resolve("smartest", |_| true).is_err());
 }
 
 #[test]

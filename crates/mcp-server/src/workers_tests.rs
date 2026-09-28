@@ -63,6 +63,129 @@ impl WorkerSession for Session {
 }
 
 #[test]
+fn preset_creation_uses_production_configuration_and_admission() -> Result<(), String> {
+    use crate::agents::{HarnessAccessMode, WorkerExecution, WorkerProfile, WorkerProfiles};
+
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let launches = Arc::new(Mutex::new(Vec::new()));
+    let factory: Arc<dyn WorkerSessionFactory> = Arc::new(Factory {
+        launches: launches.clone(),
+    });
+    let pool = WorkerPool::new(
+        std::collections::BTreeMap::from([(Backend::Codex, factory)]),
+        Backend::Codex,
+        temp.path().to_owned(),
+        4,
+    )?;
+    let parent = CallerRegistry::shared().issue_with_access(
+        temp.path(),
+        CallerProfile {
+            backend: Backend::Codex,
+            provider: Some("openai".into()),
+            model: Some("parent".into()),
+            effort: None,
+        },
+        None,
+        HarnessAccessMode::Auto,
+    );
+    parent.bind("preset-parent");
+    let execution = |harness, model: &str| WorkerExecution {
+        harness,
+        provider: "openai".into(),
+        model: model.into(),
+        effort: None,
+        service_tier: None,
+    };
+    for (name, enabled, saved, choice, expected_calls, expected_error) in [
+        (
+            "disabled",
+            false,
+            Some("selected"),
+            "chosen",
+            0,
+            Some("disabled"),
+        ),
+        ("empty", true, None, "chosen", 1, None),
+        ("unavailable", true, Some("unavailable"), "chosen", 1, None),
+        ("configured", true, Some("selected"), "chosen", 0, None),
+        (
+            "invalid-choice",
+            true,
+            None,
+            "unavailable",
+            1,
+            Some("selected worker model is unavailable"),
+        ),
+        (
+            "unsandboxed-pi",
+            true,
+            Some("selected"),
+            "chosen",
+            1,
+            Some("selected worker model is unavailable"),
+        ),
+    ] {
+        let harness = if name == "unsandboxed-pi" {
+            Backend::Pi
+        } else {
+            Backend::Codex
+        };
+        let mut profile = WorkerProfile::new("review".into());
+        profile.enabled = enabled;
+        profile.models = saved
+            .map(|model| execution(harness, model))
+            .into_iter()
+            .collect();
+        let profiles = WorkerProfiles {
+            profiles: vec![profile],
+            ..Default::default()
+        };
+        let configured = std::cell::Cell::new(0);
+        let result = send_configurable(
+            &pool,
+            SendParams {
+                to: Some(name.into()),
+                message: "inspect".into(),
+                profile: Some("review".into()),
+            },
+            Some(parent.token().into()),
+            &profiles,
+            |model, _, project, mode| {
+                if model.model == "unavailable" {
+                    return None;
+                }
+                child_access_mode(model, project, mode, &[Backend::Codex, Backend::Pi], &[])
+            },
+            |profile, caller| {
+                assert_eq!(profile, "review");
+                assert_eq!(caller.access_mode, HarnessAccessMode::Auto);
+                configured.set(configured.get() + 1);
+                Ok(execution(harness, choice))
+            },
+        );
+        assert_eq!(configured.get(), expected_calls, "{name}");
+        if let Some(expected) = expected_error {
+            let error = result.expect_err(name);
+            assert!(error.contains(expected), "{name}: {error}");
+        } else {
+            let result = result?;
+            assert_eq!(result["created"], true, "{name}");
+            assert_eq!(
+                result["assignment"]["execution"]["model"],
+                if expected_calls == 0 {
+                    "selected"
+                } else {
+                    choice
+                }
+            );
+        }
+    }
+    wait_for_launches(&launches, 3)?;
+    assert_eq!(launches.lock().unwrap().len(), 3);
+    Ok(())
+}
+
+#[test]
 fn inherit_carries_harness_profile_but_explicit_presets_use_base_configuration()
 -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
@@ -897,22 +1020,18 @@ fn worker_model_selection_uses_installed_harnesses_and_project_catalogs() {
         },
     };
     let catalogs = [catalog];
-    let assignment = profiles
-        .resolve("cheap_4", |model| {
-            model_available(model, project, &backends, &catalogs)
-        })
-        .expect("test operation should succeed");
-    assert_eq!(assignment.execution.provider, "openai-codex");
-    assert_eq!(assignment.execution.model, "gpt-5.6-luna");
-    assert!(
-        profiles
-            .resolve("oracle", |model| model_available(
-                model, project, &backends, &catalogs
-            ))
-            .is_err()
-    );
-    assert!(!model_available(
-        &assignment.execution,
+    let selected = &profiles
+        .profiles
+        .iter()
+        .find(|profile| profile.name == "cheap_4")
+        .unwrap()
+        .models[0];
+    assert!(model_available_for_profile(
+        selected, None, project, &backends, &catalogs
+    ));
+    assert!(!model_available_for_profile(
+        selected,
+        None,
         project,
         &[],
         &catalogs
@@ -923,19 +1042,27 @@ fn worker_model_selection_uses_installed_harnesses_and_project_catalogs() {
         .find(|profile| profile.name == "cheap_2")
         .unwrap()
         .models[0];
-    assert!(!model_available(
+    assert!(!model_available_for_profile(
         preferred_pi,
+        None,
         project,
         &backends,
         &catalogs
     ));
-    assert!(model_available(
+    assert!(model_available_for_profile(
         preferred_pi,
+        None,
         std::path::Path::new("/other"),
         &backends,
         &catalogs
     ));
-    assert!(model_available(preferred_pi, project, &backends, &[]));
+    assert!(model_available_for_profile(
+        preferred_pi,
+        None,
+        project,
+        &backends,
+        &[]
+    ));
 }
 
 #[test]
@@ -980,21 +1107,6 @@ fn restricted_parent_never_routes_to_unsandboxed_pi() {
         ),
         Some(crate::agents::HarnessAccessMode::Full),
         "only a Full parent may route to an unsandboxed Pi child"
-    );
-
-    let mut profiles = configured_profiles();
-    profiles.profiles[0].models = vec![pi];
-    let profile_name = profiles.profiles[0].name.clone();
-    assert!(
-        resolve_child(
-            &profiles,
-            &profile_name,
-            project,
-            auto,
-            |model, project, mode| { child_access_mode(model, project, mode, &[Backend::Pi], &[]) }
-        )
-        .is_err(),
-        "creation must fail before launching when no protected candidate exists"
     );
 }
 

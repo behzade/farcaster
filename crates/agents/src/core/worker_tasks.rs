@@ -295,38 +295,6 @@ impl WorkerProfiles {
         }
         Ok(())
     }
-
-    pub fn resolve(
-        &self,
-        profile: &str,
-        available: impl Fn(&WorkerExecution) -> bool,
-    ) -> Result<WorkerAssignment, String> {
-        self.validate()?;
-        let definition = self
-            .profiles
-            .iter()
-            .find(|definition| definition.name == profile)
-            .ok_or_else(|| {
-                format!("unknown worker profile: {profile}; refresh the tool schema for configured profiles")
-            })?;
-        if !definition.enabled {
-            return Err(format!("worker profile '{profile}' is disabled"));
-        }
-        let execution = definition
-            .models
-            .first()
-            .ok_or_else(|| format!("worker profile '{profile}' has no selected model"))?;
-        if !available(execution) {
-            return Err(format!(
-                "selected model for worker profile '{profile}' is unavailable"
-            ));
-        }
-        Ok(WorkerAssignment {
-            profile: profile.into(),
-            harness_profile_id: None,
-            execution: execution.clone(),
-        })
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
