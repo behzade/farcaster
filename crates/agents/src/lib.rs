@@ -27,6 +27,7 @@ pub use adapter::{
     supports_startup_command, supports_steering, validate_launch, validate_session_move,
     warm_session_history_for_profile, worker_factories,
 };
+pub use adapter::{delegated_worker_access_mode, worker_access_modes};
 #[cfg(any(test, feature = "test-support"))]
 pub use contract::WorkerStatus;
 pub use contract::extensions;

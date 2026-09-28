@@ -77,7 +77,7 @@ pub(super) fn configure(
         // Another request may have saved this profile after our caller loaded it.
         let saved = with_store(store, |store| store.load_worker_profiles())?;
         let backends = available_worker_backends(launch_config, &caller.project);
-        let access = super::workers::delegated_access_mode(caller.backend, caller.access_mode);
+        let access = agents::delegated_worker_access_mode(caller.backend, caller.access_mode);
         if let Some(model) = saved
             .profiles
             .iter()
@@ -124,7 +124,7 @@ fn configure_model(
                     service_tier: None,
                 };
                 let access =
-                    super::workers::delegated_access_mode(caller.backend, caller.access_mode);
+                    agents::delegated_worker_access_mode(caller.backend, caller.access_mode);
                 super::workers::child_access_mode(
                     &execution,
                     &caller.project,
@@ -137,7 +137,7 @@ fn configure_model(
         })
         .collect::<Vec<_>>();
     let (execution, save_choice) = if choices.is_empty() {
-        let access = super::workers::delegated_access_mode(caller.backend, caller.access_mode);
+        let access = agents::delegated_worker_access_mode(caller.backend, caller.access_mode);
         let available = fallback_harnesses(&caller.project, access, backends, catalogs);
         let harnesses = available
             .iter()
@@ -250,7 +250,7 @@ fn configure_model(
         )
     };
     execution.validate()?;
-    let access = super::workers::delegated_access_mode(caller.backend, caller.access_mode);
+    let access = agents::delegated_worker_access_mode(caller.backend, caller.access_mode);
     if super::workers::child_access_mode(&execution, &caller.project, access, backends, catalogs)
         .is_none()
     {

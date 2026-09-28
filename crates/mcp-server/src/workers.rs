@@ -141,7 +141,8 @@ pub fn send_configurable(
     pool.allow_project(&caller.project)?;
     let name = to;
     let profile = params.profile.as_deref().unwrap_or("inherit");
-    let requested_access_mode = delegated_access_mode(caller.backend, caller.access_mode);
+    let requested_access_mode =
+        crate::agents::delegated_worker_access_mode(caller.backend, caller.access_mode);
     let (assignment, child_access_mode) = if profile == "inherit" {
         if !tasks.inherit_enabled {
             return Err("worker profile 'inherit' is disabled".into());
@@ -236,20 +237,6 @@ pub fn send_configurable(
     }))
 }
 
-pub(super) fn delegated_access_mode(
-    parent_backend: crate::agents::Backend,
-    parent_access_mode: crate::agents::HarnessAccessMode,
-) -> crate::agents::HarnessAccessMode {
-    match (parent_backend, parent_access_mode) {
-        // Pi's mode describes parent containment, not how autonomous children
-        // should handle approvals.
-        (crate::agents::Backend::Pi, crate::agents::HarnessAccessMode::Sandboxed) => {
-            crate::agents::HarnessAccessMode::Auto
-        }
-        (_, access_mode) => access_mode,
-    }
-}
-
 pub(super) fn launch_access_mode(
     config: &crate::agents::AgentLaunchConfig,
     model: &crate::agents::WorkerExecution,
@@ -311,21 +298,14 @@ pub(super) fn child_access_mode_for_profile(
             .find(|candidate| candidate.provider == model.provider && candidate.id == model.model)
             .map(|candidate| (*entry, candidate))
     });
-    if model.harness == crate::agents::Backend::Pi
-        && catalog_model
-            .and_then(|(entry, _)| entry.catalog.sandbox_adapter.as_deref())
-            .is_none()
-    {
-        return None;
-    }
     let modes = match catalog_model {
-        Some((entry, candidate)) => crate::agents::available_access_modes(
+        Some((entry, candidate)) => crate::agents::worker_access_modes(
             model.harness,
             Some(candidate),
             entry.catalog.sandbox_adapter.as_deref(),
         ),
         None if catalogs_for_harness.is_empty() => {
-            crate::agents::available_access_modes(model.harness, None, None)
+            crate::agents::worker_access_modes(model.harness, None, None)
         }
         None => Vec::new(),
     };

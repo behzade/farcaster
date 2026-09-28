@@ -84,6 +84,27 @@ impl BackendAdapter for PiAdapter {
     ) -> Vec<crate::HarnessAccessMode> {
         super::sandbox::access_modes(sandbox_adapter).to_vec()
     }
+    fn delegated_worker_access_mode(
+        &self,
+        mode: crate::HarnessAccessMode,
+    ) -> crate::HarnessAccessMode {
+        // Pi's mode describes parent containment, not child approval behavior.
+        match mode {
+            crate::HarnessAccessMode::Sandboxed => crate::HarnessAccessMode::Auto,
+            mode => mode,
+        }
+    }
+    fn worker_access_modes(
+        &self,
+        model: Option<&crate::extensions::Model>,
+        sandbox_adapter: Option<&str>,
+    ) -> Vec<crate::HarnessAccessMode> {
+        // Without a sandbox adapter, Pi's Auto mode launches with full access.
+        if sandbox_adapter.is_none() {
+            return Vec::new();
+        }
+        self.access_modes(model, sandbox_adapter)
+    }
     fn supports_sandbox_discovery(&self) -> bool {
         true
     }

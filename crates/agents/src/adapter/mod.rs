@@ -59,6 +59,24 @@ pub fn available_access_modes(
     for_backend(harness).access_modes(model, sandbox_adapter)
 }
 
+/// Translate a parent's native access mode into its worker approval policy.
+pub fn delegated_worker_access_mode(
+    harness: Backend,
+    mode: crate::HarnessAccessMode,
+) -> crate::HarnessAccessMode {
+    for_backend(harness).delegated_worker_access_mode(mode)
+}
+
+/// Modes a restricted parent may consider when creating a worker.
+/// The caller must still enforce its own access ceiling.
+pub fn worker_access_modes(
+    harness: Backend,
+    model: Option<&crate::extensions::Model>,
+    sandbox_adapter: Option<&str>,
+) -> Vec<crate::HarnessAccessMode> {
+    for_backend(harness).worker_access_modes(model, sandbox_adapter)
+}
+
 pub fn supports_sandbox_discovery(harness: impl Into<Option<Backend>>) -> bool {
     let Some(harness) = harness.into() else {
         return false;

@@ -165,7 +165,7 @@ fn concurrent_sends_share_one_profile_choice_and_its_result() {
 fn fallback_offers_only_harnesses_that_can_run_at_the_parent_access_mode() {
     let backends = [agents::Backend::Pi, agents::Backend::Codex];
     let project = std::path::Path::new("/profile-prompt-test");
-    let access = super::super::workers::delegated_access_mode(
+    let access = agents::delegated_worker_access_mode(
         agents::Backend::Pi,
         agents::HarnessAccessMode::Sandboxed,
     );

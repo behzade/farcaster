@@ -20,6 +20,10 @@ use crate::{
 pub(super) static STANDARD_SERVICE_TIER: LazyLock<[String; 1]> =
     LazyLock::new(|| ["standard".to_owned()]);
 
+#[cfg(test)]
+#[path = "backend_tests.rs"]
+mod tests;
+
 pub(super) trait BackendAdapter: Sync {
     fn descriptor(&self) -> AgentBackendDescriptor;
     fn launch_configuration(&self, config: &AgentLaunchConfig) -> AgentLaunchConfig;
@@ -79,6 +83,19 @@ pub(super) trait BackendAdapter: Sync {
                 )
             })
             .collect()
+    }
+    fn delegated_worker_access_mode(
+        &self,
+        mode: crate::HarnessAccessMode,
+    ) -> crate::HarnessAccessMode {
+        mode
+    }
+    fn worker_access_modes(
+        &self,
+        model: Option<&crate::extensions::Model>,
+        sandbox_adapter: Option<&str>,
+    ) -> Vec<crate::HarnessAccessMode> {
+        self.access_modes(model, sandbox_adapter)
     }
     fn supports_sandbox_discovery(&self) -> bool {
         false
