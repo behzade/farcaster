@@ -358,17 +358,28 @@ impl StateStore {
             .map(String::as_str)
             .collect::<HashSet<_>>();
         for submission_id in &delivered {
-            transaction
-                .execute(
-                    "UPDATE outbox SET state='acked', error=NULL
-                  WHERE session_id=?1 AND state='pending' AND id IN (
-                    SELECT json_extract(body,'$.outboxId') FROM session_events
-                     WHERE session_id=?1 AND json_extract(body,'$.type')='prompt_dispatch'
-                       AND json_extract(body,'$.submissionId')=?2
-                  )",
-                    params![session_id, submission_id],
-                )
-                .map_err(|error| format!("ack native prompt delivery {submission_id}: {error}"))?;
+            let outbox_ids = {
+                let mut statement = transaction
+                    .prepare(
+                        "SELECT id FROM outbox
+                          WHERE session_id=?1 AND state='pending' AND id IN (
+                            SELECT json_extract(body,'$.outboxId') FROM session_events
+                             WHERE session_id=?1 AND json_extract(body,'$.type')='prompt_dispatch'
+                               AND json_extract(body,'$.submissionId')=?2
+                          )",
+                    )
+                    .map_err(|error| format!("find native prompt delivery: {error}"))?;
+                statement
+                    .query_map(params![session_id, submission_id], |row| {
+                        row.get::<_, i64>(0)
+                    })
+                    .map_err(|error| format!("query native prompt delivery: {error}"))?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(|error| format!("decode native prompt delivery: {error}"))?
+            };
+            for id in outbox_ids {
+                record_prompt_delivery(&transaction, id, submission_id, true, true)?;
+            }
         }
         for submission_id in unresolved {
             let (event_type, status) = if delivered.contains(submission_id.as_str()) {
@@ -463,64 +474,7 @@ impl StateStore {
                 format!("associate queued prompt {id} with its session: {error}")
             })?;
         }
-        transaction.execute(
-            "UPDATE sessions SET submitted=1 WHERE id=(SELECT session_id FROM outbox WHERE id=?1)",
-            [id],
-        ).map_err(|error| format!("record prompt acceptance: {error}"))?;
-        transaction.execute(
-            "INSERT INTO session_events(session_id, seq, t, schema_version, body)
-             SELECT o.session_id,
-                    (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=o.session_id),
-                    o.created_ms, 1,
-                    json_object('type','accepted_prompt','submissionId',?2,'outboxId',o.id,
-                                'deliveryStatus','accepted',
-                                'deliveryTracked',json(CASE WHEN ?3 THEN 'true' ELSE 'false' END),
-                                'promptMode',o.mode,'message',o.message,
-                                'images',json(o.images_json))
-               FROM outbox o WHERE o.id=?1
-                AND NOT EXISTS (
-                    SELECT 1 FROM session_events e
-                     WHERE e.session_id=o.session_id
-                       AND json_extract(e.body,'$.type')='accepted_prompt'
-                       AND json_extract(e.body,'$.submissionId')=?2
-                )",
-            rusqlite::params![id, receipt_id, delivery_tracked],
-        ).map_err(|error| format!("save accepted prompt {id}: {error}"))?;
-        if delivered {
-            transaction.execute(
-                "INSERT INTO session_events(session_id, seq, t, schema_version, body)
-                 SELECT o.session_id,
-                        (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=o.session_id),
-                        o.created_ms, 1,
-                        json_object('type','prompt_presentation','resolved',o.message,
-                                    'display',o.display_message,'invocation',o.invocation)
-                   FROM outbox o
-                  WHERE o.id=?1 AND o.display_message IS NOT NULL AND o.invocation IS NOT NULL",
-                [id],
-            ).map_err(|error| format!("save prompt presentation {id}: {error}"))?;
-            // Acceptance and consumption must commit together. A crash between
-            // separate transactions would restore delivered input as pending.
-            transaction.execute(
-                "INSERT INTO session_events(session_id, seq, t, schema_version, body)
-                 SELECT o.session_id,
-                        (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=o.session_id),
-                        ?3, 1,
-                        json_object('type','prompt_delivery_receipt','submissionId',?2)
-                   FROM outbox o WHERE o.id=?1
-                    AND NOT EXISTS (
-                        SELECT 1 FROM session_events e WHERE e.session_id=o.session_id
-                         AND json_extract(e.body,'$.type')='prompt_delivery_receipt'
-                         AND json_extract(e.body,'$.submissionId')=?2
-                    )",
-                rusqlite::params![id, receipt_id, now_ms()],
-            ).map_err(|error| format!("save delivered prompt {id}: {error}"))?;
-            transaction
-                .execute(
-                    "UPDATE outbox SET state='acked', error=NULL WHERE id=?1 AND state='pending'",
-                    [id],
-                )
-                .map_err(|error| format!("complete delivered prompt {id}: {error}"))?;
-        }
+        record_prompt_delivery(&transaction, id, receipt_id, delivery_tracked, delivered)?;
         transaction
             .commit()
             .map_err(|error| format!("commit prompt delivery record {id}: {error}"))
@@ -573,6 +527,10 @@ impl StateStore {
                 .commit()
                 .map_err(|error| format!("finish unmatched prompt delivery receipt: {error}"));
         };
+        if let Some(outbox_id) = outbox_id {
+            record_prompt_delivery(&transaction, outbox_id, receipt_id, true, true)?;
+        }
+        // A receipt can still settle accepted history after its outbox row is gone.
         transaction
             .execute(
                 "INSERT INTO session_events(session_id, seq, t, schema_version, body)
@@ -589,15 +547,6 @@ impl StateStore {
                 rusqlite::params![session_id, now_ms(), receipt_id],
             )
             .map_err(|error| format!("save prompt delivery receipt {receipt_id}: {error}"))?;
-        if let Some(outbox_id) = outbox_id {
-            transaction
-                .execute(
-                    "UPDATE outbox SET state='acked', error=NULL
-                      WHERE id=?1 AND state='pending'",
-                    [outbox_id],
-                )
-                .map_err(|error| format!("ack delivered prompt {outbox_id}: {error}"))?;
-        }
         transaction
             .commit()
             .map_err(|error| format!("commit prompt delivery receipt {receipt_id}: {error}"))
@@ -619,4 +568,87 @@ impl StateStore {
             Err(format!("queued prompt {id} is no longer ready to send"))
         }
     }
+}
+
+// Keep every outbox acknowledgement in the same transaction as its payload,
+// presentation and receipt. The pending guard makes repeats harmless and keeps
+// cancelled prompts cancelled.
+fn record_prompt_delivery(
+    transaction: &Transaction<'_>,
+    id: i64,
+    receipt_id: &str,
+    delivery_tracked: bool,
+    delivered: bool,
+) -> Result<(), String> {
+    let pending = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM outbox WHERE id=?1 AND state='pending')",
+            [id],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|error| format!("check prompt delivery {id}: {error}"))?;
+    if !pending {
+        return Ok(());
+    }
+    transaction
+        .execute(
+            "UPDATE sessions SET submitted=1 WHERE id=(SELECT session_id FROM outbox WHERE id=?1)",
+            [id],
+        )
+        .map_err(|error| format!("record prompt acceptance: {error}"))?;
+    transaction.execute(
+            "INSERT INTO session_events(session_id, seq, t, schema_version, body)
+             SELECT o.session_id,
+                    (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=o.session_id),
+                    o.created_ms, 1,
+                    json_object('type','accepted_prompt','submissionId',?2,'outboxId',o.id,
+                                'deliveryStatus','accepted',
+                                'deliveryTracked',json(CASE WHEN ?3 THEN 'true' ELSE 'false' END),
+                                'promptMode',o.mode,'message',o.message,
+                                'images',json(o.images_json))
+               FROM outbox o WHERE o.id=?1
+                AND NOT EXISTS (
+                    SELECT 1 FROM session_events e
+                     WHERE e.session_id=o.session_id
+                       AND json_extract(e.body,'$.type')='accepted_prompt'
+                       AND json_extract(e.body,'$.submissionId')=?2
+                )",
+            rusqlite::params![id, receipt_id, delivery_tracked],
+        ).map_err(|error| format!("save accepted prompt {id}: {error}"))?;
+    if delivered {
+        transaction.execute(
+                "INSERT INTO session_events(session_id, seq, t, schema_version, body)
+                 SELECT o.session_id,
+                        (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=o.session_id),
+                        o.created_ms, 1,
+                        json_object('type','prompt_presentation','resolved',o.message,
+                                    'display',o.display_message,'invocation',o.invocation)
+                   FROM outbox o
+                  WHERE o.id=?1 AND o.display_message IS NOT NULL AND o.invocation IS NOT NULL",
+                [id],
+            ).map_err(|error| format!("save prompt presentation {id}: {error}"))?;
+        // Acceptance and consumption must commit together. A crash between
+        // separate transactions would restore delivered input as pending.
+        transaction.execute(
+                "INSERT INTO session_events(session_id, seq, t, schema_version, body)
+                 SELECT o.session_id,
+                        (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=o.session_id),
+                        ?3, 1,
+                        json_object('type','prompt_delivery_receipt','submissionId',?2)
+                   FROM outbox o WHERE o.id=?1
+                    AND NOT EXISTS (
+                        SELECT 1 FROM session_events e WHERE e.session_id=o.session_id
+                         AND json_extract(e.body,'$.type')='prompt_delivery_receipt'
+                         AND json_extract(e.body,'$.submissionId')=?2
+                    )",
+                rusqlite::params![id, receipt_id, now_ms()],
+            ).map_err(|error| format!("save delivered prompt {id}: {error}"))?;
+        transaction
+            .execute(
+                "UPDATE outbox SET state='acked', error=NULL WHERE id=?1 AND state='pending'",
+                [id],
+            )
+            .map_err(|error| format!("complete delivered prompt {id}: {error}"))?;
+    }
+    Ok(())
 }
