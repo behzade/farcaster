@@ -12,7 +12,7 @@ pub(super) struct VsCodeBackend;
 impl EditorBackend for VsCodeBackend {
     fn open(
         &self,
-        _app: &mut FarcasterApp,
+        app: &mut FarcasterApp,
         request: EditorRequest,
         window: &mut Window,
         cx: &mut Context<FarcasterApp>,
@@ -28,6 +28,7 @@ impl EditorBackend for VsCodeBackend {
                 if diff {
                     external_editor::prepare_diff(
                         project.clone(),
+                        app.composer.sessions.current_target().to_owned(),
                         path.clone(),
                         "VS Code",
                         window,

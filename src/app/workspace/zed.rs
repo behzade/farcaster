@@ -11,7 +11,7 @@ pub(super) struct ZedBackend;
 impl EditorBackend for ZedBackend {
     fn open(
         &self,
-        _app: &mut FarcasterApp,
+        app: &mut FarcasterApp,
         request: EditorRequest,
         window: &mut Window,
         cx: &mut Context<FarcasterApp>,
@@ -40,6 +40,7 @@ impl EditorBackend for ZedBackend {
                 if diff {
                     external_editor::prepare_diff(
                         project.clone(),
+                        app.composer.sessions.current_target().to_owned(),
                         path.clone(),
                         "Zed",
                         window,

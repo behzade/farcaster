@@ -11,6 +11,7 @@ use super::FarcasterApp;
 
 pub(super) fn prepare_diff(
     project: PathBuf,
+    target: String,
     path: PathBuf,
     editor: &'static str,
     window: &mut Window,
@@ -29,7 +30,9 @@ pub(super) fn prepare_diff(
     cx.spawn_in(window, async move |weak, cx| {
         let prepared = prepared.await;
         let _ = weak.update_in(cx, |app, window, cx| {
-            if app.workspace_project() != project {
+            if app.workspace_project() != project
+                || app.composer.sessions.current_target() != target
+            {
                 return;
             }
             let result = if app.project.repository.execution_allowed {

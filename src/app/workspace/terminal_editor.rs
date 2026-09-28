@@ -62,6 +62,7 @@ impl EditorBackend for TerminalBackend {
                 if diff {
                     external_editor::prepare_diff(
                         project.clone(),
+                        app.composer.sessions.current_target().to_owned(),
                         path.clone(),
                         choice.label(),
                         window,
