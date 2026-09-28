@@ -85,15 +85,39 @@ impl RuntimeOwner {
         let uncertain = error.kind == SessionResponseErrorKind::DeliveryUnknown;
         let recover = uncertain
             || (error.kind == SessionResponseErrorKind::RejectedBeforeAcceptance
-                && !is_user_actionable_prompt_error(&error.message))
-            // A manual retry has no composer draft to restore on rejection.
-            || (prompt.submission_id.is_none() && prompt.outbox_id.is_some());
+                && !is_user_actionable_prompt_error(&error.message));
         if uncertain {
             self.retired_prompts
                 .insert(receipt_id.to_owned(), prompt.clone());
         }
+        let outcome = self.settle_undelivered_outbox(
+            prompt.outbox_id,
+            prompt.submission_id.as_deref(),
+            recover,
+            recovery.map(PendingQueuedPrompt::recovery_prompt),
+        );
+        if !uncertain {
+            // Terminal rejection owns no future model receipt. Dismiss only its
+            // pending presentation, never a delivered transcript row.
+            conversation_mut(self.active_snapshot_mut()).dismiss_pending_receipt(receipt_id);
+        }
+        self.emit_prompt_result(prompt.submission_id.as_deref(), &prompt.target, outcome);
+        Some(outcome)
+    }
+
+    /// Restore composer ownership only after durable cancellation. Otherwise
+    /// the saved queue owns the payload, including retries without a composer.
+    pub(super) fn settle_undelivered_outbox(
+        &mut self,
+        outbox_id: Option<i64>,
+        submission_id: Option<&str>,
+        recover: bool,
+        fallback: Option<agents::QueuedPrompt>,
+    ) -> agents::PromptOutcome {
+        use agents::PromptOutcome;
+        let recover = recover || (submission_id.is_none() && outbox_id.is_some());
         let mut outcome = PromptOutcome::RejectedBeforeAcceptance;
-        if let Some(outbox_id) = prompt.outbox_id {
+        if let Some(outbox_id) = outbox_id {
             let cancelled = !recover
                 && self.state.as_ref().is_some_and(|state| {
                     match state.with(|store| store.cancel_queued_prompts(&[outbox_id])) {
@@ -107,23 +131,13 @@ impl RuntimeOwner {
             if cancelled {
                 self.reconcile_saved_prompts();
             } else {
-                self.save_outbox_for_recovery(
-                    outbox_id,
-                    prompt.submission_id.as_deref(),
-                    recovery.map(PendingQueuedPrompt::recovery_prompt),
-                );
+                self.save_outbox_for_recovery(outbox_id, submission_id, fallback);
                 outcome = PromptOutcome::DeliveryUnknown;
             }
         } else if recover {
             outcome = PromptOutcome::DeliveryUnknown;
         }
-        if !uncertain {
-            // Terminal rejection owns no future model receipt. Dismiss only its
-            // pending presentation, never a delivered transcript row.
-            conversation_mut(self.active_snapshot_mut()).dismiss_pending_receipt(receipt_id);
-        }
-        self.emit_prompt_result(prompt.submission_id.as_deref(), &prompt.target, outcome);
-        Some(outcome)
+        outcome
     }
 
     /// The durable outbox owns recovery membership; cached cards only project it.

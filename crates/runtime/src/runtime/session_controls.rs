@@ -570,6 +570,7 @@ impl RuntimeOwner {
         label: &str,
         details: String,
     ) {
+        self.settle_deferred_prompt();
         self.pending_session_controls = PendingSessionControls::default();
         if let Some(mut process) = self.process.take() {
             let _ = process.close();

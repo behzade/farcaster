@@ -355,28 +355,64 @@ impl RuntimeOwner {
         true
     }
 
-    fn finish_unsent_prompt(&mut self, outbox_id: Option<i64>, error: String) {
-        let cancelled = match outbox_id {
-            Some(id) if self.pending_submission_id.is_none() => {
-                self.park_pending_outbox(id);
-                false
-            }
-            Some(id) => self.cancel_outbox_or_park(id),
-            None => true,
+    pub(super) fn settle_deferred_prompt(&mut self) {
+        let Some(prompt) = self.deferred_prompt.take() else {
+            return;
         };
+        let fallback = prompt
+            .outbox_id
+            .zip(self.harness)
+            .map(|(id, harness)| QueuedPrompt {
+                id,
+                submission_id: self.pending_submission_id.clone(),
+                target: self.pending_prompt_target.clone().unwrap_or_default(),
+                harness,
+                project: self.project.clone(),
+                session: self.active_session.clone(),
+                mode: prompt.mode,
+                message: prompt.message,
+                display_message: prompt.display_message,
+                invocation: prompt.invocation,
+                images: prompt.images,
+            });
+        self.settle_unsent_prompt(prompt.outbox_id, fallback);
+    }
+
+    fn settle_unsent_prompt(
+        &mut self,
+        outbox_id: Option<i64>,
+        fallback: Option<QueuedPrompt>,
+    ) -> PromptOutcome {
+        let submission_id = self.pending_submission_id.take();
+        let target = self.pending_prompt_target.take();
+        let outcome =
+            self.settle_undelivered_outbox(outbox_id, submission_id.as_deref(), false, fallback);
         self.pending_outbox_id = None;
-        let target = self.pending_prompt_target.take().unwrap_or_default();
-        self.rollback_failed_prompt(&error);
         self.pending_prompt_id = None;
-        if cancelled {
-            self.reject_pending_prompt(&target, error);
-        } else {
-            self.pending_submission_id = None;
-            if !self.active_snapshot().conversation.running {
-                self.snapshot.status = "Done".into();
-            }
-            self.publish();
+        self.pending_prompt_result_emitted = false;
+        self.pending_prompt_delivery_tracked = false;
+        self.rollback_pending_prompt();
+        let running = self
+            .active_snapshot()
+            .session
+            .as_ref()
+            .is_some_and(|session| session.is_streaming);
+        conversation_mut(self.active_snapshot_mut()).running = running;
+        if let Some(target) = target {
+            self.emit_prompt_result(submission_id.as_deref(), &target, outcome);
         }
+        outcome
+    }
+
+    fn finish_unsent_prompt(&mut self, outbox_id: Option<i64>, error: String) {
+        if self.settle_unsent_prompt(outbox_id, None) == PromptOutcome::RejectedBeforeAcceptance {
+            let snapshot = self.active_snapshot_mut();
+            conversation_mut(snapshot).push_local_error("Prompt not sent", error);
+            snapshot.status = "Prompt not sent".into();
+        } else if !self.active_snapshot().conversation.running {
+            self.active_snapshot_mut().status = "Done".into();
+        }
+        self.publish();
     }
 
     pub(super) fn can_deliver_queued(&self, mode: PromptMode) -> bool {
@@ -412,16 +448,12 @@ impl RuntimeOwner {
             .selection_error()
             .map(str::to_owned)
         {
-            self.pending_outbox_id = outbox_id;
-            self.rollback_failed_prompt(&error);
-            if let Some(target) = self.pending_prompt_target.take() {
-                self.reject_pending_prompt(
-                    &target,
-                    format!(
-                        "Check the selected model, effort, or service tier before sending: {error}"
-                    ),
-                );
-            }
+            self.finish_unsent_prompt(
+                outbox_id,
+                format!(
+                    "Check the selected model, effort, or service tier before sending: {error}"
+                ),
+            );
             return;
         }
         let start_process = self.snapshot.history_preview || self.process.is_none();
@@ -558,11 +590,6 @@ impl RuntimeOwner {
             PromptOutcome::RejectedBeforeAcceptance,
         );
         self.publish();
-    }
-
-    fn reject_pending_prompt(&mut self, target: &str, message: String) {
-        let submission_id = self.pending_submission_id.take().unwrap_or_default();
-        self.reject_prompt(&submission_id, target, message);
     }
 
     pub(super) fn rollback_failed_prompt(&mut self, _error: &str) {

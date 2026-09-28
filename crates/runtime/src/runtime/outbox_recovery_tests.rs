@@ -1207,3 +1207,269 @@ fn secondary_recovery_keeps_payload_when_outbox_reads_fail() -> Result<(), Strin
     }
     Ok(())
 }
+
+#[test]
+fn deferred_selection_rejection_cancels_outbox_and_settles_once() -> Result<(), String> {
+    for operation in [
+        SessionOperation::SelectModel,
+        SessionOperation::SelectReasoning,
+        SessionOperation::SelectServiceTier,
+    ] {
+        let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let database = temp.path().join("state.sqlite3");
+        let (mut owner, sent) = ready_owner(temp.path(), &database)?;
+        let (sender, events) = mpsc::channel();
+        owner.event_tx.sender = sender;
+        let model: Model = serde_json::from_value(
+            json!({"id":"selected", "name":"Selected", "provider":"openai"}),
+        )
+        .unwrap();
+        let sent_selection = |owner: &mut RuntimeOwner, id: &str| match operation {
+            SessionOperation::SelectModel => owner
+                .pending_session_controls
+                .model_sent(id.into(), (model.provider.clone(), model.id.clone())),
+            SessionOperation::SelectReasoning => owner
+                .pending_session_controls
+                .thinking_sent(id.into(), Some("high".into())),
+            SessionOperation::SelectServiceTier => owner
+                .pending_session_controls
+                .tier_sent(id.into(), "fast".into()),
+            _ => unreachable!(),
+        };
+        sent_selection(&mut owner, "selection");
+        owner.send_prompt_for_submission(
+            "deferred".into(),
+            "draft:deferred".into(),
+            PromptMode::Normal,
+            "unsent".into(),
+            vec![],
+            false,
+        );
+        assert!(owner.deferred_prompt.is_some());
+        assert!(sent_messages(&sent).is_empty());
+        for _ in 0..2 {
+            owner.apply_response(agents::SessionResponse::failure(
+                Some("selection".into()),
+                operation,
+                "selection unavailable".into(),
+            ));
+        }
+        let outcomes = events
+            .try_iter()
+            .filter_map(|event| match event {
+                RuntimeEvent::PromptResult {
+                    submission_id: Some(id),
+                    outcome,
+                    ..
+                } if id == "deferred" => Some(outcome),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(outcomes, [agents::PromptOutcome::RejectedBeforeAcceptance]);
+        assert_eq!(
+            outbox_rows(&database)?,
+            [("unsent".into(), "cancelled".into())]
+        );
+        assert!(owner.saved_prompts.is_empty());
+        assert!(owner.deferred_prompt.is_none());
+        assert!(owner.pending_prompt_id.is_none());
+        assert!(owner.pending_prompt_target.is_none());
+        assert!(owner.pending_submission_id.is_none());
+        assert!(owner.pending_outbox_id.is_none());
+        assert!(!owner.snapshot.conversation.running);
+
+        sent_selection(&mut owner, "replacement");
+        let payload = match operation {
+            SessionOperation::SelectModel => {
+                agents::SessionResponsePayload::SelectModel(model.clone())
+            }
+            SessionOperation::SelectReasoning => agents::SessionResponsePayload::SelectReasoning,
+            SessionOperation::SelectServiceTier => {
+                agents::SessionResponsePayload::SelectServiceTier
+            }
+            _ => unreachable!(),
+        };
+        owner.apply_response(agents::SessionResponse::success(
+            Some("replacement".into()),
+            payload,
+        ));
+        owner.send_prompt_for_submission(
+            "next".into(),
+            "draft:deferred".into(),
+            PromptMode::Normal,
+            "next input".into(),
+            vec![],
+            false,
+        );
+        assert_eq!(sent_messages(&sent), ["next input"]);
+    }
+    Ok(())
+}
+
+#[test]
+fn startup_failure_settles_deferred_outbox_with_or_without_controls() -> Result<(), String> {
+    for controls in [false, true] {
+        for operation in [SessionOperation::LoadState, SessionOperation::LoadHistory] {
+            let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+            let database = temp.path().join("state.sqlite3");
+            let (mut owner, sent) = ready_owner(temp.path(), &database)?;
+            let (sender, events) = mpsc::channel();
+            owner.event_tx.sender = sender;
+            if controls {
+                let process = owner.process.take();
+                owner.set_thinking("high".into());
+                owner.process = process;
+                assert!(!owner.pending_session_controls.is_empty());
+            }
+            owner.startup_state_loaded = false;
+            owner.startup_history_loaded = false;
+            owner.send_prompt_for_submission(
+                "deferred".into(),
+                "draft:startup".into(),
+                PromptMode::Normal,
+                "never dispatched".into(),
+                vec![],
+                false,
+            );
+            assert!(owner.deferred_prompt.is_some());
+            owner.apply_response(agents::SessionResponse::cancelled(
+                "startup".into(),
+                operation,
+                "startup interrupted".into(),
+            ));
+            let outcomes = events
+                .try_iter()
+                .filter_map(|event| match event {
+                    RuntimeEvent::PromptResult {
+                        submission_id: Some(id),
+                        outcome,
+                        ..
+                    } if id == "deferred" => Some(outcome),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(outcomes, [agents::PromptOutcome::RejectedBeforeAcceptance]);
+            assert_eq!(
+                outbox_rows(&database)?,
+                [("never dispatched".into(), "cancelled".into())]
+            );
+            assert!(owner.saved_prompts.is_empty());
+            assert!(owner.deferred_prompt.is_none());
+            assert!(owner.pending_prompt_target.is_none());
+            assert!(owner.pending_submission_id.is_none());
+            assert!(owner.pending_outbox_id.is_none());
+            assert!(owner.can_deliver_queued(PromptMode::Normal));
+            // Supply a ready replacement transport after the startup failure.
+            owner.process = Some(Box::new(Recorder(sent.clone())));
+            owner.active_session = Some(temp.path().join("session.jsonl"));
+            owner.startup_state_loaded = true;
+            owner.startup_history_loaded = true;
+            owner.send_prompt_for_submission(
+                "next".into(),
+                "draft:startup".into(),
+                PromptMode::Normal,
+                "next input".into(),
+                vec![],
+                false,
+            );
+            assert_eq!(sent_messages(&sent), ["next input"]);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn deferred_cancellation_failure_keeps_one_recovery_payload() -> Result<(), String> {
+    for startup_failure in [false, true] {
+        for read_failure in [false, true] {
+            let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+            let database = temp.path().join("state.sqlite3");
+            let (mut owner, sent) = ready_owner(temp.path(), &database)?;
+            let (sender, events) = mpsc::channel();
+            owner.event_tx.sender = sender;
+            if startup_failure {
+                let process = owner.process.take();
+                owner.set_thinking("high".into());
+                owner.process = process;
+                owner.startup_state_loaded = false;
+                owner.startup_history_loaded = false;
+            } else {
+                owner
+                    .pending_session_controls
+                    .thinking_sent("effort".into(), Some("high".into()));
+            }
+            let image = PromptImage::new("aW1hZ2UtYnl0ZXM=".into(), "image/png".into());
+            owner.send_prompt_with_presentation_for_submission(
+                "deferred".into(),
+                "draft:fault".into(),
+                PromptMode::Normal,
+                "expanded input".into(),
+                Some("display input".into()),
+                Some("invocation".into()),
+                vec![image.clone()],
+                false,
+            );
+            let outbox_id = owner.pending_outbox_id.unwrap();
+            let connection =
+                rusqlite::Connection::open(&database).map_err(|error| error.to_string())?;
+            let fault = if read_failure {
+                "ALTER TABLE outbox RENAME TO unavailable_outbox"
+            } else {
+                "CREATE TRIGGER fail_cancel BEFORE UPDATE OF state ON outbox BEGIN SELECT RAISE(ABORT, 'cancel unavailable'); END;"
+            };
+            connection
+                .execute_batch(fault)
+                .map_err(|error| error.to_string())?;
+            if startup_failure {
+                owner.apply_response(agents::SessionResponse::failure(
+                    Some("startup".into()),
+                    SessionOperation::LoadHistory,
+                    "history unavailable".into(),
+                ));
+            } else {
+                owner.apply_response(agents::SessionResponse::failure(
+                    Some("effort".into()),
+                    SessionOperation::SelectReasoning,
+                    "effort unavailable".into(),
+                ));
+            }
+            let outcomes = events
+                .try_iter()
+                .filter_map(|event| match event {
+                    RuntimeEvent::PromptResult {
+                        submission_id: Some(id),
+                        outcome,
+                        ..
+                    } if id == "deferred" => Some(outcome),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(outcomes, [agents::PromptOutcome::DeliveryUnknown]);
+            assert_eq!(owner.saved_prompts.len(), 1);
+            let saved = &owner.saved_prompts[0];
+            assert_eq!(saved.id, outbox_id);
+            assert_eq!(saved.submission_id.as_deref(), Some("deferred"));
+            assert_eq!(saved.message, "expanded input");
+            assert_eq!(saved.display_message.as_deref(), Some("display input"));
+            assert_eq!(saved.invocation.as_deref(), Some("invocation"));
+            assert_eq!(saved.images[0].bytes()?, image.bytes()?);
+            assert!(owner.deferred_prompt.is_none());
+            assert!(owner.pending_prompt_target.is_none());
+            assert!(owner.pending_submission_id.is_none());
+            assert!(owner.pending_outbox_id.is_none());
+            assert!(sent_messages(&sent).is_empty());
+            connection
+                .execute_batch(if read_failure {
+                    "ALTER TABLE unavailable_outbox RENAME TO outbox"
+                } else {
+                    "DROP TRIGGER fail_cancel"
+                })
+                .map_err(|error| error.to_string())?;
+            assert_eq!(
+                outbox_rows(&database)?,
+                [("expanded input".into(), "pending".into())]
+            );
+        }
+    }
+    Ok(())
+}

@@ -145,20 +145,6 @@ pub(super) fn update_tokens_from_event(stats: &mut Value, event: &Value) -> bool
 }
 
 impl RuntimeOwner {
-    fn reject_deferred_selection(&mut self, reason: &str) {
-        if self.deferred_prompt.take().is_none() {
-            return;
-        }
-        self.rollback_failed_prompt(reason);
-        if let Some(target) = self.pending_prompt_target.take() {
-            self.emit_prompt_result(
-                self.pending_submission_id.as_deref(),
-                &target,
-                crate::agents::PromptOutcome::RejectedBeforeAcceptance,
-            );
-        }
-    }
-
     pub(super) fn apply_response(&mut self, response: crate::agents::SessionResponse) {
         if matches!(response.operation(), SessionOperation::Prompt(_))
             && let Some(id) = response.id.as_deref()
@@ -215,7 +201,7 @@ impl RuntimeOwner {
             self.pending_session_controls.model_response(&response);
             if !success && !self.pending_session_controls.model_pending() {
                 self.active_snapshot_mut().pending_initial_model = false;
-                self.reject_deferred_selection("The selected model could not be applied");
+                self.settle_deferred_prompt();
                 self.send(SessionCommand::LoadState);
             }
         }
@@ -223,7 +209,7 @@ impl RuntimeOwner {
             self.pending_session_controls.tier_response(&response);
             if !success && !self.pending_session_controls.service_tier_pending() {
                 self.active_snapshot_mut().pending_initial_service_tier = false;
-                self.reject_deferred_selection("The selected service tier could not be applied");
+                self.settle_deferred_prompt();
                 self.send(SessionCommand::LoadState);
             }
         }
@@ -235,7 +221,7 @@ impl RuntimeOwner {
                 state.thinking_level = level;
             }
             if !success && !self.pending_session_controls.thinking_pending() {
-                self.reject_deferred_selection("The selected effort could not be applied");
+                self.settle_deferred_prompt();
                 self.send(SessionCommand::LoadState);
             }
         }
@@ -341,15 +327,7 @@ impl RuntimeOwner {
             );
             snapshot.status = "Command failed".into();
             if blocks_resume {
-                self.rollback_pending_prompt();
-                self.deferred_prompt = None;
-                if let Some(target) = self.pending_prompt_target.take() {
-                    self.emit_prompt_result(
-                        self.pending_submission_id.as_deref(),
-                        &target,
-                        crate::agents::PromptOutcome::RejectedBeforeAcceptance,
-                    );
-                }
+                self.settle_deferred_prompt();
                 if let Some(snapshot) = self.parked_snapshot.take() {
                     self.snapshot = snapshot;
                 }
