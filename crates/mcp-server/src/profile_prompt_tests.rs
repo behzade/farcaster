@@ -6,6 +6,149 @@ use std::{
 };
 
 #[test]
+fn worker_admission_and_setup_use_project_executables() -> Result<(), String> {
+    use agents::{Backend, HarnessAccessMode, WorkerLaunch, WorkerSession, WorkerSessionFactory};
+    use std::os::unix::fs::PermissionsExt as _;
+
+    const CHILD: &str = "FARCASTER_TEST_PROJECT_EXECUTABLE";
+    if std::env::var_os(CHILD).is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                std::thread::current().name().unwrap(),
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("PATH", "/usr/bin:/bin")
+            .env_remove("FARCASTER_CODEX_PATH")
+            .status()
+            .map_err(|error| error.to_string())?;
+        assert!(status.success());
+        return Ok(());
+    }
+    struct Factory;
+    impl WorkerSessionFactory for Factory {
+        fn create(&self, _: WorkerLaunch) -> Result<Box<dyn WorkerSession>, String> {
+            Err("admission fixture does not start a backend".into())
+        }
+    }
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let project = temp.path().canonicalize().unwrap();
+    let bin = project.join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let executable = bin.join("codex");
+    std::fs::write(&executable, "#!/bin/sh\nexit 99\n").unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+    agents::set_test_project_environment(&project, vec![("PATH".into(), bin.into_os_string())]);
+    assert!(
+        !agents::backend_statuses()
+            .iter()
+            .find(|status| status.id == Backend::Codex)
+            .unwrap()
+            .available
+    );
+
+    let config = agents::AgentLaunchConfig::default();
+    let profile_id = uuid::Uuid::new_v4().to_string();
+    config.profiles.replace(vec![agents::HarnessProfile {
+        id: profile_id.clone(),
+        name: "Named Codex".into(),
+        backend: Backend::Codex,
+        executable: "codex".into(),
+        data_directory: None,
+    }])?;
+    let pool = agents::WorkerPool::new(
+        std::collections::BTreeMap::from([(
+            Backend::Codex,
+            Arc::new(Factory) as Arc<dyn WorkerSessionFactory>,
+        )]),
+        Backend::Codex,
+        project.clone(),
+        2,
+    )?;
+    let parent = agents::CallerRegistry::shared().issue_with_access(
+        &project,
+        agents::CallerProfile {
+            backend: Backend::Codex,
+            provider: Some("openai".into()),
+            model: Some("model".into()),
+            effort: None,
+        },
+        None,
+        HarnessAccessMode::Full,
+    );
+    parent.bind("project-executable-parent");
+    for (name, selector) in [("builtin", None), ("named", Some(profile_id.clone()))] {
+        parent.set_harness_profile_id(selector);
+        let result = crate::workers::send_configurable(
+            &pool,
+            crate::workers::SendParams {
+                to: Some(name.into()),
+                message: "inspect".into(),
+                profile: None,
+            },
+            Some(parent.token().into()),
+            &agents::WorkerProfiles::default(),
+            |model, profile, project, mode| {
+                crate::workers::launch_access_mode(&config, model, profile, project, mode, &[])
+            },
+            |_, _| panic!("inherit must not configure a preset"),
+        )?;
+        assert_eq!(result["created"], true, "{name}");
+    }
+    let model = agents::WorkerExecution {
+        harness: Backend::Codex,
+        provider: "openai".into(),
+        model: "model".into(),
+        effort: None,
+        service_tier: None,
+    };
+    for executable_mode in [0o755, 0o644] {
+        std::fs::set_permissions(
+            &executable,
+            std::fs::Permissions::from_mode(executable_mode),
+        )
+        .unwrap();
+        let available = executable_mode == 0o755;
+        let backends = available_worker_backends(&config, &project);
+        assert_eq!(backends.contains(&Backend::Codex), available);
+        assert_eq!(
+            fallback_harnesses(&project, HarnessAccessMode::Full, &backends, &[])
+                .contains(&Backend::Codex),
+            available
+        );
+        for selector in [None, Some(profile_id.as_str())] {
+            assert_eq!(
+                crate::workers::launch_access_mode(
+                    &config,
+                    &model,
+                    selector,
+                    &project,
+                    HarnessAccessMode::Full,
+                    &[]
+                )
+                .is_some(),
+                available
+            );
+        }
+    }
+    std::fs::remove_file(executable).unwrap();
+    assert!(!available_worker_backends(&config, &project).contains(&Backend::Codex));
+    assert!(
+        crate::workers::launch_access_mode(
+            &config,
+            &model,
+            None,
+            &project,
+            HarnessAccessMode::Full,
+            &[]
+        )
+        .is_none()
+    );
+    Ok(())
+}
+
+#[test]
 fn concurrent_sends_share_one_profile_choice_and_its_result() {
     let model = agents::WorkerExecution {
         harness: agents::Backend::Pi,

@@ -70,12 +70,13 @@ pub(super) fn configure(
     profile: &str,
     caller: &agents::CallerContext,
     catalogs: &[storage::CachedConfigurationCatalog],
-    backends: &[agents::Backend],
+    launch_config: &agents::AgentLaunchConfig,
     store: &SharedStore,
 ) -> Selection {
     select_once((caller.worker_id.clone(), profile.to_owned()), || {
         // Another request may have saved this profile after our caller loaded it.
         let saved = with_store(store, |store| store.load_worker_profiles())?;
+        let backends = available_worker_backends(launch_config, &caller.project);
         let access = super::workers::delegated_access_mode(caller.backend, caller.access_mode);
         if let Some(model) = saved
             .profiles
@@ -87,7 +88,7 @@ pub(super) fn configure(
                     model,
                     &caller.project,
                     access,
-                    backends,
+                    &backends,
                     catalogs,
                 )
                 .is_some()
@@ -95,7 +96,7 @@ pub(super) fn configure(
         {
             return Ok(model.clone());
         }
-        configure_model(profile, caller, catalogs, backends, store)
+        configure_model(profile, caller, catalogs, &backends, store)
     })
 }
 
@@ -282,6 +283,19 @@ fn configure_model(
         })?;
     }
     Ok(execution)
+}
+
+fn available_worker_backends(
+    config: &agents::AgentLaunchConfig,
+    project: &std::path::Path,
+) -> Vec<agents::Backend> {
+    // Explicit presets use the base harness configuration, even for named-profile callers.
+    let mut config = config.clone();
+    config.profile_id = None;
+    agents::Backend::ALL
+        .into_iter()
+        .filter(|&backend| agents::validate_launch(&config, backend, project).is_ok())
+        .collect()
 }
 
 fn fallback_harnesses(

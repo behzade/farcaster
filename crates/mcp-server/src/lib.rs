@@ -174,41 +174,27 @@ impl FarcasterMcp {
             })?;
             let launch_profiles = std::sync::Arc::new(crate::agents::HarnessProfiles::default());
             launch_profiles.replace(harness_profiles)?;
-            let backends = crate::agents::backend_statuses()
-                .into_iter()
-                .filter(|backend| backend.available)
-                .map(|backend| backend.id)
-                .collect::<Vec<_>>();
+            let launch_config = crate::agents::AgentLaunchConfig {
+                profiles: launch_profiles,
+                ..Default::default()
+            };
             workers::send_configurable(
                 &pool,
                 params,
                 caller_token,
                 &profiles,
                 |model, profile_id, project, parent_access_mode| {
-                    let profile_backend;
-                    let available = if let Some(profile_id) = profile_id {
-                        let config = crate::agents::AgentLaunchConfig {
-                            profiles: launch_profiles.clone(),
-                            profile_id: Some(profile_id.to_owned()),
-                            ..Default::default()
-                        };
-                        crate::agents::validate_launch(&config, model.harness, project).ok()?;
-                        profile_backend = [model.harness];
-                        &profile_backend[..]
-                    } else {
-                        &backends[..]
-                    };
-                    workers::child_access_mode_for_profile(
+                    workers::launch_access_mode(
+                        &launch_config,
                         model,
                         profile_id,
                         project,
                         parent_access_mode,
-                        available,
                         &catalogs,
                     )
                 },
                 |profile, caller| {
-                    profile_prompt::configure(profile, caller, &catalogs, &backends, &store)
+                    profile_prompt::configure(profile, caller, &catalogs, &launch_config, &store)
                 },
             )
         })

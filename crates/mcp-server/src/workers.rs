@@ -250,6 +250,27 @@ pub(super) fn delegated_access_mode(
     }
 }
 
+pub(super) fn launch_access_mode(
+    config: &crate::agents::AgentLaunchConfig,
+    model: &crate::agents::WorkerExecution,
+    profile_id: Option<&str>,
+    project: &std::path::Path,
+    parent_access_mode: crate::agents::HarnessAccessMode,
+    catalogs: &[crate::storage::CachedConfigurationCatalog],
+) -> Option<crate::agents::HarnessAccessMode> {
+    let mut config = config.clone();
+    config.profile_id = profile_id.map(str::to_owned);
+    crate::agents::validate_launch(&config, model.harness, project).ok()?;
+    child_access_mode_for_profile(
+        model,
+        profile_id,
+        project,
+        parent_access_mode,
+        &[model.harness],
+        catalogs,
+    )
+}
+
 pub(super) fn child_access_mode(
     model: &crate::agents::WorkerExecution,
     project: &std::path::Path,
