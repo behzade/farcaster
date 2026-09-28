@@ -519,45 +519,24 @@ impl WorkerSessionTransport {
 
     fn enqueue_activity(&mut self, worker_activity: WorkerActivity) {
         let event = match worker_activity {
-            WorkerActivity::InputDelivered { mode, message } => {
-                self.input_delivered(None, mode, &message, json!(message));
-                return;
-            }
-            WorkerActivity::InputDeliveredWithImages {
-                mode,
-                message,
-                images,
-            } => {
-                let mut content = vec![json!({"type":"text","text":message})];
-                content.extend(images.into_iter().map(|image| {
-                    json!({
-                        "type":"image", "data":image.data, "mimeType":image.mime_type,
-                    })
-                }));
-                self.input_delivered(None, mode, &message, json!(content));
-                return;
-            }
-            WorkerActivity::SubmittedInputDelivered {
-                submission_id,
-                mode,
-                message,
-            } => {
-                self.input_delivered(Some(&submission_id), mode, &message, json!(message));
-                return;
-            }
-            WorkerActivity::SubmittedInputDeliveredWithImages {
+            WorkerActivity::InputDelivered {
                 submission_id,
                 mode,
                 message,
                 images,
             } => {
-                let mut content = vec![json!({"type":"text","text":message})];
-                content.extend(images.into_iter().map(|image| {
-                    json!({
-                        "type":"image", "data":image.data, "mimeType":image.mime_type,
-                    })
-                }));
-                self.input_delivered(Some(&submission_id), mode, &message, json!(content));
+                let content = if images.is_empty() {
+                    json!(message)
+                } else {
+                    let mut content = vec![json!({"type":"text","text":message})];
+                    content.extend(images.into_iter().map(|image| {
+                        json!({
+                            "type":"image", "data":image.data, "mimeType":image.mime_type,
+                        })
+                    }));
+                    json!(content)
+                };
+                self.input_delivered(submission_id.as_deref(), mode, &message, content);
                 return;
             }
             WorkerActivity::PeerInputDelivered { message } => {

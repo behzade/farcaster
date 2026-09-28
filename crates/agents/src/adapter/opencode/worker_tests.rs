@@ -220,7 +220,7 @@ fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() -> Result
         vec![]
     )?);
     assert!(
-        matches!(worker.poll(), Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDeliveredWithImages { submission_id, message, .. }))
+        matches!(worker.poll(), Some(WorkerEvent::Activity(WorkerActivity::InputDelivered { submission_id: Some(submission_id), message, .. }))
         if submission_id == "compact-submission" && message == "/compact")
     );
     worker.send("after restart".into(), WorkerSendMode::Prompt)?;
@@ -246,11 +246,12 @@ fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() -> Result
     }
     assert!(matches!(
         delivered,
-        Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
-            submission_id,
+        Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            submission_id: Some(submission_id),
             mode: WorkerSendMode::Prompt,
             message,
-        })) if submission_id == unknown_id && message == "after restart"
+            images,
+        })) if images.is_empty() && submission_id == unknown_id && message == "after restart"
     ));
     worker.send("still alive".into(), WorkerSendMode::Prompt)?;
     worker.close()?;
@@ -1066,8 +1067,8 @@ fn steering_interruption_preserves_delivery_and_later_abort_settles() -> Result<
     send("session.inbox.delivered", json!({"inboxID": "steer-1"}));
     assert!(matches!(
         worker.poll_native_event(),
-        Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDeliveredWithImages {
-            submission_id,
+        Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            submission_id: Some(submission_id),
             mode: WorkerSendMode::Steer,
             images,
             ..
@@ -1077,8 +1078,8 @@ fn steering_interruption_preserves_delivery_and_later_abort_settles() -> Result<
     send("session.inbox.delivered", json!({"inboxID": "queue-1"}));
     assert!(matches!(
         worker.poll_native_event(),
-        Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDeliveredWithImages {
-            submission_id,
+        Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            submission_id: Some(submission_id),
             mode: WorkerSendMode::Queue,
             images,
             ..
@@ -1393,8 +1394,8 @@ fn abort_reinterrupts_a_delivery_that_wins_the_cancel_race() -> Result<(), Strin
         .map_err(|error| error.to_string())?;
     assert!(matches!(
         worker.poll_native_event(),
-        Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
-            submission_id,
+        Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            submission_id: Some(submission_id),
             ..
         })) if submission_id == "delivered"
     ));

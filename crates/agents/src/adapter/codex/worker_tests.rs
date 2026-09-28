@@ -237,16 +237,15 @@ fn delivered_inputs_preserve_images() {
             }
             assert_eq!(
                 session.poll(),
-                Some(WorkerEvent::Activity(
-                    WorkerActivity::InputDeliveredWithImages {
-                        mode,
-                        message: text.unwrap_or_default().into(),
-                        images: vec![
-                            PromptImage::new("aGVsbG8=".into(), "image/png".into()),
-                            PromptImage::new("d29ybGQ=".into(), "image/jpeg".into()),
-                        ],
-                    }
-                ))
+                Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                    submission_id: None,
+                    mode,
+                    message: text.unwrap_or_default().into(),
+                    images: vec![
+                        PromptImage::new("aGVsbG8=".into(), "image/png".into()),
+                        PromptImage::new("d29ybGQ=".into(), "image/jpeg".into()),
+                    ],
+                }))
             );
             assert_eq!(session.poll(), None);
         }
@@ -1809,8 +1808,8 @@ fn malformed_native_reply_stays_correlatable_but_never_joins_next_handoff() {
     assert!(matches!(
         session.poll(),
         Some(WorkerEvent::Activity(
-            WorkerActivity::SubmittedInputDeliveredWithImages {
-                submission_id,
+            WorkerActivity::InputDelivered {
+                submission_id: Some(submission_id),
                 message,
                 images,
                 ..
@@ -1924,8 +1923,8 @@ fn late_old_unknown_batch_delivery_does_not_clear_new_handoff() {
         }));
     assert!(matches!(
         session.poll(),
-        Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
-            submission_id,
+        Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            submission_id: Some(submission_id),
             ..
         })) if submission_id == "old"
     ));
@@ -2108,11 +2107,12 @@ fn native_queue_delivery_correlates_duplicate_text_before_other_rejection() {
         }));
     assert!(matches!(
         session.poll(),
-        Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
-            submission_id,
+        Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            submission_id: Some(submission_id),
             mode: WorkerSendMode::Queue,
             message,
-        })) if submission_id == "second-submission" && message == "same text"
+            images,
+        })) if images.is_empty() && submission_id == "second-submission" && message == "same text"
     ));
     assert_eq!(
         session
@@ -2345,8 +2345,8 @@ fn apply_steering_claims_all_queued_inputs_and_fans_out_batch_delivery() {
     let mut delivered = Vec::new();
     for _ in 0..3 {
         match session.poll().expect("original delivery") {
-            WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
-                submission_id,
+            WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                submission_id: Some(submission_id),
                 ..
             }) => delivered.push(submission_id),
             event => panic!("unexpected event: {event:?}"),
@@ -2640,8 +2640,8 @@ fn assert_second_abort_cancels_auto_started_queue(abort_before_delete_reply: boo
     ));
     assert!(matches!(
         session.poll(),
-        Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
-            submission_id,
+        Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            submission_id: Some(submission_id),
             ..
         })) if submission_id == "queue-1"
     ));
@@ -2739,11 +2739,12 @@ fn normal_prompt_delivery_uses_backend_client_id_and_original_submission_id() {
     ));
     assert!(matches!(
         session.poll(),
-        Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
-            submission_id,
+        Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            submission_id: Some(submission_id),
             mode: WorkerSendMode::Prompt,
             message,
-        })) if submission_id == "normal-1" && message == "new work"
+            images,
+        })) if images.is_empty() && submission_id == "normal-1" && message == "new work"
     ));
 }
 
@@ -2820,8 +2821,8 @@ done
 
     let mut delivered = Vec::new();
     for _ in 0..200 {
-        if let Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
-            submission_id,
+        if let Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            submission_id: Some(submission_id),
             ..
         })) = session.poll()
         {
@@ -3008,8 +3009,8 @@ fn committed_original_steer_before_rpc_reply_is_never_replayed() {
         }));
     assert!(matches!(
         session.poll(),
-        Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
-            submission_id,
+        Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            submission_id: Some(submission_id),
             ..
         })) if submission_id == "steer-1"
     ));

@@ -467,25 +467,15 @@ impl PiWorkerSession {
             PromptMode::FollowUp => WorkerSendMode::Queue,
             PromptMode::Normal => return,
         };
-        let submission_id = pending.submission_id.clone();
-        if pending.images.is_empty() {
-            self.pending_worker_events.push_back(WorkerEvent::Activity(
-                crate::agents::WorkerActivity::SubmittedInputDelivered {
-                    submission_id: submission_id.clone(),
-                    mode,
-                    message: pending.message,
-                },
-            ));
-        } else {
-            self.pending_worker_events.push_back(WorkerEvent::Activity(
-                crate::agents::WorkerActivity::SubmittedInputDeliveredWithImages {
-                    submission_id: submission_id.clone(),
-                    mode,
-                    message: pending.message,
-                    images: pending.images,
-                },
-            ));
-        }
+        let submission_id = pending.submission_id;
+        self.pending_worker_events.push_back(WorkerEvent::Activity(
+            crate::agents::WorkerActivity::InputDelivered {
+                submission_id: Some(submission_id.clone()),
+                mode,
+                message: pending.message,
+                images: pending.images,
+            },
+        ));
         self.delivery_ack_ready.push_back((submission_id, Ok(())));
     }
 

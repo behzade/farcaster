@@ -1606,7 +1606,7 @@ fn acp_prompt_ack_uses_execution_evidence_and_rejects_unadmitted_errors() {
                 .restore_queued(VecDeque::from([agent_message_chunk("admitted"), reply]));
             assert!(matches!(
                 session.poll(),
-                Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered { submission_id, .. }))
+                Some(WorkerEvent::Activity(WorkerActivity::InputDelivered { submission_id: Some(submission_id), .. }))
                     if submission_id == "submission"
             ));
             assert!(matches!(session.poll(), Some(WorkerEvent::Activity(_))));
@@ -1763,7 +1763,7 @@ fn acp_prompt_delivery_precedes_the_first_execution_chunk() {
     assert!(matches!(
         session.poll(),
         Some(WorkerEvent::Activity(
-            WorkerActivity::SubmittedInputDelivered { submission_id, .. }
+            WorkerActivity::InputDelivered { submission_id: Some(submission_id), .. }
         )) if submission_id == "prompt"
     ));
     assert_eq!(session.poll_prompt_ack(), Some(("prompt".into(), Ok(()))));
@@ -1846,7 +1846,7 @@ fn acp_abort_timeout_keeps_delivery_evidence_before_failing() {
         .restore_queued(VecDeque::from([agent_message_chunk("model output")]));
     assert!(matches!(
         session.poll(),
-        Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered { submission_id, .. }))
+        Some(WorkerEvent::Activity(WorkerActivity::InputDelivered { submission_id: Some(submission_id), .. }))
             if submission_id == "submitted"
     ));
     assert_eq!(
@@ -2024,24 +2024,21 @@ fn acp_user_message_chunk_delivers_current_inputs_before_the_model_reply() {
 
     assert_eq!(
         session.poll(),
-        Some(WorkerEvent::Activity(
-            WorkerActivity::SubmittedInputDelivered {
-                submission_id: "prompt".into(),
-                mode: WorkerSendMode::Prompt,
-                message: "work".into(),
-            }
-        ))
+        Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            submission_id: Some("prompt".into()),
+            mode: WorkerSendMode::Prompt,
+            message: "work".into(),
+            images: Vec::new(),
+        }))
     );
     assert_eq!(
         session.poll(),
-        Some(WorkerEvent::Activity(
-            WorkerActivity::SubmittedInputDeliveredWithImages {
-                submission_id: "follow-up".into(),
-                mode: WorkerSendMode::Queue,
-                message: "follow-up with image".into(),
-                images: vec![image],
-            }
-        ))
+        Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            submission_id: Some("follow-up".into()),
+            mode: WorkerSendMode::Queue,
+            message: "follow-up with image".into(),
+            images: vec![image],
+        }))
     );
     assert_eq!(session.poll_prompt_ack(), Some(("prompt".into(), Ok(()))));
     assert_eq!(
@@ -2104,8 +2101,8 @@ fn acp_user_message_chunk_commits_delivery_before_a_cancel_or_error() {
         ]));
         assert!(matches!(
             session.poll(),
-            Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
-                submission_id, ..
+            Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                submission_id: Some(submission_id), ..
             })) if submission_id == "prompt"
         ));
         assert_eq!(session.poll_prompt_ack(), Some(("prompt".into(), Ok(()))));
@@ -2238,13 +2235,12 @@ fn acp_user_message_chunk_accepts_empty_text_and_non_text_content() {
             }]));
         assert_eq!(
             session.poll(),
-            Some(WorkerEvent::Activity(
-                WorkerActivity::SubmittedInputDelivered {
-                    submission_id: "prompt".into(),
-                    mode: WorkerSendMode::Prompt,
-                    message: "work".into(),
-                }
-            )),
+            Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                submission_id: Some("prompt".into()),
+                mode: WorkerSendMode::Prompt,
+                message: "work".into(),
+                images: Vec::new(),
+            })),
             "valid echo should deliver before model output: {content}"
         );
         assert_eq!(session.poll_prompt_ack(), Some(("prompt".into(), Ok(()))));
@@ -2355,7 +2351,7 @@ fn acp_first_completed_tool_update_delivers_before_exact_tool_lifecycle() {
     assert!(matches!(
         session.poll(),
         Some(WorkerEvent::Activity(
-            WorkerActivity::SubmittedInputDelivered { submission_id, .. }
+            WorkerActivity::InputDelivered { submission_id: Some(submission_id), .. }
         )) if submission_id == "prompt"
     ));
     assert_eq!(session.poll_prompt_ack(), Some(("prompt".into(), Ok(()))));
@@ -2619,8 +2615,8 @@ fn natural_completion_batches_all_pending_inputs_with_original_receipts() {
     ] {
         assert!(matches!(
             session.poll(),
-            Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDeliveredWithImages {
-                submission_id, mode, message, images,
+            Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                submission_id: Some(submission_id), mode, message, images,
             })) if submission_id == id && mode == expected_mode
                 && message == "same" && images == vec![image.clone()]
         ));

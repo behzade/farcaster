@@ -701,18 +701,11 @@ impl OpenCodeWorkerSession {
                 .client()
                 .run_command(&self.session_id, name, text, files)?;
             self.ignore_execution_events = false;
-            let activity = match submission_id {
-                Some(submission_id) => WorkerActivity::SubmittedInputDeliveredWithImages {
-                    submission_id,
-                    mode,
-                    message,
-                    images,
-                },
-                None => WorkerActivity::InputDeliveredWithImages {
-                    mode,
-                    message,
-                    images,
-                },
+            let activity = WorkerActivity::InputDelivered {
+                submission_id,
+                mode,
+                message,
+                images,
             };
             self.pending.push_back(WorkerEvent::Activity(activity));
             return Ok(true);
@@ -865,27 +858,11 @@ impl OpenCodeWorkerSession {
         if delivery.clears_abort_barrier {
             self.ignore_execution_events = false;
         }
-        let activity = match (delivery.submission_id, delivery.images.is_empty()) {
-            (Some(submission_id), true) => WorkerActivity::SubmittedInputDelivered {
-                submission_id,
-                mode: delivery.mode,
-                message: delivery.message,
-            },
-            (Some(submission_id), false) => WorkerActivity::SubmittedInputDeliveredWithImages {
-                submission_id,
-                mode: delivery.mode,
-                message: delivery.message,
-                images: delivery.images,
-            },
-            (None, true) => WorkerActivity::InputDelivered {
-                mode: delivery.mode,
-                message: delivery.message,
-            },
-            (None, false) => WorkerActivity::InputDeliveredWithImages {
-                mode: delivery.mode,
-                message: delivery.message,
-                images: delivery.images,
-            },
+        let activity = WorkerActivity::InputDelivered {
+            submission_id: delivery.submission_id,
+            mode: delivery.mode,
+            message: delivery.message,
+            images: delivery.images,
         };
         Some(WorkerEvent::Activity(activity))
     }

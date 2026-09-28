@@ -707,30 +707,17 @@ struct NativeInputDelivery {
 
 impl NativeInputDelivery {
     fn activity(self) -> WorkerActivity {
-        match (self.submission_id, self.images.is_empty()) {
-            (Some(submission_id), true) => WorkerActivity::SubmittedInputDelivered {
-                submission_id,
-                mode: self.mode,
-                message: self.message,
-            },
-            (Some(submission_id), false) => WorkerActivity::SubmittedInputDeliveredWithImages {
-                submission_id,
-                mode: self.mode,
-                message: self.message,
-                images: self.images,
-            },
-            (None, true) => match PeerMessage::from_prompt(&self.message) {
-                Some(message) => WorkerActivity::PeerInputDelivered { message },
-                None => WorkerActivity::InputDelivered {
-                    mode: self.mode,
-                    message: self.message,
-                },
-            },
-            (None, false) => WorkerActivity::InputDeliveredWithImages {
-                mode: self.mode,
-                message: self.message,
-                images: self.images,
-            },
+        if self.submission_id.is_none()
+            && self.images.is_empty()
+            && let Some(message) = PeerMessage::from_prompt(&self.message)
+        {
+            return WorkerActivity::PeerInputDelivered { message };
+        }
+        WorkerActivity::InputDelivered {
+            submission_id: self.submission_id,
+            mode: self.mode,
+            message: self.message,
+            images: self.images,
         }
     }
 }

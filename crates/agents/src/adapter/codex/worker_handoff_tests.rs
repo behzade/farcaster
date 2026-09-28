@@ -191,8 +191,8 @@ fn rejected_claimed_handoff_retries_exact_input_only_on_explicit_apply() {
         }
         let mut delivered = Vec::new();
         while let Some(event) = session.poll() {
-            if let WorkerEvent::Activity(WorkerActivity::SubmittedInputDeliveredWithImages {
-                submission_id,
+            if let WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                submission_id: Some(submission_id),
                 images,
                 ..
             }) = event

@@ -770,7 +770,7 @@ fn claude_ack_uses_the_echoed_uuid_and_survives_queued_delivery() {
     assert!(matches!(
         session.events.pending.pop_front(),
         Some(WorkerEvent::Activity(
-            WorkerActivity::SubmittedInputDelivered { submission_id, .. }
+            WorkerActivity::InputDelivered { submission_id: Some(submission_id), .. }
         )) if submission_id == "first"
     ));
     assert!(session.poll_prompt_ack().is_none());
@@ -855,8 +855,8 @@ fn queued_batch_round_trip(interrupt: bool) {
     let deliveries = events
         .iter()
         .filter_map(|event| match event {
-            WorkerEvent::Activity(WorkerActivity::SubmittedInputDeliveredWithImages {
-                submission_id,
+            WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                submission_id: Some(submission_id),
                 mode,
                 message,
                 images,

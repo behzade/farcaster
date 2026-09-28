@@ -129,21 +129,7 @@ impl ChildSessionOutcome {
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorkerActivity {
     InputDelivered {
-        mode: WorkerSendMode,
-        message: String,
-    },
-    InputDeliveredWithImages {
-        mode: WorkerSendMode,
-        message: String,
-        images: Vec<crate::extensions::PromptImage>,
-    },
-    SubmittedInputDelivered {
-        submission_id: String,
-        mode: WorkerSendMode,
-        message: String,
-    },
-    SubmittedInputDeliveredWithImages {
-        submission_id: String,
+        submission_id: Option<String>,
         mode: WorkerSendMode,
         message: String,
         images: Vec<crate::extensions::PromptImage>,

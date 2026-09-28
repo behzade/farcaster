@@ -1075,24 +1075,11 @@ impl AcpWorkerSession {
         message: String,
         images: Vec<crate::extensions::PromptImage>,
     ) -> WorkerActivity {
-        match (submission_id, images.is_empty()) {
-            (Some(submission_id), true) => WorkerActivity::SubmittedInputDelivered {
-                submission_id: submission_id.into(),
-                mode,
-                message,
-            },
-            (Some(submission_id), false) => WorkerActivity::SubmittedInputDeliveredWithImages {
-                submission_id: submission_id.into(),
-                mode,
-                message,
-                images,
-            },
-            (None, true) => WorkerActivity::InputDelivered { mode, message },
-            (None, false) => WorkerActivity::InputDeliveredWithImages {
-                mode,
-                message,
-                images,
-            },
+        WorkerActivity::InputDelivered {
+            submission_id: submission_id.map(str::to_owned),
+            mode,
+            message,
+            images,
         }
     }
 

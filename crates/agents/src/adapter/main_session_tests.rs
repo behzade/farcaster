@@ -342,14 +342,12 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
             .lock()
             .expect("test lock should not be poisoned")
             .events
-            .push_back(WorkerEvent::Activity(
-                WorkerActivity::SubmittedInputDeliveredWithImages {
-                    submission_id: old_id.clone(),
-                    mode: worker_mode,
-                    message: "same text".into(),
-                    images: vec![old_image],
-                },
-            ));
+            .push_back(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                submission_id: Some(old_id.clone()),
+                mode: worker_mode,
+                message: "same text".into(),
+                images: vec![old_image],
+            }));
         let old_delivery = project_transport_without_failures(&mut transport, &mut conversation);
         assert_eq!(
             old_delivery.deliveries,
@@ -434,14 +432,12 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
             .lock()
             .expect("test lock should not be poisoned")
             .events
-            .push_back(WorkerEvent::Activity(
-                WorkerActivity::SubmittedInputDeliveredWithImages {
-                    submission_id: new_id.clone(),
-                    mode: worker_mode,
-                    message: "same text".into(),
-                    images: vec![new_image],
-                },
-            ));
+            .push_back(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                submission_id: Some(new_id.clone()),
+                mode: worker_mode,
+                message: "same text".into(),
+                images: vec![new_image],
+            }));
         let new_delivery = project_transport_without_failures(&mut transport, &mut conversation);
         assert_eq!(new_delivery.deliveries, [(new_id, "delivered".into())]);
         assert_eq!(
@@ -529,10 +525,11 @@ fn abort_before_ack_retains_unknown_then_reconciles_by_submission_id() {
                 .any(|r| matches!(r.operation(), SessionOperation::Prompt(_))),
             "interrupt is not a prompt acknowledgement"
         );
-        let delivered = WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
-            submission_id: id.clone(),
+        let delivered = WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            submission_id: Some(id.clone()),
             mode: WorkerSendMode::Queue,
             message: "duplicate text".into(),
+            images: Vec::new(),
         });
         if delivery_first {
             backend
@@ -705,13 +702,12 @@ fn equal_text_submissions_stay_distinct_through_out_of_order_receipts_and_abort(
         .lock()
         .expect("test lock should not be poisoned")
         .events
-        .push_back(WorkerEvent::Activity(
-            WorkerActivity::SubmittedInputDelivered {
-                submission_id: first.clone(),
-                mode: WorkerSendMode::Steer,
-                message: "same text".into(),
-            },
-        ));
+        .push_back(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            submission_id: Some(first.clone()),
+            mode: WorkerSendMode::Steer,
+            message: "same text".into(),
+            images: Vec::new(),
+        }));
     project_transport(&mut transport, &mut conversation);
     backend
         .lock()
@@ -722,13 +718,12 @@ fn equal_text_submissions_stay_distinct_through_out_of_order_receipts_and_abort(
         .lock()
         .expect("test lock should not be poisoned")
         .events
-        .push_back(WorkerEvent::Activity(
-            WorkerActivity::SubmittedInputDelivered {
-                submission_id: second,
-                mode: WorkerSendMode::Steer,
-                message: "same text".into(),
-            },
-        ));
+        .push_back(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            submission_id: Some(second),
+            mode: WorkerSendMode::Steer,
+            message: "same text".into(),
+            images: Vec::new(),
+        }));
     project_transport(&mut transport, &mut conversation);
     let users = conversation
         .items
@@ -810,13 +805,12 @@ fn normal_receipt_and_user_echo_share_identity_and_emit_delivery_evidence() {
         .lock()
         .expect("test lock should not be poisoned")
         .events
-        .push_back(WorkerEvent::Activity(
-            WorkerActivity::SubmittedInputDelivered {
-                submission_id: id.clone(),
-                mode: WorkerSendMode::Prompt,
-                message: "normal text".into(),
-            },
-        ));
+        .push_back(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            submission_id: Some(id.clone()),
+            mode: WorkerSendMode::Prompt,
+            message: "normal text".into(),
+            images: Vec::new(),
+        }));
     let mut delivered_ids = Vec::new();
     while let Some(event) = transport.poll() {
         if let SessionEvent::Activity(event) = event {
@@ -897,8 +891,8 @@ fn acknowledged_queue_stays_off_transcript_until_late_delivery_after_abort() {
         1,
         "history refresh must not expose undelivered input"
     );
-    transport.enqueue_activity(WorkerActivity::SubmittedInputDeliveredWithImages {
-        submission_id: id,
+    transport.enqueue_activity(WorkerActivity::InputDelivered {
+        submission_id: Some(id),
         mode: WorkerSendMode::Steer,
         message: "keep this accepted instruction".into(),
         images: vec![input],
@@ -940,13 +934,12 @@ fn delivered_image_only_prompt_survives_transcript_finalization() {
         None,
     )
     .expect("test operation should succeed");
-    transport.enqueue_worker_event(WorkerEvent::Activity(
-        WorkerActivity::InputDeliveredWithImages {
-            mode: WorkerSendMode::Prompt,
-            message: String::new(),
-            images: vec![image],
-        },
-    ));
+    transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+        submission_id: None,
+        mode: WorkerSendMode::Prompt,
+        message: String::new(),
+        images: vec![image],
+    }));
     for event in &transport.pending {
         if let SessionEvent::Activity(event) = event {
             conversation.reduce(event.value());
@@ -1446,8 +1439,10 @@ fn applying_steering_preserves_the_running_worker_and_pending_delivery() {
         assert_eq!(queued, &["redirect"]);
         assert!(other.is_empty());
         transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            submission_id: None,
             mode,
             message: "redirect".into(),
+            images: Vec::new(),
         }));
         assert!(transport.steering.is_empty());
         assert!(transport.follow_up.is_empty());
@@ -1499,8 +1494,10 @@ impl WorkerSession for DeliveryBeforeAckWorker {
         self.polls += 1;
         match self.polls {
             1 => Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                submission_id: None,
                 mode: WorkerSendMode::Queue,
                 message: "next task".into(),
+                images: Vec::new(),
             })),
             2 => {
                 self.acknowledged = true;
@@ -1571,24 +1568,28 @@ fn queue_tracking_correlates_real_ids_across_event_orders_and_rejection() {
     let ack_first = submit(&mut transport, "same text");
     transport.finish_prompt_ack(ack_first, Ok(()));
     transport.enqueue_activity(WorkerActivity::InputDelivered {
+        submission_id: None,
         mode: WorkerSendMode::Queue,
         message: "same text".into(),
+        images: Vec::new(),
     });
     assert!(transport.follow_up.is_empty());
 
     let first = submit(&mut transport, "same text");
     let second = submit(&mut transport, "same text");
     transport.finish_prompt_ack(second.clone(), Ok(()));
-    transport.enqueue_activity(WorkerActivity::SubmittedInputDelivered {
-        submission_id: "unknown-submission".into(),
+    transport.enqueue_activity(WorkerActivity::InputDelivered {
+        submission_id: Some("unknown-submission".into()),
         mode: WorkerSendMode::Queue,
         message: "same text".into(),
+        images: Vec::new(),
     });
     assert_eq!(transport.follow_up, ["same text"]);
-    transport.enqueue_activity(WorkerActivity::SubmittedInputDelivered {
-        submission_id: second,
+    transport.enqueue_activity(WorkerActivity::InputDelivered {
+        submission_id: Some(second),
         mode: WorkerSendMode::Queue,
         message: "same text".into(),
+        images: Vec::new(),
     });
     assert!(transport.follow_up.is_empty());
     assert_eq!(transport.prompt_deliveries[0].request_id, first);
@@ -1946,8 +1947,10 @@ fn delivered_worker_message_leaves_the_queue_and_enters_the_transcript() {
 
     transport.steering.push("redirect".into());
     transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+        submission_id: None,
         mode: WorkerSendMode::Steer,
         message: "redirect".into(),
+        images: Vec::new(),
     }));
     assert!(transport.steering.is_empty());
 
@@ -2020,13 +2023,12 @@ fn tracked_admission_waits_for_delivery_and_duplicate_ack_is_idempotent() {
         .lock()
         .expect("test lock should not be poisoned")
         .events
-        .push_back(WorkerEvent::Activity(
-            WorkerActivity::SubmittedInputDelivered {
-                submission_id: id.clone(),
-                mode: WorkerSendMode::Queue,
-                message: "do this next".into(),
-            },
-        ));
+        .push_back(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            submission_id: Some(id.clone()),
+            mode: WorkerSendMode::Queue,
+            message: "do this next".into(),
+            images: Vec::new(),
+        }));
     let responses = project_transport(&mut transport, &mut conversation);
     assert_eq!(
         responses
@@ -2301,8 +2303,10 @@ fn worker_session_state_retains_titles_and_counts_new_messages() {
         assert_eq!(transport.state().message_count, turn * 2 + 1);
         transport.enqueue_worker_event(WorkerEvent::Started);
         transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            submission_id: None,
             mode: WorkerSendMode::Prompt,
             message: prompt,
+            images: Vec::new(),
         }));
         transport.enqueue_worker_event(WorkerEvent::Settled {
             output: "Done".into(),

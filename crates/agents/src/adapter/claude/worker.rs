@@ -332,24 +332,11 @@ impl ClaudeSession {
             .map(crate::extensions::PromptImage::into_inline)
             .collect::<Result<Vec<_>, _>>()?;
         let message_frame = prompt(&self.id, &message, inline_images)?;
-        let delivery = match (submission_id, images.is_empty()) {
-            (Some(submission_id), true) => WorkerActivity::SubmittedInputDelivered {
-                submission_id: submission_id.into(),
-                mode,
-                message,
-            },
-            (Some(submission_id), false) => WorkerActivity::SubmittedInputDeliveredWithImages {
-                submission_id: submission_id.into(),
-                mode,
-                message,
-                images,
-            },
-            (None, true) => WorkerActivity::InputDelivered { mode, message },
-            (None, false) => WorkerActivity::InputDeliveredWithImages {
-                mode,
-                message,
-                images,
-            },
+        let delivery = WorkerActivity::InputDelivered {
+            submission_id: submission_id.map(str::to_owned),
+            mode,
+            message,
+            images,
         };
         Ok(Prompt {
             message: message_frame,
