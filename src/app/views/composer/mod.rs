@@ -137,20 +137,6 @@ impl FarcasterApp {
                     .p(theme().space.sm)
                     .when_some(widgets_above, |composer, widgets| composer.child(widgets))
                     .when_some(
-                        queue::render(
-                            &visible_queue,
-                            &restored_receipts,
-                            self.composer.sessions.current_target(),
-                            self.snapshot.selected_session.as_deref(),
-                            entity.clone(),
-                            crate::agents::supports_individual_queue_cancellation(
-                                self.active_harness(),
-                            ),
-                            self.snapshot.history_preview,
-                        ),
-                        |composer, queue| composer.child(queue),
-                    )
-                    .when_some(
                         attachments::render(self, entity.clone()),
                         |composer, attachments| composer.child(attachments),
                     )
@@ -195,6 +181,18 @@ impl FarcasterApp {
             .flex_none()
             .flex()
             .flex_col()
+            .when_some(
+                queue::render(
+                    &visible_queue,
+                    &restored_receipts,
+                    self.composer.sessions.current_target(),
+                    self.snapshot.selected_session.as_deref(),
+                    entity.clone(),
+                    crate::agents::supports_individual_queue_cancellation(self.active_harness()),
+                    self.snapshot.history_preview,
+                ),
+                |composer, queue| composer.child(queue),
+            )
             .child(composer)
             .child(self.render_composer_status(status_scroll, mode))
             .into_any_element()
