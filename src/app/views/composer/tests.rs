@@ -203,18 +203,21 @@ fn receipt_overlay_preserves_duplicate_occurrences_and_live_cancel_actions() {
 }
 
 #[test]
-fn peer_messages_have_their_own_queue_group_and_preview() {
+fn peer_messages_keep_their_delivery_group_and_sender_preview() {
     let peer = "Message from Farcaster peer worker-7:\n\nreview complete\nwith details".to_owned();
     let queue = QueueState {
         steering: vec![peer.clone(), "redirect now".into()],
-        follow_up: Vec::new(),
+        follow_up: vec![peer.clone()],
         ..Default::default()
     };
 
     let groups = queued_message_groups(&queue);
-    assert_eq!(groups[0].0, QueuedMessageKind::Peer);
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0].0, QueuedMessageKind::Steer);
     assert_eq!(groups[0].1[0].text, &peer);
-    assert_eq!(groups[1].0, QueuedMessageKind::Steer);
+    assert_eq!(groups[0].1.len(), 2);
+    assert_eq!(groups[1].0, QueuedMessageKind::FollowUp);
+    assert_eq!(groups[1].1[0].text, &peer);
     assert_eq!(queued_message_preview(&peer), "worker-7: review complete…");
 }
 
