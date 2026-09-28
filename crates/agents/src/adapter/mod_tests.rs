@@ -150,3 +150,57 @@ fn backend_descriptors_and_worker_factories_cover_every_variant() {
         assert!(factories.contains_key(&backend));
     }
 }
+
+#[test]
+fn rename_preserves_explicit_profile_for_native_session_path() {
+    let project = tempfile::tempdir().expect("project");
+    let profile_id = uuid::Uuid::new_v4().to_string();
+    let config = crate::AgentLaunchConfig {
+        profile_id: Some(profile_id.clone()),
+        ..Default::default()
+    };
+    let path = project.path().join("native-pi.jsonl");
+    std::fs::write(&path, r#"{"type":"session","id":"native-pi"}"#).expect("session");
+    let error = rename_session(
+        &config,
+        Backend::Pi,
+        project.path(),
+        &path,
+        "native-pi",
+        "New name",
+    )
+    .expect_err("missing explicit profile must not fall back to the default executable");
+    assert!(error.contains(&profile_id), "{error}");
+}
+
+#[test]
+fn rename_does_not_infer_a_profile_from_native_path_directories() {
+    let project = tempfile::tempdir().expect("project");
+    let profile_id = uuid::Uuid::new_v4().to_string();
+    let path = project
+        .path()
+        .join("profiles")
+        .join(&profile_id)
+        .join("pi/session.jsonl");
+    std::fs::create_dir_all(path.parent().expect("parent")).expect("session directory");
+    std::fs::write(&path, r#"{"type":"session","id":"native-pi"}"#).expect("session");
+    let program = project.path().join("missing-default-pi");
+    let config = crate::AgentLaunchConfig {
+        program: program.clone(),
+        ..Default::default()
+    };
+    assert_eq!(crate::profile_id_from_locator(&path), Some(profile_id));
+    let error = rename_session(
+        &config,
+        Backend::Pi,
+        project.path(),
+        &path,
+        "native-pi",
+        "New name",
+    )
+    .expect_err("fixture executable does not exist");
+    assert!(
+        error.contains(program.to_str().expect("program path")),
+        "{error}"
+    );
+}

@@ -280,17 +280,26 @@ impl RuntimeOwner {
                 project,
                 name,
             } => {
-                match crate::agents::rename_session(
+                let result = configuration_for_target(
                     &self.process_command,
-                    harness,
-                    &project,
-                    &path,
-                    &session_id,
-                    &name,
-                ) {
-                    Ok(()) => self.update_session_metadata(agents::SessionMetadata {
+                    self.state.as_ref(),
+                    LaunchTarget::Session(&path),
+                )
+                .and_then(|config| {
+                    crate::agents::rename_session(
+                        &config,
                         harness,
-                        profile_id: None,
+                        &project,
+                        &path,
+                        &session_id,
+                        &name,
+                    )?;
+                    Ok(config.profile_id)
+                });
+                match result {
+                    Ok(profile_id) => self.update_session_metadata(agents::SessionMetadata {
+                        harness,
+                        profile_id,
                         id: session_id,
                         path,
                         project,
@@ -429,3 +438,7 @@ impl RuntimeOwner {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "commands_tests.rs"]
+mod tests;

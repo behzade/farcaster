@@ -251,6 +251,7 @@ fn spawn_native_session(
     adapter.spawn(config, launch)
 }
 
+/// Rename using the target configuration already resolved by the caller.
 pub fn rename_session(
     config: &crate::AgentLaunchConfig,
     harness: Backend,
@@ -264,10 +265,8 @@ pub fn rename_session(
         id: session_id.into(),
         path: session.into(),
     })?;
-    let mut config = config.clone();
-    config.profile_id = crate::profile_id_from_locator(session);
     config.validate_profile_backend(harness)?;
-    for_backend(harness).rename_session(&config, project, session, session_id, name)
+    for_backend(harness).rename_session(config, project, session, session_id, name)
 }
 
 pub fn external_session_identity(path: &std::path::Path) -> Option<(Backend, String)> {
