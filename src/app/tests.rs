@@ -344,6 +344,42 @@ fn transcript_only_snapshot_changes_do_not_invalidate_other_regions() {
 }
 
 #[test]
+fn receipt_only_changes_invalidate_the_composer() {
+    let mut previous = RuntimeSnapshot::default();
+    Arc::make_mut(&mut previous.conversation).reduce(&serde_json::json!({
+        "type": "prompt_delivery", "submissionId": "receipt", "status": "unknown",
+        "message": {"role": "user", "content": "queued message", "queued": true,
+            "deliveryTracked": true, "promptMode": "follow_up"}
+    }));
+    assert_eq!(previous.conversation.pending_receipts().len(), 1);
+    assert!(!composer_snapshot_changed(&previous, &previous.clone()));
+
+    let mut dismissed = previous.clone();
+    Arc::make_mut(&mut dismissed.conversation).dismiss_pending_receipt("receipt");
+    assert!(dismissed.conversation.pending_receipts().is_empty());
+    assert_eq!(previous.conversation.queue, dismissed.conversation.queue);
+    assert_eq!(
+        previous.conversation.items.len(),
+        dismissed.conversation.items.len()
+    );
+    assert!(composer_snapshot_changed(&previous, &dismissed));
+
+    let mut accepted = previous.clone();
+    Arc::make_mut(&mut accepted.conversation).reduce(&serde_json::json!({
+        "type": "prompt_delivery", "submissionId": "receipt", "status": "accepted",
+        "message": {"role": "user", "content": "queued message", "queued": true,
+            "deliveryTracked": true, "promptMode": "follow_up"}
+    }));
+    assert!(!accepted.conversation.pending_receipts()[0].unknown);
+    assert_eq!(previous.conversation.queue, accepted.conversation.queue);
+    assert_eq!(
+        previous.conversation.items.len(),
+        accepted.conversation.items.len()
+    );
+    assert!(composer_snapshot_changed(&previous, &accepted));
+}
+
+#[test]
 fn composer_variant_tracks_empty_to_nonempty_conversations() {
     let previous = RuntimeSnapshot::default();
     let mut connected = previous.clone();

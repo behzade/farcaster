@@ -1,7 +1,7 @@
 use super::*;
 use farcaster_agent_protocol::extensions::PromptMode;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PendingReceipt {
     pub id: String,
     pub mode: Option<PromptMode>,

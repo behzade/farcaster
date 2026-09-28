@@ -259,6 +259,8 @@ pub(in crate::app) fn composer_snapshot_changed(
         || previous.thinking_levels != next.thinking_levels
         || previous.configuration_status != next.configuration_status
         || previous.access_mode != next.access_mode
+        || (!Arc::ptr_eq(&previous.conversation, &next.conversation)
+            && previous.conversation.pending_receipts() != next.conversation.pending_receipts())
 }
 
 pub(in crate::app) fn run_panel_snapshot_changed(
