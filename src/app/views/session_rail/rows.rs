@@ -101,6 +101,7 @@ impl RenderOnce for SessionRow {
         } = self;
         let row_height = session_row_height(compact);
         let session = &item.session;
+        let identity = super::session_row_identity(session);
         let path = session.path.clone();
         let project = session.project.clone();
         let open_entity = entity.clone();
@@ -133,9 +134,9 @@ impl RenderOnce for SessionRow {
         };
         let accessible_label = session_accessible_label(&session.title, accessible_state, &age);
         let hover_details = session_hover_details(session, accessible_state, &age, subagents);
-        let action_group = format!("session-actions-{}", session.id);
+        let action_group = format!("{identity}:actions");
         let archive_action = session_archive_action(
-            &session.id,
+            &identity,
             session.path.clone(),
             is_archived,
             action_group.clone(),
@@ -143,14 +144,14 @@ impl RenderOnce for SessionRow {
         );
         let delete_action = is_archived.then(|| {
             session_delete_action(
-                &session.id,
+                &identity,
                 session.path.clone(),
                 action_group.clone(),
                 entity.clone(),
             )
         });
         let row = div()
-            .id(format!("session-{}", session.id))
+            .id(identity.clone())
             .role(Role::Button)
             .aria_label(accessible_label)
             .aria_selected(selected)
@@ -248,7 +249,7 @@ impl RenderOnce for SessionRow {
                     .text_color(theme().colors.subtle)
                     .child(
                         div()
-                            .id(format!("move-project-{}", session.id))
+                            .id(format!("{identity}:move-project"))
                             .min_w_0()
                             .when(
                                 crate::agents::supports_session_move(session.harness),
@@ -298,7 +299,7 @@ impl RenderOnce for SessionRow {
                     .into_any_element(),
                 session_row_trailing(
                     session.harness,
-                    session_status_icon(target_app_session_id, &status_text),
+                    session_status_icon(&identity, &status_text),
                     age,
                     shortcut,
                     Some(archive_action),
@@ -311,11 +312,16 @@ impl RenderOnce for SessionRow {
         let hover_harness = session.harness;
         let hover_path = session.path.clone();
         let hover_project = session.project.clone();
-        let context_menu =
-            session_context_menu(session, target_kind, entity, row.into_any_element());
+        let context_menu = session_context_menu(
+            session,
+            &identity,
+            target_kind,
+            entity,
+            row.into_any_element(),
+        );
 
         div()
-            .id(format!("session-hover-{}", session.id))
+            .id(format!("{identity}:hover"))
             .h(row_height)
             .w_full()
             .on_hover(move |hovered: &bool, _, cx| {
@@ -472,6 +478,7 @@ fn session_delete_action(
 
 fn session_context_menu(
     session: &crate::sessions::SessionSummary,
+    identity: &str,
     kind: SessionRailKind,
     entity: WeakEntity<FarcasterApp>,
     row: AnyElement,
@@ -481,7 +488,7 @@ fn session_context_menu(
     let title = session.title.clone();
     let can_fork = crate::agents::supports_session_fork(session.harness);
     let app_session_id = session.app_session_id;
-    ContextMenuTrigger::new(format!("session-context-trigger-{}", session.id), row)
+    ContextMenuTrigger::new(format!("{identity}:context-trigger"), row)
         .size_full()
         .dropdown_menu_with_anchor(gpui::Anchor::TopLeft, move |menu, window, cx| {
             let rename_path = path.clone();
@@ -711,13 +718,13 @@ fn session_metadata_slot(
 
 /// A chat reports its state immediately left of the provider icon, in the same
 /// slot a failed chat and any future reload action share.
-pub(super) fn session_status_icon(app_session_id: i64, status: &str) -> Option<AnyElement> {
+pub(super) fn session_status_icon(identity: &str, status: &str) -> Option<AnyElement> {
     let (icon, color) = status_visual(status)?;
     let tooltip = status.to_owned();
     let icon = app_icon(icon, AppIconSize::Inline).into_any_element();
     Some(
         div()
-            .id(format!("session-status-{app_session_id}"))
+            .id(format!("session-status-{identity}"))
             .flex_none()
             .text_color(color)
             .app_tooltip(tooltip.clone())

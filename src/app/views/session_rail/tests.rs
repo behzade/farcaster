@@ -474,3 +474,76 @@ fn direct_worker_counts_do_not_merge_profile_copies() {
     assert_eq!(counts.get(&first.path), None);
     assert_eq!(counts.get(&second.path), Some(&1));
 }
+
+#[test]
+fn profile_copies_keep_distinct_list_and_navigation_keys_when_reordered() {
+    for kind in [SessionRailKind::Project, SessionRailKind::Archived] {
+        let mut first = item("same-native", 41, "/project", kind, false);
+        first.session.profile_id = Some("first".into());
+        first.session.path = "/profiles/first/session".into();
+        let mut second = first.clone();
+        second.session.app_session_id = 84;
+        second.session.profile_id = Some("second".into());
+        second.session.path = "/profiles/second/session".into();
+        let rows = [first, second];
+        let keys = rows.each_ref().map(|row| {
+            let key = super::session_item_identity(row);
+            assert_eq!(
+                super::active_item_identity(&ActiveSessionItem::Session(row.clone())),
+                key
+            );
+            assert_eq!(
+                super::VisibleSessionTarget::Persisted(row.session.clone()).rail_identity(),
+                key
+            );
+            key
+        });
+        assert_ne!(keys[0], keys[1]);
+        let reordered = [keys[1].clone(), keys[0].clone()];
+        assert_eq!(minimal_row_splice(&keys, &reordered), Some((0..2, 2)));
+        let list = gpui::ListState::new(2, gpui::ListAlignment::Top, px(0.0));
+        let current = std::cell::RefCell::new(keys.to_vec());
+        super::reconcile_list_rows(&list, &current, reordered.to_vec());
+        assert_eq!(*current.borrow(), reordered);
+    }
+}
+
+#[test]
+fn unbound_rail_keys_keep_locator_scope_and_bound_keys_survive_metadata_changes() {
+    let mut first = item(
+        "same-native",
+        0,
+        "/project",
+        SessionRailKind::Project,
+        false,
+    )
+    .session;
+    let mut other = first.clone();
+    other.profile_id = Some("custom".into());
+    assert_ne!(
+        super::session_row_identity(&first),
+        super::session_row_identity(&other)
+    );
+    other = first.clone();
+    other.harness = Backend::Codex;
+    assert_ne!(
+        super::session_row_identity(&first),
+        super::session_row_identity(&other)
+    );
+    other = first.clone();
+    other.path = "/other/session".into();
+    assert_ne!(
+        super::session_row_identity(&first),
+        super::session_row_identity(&other)
+    );
+    let unbound = super::session_row_identity(&first);
+    first.app_session_id = 41;
+    assert_ne!(unbound, super::session_row_identity(&first));
+    other = first.clone();
+    other.path = "/renamed/session".into();
+    other.title = "Renamed".into();
+    assert_eq!(
+        super::session_row_identity(&first),
+        super::session_row_identity(&other)
+    );
+}

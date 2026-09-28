@@ -88,6 +88,7 @@ impl RenderOnce for DraftRow {
         let is_draft = status == "Draft";
         let age = relative_age(UNIX_EPOCH + Duration::from_millis(draft.created_ms));
         let id = draft.id.clone();
+        let identity = format!("draft:{id}");
         let discard_id = id.clone();
         let project = draft.project.clone();
         let discard_entity = entity.clone();
@@ -216,10 +217,7 @@ impl RenderOnce for DraftRow {
                             .into_any_element(),
                         session_row_trailing(
                             draft.harness,
-                            session_status_icon(
-                                target_app_session_id,
-                                if is_draft { "" } else { status },
-                            ),
+                            session_status_icon(&identity, if is_draft { "" } else { status }),
                             age,
                             shortcut,
                             (draft.submitted || archived).then(|| {

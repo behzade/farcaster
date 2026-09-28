@@ -173,10 +173,7 @@ impl FarcasterApp {
             ),
             None => return,
         };
-        let key = match &target {
-            VisibleSessionTarget::Draft(draft) => format!("draft:{}", draft.id),
-            VisibleSessionTarget::Persisted(session) => format!("session:{}", session.id),
-        };
+        let key = target.rail_identity();
         // Browse archived history; never restore it or switch to its saved editor.
         match target {
             VisibleSessionTarget::Draft(draft) => {

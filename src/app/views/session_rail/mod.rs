@@ -97,6 +97,13 @@ impl VisibleSessionTarget {
         }
     }
 
+    fn rail_identity(&self) -> String {
+        match self {
+            Self::Draft(draft) => format!("draft:{}", draft.id),
+            Self::Persisted(session) => session_row_identity(session),
+        }
+    }
+
     fn app_session_id(&self) -> i64 {
         match self {
             Self::Draft(draft) => draft.app_session_id,
@@ -108,12 +115,18 @@ impl VisibleSessionTarget {
 fn active_item_identity(item: &ActiveSessionItem) -> String {
     match item {
         ActiveSessionItem::Draft(draft) => format!("draft:{}", draft.id),
-        ActiveSessionItem::Session(item) => format!("session:{}", item.session.id),
+        ActiveSessionItem::Session(item) => session_item_identity(item),
     }
 }
 
 fn session_item_identity(item: &SessionRailItem) -> String {
-    format!("session:{}", item.session.id)
+    session_row_identity(&item.session)
+}
+
+// UI-only keys retain the full tagged identity, including non-UTF-8 locators.
+// They are shared by list reconciliation, reveal targets, and row controls.
+pub(in crate::app::views) fn session_row_identity(session: &SessionSummary) -> String {
+    format!("session:{:?}", session.key())
 }
 
 fn reconcile_list_rows(

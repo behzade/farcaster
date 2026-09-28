@@ -73,3 +73,42 @@ fn switching_grouping_remeasures_session_rows(cx: &mut gpui::TestAppContext) {
         },
     );
 }
+
+#[test]
+fn revealing_profile_copies_uses_the_requested_active_or_archived_row() {
+    use crate::app::views::session_rail::session_row_identity;
+    use crate::sessions::{SessionSummary, UsageSummary};
+
+    for archived in [false, true] {
+        let sessions = [41, 84].map(|id| {
+            let mut session = SessionSummary::from_cached(
+                "same-native".into(),
+                format!("/profiles/{id}/session").into(),
+                "/project".into(),
+                String::new(),
+                String::new(),
+                String::new(),
+                None,
+                std::time::SystemTime::UNIX_EPOCH,
+                0,
+                UsageSummary::default(),
+                archived,
+                false,
+                String::new(),
+            )
+            .with_app_session_id(id);
+            session.profile_id = Some(id.to_string());
+            session
+        });
+        let keys = sessions.each_ref().map(session_row_identity);
+        let rows = RefCell::new(keys.to_vec());
+        let list = ListState::new(2, ListAlignment::Top, gpui::px(0.0))
+            .with_uniform_item_height(session_row_height(archived));
+        for index in [1, 0, 1] {
+            let mut reveal = Some(session_row_identity(&sessions[index]));
+            reveal_session_row(&list, &rows, &mut reveal);
+            assert_eq!(list.logical_scroll_top().item_ix, index);
+            assert!(reveal.is_none());
+        }
+    }
+}
