@@ -2450,17 +2450,61 @@ fn a_new_transport_without_a_picked_effort_reports_no_level() {
 
 #[test]
 fn completion_is_an_authoritative_message_before_settling() {
-    let mut message = AssistantMessage::default();
-    message.append_delta(0, "thinking", "thinking", "plan");
-    message.append_delta(1, "text", "text", "partial");
-    message.replace_text("final");
-    assert_eq!(
-        message.content(),
-        vec![
-            json!({"type": "thinking", "thinking": "plan"}),
-            json!({"type": "text", "text": "final"}),
-        ]
-    );
+    for (streamed, completed, expected) in [
+        ("partial", "final", "final"),
+        ("سلام", "سلام دنیا", "سلام دنیا"),
+        ("same", "same", "same"),
+        ("partial", "", "partial"),
+        ("longer", "long", "long"),
+        ("", "final", "final"),
+    ] {
+        let mut transport = WorkerSessionTransport::new(
+            std::path::Path::new("/locators"),
+            Backend::Codex,
+            "thread-1".into(),
+            Box::new(IdleWorker),
+            MainSessionMetadata::default(),
+            None,
+        )
+        .expect("transport");
+        for event in [
+            WorkerEvent::Started,
+            WorkerEvent::Activity(WorkerActivity::ThinkingDelta {
+                content_index: 0,
+                delta: "plan".into(),
+            }),
+            WorkerEvent::Activity(WorkerActivity::TextDelta {
+                content_index: 1,
+                delta: streamed.into(),
+            }),
+            WorkerEvent::Settled {
+                output: completed.into(),
+            },
+        ] {
+            transport.enqueue_worker_event(event);
+        }
+        let activities = transport
+            .pending
+            .iter()
+            .filter_map(|event| match event {
+                SessionEvent::Activity(event) => Some(event.value()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let message = activities
+            .iter()
+            .find(|event| event["type"] == "message_end")
+            .expect("final message");
+        assert_eq!(
+            message["message"]["content"],
+            json!([
+                {"type": "thinking", "thinking": "plan"},
+                {"type": "text", "text": expected},
+            ]),
+            "streamed={streamed:?}, completed={completed:?}"
+        );
+        assert_eq!(activities.last().expect("settled")["type"], "agent_settled");
+    }
 }
 
 fn state_of(payload: Payload) -> SessionState {

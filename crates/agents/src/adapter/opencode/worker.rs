@@ -19,7 +19,7 @@ use super::{
     tool::{normalize_opencode_tool, opencode_tool_metadata},
 };
 use crate::{
-    adapter::{child_stderr, farcaster_mcp, main_session},
+    adapter::{child_stderr, farcaster_mcp, main_session, stream_text::TextUpdate},
     agents::{
         AgentLaunchConfig, TokenUsage, WorkerActivity, WorkerActivityState, WorkerContext,
         WorkerEvent, WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession,
@@ -1088,12 +1088,12 @@ impl OpenCodeWorkerSession {
                     let streamed = opencode_part_key(&event.data)
                         .and_then(|key| self.text_streams.remove(&key))
                         .unwrap_or_default();
-                    let Some(delta) = completed_opencode_delta(&streamed, text) else {
+                    let TextUpdate::Append(delta) = TextUpdate::between(&streamed, text) else {
                         continue;
                     };
                     return Some(WorkerEvent::Activity(WorkerActivity::TextDelta {
                         content_index: usize::from(self.reasoning_started),
-                        delta,
+                        delta: delta.to_owned(),
                     }));
                 }
                 OpenCodeEventKind::ReasoningStarted => {
@@ -1130,13 +1130,13 @@ impl OpenCodeWorkerSession {
                     let streamed = opencode_part_key(&event.data)
                         .and_then(|key| self.reasoning_streams.remove(&key))
                         .unwrap_or_default();
-                    let Some(delta) = completed_opencode_delta(&streamed, text) else {
+                    let TextUpdate::Append(delta) = TextUpdate::between(&streamed, text) else {
                         continue;
                     };
                     self.reasoning_started = true;
                     return Some(WorkerEvent::Activity(WorkerActivity::ThinkingDelta {
                         content_index: 0,
-                        delta,
+                        delta: delta.to_owned(),
                     }));
                 }
                 OpenCodeEventKind::ToolInputStarted => {
@@ -1808,16 +1808,6 @@ fn opencode_part_key(data: &Value) -> Option<String> {
     let message = data.get("assistantMessageID")?.as_str()?;
     let ordinal = data.get("ordinal").and_then(Value::as_u64).unwrap_or(0);
     Some(format!("{message}:{ordinal}"))
-}
-
-fn completed_opencode_delta(streamed: &str, completed: &str) -> Option<String> {
-    if streamed.is_empty() {
-        return (!completed.is_empty()).then(|| completed.to_owned());
-    }
-    completed
-        .strip_prefix(streamed)
-        .filter(|suffix| !suffix.is_empty())
-        .map(str::to_owned)
 }
 
 fn opencode_form_prompt(form: &Value, field: &Value) -> String {

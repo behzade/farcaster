@@ -1522,13 +1522,22 @@ fn queued_prompt_during_stream_does_not_restart_visible_assistant_text() -> Resu
         1,
         "queue admission must not emit another turn start"
     );
-    sender
-        .send(Ok(super::super::contract::OpenCodeEvent {
-            id: None,
-            event: Some("session.text.delta".into()),
-            data: json!({"sessionID":"session-1","delta":"world"}),
-        }))
-        .map_err(|error| error.to_string())?;
+    for (event, data) in [
+        ("session.text.delta", json!({"delta":"world"})),
+        ("session.text.ended", json!({"text":"world!"})),
+    ] {
+        let mut data = data;
+        data["sessionID"] = json!("session-1");
+        data["assistantMessageID"] = json!("message-1");
+        data["ordinal"] = json!(0);
+        sender
+            .send(Ok(super::super::contract::OpenCodeEvent {
+                id: None,
+                event: Some(event.into()),
+                data,
+            }))
+            .map_err(|error| error.to_string())?;
+    }
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
         Backend::OpenCode,
@@ -1550,7 +1559,7 @@ fn queued_prompt_during_stream_does_not_restart_visible_assistant_text() -> Resu
             .filter(|item| item.kind == TranscriptKind::Assistant)
             .map(|item| item.complete_text())
             .collect::<Vec<_>>(),
-        ["hello world"]
+        ["hello world!"]
     );
     transport.close()?;
     Ok(())

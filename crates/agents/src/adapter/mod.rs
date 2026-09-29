@@ -26,6 +26,7 @@ mod prompt_boundary;
 mod queued_session;
 mod session_storage;
 mod shell_environment;
+mod stream_text;
 use backend::for_backend;
 pub fn profile_data_environment_key(backend: Backend) -> Option<&'static str> {
     for_backend(backend).profile_data_environment_key()

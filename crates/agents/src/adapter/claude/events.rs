@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use crate::adapter::stream_text::TextUpdate;
 use crate::{TokenUsage, ToolCategory, ToolMetadata, WorkerActivity, WorkerEvent, WorkerUsage};
 use serde_json::{Value, json};
 
@@ -219,7 +220,7 @@ impl Events {
                             let full = string(block, if thinking {"thinking"} else {"text"});
                             let previous = if thinking {&self.thinking} else {&self.streamed}
                                 .get(&index).map(String::as_str).unwrap_or_default();
-                            if let Some(suffix) = full.strip_prefix(previous) {
+                            if let TextUpdate::Append(suffix) = TextUpdate::between(previous, full) {
                                 self.delta(index, suffix, thinking);
                             }
                         }

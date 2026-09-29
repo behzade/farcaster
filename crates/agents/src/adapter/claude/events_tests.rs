@@ -26,15 +26,17 @@ fn seven_day_rate_limit_maps_to_neutral_weekly_usage() {
 fn per_block_assistant_envelopes_do_not_repeat_streamed_text() {
     let mut events = Events::default();
     events.start();
-    for (index, kind, field, value) in [
-        (0, "thinking", "thinking", "Checking"),
-        (1, "text", "text", "Hello"),
+    for (index, kind, field, value, completed) in [
+        (0, "thinking", "thinking", "Checking", "Checking now"),
+        (1, "text", "text", "سلام", "سلام دنیا"),
     ] {
         events.message(&json!({"type":"stream_event","event":{"type":"content_block_start","index":index,"content_block":{"type":kind,field:""}}}));
         events.message(&json!({"type":"stream_event","event":{"type":"content_block_delta","index":index,"delta":{"type":format!("{kind}_delta"),field:value}}}));
-        let frame = json!({"type":"assistant","message":{"content":[{"type":kind,field:value}]}});
-        events.message(&frame);
-        events.message(&frame);
+        for snapshot in [value, "", "unrelated", completed, completed] {
+            events.message(
+                &json!({"type":"assistant","message":{"content":[{"type":kind,field:snapshot}]}}),
+            );
+        }
     }
     let output = events
         .pending
@@ -44,8 +46,20 @@ fn per_block_assistant_envelopes_do_not_repeat_streamed_text() {
             _ => None,
         })
         .collect::<String>();
-    assert_eq!(output, "Hello");
-    assert_eq!(events.output, "Hello");
+    assert_eq!(output, "سلام دنیا");
+    assert_eq!(events.output, output);
+    let thinking = events
+        .pending
+        .iter()
+        .filter_map(|event| match event {
+            WorkerEvent::Activity(WorkerActivity::ThinkingDelta {
+                content_index: 0,
+                delta,
+            }) => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert_eq!(thinking, "Checking now");
 }
 
 #[test]

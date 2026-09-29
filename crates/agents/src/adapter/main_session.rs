@@ -1,5 +1,6 @@
 use crate::Backend;
 mod responses;
+use super::stream_text::TextUpdate;
 use responses::CatalogQuery;
 
 use std::{
@@ -845,15 +846,16 @@ impl WorkerSessionTransport {
 
     fn reconcile_completed_output(&mut self, output: &str) {
         let current_text = self.assistant_message.text().unwrap_or_default();
-        if output.is_empty() || output == self.observed_text || output == current_text {
+        if output == current_text {
             return;
         }
-        if let Some(suffix) = output.strip_prefix(&self.observed_text) {
-            self.append_completed_text(suffix);
-        } else if current_text.is_empty() {
-            self.append_completed_text(output);
-        } else {
-            self.assistant_message.replace_text(output);
+        match TextUpdate::between(&self.observed_text, output) {
+            TextUpdate::Unchanged => {}
+            TextUpdate::Append(suffix) => self.append_completed_text(suffix),
+            TextUpdate::Replace(text) if current_text.is_empty() => {
+                self.append_completed_text(text)
+            }
+            TextUpdate::Replace(text) => self.assistant_message.replace_text(text),
         }
     }
 
