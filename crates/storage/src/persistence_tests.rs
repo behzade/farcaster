@@ -188,7 +188,6 @@ fn empty_backend_preference_is_an_error() -> Result<(), Box<dyn std::error::Erro
     let temp = tempdir()?;
     let database = temp.path().join("state.sqlite3");
     let store = StateStore::open_at(&database)?;
-    assert!("".parse::<Backend>().is_err());
     Connection::open(&database)?.execute(
         "INSERT INTO meta(key, value) VALUES('preferred_harness', '')",
         [],

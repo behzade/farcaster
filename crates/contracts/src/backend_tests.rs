@@ -1,14 +1,6 @@
 use super::Backend;
 
 #[test]
-fn backend_ids_are_stable_machine_keys() -> Result<(), String> {
-    assert_eq!("codex-cli".parse::<Backend>()?.as_str(), "codex-cli");
-    assert!("Codex CLI".parse::<Backend>().is_err());
-    assert!("".parse::<Backend>().is_err());
-    Ok(())
-}
-
-#[test]
 fn backend_round_trips_preserve_storage_and_wire_names() {
     let expected = [
         "pi",
@@ -31,7 +23,7 @@ fn backend_round_trips_preserve_storage_and_wire_names() {
             backend
         );
     }
-    for name in ["", "unknown", "Pi", "codex"] {
+    for name in ["", "unknown", "Pi", "codex", "Codex CLI"] {
         assert!(name.parse::<Backend>().is_err());
         assert!(serde_json::from_value::<Backend>(serde_json::json!(name)).is_err());
     }
