@@ -268,8 +268,7 @@ fn abort_cancels_only_local_queue_work() -> Result<(), String> {
         !owner.active_snapshot().conversation.running,
         "settlement ends the turn"
     );
-    assert!(owner.pending_prompt_id.is_none());
-    assert!(owner.pending_prompt_target.is_none());
+    assert!(owner.pending_prompt.is_none());
     owner.maybe_send_deferred_prompt();
     assert_eq!(sent_messages(&sent), ["active task"]);
     drop(owner);
@@ -310,11 +309,10 @@ fn abort_cancels_a_not_yet_dispatched_prompt_durably() -> Result<(), String> {
         Vec::new(),
         false,
     );
-    assert!(owner.deferred_prompt.is_some());
+    assert!(owner.deferred_prompt().is_some());
     owner.apply_command(RuntimeCommand::Abort);
 
-    assert!(owner.deferred_prompt.is_none());
-    assert!(owner.pending_prompt_item.is_none());
+    assert!(owner.pending_prompt.is_none());
     assert!(
         owner
             .state
@@ -549,7 +547,7 @@ fn only_native_delivery_acknowledges_the_matching_outbox_row() -> Result<(), Str
         Vec::new(),
         false,
     );
-    let id = owner.pending_prompt_id.clone().expect("request id");
+    let id = owner.pending_request_id().expect("request id").to_owned();
     owner.apply_response(prompt_response("unrelated", PromptMode::Normal, true));
     owner.apply_response(prompt_response(&id, PromptMode::Normal, true));
     assert_eq!(
@@ -582,7 +580,7 @@ fn delivery_receipt_acks_prompt_and_persists_its_presentation() -> Result<(), St
         vec![image],
         false,
     );
-    let id = owner.pending_prompt_id.clone().expect("request id");
+    let id = owner.pending_request_id().expect("request id").to_owned();
     owner.apply_response(prompt_response(&id, PromptMode::Normal, true));
     let store = owner.state.as_ref().expect("state");
     assert_eq!(store.with(|store| store.queued_prompts())?.len(), 1);
@@ -667,8 +665,12 @@ fn late_receipt_never_acknowledges_a_new_same_text_submission() -> Result<(), St
         Vec::new(),
         false,
     );
-    let old_id = owner.pending_prompt_id.clone().expect("old request");
-    let old_outbox = owner.pending_outbox_id.expect("old outbox");
+    let old_id = owner.pending_request_id().expect("old request").to_owned();
+    let old_outbox = owner
+        .pending_prompt
+        .as_ref()
+        .and_then(|prompt| prompt.outbox_id)
+        .expect("old outbox");
     owner.apply_response(crate::agents::SessionResponse::prompt_delivery_unknown(
         old_id.clone(),
         PromptMode::Normal,
@@ -685,16 +687,32 @@ fn late_receipt_never_acknowledges_a_new_same_text_submission() -> Result<(), St
         Vec::new(),
         false,
     );
-    let new_id = owner.pending_prompt_id.clone().expect("new request");
-    let new_outbox = owner.pending_outbox_id.expect("new outbox");
+    let new_id = owner.pending_request_id().expect("new request").to_owned();
+    let new_outbox = owner
+        .pending_prompt
+        .as_ref()
+        .and_then(|prompt| prompt.outbox_id)
+        .expect("new outbox");
 
     owner.apply_response(prompt_response(&old_id, PromptMode::Normal, true));
-    assert_eq!(owner.pending_prompt_id.as_deref(), Some(new_id.as_str()));
-    assert_eq!(owner.pending_outbox_id, Some(new_outbox));
+    assert_eq!(owner.pending_request_id(), Some(new_id.as_str()));
+    assert_eq!(
+        owner
+            .pending_prompt
+            .as_ref()
+            .and_then(|prompt| prompt.outbox_id),
+        Some(new_outbox)
+    );
     owner.apply_process_item(delivered(&old_id, "same text"));
     assert!(owner.saved_prompts.is_empty());
-    assert_eq!(owner.pending_prompt_id.as_deref(), Some(new_id.as_str()));
-    assert_eq!(owner.pending_outbox_id, Some(new_outbox));
+    assert_eq!(owner.pending_request_id(), Some(new_id.as_str()));
+    assert_eq!(
+        owner
+            .pending_prompt
+            .as_ref()
+            .and_then(|prompt| prompt.outbox_id),
+        Some(new_outbox)
+    );
     assert_eq!(
         outbox_rows(&database)?,
         [
@@ -753,7 +771,7 @@ fn failed_delivery_record_keeps_the_original_pending_row_retryable() -> Result<(
         Vec::new(),
         false,
     );
-    let id = owner.pending_prompt_id.clone().expect("request id");
+    let id = owner.pending_request_id().expect("request id").to_owned();
     owner.apply_response(prompt_response(&id, PromptMode::Normal, true));
     let connection = rusqlite::Connection::open(&database).map_err(|error| error.to_string())?;
     connection
@@ -1093,7 +1111,7 @@ fn exact_cancellation_removes_saved_recovery_and_preserves_other_input() -> Resu
     owner.publish();
     assert!(owner.saved_prompts.is_empty());
     assert!(published_saved_ids(&events.try_iter().collect::<Vec<_>>()).is_empty());
-    assert_eq!(owner.pending_prompt_id.as_deref(), Some("request-1"));
+    assert_eq!(owner.pending_request_id(), Some("request-1"));
     assert_eq!(StateStore::open_at(&database)?.queued_prompts()?.len(), 1);
     Ok(())
 }
@@ -1262,7 +1280,7 @@ fn deferred_selection_rejection_cancels_outbox_and_settles_once() -> Result<(), 
             vec![],
             false,
         );
-        assert!(owner.deferred_prompt.is_some());
+        assert!(owner.deferred_prompt().is_some());
         assert!(sent_messages(&sent).is_empty());
         for _ in 0..2 {
             owner.apply_response(agents::SessionResponse::failure(
@@ -1288,11 +1306,7 @@ fn deferred_selection_rejection_cancels_outbox_and_settles_once() -> Result<(), 
             [("unsent".into(), "cancelled".into())]
         );
         assert!(owner.saved_prompts.is_empty());
-        assert!(owner.deferred_prompt.is_none());
-        assert!(owner.pending_prompt_id.is_none());
-        assert!(owner.pending_prompt_target.is_none());
-        assert!(owner.pending_submission_id.is_none());
-        assert!(owner.pending_outbox_id.is_none());
+        assert!(owner.pending_prompt.is_none());
         assert!(!owner.snapshot.conversation.running);
 
         sent_selection(&mut owner, "replacement");
@@ -1348,7 +1362,7 @@ fn startup_failure_settles_deferred_outbox_with_or_without_controls() -> Result<
                 vec![],
                 false,
             );
-            assert!(owner.deferred_prompt.is_some());
+            assert!(owner.deferred_prompt().is_some());
             owner.apply_response(agents::SessionResponse::cancelled(
                 "startup".into(),
                 operation,
@@ -1371,10 +1385,7 @@ fn startup_failure_settles_deferred_outbox_with_or_without_controls() -> Result<
                 [("never dispatched".into(), "cancelled".into())]
             );
             assert!(owner.saved_prompts.is_empty());
-            assert!(owner.deferred_prompt.is_none());
-            assert!(owner.pending_prompt_target.is_none());
-            assert!(owner.pending_submission_id.is_none());
-            assert!(owner.pending_outbox_id.is_none());
+            assert!(owner.pending_prompt.is_none());
             assert!(owner.can_deliver_queued(PromptMode::Normal));
             owner.process = Some(Box::new(Recorder(sent.clone(), None)));
             owner.active_session = Some(temp.path().join("session.jsonl"));
@@ -1425,7 +1436,11 @@ fn deferred_cancellation_failure_keeps_one_recovery_payload() -> Result<(), Stri
                 vec![image.clone()],
                 false,
             );
-            let outbox_id = owner.pending_outbox_id.unwrap();
+            let outbox_id = owner
+                .pending_prompt
+                .as_ref()
+                .and_then(|prompt| prompt.outbox_id)
+                .unwrap();
             let connection =
                 rusqlite::Connection::open(&database).map_err(|error| error.to_string())?;
             let fault = if read_failure {
@@ -1469,10 +1484,7 @@ fn deferred_cancellation_failure_keeps_one_recovery_payload() -> Result<(), Stri
             assert_eq!(saved.display_message.as_deref(), Some("display input"));
             assert_eq!(saved.invocation.as_deref(), Some("invocation"));
             assert_eq!(saved.images[0].bytes()?, image.bytes()?);
-            assert!(owner.deferred_prompt.is_none());
-            assert!(owner.pending_prompt_target.is_none());
-            assert!(owner.pending_submission_id.is_none());
-            assert!(owner.pending_outbox_id.is_none());
+            assert!(owner.pending_prompt.is_none());
             assert!(sent_messages(&sent).is_empty());
             connection
                 .execute_batch(if read_failure {
@@ -1558,7 +1570,7 @@ fn malformed_delivery_cannot_settle_current_or_queued_input() -> Result<(), Stri
             owner.apply_process_item(SessionEvent::Activity(invalid.into()));
         }
     }
-    assert_eq!(owner.pending_prompt_id.as_deref(), Some("request-1"));
+    assert_eq!(owner.pending_request_id(), Some("request-1"));
     assert!(owner.pending_queued_prompts.contains_key("request-2"));
     assert_eq!(
         outbox_rows(&database)?,
@@ -1576,5 +1588,96 @@ fn malformed_delivery_cannot_settle_current_or_queued_input() -> Result<(), Stri
         outbox_rows(&database)?,
         vec![("same".into(), "acked".into()); 2]
     );
+    Ok(())
+}
+
+#[test]
+fn delivered_prompt_keeps_its_identity_until_receipt_storage_recovers() -> Result<(), String> {
+    for finish in ["response", "reset", "failure"] {
+        let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let database = temp.path().join("state.sqlite3");
+        let (mut owner, sent) = ready_owner(temp.path(), &database)?;
+        let (sender, events) = mpsc::channel();
+        owner.event_tx.sender = sender;
+        owner.send_prompt_for_submission(
+            "first".into(),
+            "session:one".into(),
+            PromptMode::Normal,
+            "same".into(),
+            vec![],
+            false,
+        );
+        let first = owner.pending_request_id().unwrap().to_owned();
+        let session = owner.active_session.clone();
+        let connection =
+            rusqlite::Connection::open(&database).map_err(|error| error.to_string())?;
+        connection
+            .execute_batch(
+                "CREATE TRIGGER reject_delivery_receipt BEFORE INSERT ON session_events
+             WHEN json_extract(NEW.body, '$.type')='prompt_delivery_receipt'
+             BEGIN SELECT RAISE(ABORT, 'delivery storage fixture'); END;",
+            )
+            .map_err(|error| error.to_string())?;
+        owner.apply_process_item(delivered(&first, "same"));
+        match finish {
+            "response" => owner.apply_response(prompt_response(&first, PromptMode::Normal, true)),
+            "reset" => owner.reset_process_runtime(),
+            "failure" => owner.fail("transport failed".into()),
+            _ => unreachable!(),
+        }
+        assert!(owner.pending_prompt.is_none(), "{finish}");
+        let retired = &owner.retired_prompts[&first];
+        assert!(retired.delivered && retired.outbox_id.is_some(), "{finish}");
+        assert_eq!(retired.session, session, "{finish}");
+        connection
+            .execute_batch("DROP TRIGGER reject_delivery_receipt;")
+            .map_err(|error| error.to_string())?;
+
+        owner.process = Some(Box::new(Recorder(sent, None)));
+        owner.active_session = Some(temp.path().join("other-session.jsonl"));
+        owner.startup_state_loaded = true;
+        owner.startup_history_loaded = true;
+        owner.normal_prompt_in_flight = false;
+        conversation_mut(owner.active_snapshot_mut()).running = false;
+        owner.send_prompt_for_submission(
+            "second".into(),
+            "session:two".into(),
+            PromptMode::Normal,
+            "same".into(),
+            vec![],
+            false,
+        );
+        let second = owner.pending_request_id().unwrap().to_owned();
+        owner.apply_response(prompt_response(&first, PromptMode::Normal, true));
+        assert_eq!(
+            owner.pending_request_id(),
+            Some(second.as_str()),
+            "{finish}"
+        );
+        assert_eq!(
+            outbox_rows(&database)?,
+            [
+                ("same".into(), "acked".into()),
+                ("same".into(), "pending".into()),
+            ],
+            "{finish}"
+        );
+        let results = events
+            .try_iter()
+            .filter_map(|event| match event {
+                RuntimeEvent::PromptResult {
+                    submission_id,
+                    outcome,
+                    ..
+                } => Some((submission_id, outcome)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            results,
+            [(Some("first".into()), agents::PromptOutcome::Accepted)],
+            "{finish}"
+        );
+    }
     Ok(())
 }

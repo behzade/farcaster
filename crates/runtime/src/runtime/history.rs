@@ -218,11 +218,6 @@ impl RuntimeOwner {
         self.process_command = config;
         self.project = project.clone();
         self.session_id = None;
-        self.pending_prompt_target = None;
-        self.pending_submission_id = None;
-        self.pending_prompt_result_emitted = false;
-        self.pending_outbox_id = None;
-        self.deferred_prompt = None;
         self.pending_session_controls = PendingSessionControls::default();
         reset_snapshot_for_process(&mut self.snapshot, project, None, "Ready".into());
         self.snapshot.profile_id = self.process_command.profile_id.clone();

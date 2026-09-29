@@ -106,6 +106,7 @@ impl RuntimeOwner {
     pub(super) fn reset_process_runtime(&mut self) {
         self.idle_retirement = Default::default();
         self.complete_current_delivered_prompt();
+        self.finish_current_prompt(false);
         self.fail_pending_queued_prompts("Runtime reset before acknowledgement");
         self.pending_session_controls.reset_transport();
         self.invalidate_history_loads();
@@ -117,11 +118,6 @@ impl RuntimeOwner {
         self.parked_snapshot = None;
         self.startup_state_loaded = false;
         self.startup_history_loaded = false;
-        self.pending_prompt_id = None;
-        self.pending_submission_id = None;
-        self.pending_prompt_result_emitted = false;
-        self.pending_prompt_item = None;
-        self.pending_prompt_delivery_tracked = false;
         self.normal_prompt_in_flight = false;
         self.invalidate_auto_title_generation();
         self.title_generation.new_session = false;
@@ -152,15 +148,12 @@ impl RuntimeOwner {
             };
         }
         let preserve_transcript = preserve_transcript
-            || self.deferred_prompt.is_some()
+            || self.deferred_prompt().is_some()
             || !self.queued_prompts.is_empty()
             || (!self.pending_session_controls.is_empty() && self.snapshot.history_preview);
         let keep_preview = preserve_transcript && self.snapshot.history_preview;
         let preserved_conversation =
             (preserve_transcript && !keep_preview).then(|| self.snapshot.conversation.clone());
-        let preserved_prompt_item = preserved_conversation
-            .as_ref()
-            .and(self.pending_prompt_item.clone());
         let use_visible_snapshot = self.snapshot.selected_session == session;
         let sandbox_adapter = self.selected_sandbox_adapter();
         let target_snapshot = if use_visible_snapshot {
@@ -193,10 +186,16 @@ impl RuntimeOwner {
                 snapshot.pending_initial_service_tier,
             )
         });
-        let deferred_submission_id = self
-            .deferred_prompt
-            .as_ref()
-            .and(self.pending_submission_id.clone());
+        let mut waiting_prompt = self
+            .deferred_prompt()
+            .is_some()
+            .then(|| self.pending_prompt.take())
+            .flatten();
+        if preserved_conversation.is_none()
+            && let Some(prompt) = &mut waiting_prompt
+        {
+            prompt.item = None;
+        }
         let retained_inbox = (session.is_some() && session == self.active_session)
             .then(|| self.idle_retirement.inbox.take())
             .flatten();
@@ -210,7 +209,7 @@ impl RuntimeOwner {
         self.idle_retirement.resume_attempted = resume_attempted;
         self.idle_retirement.retired = retired;
         self.pending_session_controls.restore_preview = keep_preview;
-        self.pending_submission_id = deferred_submission_id;
+        self.pending_prompt = waiting_prompt;
         self.title_generation.new_session = session.is_none() && fork.is_none();
         self.active_session = session.clone();
         self.process_command.access_mode = self
@@ -248,7 +247,6 @@ impl RuntimeOwner {
             );
             if let Some(conversation) = preserved_conversation {
                 self.snapshot.conversation = conversation;
-                self.pending_prompt_item = preserved_prompt_item;
             }
         }
         self.active_snapshot_mut().profile_id = self.process_command.profile_id.clone();
@@ -552,12 +550,6 @@ impl RuntimeOwner {
         self.parked_snapshot.as_ref().unwrap_or(&self.snapshot)
     }
 
-    pub(super) fn rollback_pending_prompt(&mut self) {
-        if let Some(optimistic) = self.pending_prompt_item.take() {
-            conversation_mut(self.active_snapshot_mut()).rollback_local_user(&optimistic);
-        }
-    }
-
     pub(super) fn fail(&mut self, error: String) {
         let details = failure_details(&error);
         if self.active_snapshot().status != "Failed" {
@@ -570,26 +562,34 @@ impl RuntimeOwner {
         zlog::error!("agent runtime failed: {details}");
         self.complete_current_delivered_prompt();
         self.fail_pending_queued_prompts(&details);
-        let prompt_was_delivered = self.pending_prompt_result_emitted;
-        if let (Some(outbox_id), Some(target)) = (
-            self.deferred_prompt
-                .as_ref()
-                .and_then(|prompt| prompt.outbox_id),
-            self.pending_prompt_target.clone(),
-        ) {
-            if self.pending_submission_id.is_none() {
+        let prompt_was_delivered = self
+            .pending_prompt
+            .as_ref()
+            .is_some_and(PendingPrompt::delivered);
+        if let Some(prompt) = self
+            .pending_prompt
+            .as_ref()
+            .filter(|prompt| prompt.waiting().is_some())
+            && let Some(outbox_id) = prompt.outbox_id
+        {
+            let submission_id = prompt.submission_id.clone();
+            let target = prompt.target.clone();
+            if submission_id.is_none() {
                 self.park_pending_outbox(outbox_id);
             } else if self.cancel_outbox_or_park(outbox_id) {
                 self.emit_prompt_result(
-                    self.pending_submission_id.as_deref(),
+                    submission_id.as_deref(),
                     &target,
                     agents::PromptOutcome::RejectedBeforeAcceptance,
                 );
             }
         }
         if !prompt_was_delivered {
-            if self.deferred_prompt.is_some() {
-                self.pending_outbox_id = None;
+            if self.deferred_prompt().is_some() {
+                self.pending_prompt
+                    .as_mut()
+                    .expect("waiting prompt")
+                    .outbox_id = None;
             } else {
                 self.release_pending_outbox();
             }
@@ -604,18 +604,13 @@ impl RuntimeOwner {
             );
             self.saved_prompts.push_back(prompt);
         }
-        self.pending_prompt_id = None;
+        self.finish_current_prompt(false);
         self.normal_prompt_in_flight = false;
-        self.deferred_prompt = None;
         conversation_mut(self.active_snapshot_mut()).running = false;
         self.publish_session_metadata();
         self.process_command.access_mode = self
             .access_mode_changes
             .take_requested_mode(self.process_command.access_mode);
-        self.pending_prompt_target = None;
-        self.pending_submission_id = None;
-        self.pending_prompt_result_emitted = false;
-        self.pending_prompt_delivery_tracked = false;
         if preserve_history {
             let label = format!("Couldn’t start {}", self.backend_name());
             self.fail_session_control_resume("Failed", &label, details);

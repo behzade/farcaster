@@ -171,22 +171,21 @@ fn first_prompt_waits_for_cursor_service_tier_acknowledgement() {
     let (mut owner, _events) = owner_without_process(std::env::temp_dir());
     owner.startup_state_loaded = true;
     owner.startup_history_loaded = true;
-    owner.deferred_prompt = Some(super::prompts::DeferredPrompt {
+    owner.pending_prompt = Some(crate::runtime::tests::waiting_prompt(PromptInput {
         mode: crate::protocol::PromptMode::Normal,
         message: "first message".into(),
         display_message: None,
         invocation: None,
         images: Vec::new(),
-        outbox_id: None,
-    });
+    }));
     owner
         .pending_session_controls
         .tier_sent("tier-request".into(), "priority".into());
 
     owner.maybe_send_deferred_prompt();
 
-    assert!(owner.deferred_prompt.is_some());
-    assert!(owner.pending_prompt_id.is_none());
+    assert!(owner.deferred_prompt().is_some());
+    assert!(owner.pending_request_id().is_none());
 }
 
 #[test]
@@ -212,9 +211,17 @@ fn cancelled_background_refreshes_preserve_transcript_and_status() {
 #[test]
 fn cancelled_undelivered_prompt_returns_ownership_without_command_error() {
     let (mut owner, events) = owner_without_process(std::env::temp_dir());
-    owner.pending_prompt_id = Some("pending-steer".into());
-    owner.pending_submission_id = Some("composer-steer".into());
-    owner.pending_prompt_target = Some("session:one".into());
+    owner.pending_prompt = Some(PendingPrompt {
+        submission_id: Some("composer-steer".into()),
+        target: "session:one".into(),
+        outbox_id: None,
+        item: None,
+        phase: PromptPhase::Dispatched {
+            request_id: "pending-steer".into(),
+            delivery_tracked: false,
+            delivered: false,
+        },
+    });
     owner.active_snapshot_mut().status = "Stopping".into();
 
     owner.apply_response(SessionResponse::cancelled(
@@ -223,8 +230,7 @@ fn cancelled_undelivered_prompt_returns_ownership_without_command_error() {
         "Prompt cancelled before delivery".into(),
     ));
 
-    assert!(owner.pending_prompt_id.is_none());
-    assert!(owner.pending_prompt_target.is_none());
+    assert!(owner.pending_prompt.is_none());
     assert_eq!(owner.active_snapshot().status, "Stopped");
     assert!(owner.active_snapshot().conversation.items.is_empty());
     assert!(events.try_iter().any(|event| matches!(
@@ -241,20 +247,19 @@ fn cancelled_undelivered_prompt_returns_ownership_without_command_error() {
 fn cancelled_startup_query_resolves_deferred_prompt_failure() {
     for operation in [SessionOperation::LoadState, SessionOperation::LoadHistory] {
         let (mut owner, _events) = owner_without_process(std::env::temp_dir());
-        owner.deferred_prompt = Some(super::prompts::DeferredPrompt {
+        owner.pending_prompt = Some(crate::runtime::tests::waiting_prompt(PromptInput {
             mode: PromptMode::Normal,
             message: "waiting for startup".into(),
             display_message: None,
             invocation: None,
             images: Vec::new(),
-            outbox_id: None,
-        });
+        }));
         owner.apply_response(SessionResponse::cancelled(
             "startup".into(),
             operation,
             "transport restarted".into(),
         ));
-        assert!(owner.deferred_prompt.is_none());
+        assert!(owner.deferred_prompt().is_none());
         assert_eq!(owner.active_snapshot().status, "Command failed");
     }
 }
@@ -300,16 +305,14 @@ fn cancelled_startup_query_resolves_pending_control_failure() {
 #[test]
 fn failed_effort_change_rejects_the_waiting_prompt() {
     let (mut owner, events) = owner_without_process(std::env::temp_dir());
-    owner.deferred_prompt = Some(super::prompts::DeferredPrompt {
+    owner.pending_prompt = Some(crate::runtime::tests::waiting_prompt(PromptInput {
         mode: PromptMode::Normal,
         message: "first message".into(),
         display_message: None,
         invocation: None,
         images: Vec::new(),
-        outbox_id: None,
-    });
-    owner.pending_prompt_target = Some("session:one".into());
-    owner.pending_submission_id = Some("composer:one".into());
+    }));
+    owner.pending_prompt.as_mut().unwrap().submission_id = Some("composer:one".into());
     owner
         .pending_session_controls
         .thinking_sent("effort-request".into(), Some("high".into()));
@@ -320,8 +323,7 @@ fn failed_effort_change_rejects_the_waiting_prompt() {
         "effort unavailable".into(),
     ));
 
-    assert!(owner.deferred_prompt.is_none());
-    assert!(owner.pending_prompt_target.is_none());
+    assert!(owner.pending_prompt.is_none());
     assert!(events.try_iter().any(|event| matches!(
         event,
         RuntimeEvent::PromptResult {
@@ -336,14 +338,13 @@ fn failed_effort_change_rejects_the_waiting_prompt() {
 fn stale_model_failure_does_not_reject_a_newer_startup_choice() {
     let (mut owner, _events) = owner_without_process(std::env::temp_dir());
     owner.snapshot.pending_initial_model = true;
-    owner.deferred_prompt = Some(super::prompts::DeferredPrompt {
+    owner.pending_prompt = Some(crate::runtime::tests::waiting_prompt(PromptInput {
         mode: PromptMode::Normal,
         message: "first message".into(),
         display_message: None,
         invocation: None,
         images: Vec::new(),
-        outbox_id: None,
-    });
+    }));
     owner
         .pending_session_controls
         .model_sent("older".into(), ("openai".into(), "old-model".into()));
@@ -357,7 +358,7 @@ fn stale_model_failure_does_not_reject_a_newer_startup_choice() {
         "old model unavailable".into(),
     ));
 
-    assert!(owner.deferred_prompt.is_some());
+    assert!(owner.deferred_prompt().is_some());
     assert!(owner.snapshot.pending_initial_model);
     assert!(owner.pending_session_controls.model_pending());
 }

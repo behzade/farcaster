@@ -60,8 +60,19 @@ fn busy_or_unresumable_sessions_survive_timeout_and_system_wake() {
         |o| conversation_mut(&mut o.snapshot).compacting = true,
         |o| conversation_mut(&mut o.snapshot).retrying = true,
         |o| o.normal_prompt_in_flight = true,
-        |o| o.pending_prompt_id = Some("unconfirmed".into()),
-        |o| o.pending_outbox_id = Some(1),
+        |o| {
+            o.pending_prompt = Some(PendingPrompt {
+                submission_id: None,
+                target: "session:one".into(),
+                outbox_id: Some(1),
+                item: None,
+                phase: PromptPhase::Dispatched {
+                    request_id: "unconfirmed".into(),
+                    delivery_tracked: false,
+                    delivered: false,
+                },
+            })
+        },
         |o| o.active_session = None,
         |o| o.startup_history_loaded = false,
         |o| o.snapshot.session.as_mut().unwrap().pending_message_count = 1,

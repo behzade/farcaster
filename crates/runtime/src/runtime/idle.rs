@@ -123,13 +123,9 @@ impl RuntimeOwner {
             && self.access_mode_changes.is_idle()
             && !self.access_mode_changes.applying
             && !self.pending_session_controls.selection_pending()
-            && self.pending_prompt_id.is_none()
-            && self.pending_submission_id.is_none()
-            && self.pending_prompt_target.is_none()
-            && self.pending_outbox_id.is_none()
+            && self.pending_prompt.is_none()
             && self.pending_queued_prompts.is_empty()
             && self.retired_prompts.is_empty()
-            && self.deferred_prompt.is_none()
             && self.queued_prompts.is_empty()
             && self.saved_prompts.is_empty()
             && !self.title_generation.in_flight

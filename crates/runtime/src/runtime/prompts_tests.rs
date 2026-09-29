@@ -126,9 +126,9 @@ fn normal_receipt_after_steering_settles_releases_the_next_send() -> Result<(), 
     };
     owner.apply_command(submit("normal", PromptMode::Normal, "original"));
     let normal = owner
-        .pending_prompt_id
-        .clone()
-        .expect("normal was dispatched");
+        .pending_request_id()
+        .expect("normal was dispatched")
+        .to_owned();
     owner.apply_process_item(SessionEvent::Activity(
         json!({
             "type":"prompt_delivery", "submissionId":normal, "status":"accepted"
@@ -158,7 +158,7 @@ fn normal_receipt_after_steering_settles_releases_the_next_send() -> Result<(), 
         json!({"type":"agent_settled"}).into(),
     ));
     assert!(!owner.snapshot.conversation.running);
-    assert_eq!(owner.pending_prompt_id.as_deref(), Some(normal.as_str()));
+    assert_eq!(owner.pending_request_id(), Some(normal.as_str()));
     assert!(owner.pending_queued_prompts.is_empty());
     owner.apply_process_item(SessionEvent::Activity(
         json!({
@@ -170,8 +170,7 @@ fn normal_receipt_after_steering_settles_releases_the_next_send() -> Result<(), 
         Some(normal),
         SessionResponsePayload::Prompt(PromptMode::Normal),
     )));
-    assert!(owner.pending_prompt_id.is_none());
-    assert!(owner.pending_prompt_target.is_none());
+    assert!(owner.pending_prompt.is_none());
     events.try_iter().for_each(drop);
 
     owner.apply_command(submit("next", PromptMode::Normal, "next input"));
@@ -222,12 +221,17 @@ fn admission_before_delivery_retains_the_outbox_and_composer_identity() -> Resul
             vec![],
             false,
         );
-        let id = owner.pending_prompt_id.clone().expect("sent");
+        let id = owner.pending_request_id().expect("sent").to_owned();
         let response =
             SessionResponse::success(Some(id.clone()), SessionResponsePayload::Prompt(mode));
         owner.apply_response(response.clone());
-        assert_eq!(owner.pending_prompt_id.as_deref(), Some(id.as_str()));
-        assert!(!owner.pending_prompt_result_emitted);
+        assert_eq!(owner.pending_request_id(), Some(id.as_str()));
+        assert!(
+            !owner
+                .pending_prompt
+                .as_ref()
+                .is_some_and(PendingPrompt::delivered)
+        );
         assert_eq!(
             owner
                 .state
@@ -253,7 +257,7 @@ fn admission_before_delivery_retains_the_outbox_and_composer_identity() -> Resul
                 .with(|store| store.queued_prompts())?
                 .is_empty()
         );
-        assert!(owner.pending_prompt_id.is_none());
+        assert!(owner.pending_request_id().is_none());
         assert!(owner.snapshot.conversation.pending_receipts().is_empty());
     }
     Ok(())
@@ -321,7 +325,7 @@ fn command_entry_sends_all_unacknowledged_inputs_before_first_escape() -> Result
     }
     owner.apply_command(RuntimeCommand::ApplySteering);
 
-    assert!(owner.pending_prompt_id.is_some());
+    assert!(owner.pending_request_id().is_some());
     assert_eq!(owner.pending_queued_prompts.len(), 2);
     assert!(matches!(
         commands.borrow().as_slice(),
@@ -405,7 +409,7 @@ fn command_entry_sends_all_unacknowledged_inputs_before_first_escape() -> Result
             .try_iter()
             .all(|event| !matches!(event, RuntimeEvent::PromptResult { .. }))
     );
-    assert_eq!(owner.pending_prompt_id.as_deref(), Some("held-1"));
+    assert_eq!(owner.pending_request_id(), Some("held-1"));
     fail_delivery_receipt_writes(&failure_connection)?;
     owner.apply_process_item(SessionEvent::Activity(
         json!({
@@ -615,8 +619,7 @@ fn rejected_submission_keeps_the_process_and_accepts_the_next_message() -> Resul
         assert!(owner.process.is_some());
         assert!(owner.snapshot.connected);
         assert_eq!(owner.snapshot.conversation.running, running);
-        assert!(owner.pending_prompt_target.is_none());
-        assert!(owner.pending_prompt_id.is_none());
+        assert!(owner.pending_prompt.is_none());
         assert!(
             !owner.snapshot.conversation.items.iter().any(|item| {
                 item.kind == crate::conversation::TranscriptKind::User && item.text == "bad input"
@@ -694,8 +697,7 @@ fn rejected_submission_keeps_the_process_and_accepts_the_next_message() -> Resul
         );
         assert!(owner.process.is_none());
         assert!(!owner.snapshot.connected);
-        assert!(owner.pending_prompt_target.is_none());
-        assert!(owner.pending_prompt_id.is_none());
+        assert!(owner.pending_prompt.is_none());
     }
     Ok(())
 }
@@ -802,23 +804,26 @@ fn resumed_prompt_survives_startup_history_without_starting_title_generation() {
         if preserve {
             conversation_mut(&mut owner.snapshot).replace_history(&history);
         }
-        owner.pending_prompt_item = Some(
+        let item = Some(
             conversation_mut(&mut owner.snapshot).push_local_user_with_prompt_images(
                 "Continue the task".into(),
                 &[],
                 false,
             ),
         );
-        owner.dispatch_prompt(
-            PromptMode::Normal,
-            "Continue the task".into(),
-            None,
-            None,
-            Vec::new(),
-            None,
-        );
+        owner.pending_prompt = Some(PendingPrompt {
+            item,
+            ..super::super::tests::waiting_prompt(PromptInput {
+                mode: PromptMode::Normal,
+                message: "Continue the task".into(),
+                display_message: None,
+                invocation: None,
+                images: Vec::new(),
+            })
+        });
+        owner.dispatch_prompt();
 
-        assert!(owner.deferred_prompt.is_some());
+        assert!(owner.deferred_prompt().is_some());
         assert!(commands.borrow().is_empty());
         let state = crate::agents::SessionResponse::success(
             None,
@@ -852,9 +857,9 @@ fn resumed_prompt_survives_startup_history_without_starting_title_generation() {
             }
         }
 
-        assert!(owner.deferred_prompt.is_none());
+        assert!(owner.deferred_prompt().is_none());
         assert!(!owner.title_generation.in_flight, "{harness}");
-        assert_eq!(owner.pending_prompt_id.as_deref(), Some("prompt-1"));
+        assert_eq!(owner.pending_request_id(), Some("prompt-1"));
         assert!(matches!(
             commands.borrow().as_slice(),
             [SessionCommand::Prompt { .. }]
@@ -884,7 +889,7 @@ fn unselected_backend_rejects_prompt_before_enqueuing() {
         vec![],
         false,
     );
-    assert!(owner.pending_prompt_target.is_none());
+    assert!(owner.pending_prompt.is_none());
     assert_eq!(
         owner.snapshot.conversation.items[0].text,
         "Choose a backend before sending a message."

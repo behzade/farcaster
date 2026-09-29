@@ -61,8 +61,11 @@ impl RuntimeOwner {
                     });
                 match result {
                     Ok(()) => {
-                        if self.pending_prompt_id.as_deref() == Some(receipt_id) {
-                            self.pending_outbox_id = None;
+                        if self.pending_request_id() == Some(receipt_id) {
+                            self.pending_prompt
+                                .as_mut()
+                                .expect("current prompt")
+                                .outbox_id = None;
                         }
                         self.reconcile_saved_prompts();
                     }
@@ -197,14 +200,19 @@ impl RuntimeOwner {
         let id = event.submission_id.as_str();
         let pending = self.pending_queued_prompts.remove(id);
         let retired = self.retired_prompts.remove(id);
-        let current = self.pending_prompt_id.as_deref() == Some(id);
+        let current = self.pending_request_id() == Some(id);
         let saved = (|| {
             let state = self.state.as_ref().ok_or("State unavailable")?;
             if let Some(outbox_id) = pending
                 .as_ref()
                 .map(|prompt| prompt.outbox_id)
                 .or_else(|| retired.as_ref().and_then(|prompt| prompt.outbox_id))
-                .or_else(|| current.then_some(self.pending_outbox_id).flatten())
+                .or_else(|| {
+                    self.pending_prompt
+                        .as_ref()
+                        .filter(|_| current)
+                        .and_then(|prompt| prompt.outbox_id)
+                })
             {
                 state.with(|store| store.cancel_queued_prompts(&[outbox_id]))?;
             }
@@ -226,19 +234,18 @@ impl RuntimeOwner {
             );
         }
         if current {
-            if let Some(target) = self.pending_prompt_target.take() {
+            if let Some(prompt) = &self.pending_prompt {
                 self.emit_prompt_result(
-                    self.pending_submission_id.as_deref(),
-                    &target,
+                    prompt.submission_id.as_deref(),
+                    &prompt.target,
                     agents::PromptOutcome::Cancelled,
                 );
             }
-            self.pending_prompt_id = None;
-            self.pending_outbox_id = None;
-            self.pending_submission_id = None;
-            self.pending_prompt_result_emitted = false;
-            self.pending_prompt_delivery_tracked = false;
-            self.rollback_pending_prompt();
+            self.pending_prompt
+                .as_mut()
+                .expect("current prompt")
+                .outbox_id = None;
+            self.finish_current_prompt(true);
         }
         conversation_mut(self.active_snapshot_mut()).dismiss_pending_receipt(id);
         true
@@ -271,19 +278,21 @@ impl RuntimeOwner {
             return;
         }
         let receipt_id = event.submission_id.as_str();
-        let current = self.pending_prompt_id.as_deref() == Some(receipt_id);
+        let current = self.pending_request_id() == Some(receipt_id);
         let queued = self.pending_queued_prompts.get(receipt_id).cloned();
         let outbox_id = if current {
-            self.pending_outbox_id
+            self.pending_prompt
+                .as_ref()
+                .and_then(|prompt| prompt.outbox_id)
         } else {
             queued.as_ref().map(|pending| pending.outbox_id)
         };
         let prompt = if current {
-            self.pending_prompt_target.as_ref().map(|target| {
+            self.pending_prompt.as_ref().map(|pending| {
                 (
-                    target.clone(),
+                    pending.target.clone(),
                     self.active_session.clone(),
-                    self.pending_prompt_delivery_tracked,
+                    pending.delivery_tracked(),
                 )
             })
         } else {
@@ -318,21 +327,30 @@ impl RuntimeOwner {
         if saved {
             self.reconcile_saved_prompts();
             if current {
-                self.pending_outbox_id = None;
+                self.pending_prompt
+                    .as_mut()
+                    .expect("current prompt")
+                    .outbox_id = None;
             }
         }
-        if current && !self.pending_prompt_result_emitted {
-            if let (Some(submission_id), Some(target)) = (
-                self.pending_submission_id.clone(),
-                self.pending_prompt_target.clone(),
-            ) {
+        if current
+            && !self
+                .pending_prompt
+                .as_ref()
+                .is_some_and(PendingPrompt::delivered)
+        {
+            let pending = self.pending_prompt.as_ref().expect("current prompt");
+            if pending.submission_id.is_some() {
                 self.emit_prompt_result(
-                    Some(&submission_id),
-                    &target,
+                    pending.submission_id.as_deref(),
+                    &pending.target,
                     crate::agents::PromptOutcome::Accepted,
                 );
             }
-            self.pending_prompt_result_emitted = true;
+            self.pending_prompt
+                .as_mut()
+                .expect("current prompt")
+                .mark_delivered();
             if saved {
                 self.apply_response(crate::agents::SessionResponse::success(
                     Some(receipt_id.to_owned()),
@@ -357,6 +375,7 @@ impl RuntimeOwner {
         let Some(retired) = self.retired_prompts.get(id).cloned() else {
             return false;
         };
+        let delivered = delivered || retired.delivered;
         let result = (|| {
             if let Some(state) = self.state.as_mut() {
                 state.with(|store| {
@@ -432,7 +451,11 @@ impl RuntimeOwner {
     }
 
     pub(super) fn release_pending_outbox(&mut self) {
-        if let Some(id) = self.pending_outbox_id.take() {
+        if let Some(id) = self
+            .pending_prompt
+            .as_mut()
+            .and_then(|prompt| prompt.outbox_id.take())
+        {
             self.park_pending_outbox(id);
         }
     }
@@ -441,7 +464,10 @@ impl RuntimeOwner {
         if self.saved_prompts.iter().any(|prompt| prompt.id == id) {
             return;
         }
-        let submission_id = self.pending_submission_id.clone();
+        let submission_id = self
+            .pending_prompt
+            .as_ref()
+            .and_then(|prompt| prompt.submission_id.clone());
         self.save_outbox_for_recovery(id, submission_id.as_deref(), None);
         if let Some(prompt) = self.saved_prompts.iter().find(|prompt| prompt.id == id) {
             self.emit_prompt_result(
@@ -476,19 +502,20 @@ impl RuntimeOwner {
     }
 
     pub(super) fn complete_current_delivered_prompt(&mut self) {
-        if !self.pending_prompt_result_emitted {
-            return;
-        }
-        let Some((outbox_id, receipt_id, target)) = self
-            .pending_outbox_id
-            .zip(self.pending_prompt_id.clone())
-            .zip(self.pending_prompt_target.clone())
-            .map(|((outbox_id, receipt_id), target)| (outbox_id, receipt_id, target))
+        let Some(prompt) = self
+            .pending_prompt
+            .as_ref()
+            .filter(|prompt| prompt.delivered())
         else {
             return;
         };
+        let Some(outbox_id) = prompt.outbox_id else {
+            return;
+        };
+        let receipt_id = prompt.request_id().expect("delivered prompt").to_owned();
+        let target = prompt.target.clone();
         let session = self.active_session.clone();
-        let delivery_tracked = self.pending_prompt_delivery_tracked;
+        let delivery_tracked = prompt.delivery_tracked();
         let Some(state) = self.state.as_mut() else {
             return;
         };
@@ -501,7 +528,12 @@ impl RuntimeOwner {
                 delivery_tracked,
             )
         }) {
-            Ok(()) => self.pending_outbox_id = None,
+            Ok(()) => {
+                self.pending_prompt
+                    .as_mut()
+                    .expect("current prompt")
+                    .outbox_id = None
+            }
             Err(error) => {
                 zlog::error!("Save proven prompt delivery {outbox_id}: {error}");
             }

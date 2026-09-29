@@ -5,21 +5,14 @@ use crate::{
     protocol::{PromptImage, PromptMode},
 };
 
-use super::{RuntimeEvent, RuntimeOwner, can_send_prompt, conversation_mut};
+use super::{
+    PendingPrompt, PromptInput, PromptPhase, RuntimeEvent, RuntimeOwner, can_send_prompt,
+    conversation_mut,
+};
 
 #[cfg(test)]
 #[path = "prompts_tests.rs"]
 mod tests;
-
-#[derive(Clone, Debug)]
-pub(super) struct DeferredPrompt {
-    pub(super) mode: PromptMode,
-    pub(super) message: String,
-    pub(super) display_message: Option<String>,
-    pub(super) invocation: Option<String>,
-    pub(super) images: Vec<PromptImage>,
-    pub(super) outbox_id: Option<i64>,
-}
 
 impl RuntimeOwner {
     pub(super) fn send_prompt_for_submission(
@@ -73,9 +66,7 @@ impl RuntimeOwner {
             );
             return;
         }
-        let queue_behind_pending = self.pending_prompt_id.is_some()
-            || self.pending_prompt_target.is_some()
-            || self.deferred_prompt.is_some();
+        let queue_behind_pending = self.pending_prompt.is_some();
         if queue_behind_pending && mode == PromptMode::Normal {
             mode = PromptMode::FollowUp;
         }
@@ -210,15 +201,12 @@ impl RuntimeOwner {
             });
             return;
         }
-        self.pending_submission_id = Some(submission_id);
-        self.pending_prompt_result_emitted = false;
-        self.pending_prompt_target = Some(target);
         self.snapshot.pending_question = None;
         let native_invocation = self
             .host
             .contains_invocation(&message, &self.snapshot.commands);
         let conversation = Arc::make_mut(&mut self.snapshot.conversation);
-        self.pending_prompt_item = (mode == PromptMode::Normal && !was_running).then(|| {
+        let item = (mode == PromptMode::Normal && !was_running).then(|| {
             match (display_message.as_ref(), invocation.as_ref()) {
                 (Some(display), Some(invocation)) => conversation
                     .push_local_invocation_with_prompt_images(
@@ -235,15 +223,21 @@ impl RuntimeOwner {
         });
         conversation.begin_run();
         self.snapshot.status = "Working".into();
-        self.publish();
-        self.dispatch_prompt(
-            mode,
-            message,
-            display_message,
-            invocation,
-            images,
+        self.pending_prompt = Some(PendingPrompt {
+            submission_id: Some(submission_id),
+            target,
             outbox_id,
-        );
+            item,
+            phase: PromptPhase::Waiting(PromptInput {
+                mode,
+                message,
+                display_message,
+                invocation,
+                images,
+            }),
+        });
+        self.publish();
+        self.dispatch_prompt();
     }
 
     #[cfg(test)]
@@ -297,14 +291,11 @@ impl RuntimeOwner {
         self.project = prompt.project;
         self.snapshot.project = self.project.clone();
         self.snapshot.selected_session = prompt.session.clone();
-        self.pending_submission_id = prompt.submission_id;
-        self.pending_prompt_result_emitted = false;
-        self.pending_prompt_target = Some(prompt.target);
         let native_invocation = self
             .host
             .contains_invocation(&prompt.message, &self.snapshot.commands);
         let conversation = Arc::make_mut(&mut self.snapshot.conversation);
-        self.pending_prompt_item = (prompt.mode == PromptMode::Normal).then(|| {
+        let item = (prompt.mode == PromptMode::Normal).then(|| {
             match (&prompt.display_message, &prompt.invocation) {
                 (Some(display), Some(invocation)) => conversation
                     .push_local_invocation_with_prompt_images(
@@ -321,15 +312,21 @@ impl RuntimeOwner {
         });
         conversation.begin_run();
         self.snapshot.status = "Working".into();
+        self.pending_prompt = Some(PendingPrompt {
+            submission_id: prompt.submission_id,
+            target: prompt.target,
+            outbox_id: Some(prompt.id),
+            item,
+            phase: PromptPhase::Waiting(PromptInput {
+                mode: prompt.mode,
+                message: prompt.message,
+                display_message: prompt.display_message,
+                invocation: prompt.invocation,
+                images: prompt.images,
+            }),
+        });
         self.publish();
-        self.dispatch_prompt(
-            prompt.mode,
-            prompt.message,
-            prompt.display_message,
-            prompt.invocation,
-            prompt.images,
-            Some(prompt.id),
-        );
+        self.dispatch_prompt();
     }
 
     pub(super) fn cancel_outbox_or_park(&mut self, id: i64) -> bool {
@@ -347,26 +344,29 @@ impl RuntimeOwner {
     }
 
     pub(super) fn settle_deferred_prompt(&mut self) {
-        let Some(prompt) = self.deferred_prompt.take() else {
+        let Some(pending) = self.pending_prompt.as_ref() else {
             return;
         };
-        let fallback = prompt
-            .outbox_id
+        let Some(input) = pending.waiting() else {
+            return;
+        };
+        let outbox_id = pending.outbox_id;
+        let fallback = outbox_id
             .zip(self.harness)
             .map(|(id, harness)| QueuedPrompt {
                 id,
-                submission_id: self.pending_submission_id.clone(),
-                target: self.pending_prompt_target.clone().unwrap_or_default(),
+                submission_id: pending.submission_id.clone(),
+                target: pending.target.clone(),
                 harness,
                 project: self.project.clone(),
                 session: self.active_session.clone(),
-                mode: prompt.mode,
-                message: prompt.message,
-                display_message: prompt.display_message,
-                invocation: prompt.invocation,
-                images: prompt.images,
+                mode: input.mode,
+                message: input.message.clone(),
+                display_message: input.display_message.clone(),
+                invocation: input.invocation.clone(),
+                images: input.images.clone(),
             });
-        self.settle_unsent_prompt(prompt.outbox_id, fallback);
+        self.settle_unsent_prompt(outbox_id, fallback);
     }
 
     fn settle_unsent_prompt(
@@ -374,24 +374,22 @@ impl RuntimeOwner {
         outbox_id: Option<i64>,
         fallback: Option<QueuedPrompt>,
     ) -> PromptOutcome {
-        let submission_id = self.pending_submission_id.take();
-        let target = self.pending_prompt_target.take();
+        let submission_id = self
+            .pending_prompt
+            .as_ref()
+            .and_then(|prompt| prompt.submission_id.clone());
         let outcome =
             self.settle_undelivered_outbox(outbox_id, submission_id.as_deref(), false, fallback);
-        self.pending_outbox_id = None;
-        self.pending_prompt_id = None;
-        self.pending_prompt_result_emitted = false;
-        self.pending_prompt_delivery_tracked = false;
-        self.rollback_pending_prompt();
+        if let Some(prompt) = &self.pending_prompt {
+            self.emit_prompt_result(prompt.submission_id.as_deref(), &prompt.target, outcome);
+        }
+        self.finish_current_prompt(true);
         let running = self
             .active_snapshot()
             .session
             .as_ref()
             .is_some_and(|session| session.is_streaming);
         conversation_mut(self.active_snapshot_mut()).running = running;
-        if let Some(target) = target {
-            self.emit_prompt_result(submission_id.as_deref(), &target, outcome);
-        }
         outcome
     }
 
@@ -407,10 +405,7 @@ impl RuntimeOwner {
     }
 
     pub(super) fn can_deliver_queued(&self, mode: PromptMode) -> bool {
-        if self.pending_prompt_id.is_some()
-            || self.pending_prompt_target.is_some()
-            || self.deferred_prompt.is_some()
-        {
+        if self.pending_prompt.is_some() {
             return false;
         }
         if mode != PromptMode::Normal {
@@ -424,16 +419,15 @@ impl RuntimeOwner {
             && snapshot.pending_question.is_none()
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn dispatch_prompt(
-        &mut self,
-        mode: PromptMode,
-        message: String,
-        display_message: Option<String>,
-        invocation: Option<String>,
-        images: Vec<PromptImage>,
-        outbox_id: Option<i64>,
-    ) {
+    fn dispatch_prompt(&mut self) {
+        let Some(pending) = self.pending_prompt.as_ref() else {
+            return;
+        };
+        let Some(input) = pending.waiting() else {
+            return;
+        };
+        let outbox_id = pending.outbox_id;
+        let mode = input.mode;
         if let Some(error) = self
             .pending_session_controls
             .selection_error()
@@ -453,15 +447,6 @@ impl RuntimeOwner {
             || !self.startup_history_loaded
             || self.pending_session_controls.selection_pending()
         {
-            self.pending_outbox_id = outbox_id;
-            self.deferred_prompt = Some(DeferredPrompt {
-                mode,
-                message,
-                display_message,
-                invocation,
-                images,
-                outbox_id,
-            });
             if start_process {
                 self.start_process(self.snapshot.selected_session.clone());
             }
@@ -484,31 +469,36 @@ impl RuntimeOwner {
             .session
             .as_ref()
             .is_some_and(|state| state.is_streaming);
+        let input = self.deferred_prompt().expect("waiting prompt");
         let title_prompt = self
             .should_generate_automatic_title(mode, was_running)
-            .then(|| message.clone());
+            .then(|| input.message.clone());
         let request = SessionCommand::Prompt {
             mode,
-            message,
-            images,
+            message: input.message.clone(),
+            images: input.images.clone(),
         };
-        self.pending_prompt_delivery_tracked = self
+        let delivery_tracked = self
             .process
             .as_ref()
             .is_some_and(|process| process.tracks_prompt_delivery(mode));
-        self.pending_outbox_id = outbox_id;
         match self.process.as_mut().map(|process| process.send(request)) {
             Some(Ok(id)) => {
                 if let Some(outbox_id) = outbox_id {
                     self.save_prompt_dispatch(outbox_id, &id);
                 }
-                if let Some(item) = self.pending_prompt_item.clone() {
-                    let delivery_tracked = self.pending_prompt_delivery_tracked;
+                if let Some(item) = self
+                    .pending_prompt
+                    .as_ref()
+                    .and_then(|prompt| prompt.item.clone())
+                {
                     conversation_mut(self.active_snapshot_mut())
                         .bind_submitted_prompt_with_evidence(&id, &item, delivery_tracked);
                 }
-                self.pending_prompt_id = Some(id);
-                self.pending_outbox_id = outbox_id;
+                self.pending_prompt
+                    .as_mut()
+                    .expect("waiting prompt")
+                    .mark_dispatched(id, delivery_tracked);
                 self.normal_prompt_in_flight |= mode == PromptMode::Normal;
                 if let Some(prompt) = title_prompt {
                     self.start_auto_title_generation(prompt);
@@ -519,12 +509,7 @@ impl RuntimeOwner {
             }
             None => {
                 self.release_pending_outbox();
-                self.rollback_pending_prompt();
-                self.pending_prompt_id = None;
-                self.pending_prompt_target = None;
-                self.pending_submission_id = None;
-                self.pending_prompt_result_emitted = false;
-                self.pending_prompt_delivery_tracked = false;
+                self.finish_current_prompt(true);
                 self.normal_prompt_in_flight = false;
                 let running = self
                     .active_snapshot()
@@ -577,17 +562,6 @@ impl RuntimeOwner {
         self.publish();
     }
 
-    pub(super) fn rollback_failed_prompt(&mut self, _error: &str) {
-        self.release_pending_outbox();
-        self.rollback_pending_prompt();
-        let running = self
-            .active_snapshot()
-            .session
-            .as_ref()
-            .is_some_and(|session| session.is_streaming);
-        conversation_mut(self.active_snapshot_mut()).running = running;
-    }
-
     pub(super) fn emit_prompt_result(
         &self,
         submission_id: Option<&str>,
@@ -615,7 +589,7 @@ impl RuntimeOwner {
         {
             return;
         }
-        if self.deferred_prompt.is_none()
+        if self.deferred_prompt().is_none()
             && self
                 .queued_prompts
                 .front()
@@ -624,8 +598,13 @@ impl RuntimeOwner {
         {
             self.deliver_queued(prompt);
         }
-        if let Some(prompt) = self.deferred_prompt.take() {
-            if prompt.mode == PromptMode::Normal && self.pending_prompt_item.is_none() {
+        if let Some(prompt) = self.deferred_prompt().cloned() {
+            if prompt.mode == PromptMode::Normal
+                && self
+                    .pending_prompt
+                    .as_ref()
+                    .is_some_and(|pending| pending.item.is_none())
+            {
                 let optimistic = match (&prompt.display_message, &prompt.invocation) {
                     (Some(display), Some(invocation)) => {
                         conversation_mut(self.active_snapshot_mut())
@@ -647,7 +626,7 @@ impl RuntimeOwner {
                             )
                     }
                 };
-                self.pending_prompt_item = Some(optimistic);
+                self.pending_prompt.as_mut().expect("waiting prompt").item = Some(optimistic);
             }
             let snapshot = self.active_snapshot_mut();
             Arc::make_mut(&mut snapshot.conversation).begin_run();
@@ -657,21 +636,15 @@ impl RuntimeOwner {
             {
                 self.snapshot = snapshot;
             }
-            self.dispatch_prompt(
-                prompt.mode,
-                prompt.message,
-                prompt.display_message,
-                prompt.invocation,
-                prompt.images,
-                prompt.outbox_id,
-            );
+            self.dispatch_prompt();
         }
     }
 
     pub(super) fn cancel_deferred_prompt(&mut self) {
-        let Some(prompt) = self.deferred_prompt.as_ref() else {
+        if self.deferred_prompt().is_none() {
             return;
-        };
+        }
+        let prompt = self.pending_prompt.as_ref().expect("waiting prompt");
         if let Some(outbox_id) = prompt.outbox_id
             && let Some(state) = &self.state
             && let Err(error) = state.with(|store| store.cancel_queued_prompts(&[outbox_id]))
@@ -679,16 +652,21 @@ impl RuntimeOwner {
             zlog::error!("Save deferred prompt cancellation: {error}");
             return;
         }
-        self.deferred_prompt = None;
-        self.rollback_failed_prompt("Prompt cancelled before delivery");
-        if let Some(target) = self.pending_prompt_target.take() {
+        self.release_pending_outbox();
+        if let Some(prompt) = &self.pending_prompt {
             self.emit_prompt_result(
-                self.pending_submission_id.as_deref(),
-                &target,
+                prompt.submission_id.as_deref(),
+                &prompt.target,
                 PromptOutcome::Cancelled,
             );
         }
-        self.pending_submission_id = None;
+        self.finish_current_prompt(true);
+        let running = self
+            .active_snapshot()
+            .session
+            .as_ref()
+            .is_some_and(|session| session.is_streaming);
+        conversation_mut(self.active_snapshot_mut()).running = running;
         self.snapshot.status = "Stopped".into();
         self.publish();
     }

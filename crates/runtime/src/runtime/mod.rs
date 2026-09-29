@@ -8,6 +8,7 @@ mod history;
 mod idle;
 mod launch_context;
 mod notifications;
+mod pending_prompt;
 mod process;
 mod projection;
 mod prompt_receipts;
@@ -22,6 +23,7 @@ use access_mode::AccessModeChangeState;
 use history::annotate_history_presentations;
 use launch_context::{LaunchTarget, configuration_for_target};
 use notifications::interaction_notification;
+use pending_prompt::{PendingPrompt, PromptInput, PromptPhase};
 #[cfg(test)]
 use process::startup_commands;
 use process::{can_send_prompt, conversation_mut, reset_snapshot_for_process};
@@ -31,7 +33,6 @@ use projection::{
     historical_context_stats, update_account_usage_from_event, update_context_from_event,
     update_session_goal_from_event, update_tokens_from_event,
 };
-use prompts::DeferredPrompt;
 use session_loop::run;
 use status::{
     failure_details, failure_summary, notification_target, run_status, semantic_status,
@@ -114,14 +115,8 @@ struct RuntimeOwner {
     session_generation: u64,
     session_refresh_due: Option<Instant>,
     process_generation: u64,
-    pending_prompt_id: Option<String>,
-    pending_submission_id: Option<String>,
-    pending_prompt_result_emitted: bool,
+    pending_prompt: Option<PendingPrompt>,
     pending_queued_prompts: HashMap<String, PendingQueuedPrompt>,
-    pending_prompt_target: Option<String>,
-    pending_prompt_item: Option<Arc<TranscriptItem>>,
-    pending_outbox_id: Option<i64>,
-    pending_prompt_delivery_tracked: bool,
     retired_prompts: HashMap<String, prompt_receipts::RetiredPrompt>,
     title_generation: SessionTitleGeneration,
     transcript_changed_from: Option<usize>,
@@ -133,7 +128,6 @@ struct RuntimeOwner {
     pending_document_refresh: Option<(PathBuf, PathBuf)>,
     active_session: Option<PathBuf>,
     parked_snapshot: Option<RuntimeSnapshot>,
-    deferred_prompt: Option<DeferredPrompt>,
     queued_prompts: VecDeque<crate::agents::QueuedPrompt>,
     saved_prompts: VecDeque<crate::agents::QueuedPrompt>,
     normal_prompt_in_flight: bool,

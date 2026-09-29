@@ -87,6 +87,16 @@ fn dropping_runtime_waits_for_owned_pi_processes_to_handle_exit() -> Result<(), 
     Ok(())
 }
 
+pub(super) fn waiting_prompt(input: PromptInput) -> PendingPrompt {
+    PendingPrompt {
+        submission_id: None,
+        target: "session:one".into(),
+        outbox_id: None,
+        item: None,
+        phase: PromptPhase::Waiting(input),
+    }
+}
+
 pub(super) fn owner_without_process(
     project: PathBuf,
 ) -> (RuntimeOwner, mpsc::Receiver<RuntimeEvent>) {
@@ -122,14 +132,8 @@ pub(super) fn owner_without_process(
             session_refresh_due: None,
             process_generation: 1,
             retired_prompts: HashMap::new(),
-            pending_prompt_id: None,
-            pending_submission_id: None,
-            pending_prompt_result_emitted: false,
+            pending_prompt: None,
             pending_queued_prompts: HashMap::new(),
-            pending_prompt_target: None,
-            pending_prompt_item: None,
-            pending_outbox_id: None,
-            pending_prompt_delivery_tracked: false,
             title_generation: SessionTitleGeneration::default(),
             transcript_changed_from: None,
             event_tx,
@@ -140,7 +144,6 @@ pub(super) fn owner_without_process(
             pending_document_refresh: None,
             active_session: None,
             parked_snapshot: None,
-            deferred_prompt: None,
             queued_prompts: VecDeque::new(),
             saved_prompts: VecDeque::new(),
             normal_prompt_in_flight: false,
@@ -207,7 +210,7 @@ fn model_switch_gates_prompts_and_recovers_after_rejection() {
         false,
     );
     owner.maybe_send_deferred_prompt();
-    assert!(owner.deferred_prompt.is_some());
+    assert!(owner.deferred_prompt().is_some());
     assert!(
         !commands
             .borrow()
@@ -219,7 +222,7 @@ fn model_switch_gates_prompts_and_recovers_after_rejection() {
         SessionOperation::SelectModel,
         "Model not found".into(),
     ));
-    assert!(owner.deferred_prompt.is_none());
+    assert!(owner.deferred_prompt().is_none());
     assert!(!owner.snapshot.conversation.running);
     assert!(events.try_iter().any(|event| matches!(
         event,
@@ -235,7 +238,7 @@ fn model_switch_gates_prompts_and_recovers_after_rejection() {
         vec![],
         false,
     );
-    assert!(owner.pending_prompt_target.is_none());
+    assert!(owner.pending_prompt.is_none());
     assert!(
         !commands
             .borrow()
@@ -257,7 +260,7 @@ fn model_switch_gates_prompts_and_recovers_after_rejection() {
         crate::agents::SessionResponsePayload::SelectModel(model),
     ));
     owner.maybe_send_deferred_prompt();
-    assert!(owner.deferred_prompt.is_none());
+    assert!(owner.deferred_prompt().is_none());
     assert_eq!(
         commands
             .borrow()
@@ -1181,7 +1184,7 @@ fn initial_prompt_is_not_duplicated_when_starting_its_process()
         false,
     );
 
-    assert!(owner.deferred_prompt.is_some());
+    assert!(owner.deferred_prompt().is_some());
     assert_eq!(owner.snapshot.conversation.items.len(), 1);
     owner.active_session = Some(temp.path().join("session.jsonl"));
     owner.startup_state_loaded = true;
@@ -1236,7 +1239,7 @@ fn deferred_prompt_is_rejected_when_startup_state_has_no_session_path()
         false,
     );
 
-    assert!(owner.deferred_prompt.is_some());
+    assert!(owner.deferred_prompt().is_some());
     assert!(
         events
             .try_iter()
@@ -1247,8 +1250,7 @@ fn deferred_prompt_is_rejected_when_startup_state_has_no_session_path()
     owner.startup_history_loaded = true;
     owner.maybe_send_deferred_prompt();
 
-    assert!(owner.deferred_prompt.is_none());
-    assert!(owner.pending_prompt_item.is_none());
+    assert!(owner.pending_prompt.is_none());
     assert!(!owner.snapshot.conversation.running);
     assert!(owner.saved_prompts.is_empty());
     assert_eq!(
@@ -1338,7 +1340,7 @@ fn new_session_stays_cold_until_the_first_prompt() -> Result<(), Box<dyn std::er
     );
 
     assert!(owner.process.is_some());
-    assert!(owner.deferred_prompt.is_some());
+    assert!(owner.deferred_prompt().is_some());
     assert!(owner.snapshot.connected);
     if let Some(mut process) = owner.process.take() {
         process.close()?;
@@ -2236,7 +2238,7 @@ fn failed_start_returns_the_deferred_prompt_to_the_composer()
             .len(),
         0
     );
-    assert!(owner.pending_outbox_id.is_none());
+    assert!(owner.pending_prompt.is_none());
     let connection = rusqlite::Connection::open(database)?;
     let (state, error) = connection.query_row(
         "SELECT state, error FROM outbox ORDER BY id DESC LIMIT 1",
@@ -2424,7 +2426,7 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
     assert_eq!(owner.snapshot.conversation.items[0].text, "previewed");
     assert!(owner.snapshot.pending_question.is_none());
     assert_eq!(owner.active_session, Some(new_path.clone()));
-    assert!(owner.deferred_prompt.is_some());
+    assert!(owner.deferred_prompt().is_some());
     let resume_events = event_rx.try_iter().collect::<Vec<_>>();
     assert!(resume_events.iter().all(|event| !matches!(
         event,
@@ -2464,13 +2466,12 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
         while let Some(item) = owner.process.as_mut().and_then(|process| process.poll()) {
             owner.apply_process_item(item);
         }
-        if owner.deferred_prompt.is_none() && owner.pending_prompt_id.is_none() {
+        if owner.pending_prompt.is_none() {
             break;
         }
         thread::sleep(Duration::from_millis(5));
     }
-    assert!(owner.deferred_prompt.is_none());
-    assert!(owner.pending_prompt_id.is_none());
+    assert!(owner.pending_prompt.is_none());
     assert!(!owner.snapshot.history_preview);
     assert!(owner.snapshot.conversation.items.iter().any(|item| {
         item.kind == crate::conversation::TranscriptKind::User && item.text == "continue"
@@ -2525,14 +2526,18 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
         session_refresh_due: None,
         process_generation: 7,
         retired_prompts: HashMap::new(),
-        pending_prompt_id: Some("pending-prompt".into()),
-        pending_submission_id: Some("submission-prompt".into()),
-        pending_prompt_result_emitted: false,
+        pending_prompt: Some(PendingPrompt {
+            submission_id: Some("submission-prompt".into()),
+            target: format!("session:{}", active_path.display()),
+            outbox_id: None,
+            item: None,
+            phase: PromptPhase::Dispatched {
+                request_id: "pending-prompt".into(),
+                delivery_tracked: false,
+                delivered: false,
+            },
+        }),
         pending_queued_prompts: HashMap::new(),
-        pending_prompt_target: Some(format!("session:{}", active_path.display())),
-        pending_prompt_item: None,
-        pending_outbox_id: None,
-        pending_prompt_delivery_tracked: false,
         title_generation: SessionTitleGeneration::default(),
         transcript_changed_from: None,
         event_tx,
@@ -2543,7 +2548,6 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
         pending_document_refresh: None,
         active_session: Some(active_path.clone()),
         parked_snapshot: None,
-        deferred_prompt: None,
         queued_prompts: VecDeque::new(),
         saved_prompts: VecDeque::new(),
         normal_prompt_in_flight: false,

@@ -161,7 +161,7 @@ impl RuntimeOwner {
             && response.result.as_ref().is_err_and(|error| {
                 error.kind == crate::agents::SessionResponseErrorKind::Cancelled
             })
-            && response.id != self.pending_prompt_id
+            && response.id.as_deref() != self.pending_request_id()
             && !response
                 .id
                 .as_ref()
@@ -223,36 +223,30 @@ impl RuntimeOwner {
             }
         }
         let is_prompt_response = matches!(operation, SessionOperation::Prompt(_))
-            && response.id.as_ref() == self.pending_prompt_id.as_ref();
-        let prompt_was_delivered = is_prompt_response && self.pending_prompt_result_emitted;
+            && response.id.is_some()
+            && response.id.as_deref() == self.pending_request_id();
+        let prompt_was_delivered = is_prompt_response
+            && self
+                .pending_prompt
+                .as_ref()
+                .is_some_and(PendingPrompt::delivered);
         if is_prompt_response {
             let Some(outcome) = self.settle_prompt_response(
                 &response,
-                RetiredPrompt {
-                    outbox_id: self.pending_outbox_id,
-                    target: self.pending_prompt_target.clone().unwrap_or_default(),
-                    session: self.active_session.clone(),
-                    delivery_tracked: self.pending_prompt_delivery_tracked,
-                    submission_id: self.pending_submission_id.clone(),
-                    delivered: prompt_was_delivered,
-                },
+                self.pending_prompt
+                    .as_ref()
+                    .expect("matched prompt")
+                    .receipt(self.active_session.clone()),
                 None,
             ) else {
                 return;
             };
-            if outcome != crate::agents::PromptOutcome::Accepted {
+            let rollback = outcome != crate::agents::PromptOutcome::Accepted;
+            if rollback {
                 self.normal_prompt_in_flight = false;
                 self.invalidate_auto_title_generation();
-                self.rollback_pending_prompt();
-                self.pending_outbox_id = None;
-            } else {
-                self.pending_prompt_item = None;
             }
-            self.pending_prompt_id = None;
-            self.pending_prompt_target = None;
-            self.pending_prompt_delivery_tracked = false;
-            self.pending_submission_id = None;
-            self.pending_prompt_result_emitted = false;
+            self.finish_current_prompt(rollback);
             if outcome == crate::agents::PromptOutcome::DeliveryUnknown {
                 let running = self
                     .active_snapshot()
@@ -298,7 +292,7 @@ impl RuntimeOwner {
                 operation,
                 SessionOperation::LoadState | SessionOperation::LoadHistory
             );
-            let blocks_resume = self.deferred_prompt.is_some() && startup_query;
+            let blocks_resume = self.deferred_prompt().is_some() && startup_query;
             let blocks_session_command_resume =
                 !self.pending_session_controls.is_empty() && startup_query;
             if error.kind == crate::agents::SessionResponseErrorKind::Cancelled
@@ -409,7 +403,9 @@ impl RuntimeOwner {
                         }
                     }
                     conversation_mut(self.active_snapshot_mut()).replace_history(&messages);
-                    self.pending_prompt_item = None;
+                    if let Some(prompt) = &mut self.pending_prompt {
+                        prompt.item = None;
+                    }
                 }
                 self.startup_history_loaded = true;
                 self.publish_session_metadata();

@@ -39,10 +39,11 @@ impl RuntimeOwner {
                     .then(|| request_id.clone())
             })
             .or_else(|| {
-                (self.pending_prompt_target.as_deref() == Some(target)
-                    && (self.pending_prompt_id.as_deref() == Some(id)
-                        || self.pending_submission_id.as_deref() == Some(id)))
-                .then(|| self.pending_prompt_id.clone())
+                let prompt = self.pending_prompt.as_ref()?;
+                (prompt.target == target
+                    && (prompt.request_id() == Some(id)
+                        || prompt.submission_id.as_deref() == Some(id)))
+                .then(|| prompt.request_id().map(str::to_owned))
                 .flatten()
             });
         if let (Some(request_id), Some(process)) = (request_id, self.process.as_mut()) {
