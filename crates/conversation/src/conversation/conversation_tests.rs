@@ -1141,6 +1141,59 @@ fn unchanged_tool_metadata_preserves_snapshot_and_derived_edit_results() {
 }
 
 #[test]
+fn tool_metadata_updates_argument_order_and_explicit_null_display() {
+    for (name, initial, next, expected, changed) in [
+        (
+            "custom",
+            Some(r#"{"first":1,"second":2}"#),
+            r#"{"second":2,"first":1}"#,
+            "Second: 2\nFirst: 1",
+            true,
+        ),
+        (
+            "custom",
+            Some(r#"{"nested":{"first":1,"second":2}}"#),
+            r#"{"nested":{"second":2,"first":1}}"#,
+            "Nested:\n  Second: 2\n  First: 1",
+            true,
+        ),
+        (
+            "custom",
+            Some(r#"[{"first":1,"second":2}]"#),
+            r#"[{"second":2,"first":1}]"#,
+            "-\n  Second: 2\n  First: 1",
+            true,
+        ),
+        ("read", None, "null", "None", true),
+        ("read", Some("null"), "null", "None", false),
+        (
+            "request_user_input",
+            Some(r#"{"script":"echo hi","question":"why"}"#),
+            r#"{"question":"why","script":"echo hi"}"#,
+            "why\n\nCommand:\necho hi",
+            false,
+        ),
+    ] {
+        let mut state = ConversationState::default();
+        let mut start = json!({"type":"tool_execution_start", "toolCallId":"t", "toolName":name});
+        if let Some(initial) = initial {
+            start["args"] = serde_json::from_str(initial).unwrap();
+        }
+        state.reduce(&start);
+        let original = state.items[0].clone();
+        let args: Value = serde_json::from_str(next).unwrap();
+        assert_eq!(
+            state.reduce(&json!({"type":"tool_metadata_changed", "toolCallId":"t", "args":args})),
+            changed.then_some(0)
+        );
+        assert_eq!(state.items[0].text, expected);
+        if !changed {
+            assert!(Arc::ptr_eq(&original, &state.items[0]));
+        }
+    }
+}
+
+#[test]
 fn tool_metadata_is_identical_in_live_and_history_projection() {
     let metadata = json!({"category":"search", "title":"Search attachment references", "targets":["src"], "native":{"kind":"search"}});
     let args = json!({"pattern":"attachment"});

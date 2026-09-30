@@ -72,10 +72,16 @@ impl ConversationState {
             .and_then(|metadata| serde_json::from_value(metadata.clone()).ok())
             .filter(|metadata| *metadata != details.metadata);
         let args = event.get("args");
-        let arguments_changed = args.is_some_and(|args| *args != details.arguments);
+        let changed_args = args
+            .filter(|args| current.text.is_empty() || !json_eq_in_order(args, &details.arguments));
+        let arguments_changed = changed_args.is_some_and(|args| *args != details.arguments);
+        let text = changed_args
+            .map(|args| format_tool_arguments(&details.name, args))
+            .filter(|text| *text != current.text);
         let presentation = args.map(|args| tool_presentation(&details.name, args));
         if metadata.is_none()
             && !arguments_changed
+            && text.is_none()
             && presentation
                 .as_ref()
                 .is_none_or(|next| *next == current.tool_presentation)
@@ -88,9 +94,11 @@ impl ConversationState {
         if let Some(metadata) = metadata {
             details.metadata = metadata;
         }
-        if arguments_changed && let Some(args) = args {
+        if let Some(args) = changed_args {
             details.arguments = args.clone();
-            value.text = format_tool_arguments(&details.name, args);
+        }
+        if let Some(text) = text {
+            value.text = text;
         }
         if let Some(presentation) = presentation {
             value.tool_presentation = presentation;
@@ -187,6 +195,25 @@ pub(super) fn tool_arguments(value: &Value) -> String {
         .map_or_else(String::new, |arguments| {
             format_tool_arguments(tool_name(value).unwrap_or_default(), arguments)
         })
+}
+
+fn json_eq_in_order(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Object(left), Value::Object(right)) => {
+            left.len() == right.len()
+                && left.iter().zip(right).all(|((key, left), (other, right))| {
+                    key == other && json_eq_in_order(left, right)
+                })
+        }
+        (Value::Array(left), Value::Array(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| json_eq_in_order(left, right))
+        }
+        _ => left == right,
+    }
 }
 
 fn format_tool_arguments(name: &str, arguments: &Value) -> String {
