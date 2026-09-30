@@ -1055,6 +1055,55 @@ fn tool_metadata_updates_preserve_lifecycle_and_raw_arguments() {
 }
 
 #[test]
+fn unchanged_tool_metadata_preserves_snapshot_and_derived_edit_results() {
+    let mut state = ConversationState::default();
+    let args = json!({"path":"file", "oldText":"old", "newText":"new"});
+    state.reduce(
+        &json!({"type":"tool_execution_start", "toolCallId":"t", "toolName":"edit", "args":args}),
+    );
+    let original = state.items[0].clone();
+    for metadata in [
+        Value::Null,
+        json!({"category":"change", "targets":["file"]}),
+        json!({"category":12}),
+    ] {
+        assert_eq!(state.reduce_deferred_with_change(&json!({
+            "type":"tool_metadata_changed", "toolCallId":"t", "args":args, "toolMetadata":metadata
+        })), (None, false));
+        assert!(Arc::ptr_eq(&original, &state.items[0]));
+    }
+    state.reduce(
+        &json!({"type":"tool_execution_end", "toolCallId":"t", "result":{
+            "content":[], "details":{"diff":"-old\n+new", "firstChangedLine":7}
+        }}),
+    );
+    assert_eq!(
+        state.items[0]
+            .tool_presentation
+            .as_ref()
+            .unwrap()
+            .first_changed_line(),
+        Some(7)
+    );
+    assert_eq!(
+        state.reduce(&json!({"type":"tool_metadata_changed", "toolCallId":"t", "args":args})),
+        Some(0)
+    );
+    assert_eq!(
+        state.items[0]
+            .tool_presentation
+            .as_ref()
+            .unwrap()
+            .first_changed_line(),
+        None
+    );
+    assert_eq!(
+        state.items[0].tool_execution_state(),
+        Some(ToolExecutionState::Succeeded)
+    );
+}
+
+#[test]
 fn tool_metadata_is_identical_in_live_and_history_projection() {
     let metadata = json!({"category":"search", "title":"Search attachment references", "targets":["src"], "native":{"kind":"search"}});
     let args = json!({"pattern":"attachment"});

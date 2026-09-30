@@ -55,28 +55,44 @@ impl ConversationState {
     }
 
     pub(super) fn update_tool_metadata(&mut self, event: &Value) -> bool {
-        let id = text_field(event, "toolCallId");
-        let Some(index) = self.tool_index(&id) else {
+        let id = event
+            .get("toolCallId")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let Some(index) = self.tool_index(id) else {
             return false;
         };
-        let mut item = self.items[index].clone();
-        let value = Arc::make_mut(&mut item);
-        let Some(details) = value.tool_details.as_mut().map(Arc::make_mut) else {
+        let current = &self.items[index];
+        let Some(details) = &current.tool_details else {
             return false;
         };
-        if let Some(metadata) = event
+        let metadata = event
             .get("toolMetadata")
             .and_then(|metadata| serde_json::from_value(metadata.clone()).ok())
+            .filter(|metadata| *metadata != details.metadata);
+        let args = event.get("args");
+        let arguments_changed = args.is_some_and(|args| *args != details.arguments);
+        let presentation = args.map(|args| tool_presentation(&details.name, args));
+        if metadata.is_none()
+            && !arguments_changed
+            && presentation
+                .as_ref()
+                .is_none_or(|next| *next == current.tool_presentation)
         {
+            return false;
+        }
+        let mut item = current.clone();
+        let value = Arc::make_mut(&mut item);
+        let details = Arc::make_mut(value.tool_details.as_mut().expect("checked tool details"));
+        if let Some(metadata) = metadata {
             details.metadata = metadata;
         }
-        if let Some(args) = event.get("args") {
+        if arguments_changed && let Some(args) = args {
             details.arguments = args.clone();
             value.text = format_tool_arguments(&details.name, args);
-            value.tool_presentation = tool_presentation(&details.name, args);
         }
-        if *self.items[index] == *item {
-            return false;
+        if let Some(presentation) = presentation {
+            value.tool_presentation = presentation;
         }
         self.items.set(index, item);
         true
