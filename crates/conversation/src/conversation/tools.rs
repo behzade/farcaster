@@ -316,7 +316,7 @@ pub(super) fn apply_tool_result(
     message: bool,
 ) -> TranscriptItem {
     let output = if message {
-        message_text(result)
+        message_text(result).into_owned()
     } else {
         result_text(result)
     };

@@ -1,5 +1,6 @@
 use super::*;
 use base64::Engine as _;
+use std::borrow::Cow;
 
 impl ConversationState {
     pub fn replace_history(&mut self, messages: &[Value]) {
@@ -249,14 +250,17 @@ pub(super) fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
                 message
                     .get("piUserInvocation")
                     .and_then(Value::as_str)
-                    .map(|_| message_text(message))
+                    .map(|_| message_text(message).into_owned())
             })
     } else {
         None
     };
     let (user_text, files) = projected_user
         .as_deref()
-        .map(super::split_pasted_files)
+        .map(|text| {
+            let (body, files) = super::split_pasted_files(text);
+            ((body.len() != text.len()).then(|| body.to_owned()), files)
+        })
         .unwrap_or_default();
     vec![TranscriptItem {
         kind: if is_error && kind != TranscriptKind::Tool {
@@ -265,11 +269,9 @@ pub(super) fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
             kind
         },
         label,
-        text: if projected_user.is_some() {
-            user_text.to_owned()
-        } else {
-            message_text(message)
-        },
+        text: user_text.unwrap_or_else(|| {
+            projected_user.map_or_else(|| message_text(message).into_owned(), Cow::into_owned)
+        }),
         files: Arc::new(files),
         images: if kind == TranscriptKind::User {
             message_images(message)
@@ -291,42 +293,34 @@ pub(super) fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
     }]
 }
 
-pub(super) fn message_text(message: &Value) -> String {
-    if let Some(content) = message.get("content")
-        && let Some(text) = content.as_str()
-    {
-        return text.to_owned();
+pub(super) fn message_text(message: &Value) -> Cow<'_, str> {
+    let mut parts = message_text_parts(message);
+    let Some(first) = parts.next() else {
+        return Cow::Borrowed("");
+    };
+    let Some(second) = parts.next() else {
+        return Cow::Borrowed(first);
+    };
+    let capacity =
+        first.len() + second.len() + 1 + parts.clone().map(|part| part.len() + 1).sum::<usize>();
+    let mut text = String::with_capacity(capacity);
+    text.push_str(first);
+    for part in std::iter::once(second).chain(parts) {
+        text.push('\n');
+        text.push_str(part);
     }
-    if let Some(blocks) = message.get("content").and_then(Value::as_array) {
-        let text = blocks
-            .iter()
-            .filter_map(|block| block.get("text").and_then(Value::as_str))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let has_image = blocks
-            .iter()
-            .any(|block| block.get("type").and_then(Value::as_str) == Some("image"));
-        if !text.is_empty() || has_image {
-            return text;
-        }
-    }
-    message
-        .get("summary")
-        .and_then(Value::as_str)
-        .or_else(|| message.get("output").and_then(Value::as_str))
-        .unwrap_or_default()
-        .to_owned()
+    Cow::Owned(text)
 }
 
-fn projected_user_message_text(message: &Value) -> String {
+fn projected_user_message_text(message: &Value) -> Cow<'_, str> {
     message
         .get("farcasterUserInvocation")
         .and_then(Value::as_str)
         .or_else(|| message.get("piUserInvocation").and_then(Value::as_str))
-        .map_or_else(|| message_text(message), str::to_owned)
+        .map_or_else(|| message_text(message), Cow::Borrowed)
 }
 
-fn message_text_parts(message: &Value) -> impl Iterator<Item = &str> {
+fn message_text_parts(message: &Value) -> impl Iterator<Item = &str> + Clone {
     let content = message.get("content");
     let mut parts = content
         .and_then(Value::as_array)
