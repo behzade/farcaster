@@ -4,9 +4,11 @@ use serde_json::{Value, json};
 
 use super::handler::IdempotencyBookkeeping;
 use super::prompt_boundary::{Boundary, PromptBoundary};
+use super::prompt_input::{PromptInput, prompt_mode, worker_mode};
+use super::prompt_queue::{PromptQueue, QueuedPrompt};
 use crate::{
-    DeliveredMessage, DeliveryStatus, SessionCommand, SessionEvent, SessionOperation,
-    SessionResponse, SessionResponsePayload as Payload, SessionTransport, SteerErrorRecovery,
+    DeliveryStatus, SessionCommand, SessionEvent, SessionOperation, SessionResponse,
+    SessionResponsePayload as Payload, SessionTransport, SteerErrorRecovery,
     extensions::{ExtensionUiResponse, PromptImage, PromptMode},
 };
 
@@ -21,26 +23,48 @@ pub(super) enum SteeringBoundary {
 }
 
 struct Input {
-    id: String,
-    mode: PromptMode,
+    prompt: PromptInput,
     requested_mode: PromptMode,
-    message: String,
-    images: Vec<PromptImage>,
 }
 
 impl Input {
-    fn receipt(&self, status: DeliveryStatus) -> crate::contract::PromptDelivery {
-        let mut content = vec![json!({"type":"text", "text":self.message})];
-        content.extend(
-            self.images.iter().map(
-                |image| json!({"type":"image", "data":image.data, "mimeType":image.mime_type}),
-            ),
-        );
-        crate::contract::PromptDelivery {
-            submission_id: self.id.clone(),
-            status,
-            message: Some(DeliveredMessage::user(content.into(), self.mode, true)),
+    fn new(
+        id: String,
+        mode: PromptMode,
+        requested_mode: PromptMode,
+        message: String,
+        images: Vec<PromptImage>,
+    ) -> Self {
+        Self {
+            prompt: PromptInput {
+                submission_id: Some(id),
+                mode: worker_mode(mode),
+                message,
+                images,
+            },
+            requested_mode,
         }
+    }
+
+    fn id(&self) -> &str {
+        self.prompt
+            .submission_id
+            .as_deref()
+            .expect("queued prompt identity")
+    }
+
+    fn mode(&self) -> PromptMode {
+        prompt_mode(self.prompt.mode)
+    }
+
+    fn receipt(&self, status: DeliveryStatus) -> crate::contract::PromptDelivery {
+        self.prompt.receipt(status)
+    }
+}
+
+impl QueuedPrompt for Input {
+    fn input(&self) -> &PromptInput {
+        &self.prompt
     }
 }
 
@@ -65,7 +89,7 @@ pub(super) struct QueuedSession {
     running: bool,
     compacting: bool,
     normal_requests: HashSet<String>,
-    queue: VecDeque<Input>,
+    queue: PromptQueue<Input>,
     stopped_batch: Vec<Input>,
     held_batch: Option<HeldBatch>,
     dispatched: HashMap<String, Dispatch>,
@@ -88,7 +112,7 @@ impl QueuedSession {
             running: false,
             compacting: false,
             normal_requests: HashSet::new(),
-            queue: VecDeque::new(),
+            queue: PromptQueue::default(),
             stopped_batch: Vec::new(),
             held_batch: None,
             dispatched: HashMap::new(),
@@ -103,7 +127,7 @@ impl QueuedSession {
             hook.enable(
                 self.queue
                     .iter()
-                    .any(|input| input.mode == PromptMode::Steer),
+                    .any(|input| input.mode() == PromptMode::Steer),
             );
         }
         let mut event = self.native_queue.clone();
@@ -111,7 +135,7 @@ impl QueuedSession {
         event["cancellableIds"] = self
             .queue
             .iter()
-            .map(|input| input.id.clone())
+            .map(|input| input.id().to_owned())
             .collect::<Vec<_>>()
             .into();
         for (key, ids, mode) in [
@@ -121,9 +145,9 @@ impl QueuedSession {
             let mut texts = event[key].as_array().cloned().unwrap_or_default();
             let mut identities = event[ids].as_array().cloned().unwrap_or_default();
             identities.resize(texts.len(), Value::String(String::new()));
-            for input in self.queue.iter().filter(|input| input.mode == mode) {
-                texts.push(input.message.clone().into());
-                identities.push(input.id.clone().into());
+            for input in self.queue.iter().filter(|input| input.mode() == mode) {
+                texts.push(input.prompt.message.clone().into());
+                identities.push(input.id().to_owned().into());
             }
             event[key] = texts.into();
             event[ids] = identities.into();
@@ -152,12 +176,12 @@ impl QueuedSession {
         let tracks_delivery = self.inner.tracks_prompt_delivery(mode);
         let message = inputs
             .iter()
-            .map(|input| input.message.as_str())
+            .map(|input| input.prompt.message.as_str())
             .collect::<Vec<_>>()
             .join("\n\n");
         let images = inputs
             .iter()
-            .flat_map(|input| input.images.iter().cloned())
+            .flat_map(|input| input.prompt.images.iter().cloned())
             .collect();
         match self.inner.send(SessionCommand::Prompt {
             mode,
@@ -179,28 +203,19 @@ impl QueuedSession {
             }
             Err(error) => {
                 for input in inputs {
-                    self.admission_resolved(&input.id);
+                    self.admission_resolved(input.id());
                     self.pending.push_back(SessionEvent::Activity(
                         input.receipt(DeliveryStatus::Rejected).into(),
                     ));
                     self.pending
                         .push_back(SessionEvent::Response(SessionResponse::failure(
-                            Some(input.id),
+                            Some(input.id().to_owned()),
                             SessionOperation::Prompt(input.requested_mode),
                             error.clone(),
                         )));
                 }
             }
         }
-    }
-
-    fn take_steers(&mut self) -> Vec<Input> {
-        let (steers, followups) = self
-            .queue
-            .drain(..)
-            .partition(|input| input.mode == PromptMode::Steer);
-        self.queue = followups;
-        steers.into()
     }
 
     fn boundary(&mut self, boundary: Boundary) {
@@ -219,7 +234,7 @@ impl QueuedSession {
             boundary.release(false);
             return;
         }
-        let batch = self.take_steers();
+        let batch = self.queue.take_steers();
         if batch.is_empty() {
             boundary.release(false);
             return;
@@ -232,7 +247,7 @@ impl QueuedSession {
             SteeringBoundary::Held => {
                 self.held_batch = Some(HeldBatch {
                     boundary,
-                    pending: batch.iter().map(|input| input.id.clone()).collect(),
+                    pending: batch.iter().map(|input| input.id().to_owned()).collect(),
                 });
                 for input in batch {
                     self.dispatch(input);
@@ -284,9 +299,9 @@ impl QueuedSession {
                 {
                     dispatch.responded = true;
                     for input in &dispatch.inputs {
-                        self.admission_resolved(&input.id);
+                        self.admission_resolved(input.id());
                         let mut reply = response.clone();
-                        reply.id = Some(input.id.clone());
+                        reply.id = Some(input.id().to_owned());
                         match &mut reply.result {
                             Ok(payload) => {
                                 *payload = Payload::Prompt(input.requested_mode);
@@ -348,7 +363,7 @@ impl QueuedSession {
                         let input_ids = dispatch
                             .inputs
                             .iter()
-                            .map(|input| input.id.clone())
+                            .map(|input| input.id().to_owned())
                             .collect::<Vec<_>>();
                         for input in &dispatch.inputs {
                             self.pending
@@ -416,18 +431,23 @@ impl QueuedSession {
     }
 
     fn cancel_local(&mut self) {
-        for input in self.queue.drain(..) {
+        let inputs = self.queue.take_all();
+        self.cancel_inputs(inputs);
+        self.queue_changed();
+    }
+
+    fn cancel_inputs(&mut self, inputs: impl IntoIterator<Item = Input>) {
+        for input in inputs {
             self.pending.push_back(SessionEvent::Activity(
                 input.receipt(DeliveryStatus::Cancelled).into(),
             ));
             self.pending
                 .push_back(SessionEvent::Response(SessionResponse::cancelled(
-                    input.id,
+                    input.id().to_owned(),
                     SessionOperation::Prompt(input.requested_mode),
                     "Cancelled before delivery".into(),
                 )));
         }
-        self.queue_changed();
     }
 }
 
@@ -466,17 +486,8 @@ impl SessionTransport for QueuedSession {
         Ok(())
     }
     fn cancel_prompt(&mut self, id: &str) -> Result<(), String> {
-        if let Some(index) = self.queue.iter().position(|input| input.id == id) {
-            let input = self.queue.remove(index).expect("located input");
-            self.pending.push_back(SessionEvent::Activity(
-                input.receipt(DeliveryStatus::Cancelled).into(),
-            ));
-            self.pending
-                .push_back(SessionEvent::Response(SessionResponse::cancelled(
-                    input.id,
-                    SessionOperation::Prompt(input.requested_mode),
-                    "Cancelled before delivery".into(),
-                )));
+        if let Some(input) = self.queue.cancel(id) {
+            self.cancel_inputs([input]);
             self.queue_changed();
             return Ok(());
         }
@@ -508,13 +519,13 @@ impl SessionTransport for QueuedSession {
                                 return Err(error);
                             }
                             self.running = recovery == SteerErrorRecovery::RetryWhenIdle;
-                            self.queue.push_back(Input {
-                                id: id.clone(),
+                            self.queue.push(Input::new(
+                                id.clone(),
                                 mode,
                                 requested_mode,
                                 message,
                                 images,
-                            });
+                            ));
                             self.queue_changed();
                             return Ok(id);
                         }
@@ -529,38 +540,29 @@ impl SessionTransport for QueuedSession {
                     .into_iter()
                     .map(PromptImage::into_inline)
                     .collect::<Result<_, _>>()?;
-                self.queue.push_back(Input {
-                    id: id.clone(),
+                self.queue.push(Input::new(
+                    id.clone(),
                     mode,
                     requested_mode,
                     message,
                     images,
-                });
+                ));
                 self.queue_changed();
                 Ok(id)
             }
             SessionCommand::Abort => {
                 self.cancel_local();
-                for input in self.stopped_batch.drain(..) {
-                    self.pending.push_back(SessionEvent::Activity(
-                        input.receipt(DeliveryStatus::Cancelled).into(),
-                    ));
-                    self.pending
-                        .push_back(SessionEvent::Response(SessionResponse::cancelled(
-                            input.id,
-                            SessionOperation::Prompt(input.requested_mode),
-                            "Cancelled before delivery".into(),
-                        )));
-                }
+                let inputs = std::mem::take(&mut self.stopped_batch);
+                self.cancel_inputs(inputs);
                 self.inner.send(SessionCommand::Abort)
             }
             SessionCommand::ApplySteering => {
                 for input in std::mem::take(&mut self.stopped_batch) {
-                    let mode = input.mode;
+                    let mode = input.mode();
                     self.dispatch_as(input, mode);
                 }
-                while let Some(input) = self.queue.pop_front() {
-                    let mode = input.mode;
+                while let Some(input) = self.queue.pop() {
+                    let mode = input.mode();
                     self.dispatch_as(input, mode);
                 }
                 self.queue_changed();
@@ -606,14 +608,14 @@ impl SessionTransport for QueuedSession {
         }
         if !self.running && !self.compacting {
             let batch = if self.stopped_batch.is_empty() {
-                self.take_steers()
+                self.queue.take_steers()
             } else {
                 std::mem::take(&mut self.stopped_batch)
             };
             if !batch.is_empty() {
                 self.queue_changed();
                 self.dispatch_batch(batch, PromptMode::Normal);
-            } else if let Some(input) = self.queue.pop_front() {
+            } else if let Some(input) = self.queue.pop() {
                 self.queue_changed();
                 self.dispatch(input);
             }

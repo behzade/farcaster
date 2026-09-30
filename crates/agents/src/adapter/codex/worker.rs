@@ -1,4 +1,6 @@
 use crate::Backend;
+use crate::adapter::prompt_acknowledgements::PromptAcknowledgements;
+use crate::adapter::prompt_input::PromptInput as NativeInputDelivery;
 #[path = "commands.rs"]
 mod commands;
 
@@ -7,7 +9,7 @@ mod handoff;
 use handoff::BatchInput;
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     io::{BufReader, Write as _},
     process::{Child, ChildStdin, Stdio},
     sync::mpsc,
@@ -164,8 +166,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             handoff: None,
             batch_deliveries: HashMap::new(),
             normal_start_clients: HashMap::new(),
-            prompt_acks: VecDeque::new(),
-            acknowledged_prompts: HashSet::new(),
+            prompt_acks: PromptAcknowledgements::default(),
             queued_inbound: VecDeque::new(),
             peer_messages: VecDeque::new(),
             events: VecDeque::from([WorkerEvent::SessionChanged { locator: thread_id }]),
@@ -338,8 +339,7 @@ pub fn spawn_main(
         handoff: None,
         batch_deliveries: HashMap::new(),
         normal_start_clients: HashMap::new(),
-        prompt_acks: VecDeque::new(),
-        acknowledged_prompts: HashSet::new(),
+        prompt_acks: PromptAcknowledgements::default(),
         queued_inbound: VecDeque::new(),
         peer_messages: VecDeque::new(),
         events: VecDeque::new(),
@@ -694,29 +694,14 @@ struct AbortCleanup {
 
 const ABORT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-#[derive(Clone)]
-struct NativeInputDelivery {
-    submission_id: Option<String>,
-    mode: WorkerSendMode,
-    message: String,
-    images: Vec<crate::extensions::PromptImage>,
-}
-
-impl NativeInputDelivery {
-    fn activity(self) -> WorkerActivity {
-        if self.submission_id.is_none()
-            && self.images.is_empty()
-            && let Some(message) = PeerMessage::from_prompt(&self.message)
-        {
-            return WorkerActivity::PeerInputDelivered { message };
-        }
-        WorkerActivity::InputDelivered {
-            submission_id: self.submission_id,
-            mode: self.mode,
-            message: self.message,
-            images: self.images,
-        }
+fn codex_delivery_activity(delivery: NativeInputDelivery) -> WorkerActivity {
+    if delivery.submission_id.is_none()
+        && delivery.images.is_empty()
+        && let Some(message) = PeerMessage::from_prompt(&delivery.message)
+    {
+        return WorkerActivity::PeerInputDelivered { message };
     }
+    delivery.into_activity()
 }
 
 enum SteerReceipt {
@@ -800,8 +785,7 @@ struct CodexWorkerSession {
     handoff: Option<Handoff>,
     batch_deliveries: HashMap<String, Vec<BatchInput>>,
     normal_start_clients: HashMap<CodexRequestId, String>,
-    prompt_acks: VecDeque<(String, Result<(), crate::PromptRejection>)>,
-    acknowledged_prompts: HashSet<String>,
+    prompt_acks: PromptAcknowledgements,
     queued_inbound: VecDeque<Result<CodexInbound, String>>,
     peer_messages: VecDeque<PeerMessage>,
     events: VecDeque<WorkerEvent>,
@@ -899,7 +883,7 @@ impl WorkerSession for CodexWorkerSession {
     }
 
     fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), crate::PromptRejection>)> {
-        self.prompt_acks.pop_front()
+        self.prompt_acks.pop()
     }
 
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String> {
@@ -2160,9 +2144,7 @@ impl CodexWorkerSession {
     }
 
     fn record_prompt_ack(&mut self, id: String, result: Result<(), crate::PromptRejection>) {
-        if self.acknowledged_prompts.insert(id.clone()) {
-            self.prompt_acks.push_back((id, result));
-        }
+        self.prompt_acks.record(id, result);
     }
 
     fn unknown_handoff_delivery(&mut self, client_id: &str, error: String) -> Option<WorkerEvent> {
@@ -2200,7 +2182,7 @@ impl CodexWorkerSession {
                 );
                 let mut activities = deliveries
                     .into_iter()
-                    .map(|entry| entry.delivery.activity());
+                    .map(|entry| codex_delivery_activity(entry.delivery));
                 let first = activities.next();
                 self.events.extend(activities.map(WorkerEvent::Activity));
                 if self
@@ -2223,7 +2205,7 @@ impl CodexWorkerSession {
                 {
                     self.events.push_back(WorkerEvent::Failed(error));
                 }
-                let activity = input.delivery.activity();
+                let activity = codex_delivery_activity(input.delivery);
                 self.finish_cancelled_handoff();
                 if let Err(error) = self.maybe_submit_handoff() {
                     self.events.push_back(WorkerEvent::Failed(error));
@@ -2236,7 +2218,7 @@ impl CodexWorkerSession {
             .get("clientId")
             .and_then(Value::as_str)
             .and_then(|client_id| self.client_submissions.remove(client_id));
-        Some(delivery.activity())
+        Some(codex_delivery_activity(delivery))
     }
 
     fn send_prompt_input(

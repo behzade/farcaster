@@ -90,20 +90,54 @@ fn worker_process_correlates_images_and_applies_all_queue_modes()
     assert!(wait_for_prompt_acks(worker.as_mut(), 1).is_empty());
 
     worker.apply_steering()?;
-    let acknowledgements = wait_for_prompt_acks(worker.as_mut(), 4);
-    let acknowledged_ids = acknowledgements
-        .iter()
-        .map(|(id, result)| (id.as_str(), result.is_ok()))
-        .collect::<Vec<_>>();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut deliveries = Vec::new();
+    let mut acknowledgements = Vec::new();
+    while std::time::Instant::now() < deadline && acknowledgements.len() < 4 {
+        assert!(worker.poll_prompt_ack().is_none(), "ack preceded delivery");
+        if let Some(WorkerEvent::Activity(crate::WorkerActivity::InputDelivered {
+            submission_id,
+            mode,
+            message,
+            images,
+        })) = worker.poll()
+        {
+            assert_eq!(images, vec![image.clone()]);
+            deliveries.push((submission_id.expect("submitted input"), mode, message));
+        }
+        while let Some((id, result)) = worker.poll_prompt_ack() {
+            assert_eq!(deliveries[acknowledgements.len()].0, id);
+            acknowledgements.push((id, result));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
     assert_eq!(
-        acknowledged_ids,
+        deliveries,
         [
-            ("steer-1", true),
-            ("steer-2", true),
-            ("follow-1", true),
-            ("follow-2", true),
+            (
+                "steer-1".into(),
+                WorkerSendMode::Steer,
+                "equal child".into()
+            ),
+            (
+                "steer-2".into(),
+                WorkerSendMode::Steer,
+                "second child steer".into()
+            ),
+            (
+                "follow-1".into(),
+                WorkerSendMode::Queue,
+                "equal child".into()
+            ),
+            (
+                "follow-2".into(),
+                WorkerSendMode::Queue,
+                "second child follow-up".into()
+            ),
         ]
     );
+    assert_eq!(acknowledgements.len(), 4);
+    assert!(acknowledgements.iter().all(|(_, result)| result.is_ok()));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     while std::time::Instant::now() < deadline {
         if matches!(worker.poll(), Some(WorkerEvent::Settled { .. })) {

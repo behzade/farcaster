@@ -210,13 +210,13 @@ impl CodexWorkerSession {
             return;
         }
         if let Some(id) = submission {
-            self.prompt_acks.push_back((
+            self.prompt_acks.record(
                 id,
                 outcome
                     .as_ref()
                     .map(|_| ())
                     .map_err(|error| error.clone().into()),
-            ));
+            );
         }
         self.caller_identity.set_activity(WorkerActivityState::Idle);
         match outcome {

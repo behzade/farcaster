@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 
+use super::{prompt_acknowledgements::PromptAcknowledgements, prompt_input::PromptInput};
 use crate::{PromptRejection, WorkerActivity, WorkerEvent};
 
 #[derive(Default)]
@@ -25,6 +26,16 @@ impl From<Vec<WorkerActivity>> for PromptBatch {
     }
 }
 
+impl From<Vec<PromptInput>> for PromptBatch {
+    fn from(inputs: Vec<PromptInput>) -> Self {
+        inputs
+            .into_iter()
+            .map(PromptInput::into_activity)
+            .collect::<Vec<_>>()
+            .into()
+    }
+}
+
 impl PromptBatch {
     pub(super) fn first_submission_id(&self) -> Option<&str> {
         self.inputs.first().and_then(submission_id)
@@ -40,13 +51,13 @@ impl PromptBatch {
 
     pub(super) fn acknowledge(
         &mut self,
-        acks: &mut VecDeque<(String, Result<(), PromptRejection>)>,
+        acks: &mut PromptAcknowledgements,
         events: &mut VecDeque<WorkerEvent>,
     ) {
         self.delivery = Delivery::Delivered;
         for input in self.inputs.drain(..) {
             if let Some(id) = submission_id(&input) {
-                acks.push_back((id.to_owned(), Ok(())));
+                acks.record(id.to_owned(), Ok(()));
             }
             events.push_back(WorkerEvent::Activity(input));
         }
@@ -67,14 +78,10 @@ impl PromptBatch {
         }
     }
 
-    pub(super) fn reject(
-        self,
-        error: PromptRejection,
-        acks: &mut VecDeque<(String, Result<(), PromptRejection>)>,
-    ) {
+    pub(super) fn reject(self, error: PromptRejection, acks: &mut PromptAcknowledgements) {
         for input in self.inputs {
             if let Some(id) = submission_id(&input) {
-                acks.push_back((id.to_owned(), Err(error.clone())));
+                acks.record(id.to_owned(), Err(error.clone()));
             }
         }
     }

@@ -879,8 +879,8 @@ fn inert_session() -> AcpWorkerSession {
         session_id: "one".into(),
         current_prompt: Some(AcpRequestId::Number(1)),
         current_inputs: PromptBatch::default(),
-        prompt_acks: VecDeque::new(),
-        queued_prompts: Vec::new(),
+        prompt_acks: PromptAcknowledgements::default(),
+        queued_prompts: PromptQueue::default(),
         handoff: None,
         output: String::new(),
         thought_started: false,
@@ -1773,6 +1773,7 @@ fn acp_in_memory_queue_is_not_an_acknowledgement() {
     assert_eq!(
         session
             .queued_prompts
+            .iter()
             .last()
             .expect("queued prompt")
             .submission_id

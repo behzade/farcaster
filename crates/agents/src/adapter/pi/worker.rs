@@ -7,9 +7,14 @@ use std::{
 
 use serde_json::Value;
 
+use crate::adapter::{
+    prompt_acknowledgements::PromptAcknowledgements,
+    prompt_input::{PromptInput, prompt_mode},
+};
+
 use super::process::{PiRpcProcess, SessionLaunch};
 use crate::{
-    agents::extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptMode},
+    agents::extensions::{ExtensionUiRequest, ExtensionUiResponse},
     agents::{
         AgentLaunchConfig, SessionActivityKind, SessionCommand, SessionEvent,
         SessionResponseErrorKind, WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse,
@@ -94,10 +99,9 @@ impl WorkerSessionFactory for PiWorkerFactory {
             pending_inputs: HashMap::new(),
             prompt_requests: HashMap::new(),
             pending_deliveries: VecDeque::new(),
-            prompt_acks: VecDeque::new(),
+            prompt_acks: PromptAcknowledgements::default(),
             pending_session_events: VecDeque::new(),
             pending_worker_events: VecDeque::new(),
-            delivery_ack_ready: VecDeque::new(),
             delivery_activity_returned: false,
             terminal: false,
         }))
@@ -114,21 +118,17 @@ struct PiWorkerSession {
     pending_inputs: HashMap<String, InputKind>,
     prompt_requests: HashMap<String, PendingPrompt>,
     pending_deliveries: VecDeque<PendingPrompt>,
-    prompt_acks: VecDeque<(String, Result<(), crate::PromptRejection>)>,
+    prompt_acks: PromptAcknowledgements,
     pending_session_events: VecDeque<SessionEvent>,
     pending_worker_events: VecDeque<WorkerEvent>,
-    delivery_ack_ready: VecDeque<(String, Result<(), crate::PromptRejection>)>,
     delivery_activity_returned: bool,
     terminal: bool,
 }
 
 #[derive(Clone)]
 struct PendingPrompt {
-    submission_id: String,
-    mode: PromptMode,
+    input: PromptInput,
     reports_ack: bool,
-    message: String,
-    images: Vec<crate::extensions::PromptImage>,
 }
 
 #[derive(Clone, Copy)]
@@ -174,11 +174,11 @@ impl WorkerSession for PiWorkerSession {
         self.pump();
         if self.delivery_activity_returned {
             self.delivery_activity_returned = false;
-            if let Some(ack) = self.delivery_ack_ready.pop_front() {
+            if let Some(ack) = self.prompt_acks.release_next() {
                 return Some(ack);
             }
         }
-        self.prompt_acks.pop_front()
+        self.prompt_acks.pop()
     }
 
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String> {
@@ -225,7 +225,7 @@ impl WorkerSession for PiWorkerSession {
 
     fn poll(&mut self) -> Option<WorkerEvent> {
         if let Some(event) = self.pending_worker_events.pop_front() {
-            if matches!(event, WorkerEvent::Activity(_)) && !self.delivery_ack_ready.is_empty() {
+            if matches!(event, WorkerEvent::Activity(_)) && self.prompt_acks.has_deferred() {
                 self.delivery_activity_returned = true;
             }
             return Some(event);
@@ -341,11 +341,10 @@ impl PiWorkerSession {
         mode: WorkerSendMode,
         images: Vec<crate::extensions::PromptImage>,
     ) -> Result<(), String> {
-        let mode = prompt_mode(mode);
         let tracked_message = message.clone();
         let tracked_images = images.clone();
         let request_id = self.process.send_request(SessionCommand::Prompt {
-            mode,
+            mode: prompt_mode(mode),
             message,
             images,
         })?;
@@ -353,13 +352,15 @@ impl PiWorkerSession {
         let submission_id =
             submission_id.unwrap_or_else(|| format!("pi-worker-input-{}", uuid::Uuid::new_v4()));
         let prompt = PendingPrompt {
-            submission_id,
-            mode,
+            input: PromptInput {
+                submission_id: Some(submission_id),
+                mode,
+                message: tracked_message,
+                images: tracked_images,
+            },
             reports_ack,
-            message: tracked_message,
-            images: tracked_images,
         };
-        if reports_ack && mode != PromptMode::Normal {
+        if reports_ack && mode != WorkerSendMode::Prompt {
             self.pending_deliveries.push_back(prompt.clone());
         }
         self.prompt_requests.insert(request_id, prompt);
@@ -401,32 +402,32 @@ impl PiWorkerSession {
         let Some(prompt) = self.prompt_requests.remove(request_id) else {
             return;
         };
+        let submission_id = prompt.input.submission_id.expect("Pi prompt identity");
         match response.result {
-            Ok(_) if prompt.reports_ack && prompt.mode != PromptMode::Normal => {}
-            Ok(_) if prompt.reports_ack => {
-                self.prompt_acks.push_back((prompt.submission_id, Ok(())))
-            }
+            Ok(_) if prompt.reports_ack && prompt.input.mode != WorkerSendMode::Prompt => {}
+            Ok(_) if prompt.reports_ack => self.prompt_acks.record(submission_id, Ok(())),
             Ok(_) => {}
             Err(error) if error.kind == SessionResponseErrorKind::DeliveryUnknown => {
                 self.pending_worker_events
                     .push_back(WorkerEvent::PromptDeliveryUnknown {
-                        submission_id: prompt.submission_id,
+                        submission_id,
                         error: error.to_string(),
                     });
             }
             Err(error) if prompt.reports_ack => {
-                self.pending_deliveries
-                    .retain(|pending| pending.submission_id != prompt.submission_id);
-                self.prompt_acks.push_back((
-                    prompt.submission_id,
+                self.pending_deliveries.retain(|pending| {
+                    pending.input.submission_id.as_deref() != Some(&submission_id)
+                });
+                self.prompt_acks.record(
+                    submission_id,
                     Err(crate::PromptRejection::new(
                         error.rejection_reason,
                         error.message,
                     )),
-                ));
+                );
             }
             Err(error) => {
-                if prompt.mode == PromptMode::Normal && !self.run_active {
+                if prompt.input.mode == WorkerSendMode::Prompt && !self.run_active {
                     self.pending_worker_events
                         .push_back(WorkerEvent::Failed(error.to_string()));
                 } else {
@@ -454,8 +455,8 @@ impl PiWorkerSession {
             .pending_deliveries
             .iter()
             .enumerate()
-            .filter(|(_, pending)| pending.message == text)
-            .min_by_key(|(_, pending)| pending.mode != PromptMode::Steer)
+            .filter(|(_, pending)| pending.input.message == text)
+            .min_by_key(|(_, pending)| pending.input.mode != WorkerSendMode::Steer)
             .map(|(index, _)| index)
         else {
             return;
@@ -464,21 +465,17 @@ impl PiWorkerSession {
             .pending_deliveries
             .remove(index)
             .expect("pending delivery index");
-        let mode = match pending.mode {
-            PromptMode::Steer => WorkerSendMode::Steer,
-            PromptMode::FollowUp => WorkerSendMode::Queue,
-            PromptMode::Normal => return,
-        };
-        let submission_id = pending.submission_id;
-        self.pending_worker_events.push_back(WorkerEvent::Activity(
-            crate::agents::WorkerActivity::InputDelivered {
-                submission_id: Some(submission_id.clone()),
-                mode,
-                message: pending.message,
-                images: pending.images,
-            },
-        ));
-        self.delivery_ack_ready.push_back((submission_id, Ok(())));
+        if pending.input.mode == WorkerSendMode::Prompt {
+            return;
+        }
+        let submission_id = pending
+            .input
+            .submission_id
+            .clone()
+            .expect("Pi prompt identity");
+        self.pending_worker_events
+            .push_back(WorkerEvent::Activity(pending.input.into_activity()));
+        self.prompt_acks.defer(submission_id, Ok(()));
     }
 
     fn request_session_state(&mut self) -> Result<(), String> {
@@ -486,14 +483,6 @@ impl PiWorkerSession {
             self.state_request = Some(self.process.send_request(SessionCommand::LoadState)?);
         }
         Ok(())
-    }
-}
-
-const fn prompt_mode(mode: WorkerSendMode) -> PromptMode {
-    match mode {
-        WorkerSendMode::Prompt => PromptMode::Normal,
-        WorkerSendMode::Queue => PromptMode::FollowUp,
-        WorkerSendMode::Steer => PromptMode::Steer,
     }
 }
 

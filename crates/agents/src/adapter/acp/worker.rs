@@ -1,4 +1,7 @@
 use crate::Backend;
+use crate::adapter::prompt_acknowledgements::PromptAcknowledgements;
+use crate::adapter::prompt_input::PromptInput as PendingPrompt;
+use crate::adapter::prompt_queue::PromptQueue;
 use std::{
     collections::{HashMap, VecDeque},
     process::{Child, Stdio},
@@ -257,8 +260,8 @@ fn spawn_session(
             session_id,
             current_prompt: None,
             current_inputs: PromptBatch::default(),
-            prompt_acks: VecDeque::new(),
-            queued_prompts: Vec::new(),
+            prompt_acks: PromptAcknowledgements::default(),
+            queued_prompts: PromptQueue::default(),
             handoff: None,
             output: String::new(),
             thought_started: false,
@@ -452,29 +455,6 @@ struct PendingInput {
     kind: PendingInputKind,
 }
 
-#[derive(Clone)]
-struct PendingPrompt {
-    mode: WorkerSendMode,
-    message: String,
-    images: Vec<crate::extensions::PromptImage>,
-    submission_id: Option<String>,
-}
-
-impl From<Vec<PendingPrompt>> for PromptBatch {
-    fn from(inputs: Vec<PendingPrompt>) -> Self {
-        inputs
-            .into_iter()
-            .map(|input| WorkerActivity::InputDelivered {
-                submission_id: input.submission_id,
-                mode: input.mode,
-                message: input.message,
-                images: input.images,
-            })
-            .collect::<Vec<_>>()
-            .into()
-    }
-}
-
 struct Handoff {
     interrupted_prompt: AcpRequestId,
     inputs: Vec<PendingPrompt>,
@@ -513,8 +493,8 @@ struct AcpWorkerSession {
     session_id: String,
     current_prompt: Option<AcpRequestId>,
     current_inputs: PromptBatch,
-    prompt_acks: VecDeque<(String, Result<(), crate::PromptRejection>)>,
-    queued_prompts: Vec<PendingPrompt>,
+    prompt_acks: PromptAcknowledgements,
+    queued_prompts: PromptQueue<PendingPrompt>,
     handoff: Option<Handoff>,
     output: String,
     thought_started: bool,
@@ -1029,7 +1009,7 @@ impl AcpWorkerSession {
             }
             return;
         }
-        let inputs = std::mem::take(&mut self.queued_prompts);
+        let inputs = self.queued_prompts.take_all();
         if let Err(error) = self.start_prompt_request(inputs.clone()) {
             self.reject_inputs(inputs, error.as_str().into());
             self.events.push_back(WorkerEvent::Failed(error));
@@ -1228,7 +1208,7 @@ impl WorkerSession for AcpWorkerSession {
     }
 
     fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), crate::PromptRejection>)> {
-        self.prompt_acks.pop_front()
+        self.prompt_acks.pop()
     }
 
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String> {
@@ -1361,7 +1341,7 @@ impl WorkerSession for AcpWorkerSession {
     }
 
     fn abort(&mut self) -> Result<(), String> {
-        PromptBatch::from(std::mem::take(&mut self.queued_prompts)).reject(
+        PromptBatch::from(self.queued_prompts.take_all()).reject(
             "Prompt cancelled before delivery".into(),
             &mut self.prompt_acks,
         );
@@ -1396,7 +1376,7 @@ impl WorkerSession for AcpWorkerSession {
         if self.handoff.is_some() || self.queued_prompts.is_empty() {
             return Ok(());
         }
-        let inputs = std::mem::take(&mut self.queued_prompts);
+        let inputs = self.queued_prompts.take_all();
         let Some(interrupted_prompt) = self.current_prompt.clone() else {
             self.start_prompt_request(inputs)?;
             self.events.push_back(WorkerEvent::Started);

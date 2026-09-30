@@ -111,7 +111,7 @@ fn followups_stay_local_and_exact_id_cancellation_does_not_touch_backend() {
     assert!(wire.lock().expect("wire").commands.is_empty());
     session.cancel_prompt(&first).expect("cancel first");
     assert_eq!(session.queue.len(), 1);
-    assert_eq!(session.queue[0].id, second);
+    assert_eq!(session.queue.iter().next().unwrap().id(), second);
     assert!(wire.lock().expect("wire").commands.is_empty());
     wire.lock()
         .expect("wire")
@@ -407,14 +407,14 @@ fn held_boundary_admits_every_pending_steer_before_releasing_the_batch() {
     session.boundary(hook);
     drain(&mut session);
     assert_eq!(session.queue.len(), 1);
-    assert_eq!(session.queue[0].id, followup);
+    assert_eq!(session.queue.iter().next().unwrap().id(), followup);
     assert_eq!(wire.lock().expect("wire").commands.len(), 3);
     for (native, input) in [
         ("native-1", &first),
         ("native-2", &second),
         ("native-3", &third),
     ] {
-        assert_eq!(session.dispatched[native].inputs[0].id, *input);
+        assert_eq!(session.dispatched[native].inputs[0].id(), *input);
         session
             .cancel_prompt(input)
             .expect("claimed row click is ignored");
@@ -435,7 +435,7 @@ fn held_boundary_admits_every_pending_steer_before_releasing_the_batch() {
         session
             .queue
             .iter()
-            .map(|input| input.id.as_str())
+            .map(|input| input.id())
             .collect::<Vec<_>>(),
         [followup.as_str(), later.as_str()]
     );
@@ -545,7 +545,10 @@ fn unsupported_steer_remains_followup_but_reply_preserves_requested_operation() 
     let (mut session, wire) = session(SteeringBoundary::Unsupported, false);
     let id = enqueue(&mut session, PromptMode::Steer);
     drain(&mut session);
-    assert_eq!(session.queue[0].mode, PromptMode::FollowUp);
+    assert_eq!(
+        session.queue.iter().next().unwrap().mode(),
+        PromptMode::FollowUp
+    );
     assert!(wire.lock().expect("wire").commands.is_empty());
     session.running = false;
     drain(&mut session);
@@ -619,7 +622,7 @@ fn clearing_queue_cancels_only_unclaimed_input() {
         session
             .dispatched
             .values()
-            .any(|dispatch| dispatch.inputs.iter().any(|input| input.id == claimed))
+            .any(|dispatch| dispatch.inputs.iter().any(|input| input.id() == claimed))
     );
     assert_eq!(wire.lock().expect("wire").commands.len(), 1);
 }
@@ -679,8 +682,8 @@ fn escape_stages_all_local_inputs_before_native_handoff_on_every_backend() {
         assert!(wire.lock().expect("wire").commands.is_empty());
         let apply = session.send(SessionCommand::ApplySteering).expect("apply");
         assert_eq!(apply, "native-3");
-        assert_eq!(session.dispatched["native-1"].inputs[0].id, first);
-        assert_eq!(session.dispatched["native-2"].inputs[0].id, second);
+        assert_eq!(session.dispatched["native-1"].inputs[0].id(), first);
+        assert_eq!(session.dispatched["native-2"].inputs[0].id(), second);
         assert!(matches!(
             &wire.lock().expect("wire").commands[..],
             [
@@ -749,7 +752,7 @@ fn second_escape_reaches_native_abort_and_does_not_resubmit_handoff_inputs() {
         .push_back(activity(json!({"type":"agent_settled"})));
     let events = drain(&mut session);
     assert!(events.iter().any(|event| matches!(event, SessionEvent::Activity(body) if body.value()["submissionId"] == later && body.value()["status"] == "cancelled")));
-    assert_eq!(session.dispatched["native-1"].inputs[0].id, first);
+    assert_eq!(session.dispatched["native-1"].inputs[0].id(), first);
     assert!(matches!(
         &wire.lock().expect("wire").commands[..],
         [
@@ -850,7 +853,7 @@ fn text_only_settlement_sends_all_pending_steers_in_one_native_prompt() {
             );
         }
         assert_eq!(session.queue.len(), 1);
-        assert_eq!(session.queue[0].id, followup);
+        assert_eq!(session.queue.iter().next().unwrap().id(), followup);
         wire.lock().expect("wire").events.extend([
             activity(json!({"type":"prompt_delivery", "submissionId":"native-1", "status":"delivered", "message":{}})),
             SessionEvent::Response(SessionResponse::success(Some("native-1".into()), Payload::Prompt(PromptMode::Normal))),
@@ -1012,7 +1015,7 @@ fn idle_batch_rejection_resolves_every_member_and_allows_the_next_followup() {
             );
         }
         assert_eq!(wire.lock().expect("wire").commands.len(), 2);
-        assert_eq!(session.dispatched["native-2"].inputs[0].id, followup);
+        assert_eq!(session.dispatched["native-2"].inputs[0].id(), followup);
     }
 }
 
@@ -1081,7 +1084,7 @@ fn stopped_boundary_claims_a_snapshot_and_leaves_later_steers_cancellable() {
         session.dispatched["native-1"]
             .inputs
             .iter()
-            .map(|input| input.id.as_str())
+            .map(|input| input.id())
             .collect::<Vec<_>>(),
         [first.as_str(), second.as_str()]
     );
@@ -1101,7 +1104,7 @@ fn cancelling_one_steer_before_idle_omits_only_that_member_from_the_batch() {
         session.dispatched["native-1"]
             .inputs
             .iter()
-            .map(|input| input.id.as_str())
+            .map(|input| input.id())
             .collect::<Vec<_>>(),
         [first.as_str(), last.as_str()]
     );

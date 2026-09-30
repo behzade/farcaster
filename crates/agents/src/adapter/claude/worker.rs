@@ -1,7 +1,5 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    path::Path,
-};
+use crate::adapter::{prompt_acknowledgements::PromptAcknowledgements, prompt_queue::PromptQueue};
+use std::{collections::HashMap, path::Path};
 
 use super::super::main_session::{self, MainSessionMetadata};
 use super::super::prompt_batch::PromptBatch;
@@ -238,9 +236,9 @@ fn attach(
         active: false,
         active_uuid: None,
         dispatched: HashMap::new(),
-        prompt_acks: VecDeque::new(),
+        prompt_acks: PromptAcknowledgements::default(),
         closed: false,
-        queued: Vec::new(),
+        queued: PromptQueue::default(),
         handoff_pending: false,
         handoff_uuid: None,
         abort_waiting_on_handoff_interrupt: None,
@@ -278,9 +276,9 @@ struct ClaudeSession {
     active: bool,
     active_uuid: Option<String>,
     dispatched: HashMap<String, PromptBatch>,
-    prompt_acks: VecDeque<(String, Result<(), crate::PromptRejection>)>,
+    prompt_acks: PromptAcknowledgements,
     closed: bool,
-    queued: Vec<Prompt>,
+    queued: PromptQueue<Prompt>,
     handoff_pending: bool,
     handoff_uuid: Option<String>,
     abort_waiting_on_handoff_interrupt: Option<String>,
@@ -400,7 +398,8 @@ impl ClaudeSession {
     fn reject_queued(&mut self, error: &str) {
         PromptBatch::from(
             self.queued
-                .drain(..)
+                .take_all()
+                .into_iter()
                 .map(|prompt| prompt.delivery)
                 .collect::<Vec<_>>(),
         )
@@ -441,7 +440,7 @@ impl ClaudeSession {
     }
 
     fn dispatch_queued(&mut self) -> Option<String> {
-        let mut prompts = std::mem::take(&mut self.queued).into_iter();
+        let mut prompts = self.queued.take_all().into_iter();
         let prompt = prompts.next()?;
         if prompts.len() == 0 {
             let uuid = match &prompt.message.uuid {
@@ -760,7 +759,7 @@ impl WorkerSession for ClaudeSession {
     }
 
     fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), crate::PromptRejection>)> {
-        self.prompt_acks.pop_front()
+        self.prompt_acks.pop()
     }
 
     fn send_peer_message(
@@ -854,7 +853,7 @@ impl WorkerSession for ClaudeSession {
     fn close(&mut self) -> Result<(), String> {
         self.closed = true;
         self.idle();
-        self.queued.clear();
+        self.queued = PromptQueue::default();
         self.dispatched.clear();
         self.handoff_pending = false;
         self.handoff_uuid = None;

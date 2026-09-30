@@ -1,4 +1,5 @@
 use crate::Backend;
+use crate::adapter::prompt_input::PromptInput;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     process::Stdio,
@@ -568,11 +569,8 @@ enum PendingOpenCodeInput {
 
 #[derive(Clone)]
 struct PendingOpenCodeDelivery {
-    submission_id: Option<String>,
+    input: PromptInput,
     order: u64,
-    mode: WorkerSendMode,
-    message: String,
-    images: Vec<crate::extensions::PromptImage>,
     clears_abort_barrier: bool,
 }
 
@@ -717,11 +715,13 @@ impl OpenCodeWorkerSession {
                 .begin_execution(submission_id.as_deref());
         }
         let pending = PendingOpenCodeDelivery {
-            submission_id,
+            input: PromptInput {
+                submission_id,
+                mode,
+                message,
+                images,
+            },
             order: self.generation,
-            mode,
-            message,
-            images,
             clears_abort_barrier,
         };
         if let Some(native_id) = &native_id {
@@ -731,8 +731,8 @@ impl OpenCodeWorkerSession {
         let admission = match self.server.client().prompt(
             &self.session_id,
             native_id.as_deref(),
-            pending.submission_id.as_deref(),
-            &pending.message,
+            pending.input.submission_id.as_deref(),
+            &pending.input.message,
             files,
             delivery,
         ) {
@@ -796,14 +796,14 @@ impl OpenCodeWorkerSession {
         native_id: &str,
         delivery: PendingOpenCodeDelivery,
     ) -> Result<(), super::contract::OpenCodePromptDispatchError> {
-        let files = opencode_image_inputs(&delivery.images);
+        let files = opencode_image_inputs(&delivery.input.images);
         self.pending_deliveries
             .insert(native_id.to_owned(), delivery.clone());
         let admission = match self.server.client().prompt(
             &self.session_id,
             Some(native_id),
-            delivery.submission_id.as_deref(),
-            &delivery.message,
+            delivery.input.submission_id.as_deref(),
+            &delivery.input.message,
             files,
             super::contract::OpenCodeDelivery::Queue,
         ) {
@@ -847,18 +847,13 @@ impl OpenCodeWorkerSession {
     fn delivered_input(&mut self, native_id: &str) -> Option<WorkerEvent> {
         let delivery = self.pending_deliveries.remove(native_id)?;
         self.caller_identity
-            .begin_execution(delivery.submission_id.as_deref());
+            .begin_execution(delivery.input.submission_id.as_deref());
         self.delivered_awaiting_execution
             .insert(native_id.to_owned());
         if delivery.clears_abort_barrier {
             self.ignore_execution_events = false;
         }
-        let activity = WorkerActivity::InputDelivered {
-            submission_id: delivery.submission_id,
-            mode: delivery.mode,
-            message: delivery.message,
-            images: delivery.images,
-        };
+        let activity = delivery.input.into_activity();
         Some(WorkerEvent::Activity(activity))
     }
 
@@ -1031,7 +1026,7 @@ impl OpenCodeWorkerSession {
                         let Some(delivery) = self.pending_deliveries.remove(id) else {
                             continue;
                         };
-                        if delivery.mode == WorkerSendMode::Steer {
+                        if delivery.input.mode == WorkerSendMode::Steer {
                             let retry_id = Self::next_internal_prompt_id();
                             if let Err(error) = self.requeue_cancelled_steer(&retry_id, delivery) {
                                 let error = match error {
@@ -1595,7 +1590,7 @@ impl WorkerSession for OpenCodeWorkerSession {
             match client.cancel_inbox(&self.session_id, &native_id) {
                 Ok(true) => {
                     if let Some(delivery) = self.pending_deliveries.remove(&native_id)
-                        && let Some(submission_id) = delivery.submission_id
+                        && let Some(submission_id) = delivery.input.submission_id
                     {
                         self.pending
                             .push_back(WorkerEvent::PromptCancelled { submission_id });
@@ -1621,7 +1616,7 @@ impl WorkerSession for OpenCodeWorkerSession {
             .iter()
             .filter(|(_, delivery)| {
                 matches!(
-                    delivery.mode,
+                    delivery.input.mode,
                     WorkerSendMode::Prompt | WorkerSendMode::Queue
                 )
             })

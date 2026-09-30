@@ -1,5 +1,6 @@
 use crate::Backend;
 mod responses;
+use super::prompt_input::{prompt_mode, worker_mode};
 use super::stream_text::TextUpdate;
 use responses::CatalogQuery;
 
@@ -383,11 +384,7 @@ impl WorkerSessionTransport {
         mode: WorkerSendMode,
         message: &str,
     ) -> Option<String> {
-        let delivery_mode = match mode {
-            WorkerSendMode::Prompt => PromptMode::Normal,
-            WorkerSendMode::Steer => PromptMode::Steer,
-            WorkerSendMode::Queue => PromptMode::FollowUp,
-        };
+        let delivery_mode = prompt_mode(mode);
         let matched = self
             .prompt_deliveries
             .iter_mut()
@@ -901,11 +898,7 @@ impl SessionTransport for WorkerSessionTransport {
     }
 
     fn tracks_prompt_delivery(&self, mode: PromptMode) -> bool {
-        self.worker.tracks_prompt_delivery(match mode {
-            PromptMode::Normal => WorkerSendMode::Prompt,
-            PromptMode::Steer => WorkerSendMode::Steer,
-            PromptMode::FollowUp => WorkerSendMode::Queue,
-        })
+        self.worker.tracks_prompt_delivery(worker_mode(mode))
     }
 
     fn send(&mut self, command: SessionCommand) -> Result<String, String> {
@@ -964,11 +957,7 @@ impl SessionTransport for WorkerSessionTransport {
                 } else {
                     mode
                 };
-                let worker_mode = match mode {
-                    PromptMode::Normal => WorkerSendMode::Prompt,
-                    PromptMode::Steer => WorkerSendMode::Steer,
-                    PromptMode::FollowUp => WorkerSendMode::Queue,
-                };
+                let worker_mode = worker_mode(mode);
                 let images = images
                     .into_iter()
                     .map(|image| image.into_inline())

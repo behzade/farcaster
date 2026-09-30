@@ -996,28 +996,32 @@ fn steering_interruption_preserves_delivery_and_later_abort_settles() -> Result<
             (
                 "steer-1".into(),
                 PendingOpenCodeDelivery {
-                    submission_id: Some("submission-steer".into()),
+                    input: PromptInput {
+                        submission_id: Some("submission-steer".into()),
+                        mode: WorkerSendMode::Steer,
+                        message: "same text".into(),
+                        images: vec![crate::extensions::PromptImage::new(
+                            "AQID".into(),
+                            "image/png".into(),
+                        )],
+                    },
                     order: 0,
-                    mode: WorkerSendMode::Steer,
-                    message: "same text".into(),
-                    images: vec![crate::extensions::PromptImage::new(
-                        "AQID".into(),
-                        "image/png".into(),
-                    )],
                     clears_abort_barrier: false,
                 },
             ),
             (
                 "queue-1".into(),
                 PendingOpenCodeDelivery {
-                    submission_id: Some("submission-queue".into()),
+                    input: PromptInput {
+                        submission_id: Some("submission-queue".into()),
+                        mode: WorkerSendMode::Queue,
+                        message: "same text".into(),
+                        images: vec![crate::extensions::PromptImage::new(
+                            "BAUG".into(),
+                            "image/jpeg".into(),
+                        )],
+                    },
                     order: 1,
-                    mode: WorkerSendMode::Queue,
-                    message: "same text".into(),
-                    images: vec![crate::extensions::PromptImage::new(
-                        "BAUG".into(),
-                        "image/jpeg".into(),
-                    )],
                     clears_abort_barrier: false,
                 },
             ),
@@ -1180,14 +1184,16 @@ fn cancelled_steering_is_requeued_instead_of_lost() -> Result<(), String> {
         pending_deliveries: HashMap::from([(
             "cancelled-steer".into(),
             PendingOpenCodeDelivery {
-                submission_id: Some("submission-steer".into()),
+                input: PromptInput {
+                    submission_id: Some("submission-steer".into()),
+                    mode: WorkerSendMode::Steer,
+                    message: "do this instead".into(),
+                    images: vec![crate::extensions::PromptImage::new(
+                        "AQID".into(),
+                        "image/png".into(),
+                    )],
+                },
                 order: 0,
-                mode: WorkerSendMode::Steer,
-                message: "do this instead".into(),
-                images: vec![crate::extensions::PromptImage::new(
-                    "AQID".into(),
-                    "image/png".into(),
-                )],
                 clears_abort_barrier: false,
             },
         )]),
@@ -1223,8 +1229,11 @@ fn cancelled_steering_is_requeued_instead_of_lost() -> Result<(), String> {
     );
     let retry_id = request["id"].as_str().ok_or("retry has no id")?;
     let retried = &worker.pending_deliveries[retry_id];
-    assert_eq!(retried.submission_id.as_deref(), Some("submission-steer"));
-    assert_eq!(retried.mode, WorkerSendMode::Steer);
+    assert_eq!(
+        retried.input.submission_id.as_deref(),
+        Some("submission-steer")
+    );
+    assert_eq!(retried.input.mode, WorkerSendMode::Steer);
     worker.close()?;
     Ok(())
 }
@@ -1334,33 +1343,39 @@ fn abort_reinterrupts_a_delivery_that_wins_the_cancel_race() -> Result<(), Strin
             (
                 "msg_delivered".into(),
                 PendingOpenCodeDelivery {
-                    submission_id: Some("delivered".into()),
+                    input: PromptInput {
+                        submission_id: Some("delivered".into()),
+                        mode: WorkerSendMode::Queue,
+                        message: "delivered".into(),
+                        images: Vec::new(),
+                    },
                     order: 0,
-                    mode: WorkerSendMode::Queue,
-                    message: "delivered".into(),
-                    images: Vec::new(),
                     clears_abort_barrier: false,
                 },
             ),
             (
                 "msg_cancelled_first".into(),
                 PendingOpenCodeDelivery {
-                    submission_id: Some("cancelled-first".into()),
+                    input: PromptInput {
+                        submission_id: Some("cancelled-first".into()),
+                        mode: WorkerSendMode::Steer,
+                        message: "cancelled first".into(),
+                        images: Vec::new(),
+                    },
                     order: 1,
-                    mode: WorkerSendMode::Steer,
-                    message: "cancelled first".into(),
-                    images: Vec::new(),
                     clears_abort_barrier: false,
                 },
             ),
             (
                 "msg_cancelled_second".into(),
                 PendingOpenCodeDelivery {
-                    submission_id: Some("cancelled-second".into()),
+                    input: PromptInput {
+                        submission_id: Some("cancelled-second".into()),
+                        mode: WorkerSendMode::Queue,
+                        message: "cancelled second".into(),
+                        images: Vec::new(),
+                    },
                     order: 2,
-                    mode: WorkerSendMode::Queue,
-                    message: "cancelled second".into(),
-                    images: Vec::new(),
                     clears_abort_barrier: false,
                 },
             ),
@@ -1504,11 +1519,13 @@ fn queued_prompt_during_stream_does_not_restart_visible_assistant_text() -> Resu
         },
         Some("queue-1"),
         PendingOpenCodeDelivery {
-            submission_id: Some("submission-queue".into()),
+            input: PromptInput {
+                submission_id: Some("submission-queue".into()),
+                mode: WorkerSendMode::Queue,
+                message: "next task".into(),
+                images: Vec::new(),
+            },
             order: 0,
-            mode: WorkerSendMode::Queue,
-            message: "next task".into(),
-            images: Vec::new(),
             clears_abort_barrier: false,
         },
         super::super::contract::OpenCodeDelivery::Queue,

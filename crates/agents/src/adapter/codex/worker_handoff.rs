@@ -261,7 +261,7 @@ impl CodexWorkerSession {
                 .delivery
                 .submission_id
                 .as_ref()
-                .is_some_and(|id| !self.acknowledged_prompts.contains(id));
+                .is_some_and(|id| !self.prompt_acks.contains(id));
             deliveries.push(BatchInput {
                 delivery: input.delivery,
                 needs_ack,
