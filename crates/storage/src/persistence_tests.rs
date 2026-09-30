@@ -207,7 +207,7 @@ fn startup_draft_text_survives_quit_without_switching() -> Result<(), Box<dyn st
         cursor: 26,
         selection_start: 26,
         selection_end: 26,
-        history: Vec::new(),
+        history: Default::default(),
         attachments: Vec::new(),
     };
     {
@@ -799,7 +799,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
             cursor: 6,
             selection_start: 2,
             selection_end: 6,
-            history: vec!["new".into(), "old".into()],
+            history: vec!["new".into(), "old".into()].into(),
             attachments: Vec::new(),
         })?;
         fs::write(&catalog_session_path, "{}")?;
@@ -858,9 +858,17 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
             cursor: 6,
             selection_start: 2,
             selection_end: 6,
-            history: vec!["new".into(), "old".into()],
+            history: vec!["new".into(), "old".into()].into(),
             attachments: Vec::new(),
         }]
+    );
+    assert_eq!(
+        store
+            .connection
+            .query_row("SELECT history_json FROM composer_sessions", [], |row| {
+                row.get::<_, String>(0)
+            },)?,
+        r#"["new","old"]"#,
     );
     assert_eq!(store.cached_sessions("literal_100%")?.len(), 1);
     assert!(!store.cached_sessions("")?[0].archived);
@@ -1696,7 +1704,7 @@ fn relocating_session_paths_preserves_application_identity_and_composer_state()
         cursor: 5,
         selection_start: 5,
         selection_end: 5,
-        history: Vec::new(),
+        history: Default::default(),
         attachments: Vec::new(),
     })?;
     let original_id = store.cached_sessions("")?[0].app_session_id;
@@ -1758,7 +1766,7 @@ fn deleting_session_state_removes_the_family_and_preserves_other_sessions()
             cursor: 5,
             selection_start: 5,
             selection_end: 5,
-            history: Vec::new(),
+            history: Default::default(),
             attachments: Vec::new(),
         })?;
     }

@@ -21,13 +21,14 @@ impl StateStore {
         statement
             .query_map([], |row| {
                 let history_json = row.get::<_, String>(7)?;
-                let history = serde_json::from_str(&history_json).map_err(|error| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        7,
-                        rusqlite::types::Type::Text,
-                        Box::new(error),
-                    )
-                })?;
+                let history: Vec<String> =
+                    serde_json::from_str(&history_json).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            7,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?;
                 let client_key = row.get::<_, Option<String>>(1)?;
                 let locator = row.get::<_, Option<String>>(2)?;
                 Ok(ComposerRecord {
@@ -36,7 +37,7 @@ impl StateStore {
                     cursor: row.get::<_, u64>(4)?.try_into().unwrap_or(usize::MAX),
                     selection_start: row.get::<_, u64>(5)?.try_into().unwrap_or(usize::MAX),
                     selection_end: row.get::<_, u64>(6)?.try_into().unwrap_or(usize::MAX),
-                    history,
+                    history: history.into(),
                     attachments: self
                         .decode_composer_attachments(&row.get::<_, String>(8)?)
                         .map_err(|error| {
@@ -57,7 +58,7 @@ impl StateStore {
         let Some(session_id) = self.session_id_for_target(&record.target, None, None)? else {
             return Ok(());
         };
-        let history_json = serde_json::to_string(&record.history)
+        let history_json = serde_json::to_string(record.history.as_ref())
             .map_err(|error| format!("encode composer history: {error}"))?;
         let attachments_json = self.encode_composer_attachments(&record.attachments)?;
         self.connection

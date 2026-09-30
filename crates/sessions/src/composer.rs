@@ -1,4 +1,4 @@
-use std::{collections::HashMap, future::Future, ops::Range, path::Path, pin::Pin};
+use std::{collections::HashMap, future::Future, ops::Range, path::Path, pin::Pin, sync::Arc};
 
 const MAX_HISTORY: usize = 100;
 
@@ -9,7 +9,7 @@ pub struct ComposerRecord<A> {
     pub cursor: usize,
     pub selection_start: usize,
     pub selection_end: usize,
-    pub history: Vec<String>,
+    pub history: Arc<Vec<String>>,
     pub attachments: Vec<A>,
 }
 
@@ -21,7 +21,7 @@ impl<A> Default for ComposerRecord<A> {
             cursor: 0,
             selection_start: 0,
             selection_end: 0,
-            history: Vec::new(),
+            history: Arc::default(),
             attachments: Vec::new(),
         }
     }
@@ -84,7 +84,7 @@ impl ComposerSnapshot {
 struct SessionComposer<A> {
     composer: ComposerSnapshot,
     attachments: Vec<A>,
-    history: Vec<String>,
+    history: Arc<Vec<String>>,
     history_index: Option<usize>,
     history_draft: Option<ComposerSnapshot>,
 }
@@ -94,7 +94,7 @@ impl<A> Default for SessionComposer<A> {
         Self {
             composer: ComposerSnapshot::default(),
             attachments: Vec::new(),
-            history: Vec::new(),
+            history: Arc::default(),
             history_index: None,
             history_draft: None,
         }
@@ -133,8 +133,9 @@ impl<A: Clone + Eq> SessionComposer<A> {
         if text.is_empty() || self.history.first().is_some_and(|entry| entry == text) {
             return false;
         }
-        self.history.insert(0, text.to_owned());
-        self.history.truncate(MAX_HISTORY);
+        let history = Arc::make_mut(&mut self.history);
+        history.insert(0, text.to_owned());
+        history.truncate(MAX_HISTORY);
         true
     }
 }
@@ -351,7 +352,7 @@ impl<A: Clone + Eq> ComposerSessions<A> {
         {
             return;
         }
-        session.history = history.into_iter().map(str::to_owned).collect();
+        session.history = Arc::new(history.into_iter().map(str::to_owned).collect());
         session.history_index = None;
         session.history_draft = None;
         self.persistence.save(session.record(target.to_owned()));

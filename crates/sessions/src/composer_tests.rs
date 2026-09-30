@@ -1,5 +1,82 @@
 use super::{ComposerSessions, ComposerSnapshot, HistoryNavigation};
 
+#[test]
+fn composer_saves_share_history_and_keep_queued_snapshots_unchanged() {
+    use super::{ComposerPersistence, ComposerRecord};
+    use std::{cell::RefCell, future::Future, pin::Pin, rc::Rc, sync::Arc};
+
+    struct RecordingPersistence(Rc<RefCell<Vec<ComposerRecord<String>>>>);
+
+    impl ComposerPersistence<String> for RecordingPersistence {
+        fn save(&self, record: ComposerRecord<String>) {
+            self.0.borrow_mut().push(record);
+        }
+
+        fn delete(&self, _target: String) {}
+
+        fn flush(&self) -> Pin<Box<dyn Future<Output = Result<(), String>>>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn revision(&self) -> u64 {
+            self.0.borrow().len() as u64
+        }
+    }
+
+    let records = Rc::new(RefCell::new(Vec::new()));
+    let history: Arc<Vec<String>> =
+        Arc::new((0..100).map(|index| format!("entry-{index}")).collect());
+    let mut sessions = ComposerSessions::new(
+        "draft:one".into(),
+        vec![ComposerRecord {
+            target: "draft:one".into(),
+            history: history.clone(),
+            ..Default::default()
+        }],
+        Box::new(RecordingPersistence(records.clone())),
+    );
+    sessions.capture_current(ComposerSnapshot::new("draft".into(), 5, 5..5));
+    sessions.capture_current(ComposerSnapshot::new("draft!".into(), 6, 6..6));
+    sessions.capture_current(ComposerSnapshot::new("draft!".into(), 1, 0..1));
+    sessions.capture_current(ComposerSnapshot::new("draft!".into(), 1, 0..1));
+    assert_eq!(sessions.persistence_revision(), 3);
+    assert!(
+        records
+            .borrow()
+            .iter()
+            .all(|record| Arc::ptr_eq(&record.history, &history))
+    );
+
+    sessions.record_submission("draft:one", "  newest  ");
+    assert_eq!(sessions.sessions["draft:one"].history.len(), 100);
+    assert_eq!(sessions.sessions["draft:one"].history[0], "newest");
+    assert_eq!(sessions.sessions["draft:one"].history[99], "entry-98");
+    sessions.sync_history(
+        "draft:one",
+        ["replacement", "replacement", "second"].into_iter(),
+    );
+    let replacement = sessions.sessions["draft:one"].history.clone();
+    sessions.promote("draft:one", "session:one".into());
+
+    let records = records.borrow();
+    assert_eq!(records.len(), 6);
+    assert_eq!(records[0].text, "draft");
+    assert_eq!(records[1].text, "draft!");
+    assert_eq!(records[2].cursor, 1);
+    assert_eq!(
+        (records[2].selection_start, records[2].selection_end),
+        (0, 1)
+    );
+    assert_eq!(records[0].history[0], "entry-0");
+    assert_eq!(records[0].history[99], "entry-99");
+    assert_eq!(records[3].history[0], "newest");
+    assert_eq!(records[3].history[99], "entry-98");
+    assert_eq!(records[4].history.as_slice(), ["replacement", "second"]);
+    assert!(Arc::ptr_eq(&records[4].history, &records[5].history));
+    assert!(Arc::ptr_eq(&records[5].history, &replacement));
+    assert_eq!(records[5].target, "session:one");
+}
+
 fn sessions(target: &str) -> ComposerSessions<String> {
     ComposerSessions::for_test(target.into())
 }

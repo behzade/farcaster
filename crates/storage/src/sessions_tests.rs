@@ -714,7 +714,7 @@ fn unavailable_project_round_trip_preserves_draft_composer_and_outbox() -> Resul
         cursor: 4,
         selection_start: 2,
         selection_end: 4,
-        history: vec!["previous draft".into()],
+        history: vec!["previous draft".into()].into(),
         ..Default::default()
     })?;
     store.enqueue_prompt(

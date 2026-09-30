@@ -346,7 +346,7 @@ fn quit_reflushes_composer_changes_queued_after_its_barrier(cx: &mut gpui::TestA
                     .load_composer_sessions()
                     .unwrap()
                     .iter()
-                    .any(|record| record.history == ["late submission"])
+                    .any(|record| record.history.as_slice() == ["late submission"])
             );
         },
     );
