@@ -151,6 +151,43 @@ fn saved_presentations_restore_compact_history_in_order() {
 }
 
 #[test]
+fn presentation_matching_keeps_text_block_and_fallback_rules() {
+    let messages = [
+        (json!({"content":"", "summary":"ignored"}), ""),
+        (
+            json!({"content":[{"text":""}], "summary":"fallback"}),
+            "fallback",
+        ),
+        (
+            json!({"content":[{"text":""},{"text":""}], "summary":"ignored"}),
+            "\n",
+        ),
+        (
+            json!({"content":[{"text":"界"},{"type":"image"},{"text":"next"}]}),
+            "界\nnext",
+        ),
+        (
+            json!({"content":[{"type":"image"}], "summary":"ignored"}),
+            "",
+        ),
+        (json!({"output":"output"}), "output"),
+        (json!({"summary":"summary", "output":"ignored"}), "summary"),
+        (json!({}), ""),
+    ];
+    for (mut message, expected) in messages {
+        message["role"] = "user".into();
+        let presentation = farcaster_agent_protocol::PromptPresentation {
+            resolved_message: expected.into(),
+            display_message: "$example".into(),
+            invocation: "resolved".into(),
+        };
+        let mut history = [message];
+        annotate_prompt_presentations(&mut history, &[presentation]);
+        assert_eq!(history[0]["farcasterUserInvocation"], "$example");
+    }
+}
+
+#[test]
 fn pasted_files_and_images_survive_finalization_and_history() {
     let prompt = "check this\n\nPasted text files:\n- [pasted.txt](</tmp/pasted.txt>)\n\n--- BEGIN PASTED FILE pasted.txt ---\nsecret\n--- END PASTED FILE pasted.txt ---";
     let image = Arc::new(EncodedImage::new(vec![1, 2, 3], "image/png").expect("fixture image"));

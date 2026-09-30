@@ -326,6 +326,50 @@ fn projected_user_message_text(message: &Value) -> String {
         .map_or_else(|| message_text(message), str::to_owned)
 }
 
+fn message_text_parts(message: &Value) -> impl Iterator<Item = &str> {
+    let content = message.get("content");
+    let mut parts = content
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|block| block.get("text").and_then(Value::as_str))
+        .peekable();
+    let first = parts.next();
+    let use_blocks = first.is_some_and(|text| !text.is_empty())
+        || parts.peek().is_some()
+        || content.and_then(Value::as_array).is_some_and(|blocks| {
+            blocks
+                .iter()
+                .any(|block| block.get("type").and_then(Value::as_str) == Some("image"))
+        });
+    let first = match content.and_then(Value::as_str) {
+        Some(text) => Some(text),
+        None if use_blocks => first,
+        None => message
+            .get("summary")
+            .and_then(Value::as_str)
+            .or_else(|| message.get("output").and_then(Value::as_str)),
+    };
+    first.into_iter().chain(parts.filter(move |_| use_blocks))
+}
+
+fn message_text_equals(message: &Value, expected: &str) -> bool {
+    let mut remaining = expected;
+    for (index, part) in message_text_parts(message).enumerate() {
+        if index > 0 {
+            let Some(rest) = remaining.strip_prefix('\n') else {
+                return false;
+            };
+            remaining = rest;
+        }
+        let Some(rest) = remaining.strip_prefix(part) else {
+            return false;
+        };
+        remaining = rest;
+    }
+    remaining.is_empty()
+}
+
 pub fn annotate_prompt_presentations(
     messages: &mut [Value],
     presentations: &[farcaster_agent_protocol::PromptPresentation],
@@ -338,7 +382,7 @@ pub fn annotate_prompt_presentations(
                 .enumerate()
                 .find(|(_, message)| {
                     message.get("role").and_then(Value::as_str) == Some("user")
-                        && message_text(message) == presentation.resolved_message
+                        && message_text_equals(message, &presentation.resolved_message)
                 })
         else {
             continue;
