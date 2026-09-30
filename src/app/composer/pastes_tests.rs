@@ -33,3 +33,30 @@ fn display_links_do_not_copy_pasted_contents() {
     );
     assert!(!display.contains("secret"));
 }
+
+#[test]
+fn pasted_payload_keeps_file_order_delimiters_and_empty_prompt_behavior() {
+    let pastes = [
+        ComposerPaste {
+            path: "/tmp/界.txt".into(),
+            content: "first\n".into(),
+            line_count: 1,
+        },
+        ComposerPaste {
+            path: "/tmp/second.txt".into(),
+            content: "".into(),
+            line_count: 1,
+        },
+    ];
+    let attachments = concat!(
+        "Pasted text files:\n- [界.txt](</tmp/界.txt>)\n- [second.txt](</tmp/second.txt>)",
+        "\n\n--- BEGIN PASTED FILE 界.txt ---\nfirst\n\n--- END PASTED FILE 界.txt ---",
+        "\n\n--- BEGIN PASTED FILE second.txt ---\n\n--- END PASTED FILE second.txt ---",
+    );
+    assert_eq!(append_pasted_files("", &pastes), attachments);
+    assert_eq!(
+        append_pasted_files("check", &pastes),
+        format!("check\n\n{attachments}")
+    );
+    assert_eq!(append_pasted_files("check", &[]), "check");
+}

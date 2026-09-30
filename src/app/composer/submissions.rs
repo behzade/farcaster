@@ -77,16 +77,16 @@ impl FarcasterApp {
             .composer
             .pastes
             .get(&target)
-            .cloned()
+            .map(Vec::as_slice)
             .unwrap_or_default();
         let expansion = prompt_fragments::expand(&value);
         let resolved = expansion
             .as_ref()
             .map_or(value.as_str(), |expansion| expansion.message.as_str());
-        let message = composer_pastes::append_pasted_files(resolved, &pastes);
-        let display_message = expansion.as_ref().map(|expansion| {
-            composer_pastes::append_pasted_file_links(&expansion.display, &pastes)
-        });
+        let message = composer_pastes::append_pasted_files(resolved, pastes);
+        let display_message = expansion
+            .as_ref()
+            .map(|expansion| composer_pastes::append_pasted_file_links(&expansion.display, pastes));
         let invocation = expansion
             .as_ref()
             .map(|expansion| expansion.resolution.clone());

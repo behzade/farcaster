@@ -118,31 +118,49 @@ impl FarcasterApp {
 }
 
 pub(in crate::app) fn append_pasted_files(message: &str, pastes: &[ComposerPaste]) -> String {
+    use std::fmt::Write as _;
+
     if pastes.is_empty() {
         return message.to_owned();
     }
-    let links = pastes
+    let files = pastes
         .iter()
-        .map(|paste| format!("- [{}](<{}>)", paste.file_name(), paste.path.display()))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let contents = pastes
-        .iter()
-        .map(|paste| {
-            let name = paste.file_name();
-            format!(
-                "--- BEGIN PASTED FILE {name} ---\n{}\n--- END PASTED FILE {name} ---",
-                paste.content
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    let attachments = format!("Pasted text files:\n{links}\n\n{contents}");
-    if message.is_empty() {
-        attachments
-    } else {
-        format!("{message}\n\n{attachments}")
+        .map(|paste| (paste, paste.file_name(), paste.path.to_string_lossy()))
+        .collect::<Vec<_>>();
+    let capacity = message.len()
+        + if message.is_empty() { 0 } else { 2 }
+        + "Pasted text files:\n".len()
+        + files.len().saturating_sub(1)
+        + files
+            .iter()
+            .map(|(paste, name, path)| {
+                "- [](<>)".len()
+                    + "\n\n--- BEGIN PASTED FILE  ---\n\n--- END PASTED FILE  ---".len()
+                    + 3 * name.len()
+                    + path.len()
+                    + paste.content.len()
+            })
+            .sum::<usize>();
+    let mut output = String::with_capacity(capacity);
+    if !message.is_empty() {
+        output.push_str(message);
+        output.push_str("\n\n");
     }
+    output.push_str("Pasted text files:\n");
+    for (index, (_, name, path)) in files.iter().enumerate() {
+        if index > 0 {
+            output.push('\n');
+        }
+        write!(output, "- [{name}](<{path}>)").expect("writing to a String cannot fail");
+    }
+    for (paste, name, _) in files {
+        write!(output, "\n\n--- BEGIN PASTED FILE {name} ---\n")
+            .expect("writing to a String cannot fail");
+        output.push_str(&paste.content);
+        write!(output, "\n--- END PASTED FILE {name} ---")
+            .expect("writing to a String cannot fail");
+    }
+    output
 }
 
 pub(in crate::app) fn append_pasted_file_links(message: &str, pastes: &[ComposerPaste]) -> String {
