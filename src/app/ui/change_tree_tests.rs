@@ -1,5 +1,85 @@
 use super::*;
 
+#[cfg(unix)]
+#[test]
+fn lossy_folder_collisions_keep_file_order_and_counts() {
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+    let paths = [
+        (
+            OsString::from_vec(b"src/\xff/\xff.rs".to_vec()).into(),
+            Some((1, 2)),
+        ),
+        (
+            OsString::from_vec(b"src/\xfe/a.rs".to_vec()).into(),
+            Some((3, 4)),
+        ),
+        (
+            OsString::from_vec(b"src/\xff/a.rs".to_vec()).into(),
+            Some((5, 6)),
+        ),
+        (PathBuf::from("src/é/u.rs"), None),
+        (PathBuf::from("src/�/a.rs"), Some((7, 8))),
+    ];
+    let project = Path::new("/repo");
+    let render = |state: &ChangeTreeState| {
+        rows(
+            paths
+                .iter()
+                .enumerate()
+                .map(|(index, (path, counts))| (index, path.as_path(), None, *counts)),
+            "",
+            project,
+            state,
+        )
+    };
+    assert_eq!(
+        render(&ChangeTreeState::with_default(project, false)),
+        vec![TreeRow::Folder {
+            path: "src".into(),
+            label: "src".into(),
+            count: 5,
+            counts: None,
+            depth: 0,
+            open: false,
+        }],
+    );
+    assert_eq!(
+        render(&ChangeTreeState::with_default(project, true)),
+        vec![
+            TreeRow::Folder {
+                path: "src".into(),
+                label: "src".into(),
+                count: 5,
+                counts: None,
+                depth: 0,
+                open: true,
+            },
+            TreeRow::Folder {
+                path: "src/é".into(),
+                label: "é".into(),
+                count: 1,
+                counts: None,
+                depth: 1,
+                open: true,
+            },
+            TreeRow::File { index: 3, depth: 2 },
+            TreeRow::Folder {
+                path: "src/�".into(),
+                label: "�".into(),
+                count: 4,
+                counts: Some((16, 20)),
+                depth: 1,
+                open: true,
+            },
+            TreeRow::File { index: 1, depth: 2 },
+            TreeRow::File { index: 2, depth: 2 },
+            TreeRow::File { index: 4, depth: 2 },
+            TreeRow::File { index: 0, depth: 2 },
+        ],
+    );
+}
+
 #[test]
 fn activity_tree_shares_folders_and_preserves_external_paths() {
     let paths = [

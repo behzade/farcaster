@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
@@ -79,14 +80,14 @@ pub(crate) enum TreeRow {
     },
 }
 
-struct Node {
-    folders: BTreeMap<String, Node>,
-    files: Vec<(String, usize)>,
+struct Node<'a> {
+    folders: BTreeMap<Cow<'a, str>, Node<'a>>,
+    files: Vec<(Cow<'a, str>, usize)>,
     count: usize,
     counts: Option<(usize, usize)>,
 }
 
-impl Default for Node {
+impl Default for Node<'_> {
     fn default() -> Self {
         Self {
             folders: BTreeMap::new(),
@@ -121,17 +122,14 @@ pub(crate) fn rows<'a>(
             for part in parent.components() {
                 node = node
                     .folders
-                    .entry(part.as_os_str().to_string_lossy().into_owned())
+                    .entry(part.as_os_str().to_string_lossy())
                     .or_default();
                 node.count += increment;
                 node.counts = sum_counts(node.counts, counts);
             }
         }
         node.files.push((
-            path.file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned(),
+            path.file_name().unwrap_or_default().to_string_lossy(),
             index,
         ));
     }
@@ -149,7 +147,7 @@ pub(crate) fn rows<'a>(
 }
 
 fn flatten(
-    mut node: Node,
+    mut node: Node<'_>,
     parent: &Path,
     depth: usize,
     searching: bool,
@@ -157,14 +155,15 @@ fn flatten(
     state: &ChangeTreeState,
     out: &mut Vec<TreeRow>,
 ) {
-    for (mut label, mut child) in node.folders {
+    for (label, mut child) in node.folders {
+        let mut label = label.into_owned();
         let mut path = parent.join(&label);
         while child.files.is_empty() && child.folders.len() == 1 {
             let (name, next) = child
                 .folders
                 .pop_first()
                 .expect("single folder checked above");
-            path.push(&name);
+            path.push(name.as_ref());
             if !label.ends_with('/') {
                 label.push('/');
             }
