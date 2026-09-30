@@ -1,5 +1,6 @@
 use super::*;
 use crate::agents::Backend;
+use farcaster_storage::SessionControlSelection;
 
 #[derive(Default)]
 pub(super) struct PendingSessionControls {
@@ -19,6 +20,30 @@ pub(super) struct PendingSessionControls {
 }
 
 impl PendingSessionControls {
+    pub(super) fn apply_local_selection(&self, snapshot: &mut RuntimeSnapshot) {
+        if let Some(identity) = &self.model {
+            if snapshot
+                .prefill_model
+                .as_ref()
+                .is_none_or(|model| (&model.provider, &model.id) != (&identity.0, &identity.1))
+            {
+                snapshot.prefill_model =
+                    HarnessConfigurationStore::history_model(&snapshot.models, Some(identity));
+            }
+            snapshot.pending_initial_model = true;
+        }
+        if let Some(level) = &self.thinking {
+            snapshot.prefill_thinking_level = level.clone();
+            if let Some(session) = snapshot.session.as_mut() {
+                session.thinking_level = level.clone();
+            }
+        }
+        if let Some(tier) = &self.service_tier {
+            snapshot.prefill_service_tier = Some(tier.clone());
+            snapshot.pending_initial_service_tier = true;
+        }
+    }
+
     pub(super) fn restore_selection(&mut self, model: Option<&Model>, effort: Option<&str>) {
         if !self.model_pending()
             && let Some(model) = model
@@ -298,8 +323,9 @@ impl RuntimeOwner {
                     &model,
                     self.snapshot.session_identity().effort,
                 );
-                self.remember_requested_model(&model, replacement_effort.as_deref());
-                self.reconcile_service_tier();
+                if !self.remember_requested_model(&model, replacement_effort.as_deref()) {
+                    return;
+                }
                 self.pending_session_controls.set(SessionControl::Model(
                     model.provider.clone(),
                     model.id.clone(),
@@ -343,12 +369,10 @@ impl RuntimeOwner {
             self.snapshot.session_identity().effort,
         );
         let control = SessionControl::Model(model.provider.clone(), model.id.clone());
-        self.remember_requested_model(&model, replacement_effort.as_deref());
-        self.reconcile_service_tier();
-        if !self.snapshot.history_preview
-            && self.process.is_none()
-            && self.snapshot.selected_session.is_none()
-        {
+        if !self.remember_requested_model(&model, replacement_effort.as_deref()) {
+            return;
+        }
+        if self.process.is_none() {
             if let Some(tier) = self.snapshot.prefill_service_tier.clone() {
                 self.pending_session_controls
                     .set(SessionControl::ServiceTier(tier));
@@ -358,6 +382,8 @@ impl RuntimeOwner {
                 self.pending_session_controls
                     .set(SessionControl::Thinking(Some(effort)));
             }
+            self.pending_session_controls
+                .apply_local_selection(&mut self.snapshot);
             self.publish();
             return;
         }
@@ -399,7 +425,15 @@ impl RuntimeOwner {
             .retain_supported_service_tier(supports);
     }
 
-    fn remember_requested_model(&mut self, model: &Model, effort: Option<&str>) {
+    fn remember_requested_model(&mut self, model: &Model, effort: Option<&str>) -> bool {
+        if !self.persist_session_selection(SessionControlSelection::Model(model.clone())) {
+            return false;
+        }
+        if let Some(effort) = effort
+            && !self.persist_session_selection(SessionControlSelection::Effort(Some(effort.into())))
+        {
+            return false;
+        }
         let update = |snapshot: &mut RuntimeSnapshot| {
             snapshot.prefill_model = Some(model.clone());
             snapshot.pending_initial_model = true;
@@ -414,23 +448,96 @@ impl RuntimeOwner {
         {
             update(loading);
         }
+        self.reconcile_service_tier();
+        self.persist_session_selection(SessionControlSelection::ServiceTier(
+            self.snapshot.selected_service_tier().map(str::to_owned),
+        ))
+    }
+
+    fn persist_session_selection(&mut self, selection: SessionControlSelection) -> bool {
+        let (Some(state), Some(harness), Some(session)) = (
+            self.state.as_ref(),
+            self.harness,
+            self.snapshot.selected_session.as_ref(),
+        ) else {
+            return true;
+        };
+        if let Err(error) = state.with(|store| {
+            store.save_session_control_selection(harness, &self.project, session, &selection)
+        }) {
+            self.command_not_sent("save_session_settings", &error);
+            return false;
+        }
+        true
+    }
+
+    pub(super) fn restore_saved_session_controls(&mut self) {
+        let saved = match (
+            self.state.as_ref(),
+            self.harness,
+            self.snapshot.selected_session.as_ref(),
+        ) {
+            (Some(state), Some(harness), Some(session)) => {
+                state.with(|store| store.load_session_control_selections(harness, session))
+            }
+            _ => Ok(Vec::new()),
+        };
+        let saved = match saved {
+            Ok(saved) => saved,
+            Err(error) => {
+                conversation_mut(&mut self.snapshot)
+                    .push_local_error("Load session settings", error);
+                return;
+            }
+        };
+        for selection in saved {
+            match selection {
+                SessionControlSelection::Model(model)
+                    if !self.pending_session_controls.model_pending() =>
+                {
+                    self.snapshot.prefill_model = Some(model.clone());
+                    self.pending_session_controls
+                        .set(SessionControl::Model(model.provider, model.id));
+                }
+                SessionControlSelection::Effort(level)
+                    if !self.pending_session_controls.thinking_pending() =>
+                {
+                    let control = SessionControl::Thinking(level);
+                    if control.supported_by(self.harness) {
+                        self.pending_session_controls.set(control);
+                    }
+                }
+                SessionControlSelection::ServiceTier(tier)
+                    if !self.pending_session_controls.service_tier_pending() =>
+                {
+                    if let Some(tier) = tier {
+                        self.pending_session_controls
+                            .set(SessionControl::ServiceTier(tier));
+                    } else {
+                        self.snapshot.prefill_service_tier = None;
+                        self.snapshot.pending_initial_service_tier = false;
+                        if let Some(session) = self.snapshot.session.as_mut() {
+                            session.service_tier = None;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.pending_session_controls
+            .apply_local_selection(&mut self.snapshot);
+        if self.pending_session_controls.model_pending()
+            || self.pending_session_controls.service_tier_pending()
+        {
+            self.reconcile_service_tier();
+        }
     }
 
     pub(super) fn set_thinking(&mut self, level: String) {
-        if self.pending_session_controls.model.is_some() {
-            self.pending_session_controls
-                .set(SessionControl::Thinking(Some(level)));
-            return;
-        }
         self.send_session_control(SessionControl::Thinking(Some(level)));
     }
 
     pub(super) fn reset_thinking(&mut self) {
-        if self.pending_session_controls.model.is_some() {
-            self.pending_session_controls
-                .set(SessionControl::Thinking(None));
-            return;
-        }
         self.send_session_control(SessionControl::Thinking(None));
     }
 
@@ -444,9 +551,9 @@ impl RuntimeOwner {
         }
         if agents::service_tier_policy(self.harness).application
             == agents::ServiceTierApplication::OnLaunch
-            && (self.process.is_some() || self.snapshot.selected_session.is_some())
+            && self.process.is_some()
         {
-            if self.process.is_some() && !self.access_mode_change_ready() {
+            if !self.access_mode_change_ready() {
                 self.command_not_sent(
                     "set_service_tier",
                     "Wait for the current response to finish before changing service tier",
@@ -464,6 +571,11 @@ impl RuntimeOwner {
                 self.command_not_sent("set_service_tier", "No session is selected");
                 return;
             };
+            if !self
+                .persist_session_selection(SessionControlSelection::ServiceTier(Some(tier.clone())))
+            {
+                return;
+            }
             self.queue_launch_only_service_tier(tier);
             let preserve_transcript = self.process.is_some() && !self.snapshot.history_preview;
             self.start_process_from(Some(session), None, preserve_transcript);
@@ -493,34 +605,28 @@ impl RuntimeOwner {
         if !control.supported_by(self.harness) {
             return;
         }
+        let selection = match &control {
+            SessionControl::Thinking(level) => Some(SessionControlSelection::Effort(level.clone())),
+            SessionControl::ServiceTier(tier) => {
+                Some(SessionControlSelection::ServiceTier(Some(tier.clone())))
+            }
+            SessionControl::Model(..) => None,
+        };
+        if let Some(selection) = selection
+            && !self.persist_session_selection(selection)
+        {
+            return;
+        }
         if !self.snapshot.history_preview && self.process.is_some() {
             if let Some(control) = self.pending_session_controls.replace_if_pending(control) {
                 self.send(control.into_request());
             }
             return;
         }
-        if !self.snapshot.history_preview
-            && self.process.is_none()
-            && self.snapshot.selected_session.is_none()
-        {
-            match &control {
-                SessionControl::Model(provider, model_id) => {
-                    self.snapshot.prefill_model = self
-                        .snapshot
-                        .models
-                        .iter()
-                        .find(|model| model.provider == *provider && model.id == *model_id)
-                        .cloned();
-                }
-                SessionControl::Thinking(level) => {
-                    self.snapshot.prefill_thinking_level = level.clone();
-                }
-                SessionControl::ServiceTier(tier) => {
-                    self.snapshot.prefill_service_tier = Some(tier.clone());
-                    self.snapshot.pending_initial_service_tier = true;
-                }
-            }
+        if self.process.is_none() {
             self.pending_session_controls.set(control);
+            self.pending_session_controls
+                .apply_local_selection(&mut self.snapshot);
             self.publish();
             return;
         }

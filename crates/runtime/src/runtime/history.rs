@@ -86,6 +86,9 @@ impl RuntimeOwner {
                 return false;
             }
         };
+        if self.process.is_none() && self.snapshot.selected_session.as_ref() != Some(&path) {
+            self.pending_session_controls = PendingSessionControls::default();
+        }
         self.bind_external_session_identity(&path);
         if self.parked_snapshot.is_none()
             && self.snapshot.selected_session.as_deref() != Some(path.as_path())
@@ -368,6 +371,9 @@ impl RuntimeOwner {
             ..RuntimeSnapshot::default()
         };
         self.snapshot.access_mode = self.process_command.access_mode;
+        if self.process.is_none() {
+            self.restore_saved_session_controls();
+        }
         if !refreshing_visible_history {
             let _ = self.event_tx.send(RuntimeEvent::HistoryReset {
                 generation: self.process_generation,

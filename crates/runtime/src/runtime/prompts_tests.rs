@@ -769,6 +769,84 @@ fn automatic_title_requires_a_loaded_new_unnamed_session() {
 }
 
 #[test]
+fn resumed_followup_waits_for_saved_selection_acknowledgements() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let (mut owner, _) = owner_without_process(temp.path().to_owned());
+    owner.harness = Some(Backend::Pi);
+    owner.snapshot.harness = Some(Backend::Pi);
+    owner.snapshot.selected_session = Some(temp.path().join("session"));
+    owner.state = Some(SharedStateStore::open_at(
+        &temp.path().join("state.sqlite3"),
+    )?);
+    let model: crate::protocol::Model = serde_json::from_value(json!({
+        "id":"chosen", "name":"Chosen", "provider":"openai",
+        "reasoning":true, "serviceTiers":["standard", "fast"]
+    }))
+    .expect("model");
+    owner.set_model(model.clone());
+    owner.set_thinking("high".into());
+    owner.set_service_tier("fast".into());
+    assert!(owner.process.is_none());
+
+    let transport = HeldAcks::new();
+    let commands = transport.commands.clone();
+    owner.process = Some(Box::new(transport));
+    owner.active_session = owner.snapshot.selected_session.clone();
+    owner.pending_prompt = Some(super::super::tests::waiting_prompt(
+        super::super::PromptInput {
+            mode: PromptMode::Normal,
+            message: "Continue".into(),
+            display_message: None,
+            invocation: None,
+            images: Vec::new(),
+        },
+    ));
+    owner.apply_response(SessionResponse::success(
+        None,
+        SessionResponsePayload::LoadState(
+            serde_json::from_value(empty_session_json()).expect("state"),
+        ),
+    ));
+    assert!(commands.borrow().is_empty(), "history must load first");
+    owner.apply_response(SessionResponse::success(
+        None,
+        SessionResponsePayload::LoadHistory(crate::agents::SessionHistory::Preserve),
+    ));
+    assert_eq!(
+        commands.borrow().as_slice(),
+        [
+            SessionCommand::SelectModel {
+                provider: model.provider.clone(),
+                model_id: model.id.clone()
+            },
+            SessionCommand::SelectReasoning {
+                level: "high".into()
+            },
+            SessionCommand::SelectServiceTier {
+                tier: "fast".into()
+            },
+        ]
+    );
+    for (id, payload) in [
+        ("held-1", SessionResponsePayload::SelectModel(model)),
+        ("held-2", SessionResponsePayload::SelectReasoning),
+        ("held-3", SessionResponsePayload::SelectServiceTier),
+    ] {
+        owner.apply_response(SessionResponse::success(Some(id.into()), payload));
+        owner.maybe_send_deferred_prompt();
+        assert_eq!(
+            commands
+                .borrow()
+                .iter()
+                .any(|command| matches!(command, SessionCommand::Prompt { .. })),
+            id == "held-3"
+        );
+    }
+    assert!(owner.deferred_prompt().is_none());
+    Ok(())
+}
+
+#[test]
 fn resumed_prompt_survives_startup_history_without_starting_title_generation() {
     struct Recorder(std::rc::Rc<std::cell::RefCell<Vec<SessionCommand>>>);
     impl crate::agents::SessionTransport for Recorder {

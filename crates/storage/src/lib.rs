@@ -50,6 +50,7 @@ mod prompts;
 mod relocation;
 mod reviews;
 mod schema;
+mod session_controls;
 mod session_state;
 #[path = "sessions.rs"]
 mod session_storage;
@@ -65,6 +66,7 @@ use draft_storage::{remove_draft_row, save_draft};
 pub use editor_setting::EditorChoice;
 use identity::{bind_locator, ensure_locator_session, ensure_project, target_for_session};
 pub use relocation::relocate_snapshot_session_locators;
+pub use session_controls::SessionControlSelection;
 pub use session_state::SessionStateChanges;
 pub use session_writer::SessionStateWriter;
 pub use snapshot::snapshot_database;

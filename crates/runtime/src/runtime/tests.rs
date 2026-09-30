@@ -2085,7 +2085,7 @@ fn process_replacement_clears_all_session_owned_snapshot_state() {
 }
 
 #[test]
-fn model_change_from_history_reconnects_without_hiding_history() -> Result<(), String> {
+fn followup_applies_selected_model_without_hiding_history() -> Result<(), String> {
     let temp = tempdir().map_err(|error| error.to_string())?;
     let script = temp.path().join("fake-pi.sh");
     fs::write(
@@ -2095,6 +2095,9 @@ fn model_change_from_history_reconnects_without_hiding_history() -> Result<(), S
     .map_err(|error| error.to_string())?;
     let session = temp.path().join("history.jsonl");
     let (mut owner, _events) = owner_without_process(temp.path().to_path_buf());
+    owner.state = Some(SharedStateStore::open_at(
+        &temp.path().join("state.sqlite3"),
+    )?);
     owner.process_command = AgentLaunchConfig::test_script(&script, vec!["history-control".into()]);
     preview_history(&mut owner, session.clone(), "preserved history");
 
@@ -2110,6 +2113,14 @@ fn model_change_from_history_reconnects_without_hiding_history() -> Result<(), S
         efforts: None,
     }));
 
+    assert!(owner.process.is_none());
+    owner.send_prompt(
+        format!("session:{}", session.display()),
+        PromptMode::Normal,
+        "Continue".into(),
+        Vec::new(),
+        false,
+    );
     assert!(owner.process.is_some());
     assert!(owner.snapshot.history_preview);
     assert_eq!(
@@ -2162,20 +2173,14 @@ fn model_change_from_history_reconnects_without_hiding_history() -> Result<(), S
 }
 
 #[test]
-fn failed_model_reconnect_keeps_the_loaded_history() {
-    let project = std::env::temp_dir();
+fn failed_followup_resume_keeps_the_loaded_history() -> Result<(), String> {
+    let temp = tempdir().map_err(|error| error.to_string())?;
+    let project = temp.path().to_path_buf();
     let session = project.join("history.jsonl");
     let (mut owner, _events) = owner_without_process(project);
-    owner.process_command = AgentLaunchConfig {
-        program: PathBuf::from("/definitely/missing/farcaster-test-command"),
-        prefix_args: Vec::new(),
-        access_mode: HarnessAccessMode::default(),
-        app_proxy: None,
-        session_locator_root: None,
-        prompt_boundary_url: None,
-        profiles: Default::default(),
-        profile_id: None,
-    };
+    owner.state = Some(SharedStateStore::open_at(
+        &temp.path().join("state.sqlite3"),
+    )?);
     preview_history(&mut owner, session.clone(), "keep this history");
 
     owner.apply_command(RuntimeCommand::SetModel(Model {
@@ -2190,6 +2195,13 @@ fn failed_model_reconnect_keeps_the_loaded_history() {
         efforts: None,
     }));
 
+    owner.send_prompt(
+        format!("session:{}", session.display()),
+        PromptMode::Normal,
+        "Continue".into(),
+        Vec::new(),
+        false,
+    );
     assert!(owner.process.is_none());
     assert!(owner.snapshot.history_preview);
     assert_eq!(owner.snapshot.selected_session, Some(session));
@@ -2202,6 +2214,7 @@ fn failed_model_reconnect_keeps_the_loaded_history() {
             item.kind == TranscriptKind::Error && item.label == "Couldn’t start Pi"
         })
     );
+    Ok(())
 }
 
 #[test]

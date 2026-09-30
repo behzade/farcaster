@@ -33,6 +33,168 @@ impl crate::agents::SessionTransport for AckTransport {
     }
 }
 
+fn stopped_session_owner(backend: Backend, history_preview: bool) -> RuntimeOwner {
+    let (mut owner, _) =
+        super::super::tests::owner_without_process(std::path::PathBuf::from("/project"));
+    owner.harness = Some(backend);
+    owner.snapshot.harness = Some(backend);
+    owner.snapshot.selected_session = Some("/saved".into());
+    owner.snapshot.history_preview = history_preview;
+    owner.snapshot.document_ready = true;
+    owner.snapshot.models = ["old", "new"]
+        .map(|id| {
+            serde_json::from_value(serde_json::json!({
+                "id":id, "name":id, "provider":"openai", "reasoning":true,
+                "serviceTiers":["standard", "fast"], "efforts":["low", "high"]
+            }))
+            .expect("model")
+        })
+        .to_vec();
+    owner.snapshot.prefill_model = Some(owner.snapshot.models[0].clone());
+    owner.snapshot.prefill_thinking_level = Some("low".into());
+    if !history_preview {
+        owner.snapshot.session = Some(
+            serde_json::from_value(serde_json::json!({
+                "model":owner.snapshot.models[0], "thinkingLevel":"low",
+                "sessionId":"saved", "isStreaming":false, "isCompacting":false,
+                "autoCompactionEnabled":true, "messageCount":1, "pendingMessageCount":0
+            }))
+            .expect("saved state"),
+        );
+        owner.active_session = owner.snapshot.selected_session.clone();
+    }
+    owner
+}
+
+#[test]
+fn stopped_session_controls_stay_local_without_resuming() {
+    for backend in [Backend::Pi, Backend::Codex, Backend::OpenCode] {
+        for preview in [true, false] {
+            for action in ["model", "effort", "tier", "reset"] {
+                if action == "reset" && backend != Backend::OpenCode {
+                    continue;
+                }
+                let mut owner = stopped_session_owner(backend, preview);
+                let generation = owner.process_generation;
+                match action {
+                    "model" => {
+                        owner.set_model(owner.snapshot.models[1].clone());
+                        assert_eq!(
+                            owner.snapshot.session_identity().model,
+                            Some(&owner.snapshot.models[1])
+                        );
+                    }
+                    "effort" => {
+                        owner.set_thinking("high".into());
+                        assert_eq!(owner.snapshot.session_identity().effort, Some("high"));
+                    }
+                    "tier" => {
+                        owner.set_service_tier("fast".into());
+                        assert_eq!(owner.snapshot.selected_service_tier(), Some("fast"));
+                    }
+                    "reset" => {
+                        owner.reset_thinking();
+                        assert_eq!(owner.snapshot.session_identity().effort, None);
+                    }
+                    _ => unreachable!(),
+                }
+                assert!(owner.process.is_none(), "{backend} {preview} {action}");
+                assert_eq!(
+                    owner.process_generation, generation,
+                    "{backend} {preview} {action}"
+                );
+                assert!(owner.pending_session_controls.selection_pending());
+            }
+        }
+    }
+}
+
+fn refresh_stopped_history(owner: &mut RuntimeOwner) {
+    owner.apply_history(HistoryResult {
+        generation: owner.history_generation,
+        path: "/saved".into(),
+        project: "/project".into(),
+        kind: HistoryLoadKind::DocumentRefresh,
+        result: Ok(LoadedHistory {
+            messages: Vec::new().into(),
+            model: Some(("openai".into(), "old".into())),
+            thinking_level: Some("low".into()),
+            pending_question: None,
+            prompt_deliveries: None,
+        }),
+    });
+}
+
+#[test]
+fn unsent_saved_session_choices_survive_refresh_and_reopen() -> Result<(), String> {
+    use farcaster_storage::SharedStateStore;
+    for backend in [Backend::Pi, Backend::OpenCode] {
+        for preview in [true, false] {
+            let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+            let database = temp.path().join("state.sqlite3");
+            let mut owner = stopped_session_owner(backend, preview);
+            owner.state = Some(SharedStateStore::open_at(&database)?);
+            let model = owner.snapshot.models[1].clone();
+            owner.set_model(model.clone());
+            owner.set_thinking("high".into());
+            owner.set_service_tier("fast".into());
+            if backend == Backend::OpenCode {
+                owner.reset_thinking();
+            }
+            let check_selection = |owner: &RuntimeOwner| {
+                assert_eq!(owner.snapshot.session_identity().model, Some(&model));
+                assert_eq!(
+                    owner.snapshot.session_identity().effort,
+                    if backend == Backend::Pi {
+                        Some("high")
+                    } else {
+                        None
+                    }
+                );
+                assert_eq!(owner.snapshot.selected_service_tier(), Some("fast"));
+                assert!(owner.pending_session_controls.selection_pending());
+                assert!(owner.process.is_none());
+            };
+            refresh_stopped_history(&mut owner);
+            check_selection(&owner);
+            drop(owner);
+
+            let mut reopened = stopped_session_owner(backend, preview);
+            reopened.state = Some(SharedStateStore::open_at(&database)?);
+            refresh_stopped_history(&mut reopened);
+            check_selection(&reopened);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn failed_saved_session_write_does_not_launch_or_queue_the_change() -> Result<(), String> {
+    use farcaster_storage::SharedStateStore;
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let state = SharedStateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    state.with(|store| {
+        store.with_connection(|connection| {
+            connection
+                .execute_batch(
+                    "CREATE TRIGGER reject_selection BEFORE INSERT ON session_events
+                 BEGIN SELECT RAISE(FAIL,'cannot save selection'); END;",
+                )
+                .map_err(|error| error.to_string())
+        })
+    })?;
+    let mut owner = stopped_session_owner(Backend::Pi, true);
+    owner.state = Some(state);
+    let generation = owner.process_generation;
+    owner.set_thinking("high".into());
+    assert_eq!(owner.snapshot.session_identity().effort, Some("low"));
+    assert!(!owner.pending_session_controls.selection_pending());
+    assert_eq!(owner.snapshot.status, "Command not sent");
+    assert_eq!(owner.process_generation, generation);
+    assert!(owner.process.is_none());
+    Ok(())
+}
+
 #[test]
 fn pending_controls_coalesce_and_apply_model_before_effort() {
     let mut pending = PendingSessionControls::default();
@@ -455,10 +617,45 @@ fn pending_reset_survives_coalescing_and_is_not_an_empty_queue() {
 }
 
 #[test]
-fn resetting_a_draft_clears_prefill_and_queues_an_explicit_reset() {
+fn pi_draft_effort_selection_publishes_while_the_model_is_pending() {
+    let (mut owner, events) =
+        super::super::tests::owner_without_process(std::path::PathBuf::from("/project"));
+    owner.snapshot.harness = Some(Backend::Pi);
+    let model: Model = serde_json::from_value(serde_json::json!({
+        "id":"selected", "name":"Selected", "provider":"openai",
+        "reasoning":true, "efforts":["off", "low", "high"]
+    }))
+    .expect("decode model");
+    owner.apply_command(RuntimeCommand::SetModel(model.clone()));
+    events.try_iter().for_each(drop);
+
+    for level in ["low", "high", "off"] {
+        owner.apply_command(RuntimeCommand::SetThinking(level.into()));
+        let published = events
+            .try_iter()
+            .filter_map(|event| match event {
+                RuntimeEvent::Snapshot { snapshot, .. } => Some(snapshot),
+                _ => None,
+            })
+            .last()
+            .expect("effort selection must publish a snapshot");
+        assert_eq!(published.session_identity().effort, Some(level));
+        assert_eq!(published.session_identity().model, Some(&model));
+        assert!(owner.process.is_none(), "draft must stay unstarted");
+    }
+}
+
+#[test]
+fn resetting_a_draft_with_a_pending_model_clears_prefill() {
     let (mut owner, _) =
         super::super::tests::owner_without_process(std::path::PathBuf::from("/project"));
     owner.harness = Some(Backend::OpenCode);
+    owner.set_model(
+        serde_json::from_value(serde_json::json!({
+            "id":"model", "name":"Model", "provider":"openai"
+        }))
+        .expect("model"),
+    );
     owner.set_thinking("high".into());
     assert_eq!(owner.snapshot.session_identity().effort, Some("high"));
     owner.reset_thinking();
@@ -470,7 +667,13 @@ fn resetting_a_draft_clears_prefill_and_queues_an_explicit_reset() {
             .into_iter()
             .map(SessionControl::into_request)
             .collect::<Vec<_>>(),
-        [SessionCommand::ResetReasoning]
+        [
+            SessionCommand::SelectModel {
+                provider: "openai".into(),
+                model_id: "model".into()
+            },
+            SessionCommand::ResetReasoning,
+        ]
     );
 }
 
