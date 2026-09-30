@@ -542,6 +542,7 @@ fn new_session_restores_the_harness_access_mode_before_staging_the_draft() {
         .send(RuntimeCommand::NewSession {
             id: "new".into(),
             harness: Some(Backend::Codex),
+            profile_id: None,
             project,
         })
         .expect("queue new session");

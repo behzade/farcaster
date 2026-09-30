@@ -89,23 +89,11 @@ pub(super) fn load(
         };
     let draft_timing =
         crate::app::infrastructure::performance::StartupTiming::new("app.create_draft");
-    let initial_draft = match session::draft_store::new(
+    let initial_draft = session::draft_store::new(
         project.to_path_buf(),
         preferred_harness,
         preferred_profile_id.clone(),
-    ) {
-        Ok(draft) => draft,
-        Err(load_error) => {
-            error.get_or_insert(load_error);
-            let mut draft = sessions::DraftSession::with_id(
-                preferred_harness,
-                format!("untracked-draft-{}", std::process::id()),
-                project.to_path_buf(),
-            );
-            draft.profile_id = preferred_profile_id.clone();
-            draft
-        }
-    };
+    );
     drop(draft_timing);
 
     let selected_draft = initial_draft.id.clone();

@@ -224,6 +224,7 @@ impl FarcasterApp {
                 group_drop_target: None,
                 drafts: persisted.drafts,
                 draft_session_ids: persisted.draft_session_ids,
+                pending_draft_saves: HashSet::new(),
                 selected_draft: Some(persisted.selected_draft),
                 preferred_harness: persisted.preferred_harness,
                 preferred_profile_id: persisted.preferred_profile_id,

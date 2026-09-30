@@ -143,18 +143,18 @@ impl FarcasterApp {
             );
             return;
         }
-        let draft = super::super::session::draft_store::new(
+        let mut draft = super::super::session::draft_store::new(
             settings.project.clone(),
             settings.harness,
             None,
         );
-        let draft = match draft {
-            Ok(draft) => draft,
+        match super::super::session::draft_store::save(&draft) {
+            Ok(id) => draft.app_session_id = id,
             Err(error) => {
                 self.send_to_chat_error(error, cx);
                 return;
             }
-        };
+        }
         self.sessions.drafts.insert(0, draft.clone());
         let target = draft_target(&draft.id);
         self.sessions

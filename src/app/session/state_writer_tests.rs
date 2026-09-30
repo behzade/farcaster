@@ -20,8 +20,9 @@ fn failed_handoffs_restore_drafts_and_folder_membership(cx: &mut gpui::TestAppCo
                         project.into(),
                         Some(Backend::Pi),
                         None,
-                    )
-                    .expect("draft");
+                    );
+                    draft.app_session_id =
+                        crate::app::session::draft_store::save(&draft).expect("saved draft");
                     app.sessions.selected_draft = Some(draft.id.clone());
                     app.switch_composer_target(draft_target(&draft.id), window, cx);
                     app.sessions.drafts.insert(0, draft.clone());
@@ -297,12 +298,13 @@ fn quit_reflushes_composer_changes_queued_after_its_barrier(cx: &mut gpui::TestA
                         }
                         persistence::shared()
                     });
-                    let draft = crate::app::session::draft_store::new(
+                    let mut draft = crate::app::session::draft_store::new(
                         project.into(),
                         Some(crate::agents::Backend::Pi),
                         None,
-                    )
-                    .expect("persistent composer draft");
+                    );
+                    draft.app_session_id = crate::app::session::draft_store::save(&draft)
+                        .expect("persistent composer draft");
                     app.composer.sessions = crate::sessions::ComposerSessions::new(
                         crate::sessions::draft_target(&draft.id),
                         vec![],

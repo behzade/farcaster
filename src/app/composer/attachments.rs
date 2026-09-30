@@ -5,6 +5,9 @@ use crate::app::infrastructure::persistence::ComposerAttachment;
 
 impl FarcasterApp {
     pub(in crate::app) fn save_composer_attachments(&mut self, target: &str) {
+        if self.composer.sessions.current_target() == target && self.has_composer_attachments() {
+            self.engage_current_draft();
+        }
         let pending = self
             .composer
             .pending_submissions

@@ -470,7 +470,7 @@ fn history_model_identity_survives_an_unavailable_catalog_entry() {
 #[test]
 fn persisted_submitted_draft_selects_its_session() {
     let project = PathBuf::from("/project");
-    let draft = crate::sessions::DraftSession::with_id(
+    let mut draft = crate::sessions::DraftSession::with_id(
         Some(Backend::Codex),
         "draft".into(),
         project.clone(),
@@ -497,6 +497,12 @@ fn persisted_submitted_draft_selects_its_session() {
                 && session_id == "thread-1"
                 && selected_project == project
     ));
+    assert!(matches!(
+        initial_draft_command(draft.clone(), None),
+        RuntimeCommand::NewSession { id, harness, profile_id: None, project: draft_project }
+            if id == "draft" && harness == Some(Backend::Codex) && draft_project == project
+    ));
+    draft.app_session_id = 42;
     assert!(matches!(
         initial_draft_command(draft, None),
         RuntimeCommand::ResumeDraft { id, harness, project: draft_project }
@@ -1321,15 +1327,27 @@ fn new_session_stays_cold_until_the_first_prompt() -> Result<(), Box<dyn std::er
         &old_project.path().join("state.sqlite3"),
     )?);
 
-    owner.apply_command(RuntimeCommand::NewSession {
-        id: "draft-new".into(),
-        harness: Some(Backend::Pi),
-        project: new_project.path().to_path_buf(),
-    });
-
-    assert_eq!(owner.project, new_project.path());
-    assert!(owner.process.is_none());
-    assert!(!owner.snapshot.connected);
+    for profile_id in [Some("chosen-profile"), None] {
+        owner.apply_command(RuntimeCommand::NewSession {
+            id: "draft-new".into(),
+            harness: Some(Backend::Pi),
+            profile_id: profile_id.map(str::to_owned),
+            project: new_project.path().to_path_buf(),
+        });
+        assert_eq!(owner.project, new_project.path());
+        assert_eq!(owner.process_command.profile_id.as_deref(), profile_id);
+        assert_eq!(owner.snapshot.profile_id.as_deref(), profile_id);
+        assert!(owner.process.is_none());
+        assert!(!owner.snapshot.connected);
+        assert!(
+            owner
+                .state
+                .as_ref()
+                .expect("state")
+                .with(|store| store.load_drafts())?
+                .is_empty()
+        );
+    }
 
     owner.send_prompt(
         "draft:draft-new".into(),
@@ -1383,6 +1401,7 @@ fn cold_draft_model_selection_is_deferred_without_starting_the_harness() {
     owner.apply_command(RuntimeCommand::NewSession {
         id: "draft-cold".into(),
         harness: Some(Backend::Pi),
+        profile_id: None,
         project,
     });
 

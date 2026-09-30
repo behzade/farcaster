@@ -323,11 +323,15 @@ impl RuntimeOwner {
             | RuntimeCommand::StopAndMoveSession { .. }
             | RuntimeCommand::DeleteSessionFamily { .. } => {}
             RuntimeCommand::NewSession {
-                id,
+                profile_id,
                 harness,
                 project,
                 ..
-            } => self.stage_draft(&id, harness, project),
+            } => self.stage_draft(
+                LaunchTarget::NewDraft(profile_id.as_deref()),
+                harness,
+                project,
+            ),
             RuntimeCommand::ForkSession {
                 path,
                 harness,
@@ -344,7 +348,7 @@ impl RuntimeOwner {
                 harness,
                 project,
                 ..
-            } => self.stage_draft(&id, harness, project),
+            } => self.stage_draft(LaunchTarget::Draft(&id), harness, project),
             RuntimeCommand::SelectSession {
                 path,
                 harness,

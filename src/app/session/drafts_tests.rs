@@ -567,3 +567,239 @@ fn materialized_codex_draft_can_enqueue_without_a_duplicate_client_key()
     );
     Ok(())
 }
+
+#[gpui::test]
+fn untouched_drafts_prune_on_switch_and_quit(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::untouched_drafts_prune_on_switch_and_quit"
+        ),
+        cx,
+        |cx, app, _, project| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let untouched = app.sessions.selected_draft.clone().expect("initial draft");
+                    assert!(
+                        crate::app::persistence::open()
+                            .expect("store")
+                            .load_drafts()
+                            .expect("drafts")
+                            .is_empty()
+                    );
+                    let snapshot = std::sync::Arc::make_mut(&mut app.snapshot);
+                    std::sync::Arc::make_mut(&mut snapshot.conversation)
+                        .push_transport_error("old session".into());
+                    app.new_session(project.into(), window, cx);
+                    assert!(
+                        !app.sessions
+                            .drafts
+                            .iter()
+                            .any(|draft| draft.id == untouched)
+                    );
+                    let engaged = app.sessions.selected_draft.clone().expect("next draft");
+                    app.set_thinking_level(Some("high".into()), cx);
+                    app.set_thinking_level(None, cx);
+                    app.project.pending_trust_command = None;
+                    app.overlays.view.project_trust = false;
+                    app.new_session(project.into(), window, cx);
+                    assert!(app.sessions.drafts.iter().any(|draft| draft.id == engaged));
+                    let last = app.sessions.selected_draft.clone().expect("last draft");
+                    let target = draft_target(&last);
+                    assert!(app.sync_current_draft(&target));
+                    assert!(app.sessions.selected_draft.is_none());
+                    assert!(!app.sessions.drafts.iter().any(|draft| draft.id == last));
+                    assert!(
+                        app.sync_current_draft(&target),
+                        "quit callback must not recreate the draft"
+                    );
+                    let saved = crate::app::persistence::open()
+                        .expect("store")
+                        .load_drafts()
+                        .expect("drafts");
+                    assert_eq!(saved.len(), 1);
+                    assert_eq!(saved[0].id, engaged);
+                    assert!(saved[0].app_session_id > 0);
+                });
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn user_actions_save_empty_drafts(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(module_path!(), "::user_actions_save_empty_drafts"),
+        cx,
+        |cx, app, _, project| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    // Trust remains off so terminal/editor entry points record the request
+                    // without launching a native process in this test.
+                    app.project.repository.execution_allowed = false;
+                    let model: crate::protocol::Model = serde_json::from_value(serde_json::json!({
+                        "id": "test", "name": "Test", "provider": "test"
+                    }))
+                    .expect("model");
+                    for action in [
+                        "harness",
+                        "model",
+                        "effort",
+                        "tier",
+                        "sandbox",
+                        "terminal",
+                        "editor",
+                        "attachment",
+                        "workgraph",
+                        "folder",
+                    ] {
+                        app.new_session(project.into(), window, cx);
+                        let id = app.sessions.selected_draft.clone().expect("draft");
+                        match action {
+                            "harness" => app.change_draft_harness(Backend::Pi, window, cx),
+                            "model" => {
+                                let snapshot = std::sync::Arc::make_mut(&mut app.snapshot);
+                                snapshot.harness = Some(Backend::Pi);
+                                snapshot.access_mode = crate::runtime::HarnessAccessMode::Auto;
+                                app.select_model_from_ui(&model, window, cx);
+                            }
+                            "effort" => app.set_thinking_level(Some("high".into()), cx),
+                            "tier" => app.set_service_tier("fast".into(), cx),
+                            "sandbox" => {
+                                app.set_access_mode(crate::runtime::HarnessAccessMode::Full, cx)
+                            }
+                            "terminal" => {
+                                app.activate_terminal_for_project(project.into(), window, cx)
+                            }
+                            "editor" => app.open_editor_request(
+                                crate::app::workspace::editor::EditorRequest::Project(
+                                    project.into(),
+                                ),
+                                window,
+                                cx,
+                            ),
+                            "workgraph" => app.open_workgraph_surface(window, cx),
+                            "folder" => {
+                                app.sessions.folders.create("Work".into(), None);
+                                let folder =
+                                    app.sessions.folders.folders.last().expect("folder").id;
+                                assert!(app.assign_session_folder(0, Some(folder), cx));
+                                let session = app.sessions.draft_session_ids[&id];
+                                assert_eq!(app.sessions.folders.folder_for(session), Some(folder));
+                            }
+                            "attachment" => {
+                                let path = project.join("attachment.txt");
+                                std::fs::write(&path, "attachment").expect("paste file");
+                                app.composer.pastes.insert(
+                                    draft_target(&id),
+                                    vec![
+                                        crate::app::composer::pastes::ComposerPaste::from_path(
+                                            path,
+                                        )
+                                        .expect("paste"),
+                                    ],
+                                );
+                                app.save_composer_attachments(&draft_target(&id));
+                                app.remove_composer_paste(0, cx);
+                            }
+                            _ => unreachable!(),
+                        }
+                        app.project.pending_trust_command = None;
+                        app.overlays.view.project_trust = false;
+                        assert!(app.sync_current_draft(&draft_target(&id)), "{action}");
+                        futures::executor::block_on(app.sessions.writer.flush())
+                            .expect("engagement saved");
+                        let saved = crate::app::persistence::open()
+                            .expect("store")
+                            .load_drafts()
+                            .expect("drafts");
+                        assert!(
+                            saved
+                                .iter()
+                                .find(|draft| draft.id == id)
+                                .expect(action)
+                                .app_session_id
+                                > 0,
+                            "{action}"
+                        );
+                    }
+                });
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn typing_then_clearing_a_draft_still_counts_as_engagement(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::typing_then_clearing_a_draft_still_counts_as_engagement"
+        ),
+        cx,
+        |cx, app, _, project| {
+            for value in [" ", ""] {
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| {
+                        app.composer.input.update(cx, |input, cx| {
+                            input.set_value(value, window, cx);
+                            cx.emit(gpui_component::input::InputEvent::Change);
+                        });
+                    });
+                });
+            }
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let id = app.sessions.selected_draft.clone().expect("draft");
+                    app.new_session(project.into(), window, cx);
+                    futures::executor::block_on(app.sessions.writer.flush()).expect("saved");
+                    assert!(
+                        crate::app::persistence::open()
+                            .expect("store")
+                            .load_drafts()
+                            .expect("drafts")
+                            .iter()
+                            .find(|draft| draft.id == id)
+                            .expect("saved draft")
+                            .app_session_id
+                            > 0
+                    );
+                });
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn failed_first_engagement_save_keeps_the_draft_and_retries_before_quit(
+    cx: &mut gpui::TestAppContext,
+) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::failed_first_engagement_save_keeps_the_draft_and_retries_before_quit"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    let id = app.sessions.selected_draft.clone().expect("draft");
+                    let mut store = crate::app::persistence::open().expect("store");
+                    store.with_connection(|connection| connection.execute_batch(
+                        "CREATE TRIGGER reject_draft BEFORE INSERT ON sessions BEGIN SELECT RAISE(FAIL,'fixture draft save failure'); END;"
+                    )).expect("reject writes");
+                    app.set_thinking_level(Some("high".into()), cx);
+                    app.set_thinking_level(None, cx);
+                    assert!(!app.sync_current_draft(&draft_target(&id)));
+                    assert_eq!(app.sessions.selected_draft.as_deref(), Some(id.as_str()));
+                    assert!(app.sessions.pending_draft_saves.contains(&id));
+                    assert!(store.load_drafts().expect("drafts").is_empty());
+                    store.with_connection(|connection| connection.execute_batch("DROP TRIGGER reject_draft;")).expect("allow writes");
+                    assert!(app.sync_current_draft(&draft_target(&id)));
+                    assert!(!app.sessions.pending_draft_saves.contains(&id));
+                    assert!(store.load_drafts().expect("drafts").iter().any(|draft| draft.id == id));
+                });
+            });
+        },
+    );
+}

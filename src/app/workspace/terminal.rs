@@ -25,6 +25,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.engage_current_draft();
         if !self.project.repository.execution_allowed {
             self.request_project_trust_for_action(
                 project.clone(),

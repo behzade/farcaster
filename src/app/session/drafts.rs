@@ -25,6 +25,7 @@ impl FarcasterApp {
         let Some(draft) = self.sessions.drafts.iter_mut().find(|draft| draft.id == id) else {
             return true;
         };
+        self.sessions.pending_draft_saves.insert(id.to_owned());
         let project = draft.project.clone();
         if draft.app_session_id <= 0 {
             match super::draft_store::save(draft) {
@@ -39,11 +40,11 @@ impl FarcasterApp {
                     return false;
                 }
             }
-        }
-        if let Err(error) = self.sessions.writer.save_draft(draft.clone()) {
+        } else if let Err(error) = self.sessions.writer.save_draft(draft.clone()) {
             self.sessions.error = Some(error);
             return false;
         }
+        self.sessions.pending_draft_saves.remove(id);
         self.remember_rail_projects([project]);
         true
     }
@@ -246,6 +247,7 @@ impl FarcasterApp {
             None => draft.change_harness(Some(harness)),
         };
         if !changed {
+            self.engage_current_draft();
             return;
         }
         let project = draft.project.clone();
@@ -256,6 +258,7 @@ impl FarcasterApp {
                     RuntimeCommand::NewSession {
                         id,
                         harness: Some(harness),
+                        profile_id: app.active_profile_id(),
                         project: project.clone(),
                     },
                     window,
@@ -307,6 +310,7 @@ impl FarcasterApp {
                 &project,
                 RuntimeCommand::NewSession {
                     harness: app.active_harness(),
+                    profile_id: app.active_profile_id(),
                     id,
                     project: project.clone(),
                 },
@@ -324,6 +328,21 @@ impl FarcasterApp {
         }
     }
 
+    pub(in crate::app) fn engage_current_draft(&mut self) {
+        let Some(id) = self.sessions.selected_draft.clone() else {
+            return;
+        };
+        if self.composer.sessions.current_target() != draft_target(&id) {
+            return;
+        }
+        let Some(draft) = self.sessions.drafts.iter().find(|draft| draft.id == id) else {
+            return;
+        };
+        if draft.app_session_id <= 0 {
+            self.save_session_draft(&id);
+        }
+    }
+
     pub(in crate::app) fn sync_current_draft(&mut self, target: &str) -> bool {
         let Some(id) = self.sessions.selected_draft.as_deref() else {
             return true;
@@ -334,6 +353,28 @@ impl FarcasterApp {
             || self.sessions.submitted_drafts.contains_key(id)
             || has_pending_submission(&self.composer.pending_submissions, target)
         {
+            return true;
+        }
+        let has_content =
+            !self.composer.sessions.current().text.is_empty() || self.has_composer_attachments();
+        if has_content {
+            self.engage_current_draft();
+        }
+        if !self.sessions.pending_draft_saves.contains(id)
+            && self
+                .sessions
+                .drafts
+                .iter()
+                .any(|draft| draft.id == id && draft.app_session_id <= 0)
+        {
+            self.sessions.drafts.retain(|draft| draft.id != id);
+            self.sessions.draft_session_ids.remove(id);
+            self.sessions.selected_draft = None;
+            self.composer.sessions.remove(target);
+            self.composer.images.remove(target);
+            self.composer.pastes.remove(target);
+            self.workspace.session_surfaces.remove(target);
+            self.workspace.editor.session_tabs.remove(target);
             return true;
         }
         let app_session_id = self
@@ -356,7 +397,7 @@ impl FarcasterApp {
             &self.project.path,
             self.snapshot.harness,
         );
-        if changed || app_session_id <= 0 {
+        if changed || app_session_id <= 0 || self.sessions.pending_draft_saves.contains(id) {
             return self.save_session_draft(id);
         }
         true
@@ -564,6 +605,7 @@ impl FarcasterApp {
         self.canonicalize_draft_status(id, path);
         self.sessions.submitted_drafts.remove(id);
         self.sessions.draft_session_ids.remove(id);
+        self.sessions.pending_draft_saves.remove(id);
         self.sessions.drafts.retain(|draft| draft.id != id);
         clear_promoted_selection(&mut self.sessions.selected_draft, id);
         self.remove_session_draft(id);

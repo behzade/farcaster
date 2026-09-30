@@ -657,19 +657,28 @@ pub(super) fn initial_draft_command(
     session: Option<crate::sessions::SessionTarget>,
 ) -> RuntimeCommand {
     let project = draft.project;
-    session.map_or(
-        RuntimeCommand::ResumeDraft {
-            id: draft.id,
-            harness: draft.harness,
-            project: project.clone(),
-        },
-        |target| RuntimeCommand::SelectSession {
+    if let Some(target) = session {
+        return RuntimeCommand::SelectSession {
             session_id: target.id,
             path: target.path,
             harness: target.harness,
             project,
-        },
-    )
+        };
+    }
+    if draft.app_session_id > 0 {
+        RuntimeCommand::ResumeDraft {
+            id: draft.id,
+            harness: draft.harness,
+            project,
+        }
+    } else {
+        RuntimeCommand::NewSession {
+            id: draft.id,
+            harness: draft.harness,
+            profile_id: draft.profile_id,
+            project,
+        }
+    }
 }
 
 #[derive(Debug)]

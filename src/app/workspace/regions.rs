@@ -64,6 +64,17 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn send(&mut self, command: RuntimeCommand, cx: &mut Context<Self>) {
+        if matches!(
+            &command,
+            RuntimeCommand::SetModel(_)
+                | RuntimeCommand::SetModelWithAccessMode { .. }
+                | RuntimeCommand::SetThinking(_)
+                | RuntimeCommand::ResetThinking
+                | RuntimeCommand::SetServiceTier(_)
+                | RuntimeCommand::SetAccessMode(_)
+        ) {
+            self.engage_current_draft();
+        }
         if let Err(error) = self.runtime.send(command) {
             let snapshot = Arc::make_mut(&mut self.snapshot);
             let index = snapshot.conversation.items.len();

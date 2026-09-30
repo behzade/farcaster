@@ -367,19 +367,21 @@ impl FarcasterApp {
             return;
         }
         self.reset_run_panel_scroll(cx);
-        let draft = match super::draft_store::new(
+        let mut draft = super::draft_store::new(
             project.clone(),
             self.sessions.preferred_harness,
             self.sessions.preferred_profile_id.clone(),
-        ) {
-            Ok(draft) => draft,
-            Err(error) => {
-                self.sessions.error = Some(error);
-                self.notify_session_rail(cx);
-                cx.notify();
-                return;
+        );
+        if folder.is_some() {
+            match super::draft_store::save(&draft) {
+                Ok(id) => draft.app_session_id = id,
+                Err(error) => {
+                    self.sessions.error = Some(error);
+                    self.notify_session_rail(cx);
+                    return;
+                }
             }
-        };
+        }
         let draft_key = draft_target(&draft.id);
         self.switch_composer_target(draft_key.clone(), window, cx);
         self.sessions.selected_draft = Some(draft.id.clone());
@@ -396,6 +398,7 @@ impl FarcasterApp {
             RuntimeCommand::NewSession {
                 id: draft.id,
                 harness: draft.harness,
+                profile_id: draft.profile_id,
                 project: project.clone(),
             },
             window,
@@ -480,21 +483,24 @@ impl FarcasterApp {
                 project: project.clone(),
             }
         } else {
-            let Some(draft_harness) = self
-                .sessions
-                .drafts
-                .iter()
-                .find(|draft| draft.id == id)
-                .map(|draft| draft.harness)
-            else {
+            let Some(draft) = self.sessions.drafts.iter().find(|draft| draft.id == id) else {
                 self.sessions.error = Some("The draft's harness identity is unavailable".into());
                 self.notify_session_rail(cx);
                 return;
             };
-            RuntimeCommand::ResumeDraft {
-                id: id.clone(),
-                harness: draft_harness,
-                project: project.clone(),
+            if draft.app_session_id > 0 {
+                RuntimeCommand::ResumeDraft {
+                    id: id.clone(),
+                    harness: draft.harness,
+                    project: project.clone(),
+                }
+            } else {
+                RuntimeCommand::NewSession {
+                    id: id.clone(),
+                    harness: draft.harness,
+                    profile_id: draft.profile_id.clone(),
+                    project: project.clone(),
+                }
             }
         };
         self.reset_run_panel_scroll(cx);
@@ -530,6 +536,7 @@ impl FarcasterApp {
         self.workspace.editor.session_tabs.remove(&target);
         self.sessions.drafts.retain(|draft| draft.id != id);
         self.sessions.draft_session_ids.remove(id);
+        self.sessions.pending_draft_saves.remove(id);
         self.sessions.submitted_drafts.remove(id);
         self.activity.run_statuses.remove(&target);
         self.activity.recent_completions.remove(&target);

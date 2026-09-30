@@ -459,6 +459,7 @@ impl FarcasterApp {
                 .retain(|_, pending| pending.submitted_target != target);
             self.sessions.submitted_drafts.remove(id);
             self.sessions.draft_session_ids.remove(id);
+            self.sessions.pending_draft_saves.remove(id);
             self.activity.run_statuses.remove(&target);
             self.activity.recent_completions.remove(&target);
             self.activity.recent_completion_expiries.remove(&target);
@@ -492,17 +493,12 @@ impl FarcasterApp {
         }
         if selected_was_deleted && generation >= self.runtime_generation {
             let current_target = self.composer.sessions.current_target().to_owned();
-            let (next_target, next_draft) = match session::draft_store::new(
+            let draft = session::draft_store::new(
                 self.project.path.clone(),
                 self.sessions.preferred_harness,
                 self.sessions.preferred_profile_id.clone(),
-            ) {
-                Ok(draft) => (draft_target(&draft.id), Some(draft)),
-                Err(error) => {
-                    self.sessions.error = Some(error);
-                    (project_target(&self.project.path), None)
-                }
-            };
+            );
+            let next_target = draft_target(&draft.id);
             let composer = self
                 .composer
                 .sessions
@@ -513,21 +509,20 @@ impl FarcasterApp {
             }
             self.reset_session_ui(generation, false, cx);
             self.composer.pending_restore = Some((next_target, composer));
-            self.sessions.selected_draft = next_draft.as_ref().map(|draft| draft.id.clone());
-            if let Some(draft) = next_draft {
-                self.sessions
-                    .draft_session_ids
-                    .insert(draft.id.clone(), draft.app_session_id);
-                self.sessions.drafts.push(draft.clone());
-                self.send(
-                    RuntimeCommand::NewSession {
-                        id: draft.id,
-                        harness: draft.harness,
-                        project: draft.project,
-                    },
-                    cx,
-                );
-            }
+            self.sessions.selected_draft = Some(draft.id.clone());
+            self.sessions
+                .draft_session_ids
+                .insert(draft.id.clone(), draft.app_session_id);
+            self.sessions.drafts.push(draft.clone());
+            self.send(
+                RuntimeCommand::NewSession {
+                    id: draft.id,
+                    harness: draft.harness,
+                    profile_id: draft.profile_id,
+                    project: draft.project,
+                },
+                cx,
+            );
             let snapshot = Arc::make_mut(&mut self.snapshot);
             snapshot.live_session = None;
             snapshot.selected_session = None;

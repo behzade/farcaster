@@ -10,6 +10,9 @@ impl FarcasterApp {
         self.navigation.chat.activation.clear();
         let current = input_snapshot(self.composer.input.read(cx));
         let current_target = self.composer.sessions.current_target().to_owned();
+        if !current.text.is_empty() {
+            self.engage_current_draft();
+        }
         self.sync_current_draft(&current_target);
         self.capture_center_surface();
         let snapshot = self.composer.sessions.switch_to(target, current);
@@ -17,9 +20,11 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn capture_composer_session(&mut self, cx: &mut Context<Self>) {
-        self.composer
-            .sessions
-            .capture_current(input_snapshot(self.composer.input.read(cx)));
+        let snapshot = input_snapshot(self.composer.input.read(cx));
+        if !snapshot.text.is_empty() {
+            self.engage_current_draft();
+        }
+        self.composer.sessions.capture_current(snapshot);
     }
 
     pub(in crate::app) fn apply_composer_snapshot(

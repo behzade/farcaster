@@ -115,6 +115,20 @@ impl FarcasterApp {
         if self.sessions.folders.folder_for(session) == folder {
             return true;
         }
+        let mut session = session;
+        if let Some(index) = self
+            .sessions
+            .drafts
+            .iter()
+            .position(|draft| draft.app_session_id <= 0 && draft.app_session_id == session)
+        {
+            let id = self.sessions.drafts[index].id.clone();
+            if !self.save_session_draft(&id) {
+                self.notify_session_rail(cx);
+                return false;
+            }
+            session = self.sessions.drafts[index].app_session_id;
+        }
         let mut next = self.sessions.folders.clone();
         next.assign(session, folder);
         self.save_session_folders(next, cx)

@@ -416,6 +416,7 @@ fn live_e2e_runtime_navigation_keeps_pending_receipts_in_their_origin_session() 
             runtime.send(RuntimeCommand::NewSession {
                 id: second_draft,
                 harness: harness.into(),
+                profile_id: None,
                 project: project.clone(),
             })?;
             trace.phase("submit same-text image-distinct second draft prompt")?;
@@ -803,6 +804,7 @@ fn start_runtime(
     runtime.send(RuntimeCommand::NewSession {
         id: draft_id.into(),
         harness: harness.into(),
+        profile_id: None,
         project: project.into(),
     })?;
     Ok(runtime)

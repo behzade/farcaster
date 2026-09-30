@@ -770,6 +770,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.engage_current_draft();
         self.close_worker_picker_for_surface_switch(window, cx);
         self.hide_native_workspace_surfaces(cx);
         if self.overlays.view.run {

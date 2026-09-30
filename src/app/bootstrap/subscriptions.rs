@@ -104,6 +104,9 @@ fn subscribe_composer(
                 });
                 this.composer.sessions.exit_history();
                 let snapshot = input_snapshot(state.read(cx));
+                if !snapshot.text.is_empty() {
+                    this.engage_current_draft();
+                }
                 let has_mention =
                     file_mentions::query_at_cursor(&snapshot.text, snapshot.cursor).is_some();
                 this.composer.sessions.capture_current(snapshot);

@@ -78,6 +78,7 @@ pub enum RuntimeCommand {
     NewSession {
         id: String,
         harness: Option<Backend>,
+        profile_id: Option<String>,
         project: PathBuf,
     },
     StartTask {

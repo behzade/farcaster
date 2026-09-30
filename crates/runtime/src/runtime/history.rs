@@ -187,20 +187,22 @@ impl RuntimeOwner {
         self.pending_document_refresh = None;
     }
 
-    pub(super) fn stage_draft(&mut self, id: &str, harness: Option<Backend>, project: PathBuf) {
-        let config = match configuration_for_target(
-            &self.process_command,
-            self.state.as_ref(),
-            LaunchTarget::Draft(id),
-        ) {
-            Ok(config) => config,
-            Err(error) => {
-                conversation_mut(&mut self.snapshot)
-                    .push_local_error("Load harness profile", error);
-                self.publish();
-                return;
-            }
-        };
+    pub(super) fn stage_draft(
+        &mut self,
+        target: LaunchTarget<'_>,
+        harness: Option<Backend>,
+        project: PathBuf,
+    ) {
+        let config =
+            match configuration_for_target(&self.process_command, self.state.as_ref(), target) {
+                Ok(config) => config,
+                Err(error) => {
+                    conversation_mut(&mut self.snapshot)
+                        .push_local_error("Load harness profile", error);
+                    self.publish();
+                    return;
+                }
+            };
         let unchanged = self.process.is_none()
             && self.parked_snapshot.is_none()
             && !self.snapshot.history_preview
