@@ -202,8 +202,12 @@ pub(super) fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
         }
         return items;
     }
-    let projected_user = (role == "user").then(|| projected_user_message_text(message));
-    if let Some(peer) = projected_user.as_deref().and_then(PeerMessage::from_prompt) {
+    let projected_user = (role == "user").then(|| projected_user_message_text(message, true));
+    if let Some(text) = projected_user.as_deref()
+        && (PeerMessage::prompt_parts(text).is_some()
+            || PeerMessage::sender_from_heading(text).is_some())
+        && let Some(peer) = PeerMessage::from_prompt(&projected_user_message_text(message, false))
+    {
         return vec![peer_transcript_item(peer)];
     }
     let (kind, label, display) = match role {
@@ -294,30 +298,63 @@ pub(super) fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
 }
 
 pub(super) fn message_text(message: &Value) -> Cow<'_, str> {
-    let mut parts = message_text_parts(message);
+    join_message_parts(message_text_parts(message), usize::MAX)
+}
+
+fn join_message_parts<'a>(
+    mut parts: impl Iterator<Item = &'a str> + Clone,
+    limit: usize,
+) -> Cow<'a, str> {
     let Some(first) = parts.next() else {
         return Cow::Borrowed("");
     };
-    let Some(second) = parts.next() else {
+    if limit <= first.len() {
+        return Cow::Borrowed(&first[..limit]);
+    }
+    let remaining_len = parts.clone().map(|part| part.len() + 1).sum::<usize>();
+    if remaining_len == 0 {
         return Cow::Borrowed(first);
-    };
-    let capacity =
-        first.len() + second.len() + 1 + parts.clone().map(|part| part.len() + 1).sum::<usize>();
+    }
+    let capacity = (first.len() + remaining_len).min(limit);
     let mut text = String::with_capacity(capacity);
     text.push_str(first);
-    for part in std::iter::once(second).chain(parts) {
+    for part in parts {
+        if text.len() == capacity {
+            break;
+        }
         text.push('\n');
-        text.push_str(part);
+        text.push_str(&part[..part.len().min(capacity - text.len())]);
     }
     Cow::Owned(text)
 }
 
-fn projected_user_message_text(message: &Value) -> Cow<'_, str> {
-    message
+fn projected_user_message_text(message: &Value, compact: bool) -> Cow<'_, str> {
+    if let Some(text) = message
         .get("farcasterUserInvocation")
         .and_then(Value::as_str)
         .or_else(|| message.get("piUserInvocation").and_then(Value::as_str))
-        .map_or_else(|| message_text(message), Cow::Borrowed)
+    {
+        return Cow::Borrowed(if compact {
+            super::attachments::pasted_file_summary(text)
+        } else {
+            text
+        });
+    }
+    let parts = message_text_parts(message);
+    let limit = if compact {
+        super::attachments::pasted_file_summary_length(parts.clone().enumerate().flat_map(
+            |(index, part)| {
+                (index > 0)
+                    .then_some("\n")
+                    .into_iter()
+                    .chain(std::iter::once(part))
+            },
+        ))
+        .unwrap_or(usize::MAX)
+    } else {
+        usize::MAX
+    };
+    join_message_parts(parts, limit)
 }
 
 fn message_text_parts(message: &Value) -> impl Iterator<Item = &str> + Clone {

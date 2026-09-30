@@ -20,3 +20,26 @@ fn leaves_prose_and_malformed_lists_alone() {
         assert_eq!(split_pasted_files(text), (text, vec![]));
     }
 }
+
+#[test]
+fn pasted_summary_finds_markers_across_fragment_boundaries() {
+    for text in [
+        "界\n\n--- BEGIN PASTED FILE f ---\npayload",
+        "界\n\n\n--- BEGIN PASTED FILE f ---\npayload",
+        "界\n\n--- BEGIN PASTED FILE f ---\n\n--- BEGIN PASTED FILE g ---",
+        "界\n\n--- BEGIN PASTED FILX f ---\nordinary",
+    ] {
+        let expected = (pasted_file_summary(text).len() != text.len())
+            .then(|| pasted_file_summary(text).len());
+        for split in text
+            .char_indices()
+            .map(|(index, _)| index)
+            .chain([text.len()])
+        {
+            assert_eq!(
+                pasted_file_summary_length([&text[..split], "", &text[split..]].into_iter()),
+                expected
+            );
+        }
+    }
+}

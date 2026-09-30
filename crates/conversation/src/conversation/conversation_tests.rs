@@ -188,6 +188,38 @@ fn presentation_matching_keeps_text_block_and_fallback_rules() {
 }
 
 #[test]
+fn pasted_history_keeps_summary_and_peer_body_across_text_blocks() {
+    let prompt = "check this\n\nPasted text files:\n- [f](</tmp/f>)\n\n--- BEGIN PASTED FILE f ---\nsecret\n--- END PASTED FILE f ---";
+    for split in prompt.match_indices('\n').map(|(index, _)| index) {
+        let message = json!({"role":"user", "content":[
+            {"type":"text", "text":&prompt[..split]},
+            {"type":"image", "data":"AQID", "mimeType":"image/png"},
+            {"type":"text", "text":&prompt[split + 1..]}
+        ]});
+        let mut state = ConversationState::default();
+        state.replace_history(&[message]);
+        assert_eq!(state.items[0].text, "check this");
+        assert_eq!(state.items[0].files[0].path, std::path::Path::new("/tmp/f"));
+        assert_eq!(state.items[0].images.len(), 1);
+    }
+    for body in [prompt, "--- BEGIN PASTED FILE f ---\nsecret"] {
+        let message = json!({"role":"user", "content":[
+            {"type":"text", "text":"Message from Farcaster worker review:"},
+            {"type":"text", "text":format!("\n{body}")}
+        ]});
+        let mut state = ConversationState::default();
+        state.replace_history(&[message]);
+        assert_eq!(state.items[0].kind, TranscriptKind::PeerMessage);
+        assert_eq!(state.items[0].text, body);
+    }
+    let mut state = ConversationState::default();
+    state.replace_history(&[
+        json!({"role":"user", "content":"Message from Farcaster worker review:"}),
+    ]);
+    assert_eq!(state.items[0].kind, TranscriptKind::User);
+}
+
+#[test]
 fn pasted_files_and_images_survive_finalization_and_history() {
     let prompt = "check this\n\nPasted text files:\n- [pasted.txt](</tmp/pasted.txt>)\n\n--- BEGIN PASTED FILE pasted.txt ---\nsecret\n--- END PASTED FILE pasted.txt ---";
     let image = Arc::new(EncodedImage::new(vec![1, 2, 3], "image/png").expect("fixture image"));

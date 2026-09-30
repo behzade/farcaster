@@ -27,6 +27,10 @@ impl PeerMessage {
 
     pub fn prompt_parts(prompt: &str) -> Option<(&str, &str)> {
         let (heading, message) = prompt.split_once("\n\n")?;
+        Some((Self::sender_from_heading(heading)?, message))
+    }
+
+    pub fn sender_from_heading(heading: &str) -> Option<&str> {
         let from = [Self::PROMPT_PREFIX, Self::LEGACY_PROMPT_PREFIX]
             .into_iter()
             .find_map(|prefix| heading.strip_prefix(prefix))?
@@ -34,7 +38,7 @@ impl PeerMessage {
         if !valid_worker_name(from) {
             return None;
         }
-        Some((from, message))
+        Some(from)
     }
 }
 
