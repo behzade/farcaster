@@ -1,7 +1,11 @@
 use std::cell::RefCell;
 
-use gpui::{Context, IntoElement as _, ListAlignment, ListState, Pixels, Render, WeakEntity};
+use gpui::{
+    Context, IntoElement as _, ListAlignment, ListState, Pixels, Render, ScrollStrategy,
+    UniformListScrollHandle, WeakEntity,
+};
 
+#[cfg(test)]
 use super::super::session_rail::session_row_height;
 use super::super::{FarcasterApp, SessionRailKind};
 use crate::app::infrastructure::performance::{OperationKind, OperationTiming, Timing};
@@ -22,7 +26,7 @@ pub(crate) struct SessionRailView {
 pub(crate) struct InactiveSessionRailView {
     app: WeakEntity<FarcasterApp>,
     kind: SessionRailKind,
-    list: ListState,
+    list: UniformListScrollHandle,
     rows: RefCell<Vec<String>>,
     pub(crate) reveal: Option<String>,
 }
@@ -78,7 +82,7 @@ impl InactiveSessionRailView {
         Self {
             app,
             kind,
-            list: session_list().with_uniform_item_height(session_row_height(false)),
+            list: UniformListScrollHandle::new(),
             rows: RefCell::new(Vec::new()),
             reveal: None,
         }
@@ -116,6 +120,18 @@ impl Render for SessionRailView {
     }
 }
 
+fn reveal_archived_session_row(
+    list: &UniformListScrollHandle,
+    rows: &RefCell<Vec<String>>,
+    reveal: &mut Option<String>,
+) {
+    if let Some(key) = reveal.take()
+        && let Some(index) = rows.borrow().iter().position(|row| row == &key)
+    {
+        list.scroll_to_item(index, ScrollStrategy::Nearest);
+    }
+}
+
 impl Render for InactiveSessionRailView {
     fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let _timing = Timing::new("render.inactive_session_sidebar");
@@ -128,7 +144,7 @@ impl Render for InactiveSessionRailView {
             self.list.clone(),
             &self.rows,
         );
-        reveal_session_row(&self.list, &self.rows, &mut self.reveal);
+        reveal_archived_session_row(&self.list, &self.rows, &mut self.reveal);
         content
     }
 }

@@ -13,3 +13,4 @@ pub(crate) mod performance;
 pub(crate) mod persistence;
 pub(super) mod quit;
 pub(crate) mod shell_environment;
+pub(in crate::app) mod system_notifications;

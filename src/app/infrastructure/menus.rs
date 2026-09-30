@@ -100,4 +100,10 @@ pub(super) fn install(cx: &mut App) {
         ]),
         Menu::new("Help").items([MenuItem::action("Keyboard Shortcuts", ShowKeybindings)]),
     ]);
+    // Detach Help search, which crashes while opening a menu on macOS 26.1.
+    if let Some(main_thread) = objc2::MainThreadMarker::new() {
+        let app = objc2_app_kit::NSApplication::sharedApplication(main_thread);
+        let help = objc2_app_kit::NSMenu::new(main_thread);
+        app.setHelpMenu(Some(&help));
+    }
 }

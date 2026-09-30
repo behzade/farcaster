@@ -166,12 +166,15 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         let tag = self.attention_notification_tag(target);
-        cx.show_system_notification(SystemNotification {
-            tag: tag.into(),
-            title: title.to_owned().into(),
-            body: body.to_owned().into(),
-            actions: Vec::new(),
-        });
+        crate::app::infrastructure::system_notifications::show(
+            SystemNotification {
+                tag: tag.into(),
+                title: title.to_owned().into(),
+                body: body.to_owned().into(),
+                actions: Vec::new(),
+            },
+            cx,
+        );
     }
 
     pub(in crate::app) fn show_completion_notice(

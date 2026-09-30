@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 
 use gpui::{
-    InteractiveElement as _, IntoElement, ListState, ParentElement as _, Styled as _, WeakEntity,
-    div, list,
+    InteractiveElement as _, IntoElement, ParentElement as _, Styled as _, UniformListScrollHandle,
+    WeakEntity, div, point, px, uniform_list,
 };
 use gpui_component::scroll::Scrollbar;
 
@@ -10,11 +10,11 @@ use super::{
     FarcasterApp,
     draft_row::{DraftRow, DraftRowInput},
     groups::{ActiveSessionItem, SessionRailKind, session_rail_lists_for_roots},
-    reconcile_list_rows,
     rendering::{inactive_session_badge, session_section_drop_target, subagent_counts},
-    rows::{SessionRow, SessionRowInput},
+    rows::{SessionRow, SessionRowInput, session_row_height},
     session_item_identity,
 };
+use crate::{app::session::status::roots_waiting_for_descendants, app::ui::theme::theme};
 
 fn archived_item_identity(item: &ActiveSessionItem) -> String {
     match item {
@@ -22,14 +22,44 @@ fn archived_item_identity(item: &ActiveSessionItem) -> String {
         ActiveSessionItem::Session(item) => session_item_identity(item),
     }
 }
-use crate::{app::session::status::roots_waiting_for_descendants, app::ui::theme::theme};
 
+fn reconcile_archived_rows(
+    scroll: &UniformListScrollHandle,
+    current: &RefCell<Vec<String>>,
+    next: Vec<String>,
+) {
+    let mut current = current.borrow_mut();
+    if *current == next {
+        return;
+    }
+    let mut state = scroll.0.borrow_mut();
+    let offset = state.base_handle.offset();
+    let row_height = session_row_height(true);
+    let top = (-offset.y / row_height).floor().max(0.0) as usize;
+    let new_top = current
+        .get(top)
+        .and_then(|key| next.iter().position(|row| row == key))
+        .unwrap_or_else(|| top.min(next.len().saturating_sub(1)));
+    let within_row = -offset.y - row_height * top as f32;
+    let y = if next.is_empty() {
+        px(0.0)
+    } else {
+        -(row_height * new_top as f32 + within_row)
+    };
+    state.base_handle.set_offset(point(offset.x, y));
+    state.deferred_scroll_to_item = state.deferred_scroll_to_item.and_then(|mut pending| {
+        let key = current.get(pending.item_index)?;
+        pending.item_index = next.iter().position(|row| row == key)?;
+        Some(pending)
+    });
+    *current = next;
+}
 impl FarcasterApp {
     pub(in crate::app::views) fn render_inactive_sessions(
         &self,
         entity: WeakEntity<Self>,
         kind: SessionRailKind,
-        list_state: ListState,
+        list_state: UniformListScrollHandle,
         list_rows: &RefCell<Vec<String>>,
     ) -> gpui::AnyElement {
         debug_assert!(kind != SessionRailKind::Project);
@@ -54,7 +84,7 @@ impl FarcasterApp {
         };
         let empty = rows.is_empty();
         let counts = subagent_counts(&self.sessions.all);
-        reconcile_list_rows(
+        reconcile_archived_rows(
             &list_state,
             list_rows,
             rows.iter().map(archived_item_identity).collect(),
@@ -72,56 +102,62 @@ impl FarcasterApp {
         let live_status = self.snapshot.live_status.clone();
         let run_statuses = self.activity.run_statuses.clone();
         let section_scrollbar = list_state.clone();
-        let rows_list = list(list_state, move |index, _, _| match rows.get(index) {
-            Some(ActiveSessionItem::Draft(draft)) => {
-                let selected = selected_draft.as_deref() == Some(draft.id.as_str());
-                let status = crate::app::session::drafts::resolved_draft_status(
-                    &draft.id,
-                    &submitted_drafts,
-                    &run_statuses,
-                );
-                DraftRow::new(
-                    draft,
-                    DraftRowInput {
-                        selected,
-                        status,
-                        archived: true,
-                        drop_position: None,
-                        compact: true,
-                        shortcut: None,
-                    },
-                    row_entity.clone(),
-                )
-                .into_any_element()
-            }
-            Some(ActiveSessionItem::Session(item)) => {
-                let selected = selected_root.as_deref() == Some(item.session.path.as_path());
-                let badge = inactive_session_badge(
-                    kind,
-                    item,
-                    &run_statuses,
-                    live_root.as_deref(),
-                    &live_status,
-                    &waiting_roots,
-                );
-                let editing = editing_path.as_deref() == Some(item.session.path.as_path());
-                SessionRow::new(
-                    item,
-                    SessionRowInput {
-                        compact: true,
-                        title_editor: editing.then(|| title_input.clone()),
-                        subagents: counts
-                            .get(item.session.path.as_path())
-                            .copied()
-                            .unwrap_or(0),
-                        ..SessionRowInput::standard(selected, badge)
-                    },
-                    row_entity.clone(),
-                )
-                .into_any_element()
-            }
-            None => div().into_any_element(),
+        let rows_list = uniform_list("archived-session-rows", rows.len(), move |range, _, _| {
+            range
+                .map(|index| match rows.get(index) {
+                    Some(ActiveSessionItem::Draft(draft)) => {
+                        let selected = selected_draft.as_deref() == Some(draft.id.as_str());
+                        let status = crate::app::session::drafts::resolved_draft_status(
+                            &draft.id,
+                            &submitted_drafts,
+                            &run_statuses,
+                        );
+                        DraftRow::new(
+                            draft,
+                            DraftRowInput {
+                                selected,
+                                status,
+                                archived: true,
+                                drop_position: None,
+                                compact: true,
+                                shortcut: None,
+                            },
+                            row_entity.clone(),
+                        )
+                        .into_any_element()
+                    }
+                    Some(ActiveSessionItem::Session(item)) => {
+                        let selected =
+                            selected_root.as_deref() == Some(item.session.path.as_path());
+                        let badge = inactive_session_badge(
+                            kind,
+                            item,
+                            &run_statuses,
+                            live_root.as_deref(),
+                            &live_status,
+                            &waiting_roots,
+                        );
+                        let editing = editing_path.as_deref() == Some(item.session.path.as_path());
+                        SessionRow::new(
+                            item,
+                            SessionRowInput {
+                                compact: true,
+                                title_editor: editing.then(|| title_input.clone()),
+                                subagents: counts
+                                    .get(item.session.path.as_path())
+                                    .copied()
+                                    .unwrap_or(0),
+                                ..SessionRowInput::standard(selected, badge)
+                            },
+                            row_entity.clone(),
+                        )
+                        .into_any_element()
+                    }
+                    None => div().into_any_element(),
+                })
+                .collect::<Vec<_>>()
         })
+        .track_scroll(&list_state)
         .size_full();
 
         let drop_entity = entity.clone();
@@ -153,3 +189,7 @@ impl FarcasterApp {
         session_section_drop_target(section, kind, drop_entity).into_any_element()
     }
 }
+
+#[cfg(test)]
+#[path = "inactive_rail_tests.rs"]
+mod tests;

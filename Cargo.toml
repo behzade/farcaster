@@ -78,6 +78,13 @@ zlog = { path = "third_party/zed-gpui-cc053a4/crates/zlog" }
 [target.'cfg(target_os = "linux")'.dependencies]
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "NSMenu", "NSResponder"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSBundle", "NSObject", "NSString"] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["UNUserNotificationCenter", "block2"] }
+
 [dev-dependencies]
 farcaster-agents = { path = "crates/agents", features = ["test-support"] }
 farcaster-conversation = { path = "crates/conversation", features = ["test-support"] }

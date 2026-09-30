@@ -1,9 +1,10 @@
 use std::{cell::Cell, rc::Rc};
 
 use gpui::{
-    Anchor, AnyElement, App, Bounds, Div, ElementId, InteractiveElement, Interactivity,
-    IntoElement, ParentElement, Pixels, Point, RenderOnce, StatefulInteractiveElement,
-    StyleRefinement, Styled, Window, deferred, div, px,
+    Anchor, AnyElement, App, Bounds, Div, Element, ElementId, Entity, Global, GlobalElementId,
+    Hitbox, HitboxBehavior, InspectorElementId, InteractiveElement, Interactivity, IntoElement,
+    LayoutId, ParentElement, Pixels, Point, RenderOnce, StatefulInteractiveElement,
+    StyleRefinement, Styled, WeakEntity, Window, WindowId, deferred, div, px,
 };
 
 use crate::{ElementExt as _, Positioner, StyledExt as _};
@@ -18,6 +19,105 @@ pub const POPUP_PRIORITY: usize = 100;
 struct PopupAnchorState {
     bounds: Bounds<Pixels>,
     captured: bool,
+    surface: Option<Hitbox>,
+}
+
+#[derive(Default)]
+struct PopupSurfaces(Vec<(WindowId, WeakEntity<PopupAnchorState>)>);
+
+impl Global for PopupSurfaces {}
+
+pub(crate) fn mouse_press_in_popup(window: &Window, cx: &App) -> bool {
+    cx.try_global::<PopupSurfaces>().is_some_and(|surfaces| {
+        let window_id = window.window_handle().window_id();
+        surfaces.0.iter().any(|(id, state)| {
+            *id == window_id
+                && state.upgrade().is_some_and(|state| {
+                    state
+                        .read(cx)
+                        .surface
+                        .as_ref()
+                        .is_some_and(|hitbox| hitbox.is_hovered(window))
+                })
+        })
+    })
+}
+
+struct PopupSurface {
+    content: AnyElement,
+    state: Entity<PopupAnchorState>,
+}
+
+impl IntoElement for PopupSurface {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for PopupSurface {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        (self.content.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.content.prepaint(window, cx);
+        // Insert after the content's occluding hitbox so this marker remains
+        // visible to hit testing without blocking any content interactions.
+        let surface = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+        self.state
+            .update(cx, |state, _| state.surface = Some(surface));
+        if !cx.has_global::<PopupSurfaces>() {
+            cx.set_global(PopupSurfaces::default());
+        }
+        let surfaces = &mut cx.global_mut::<PopupSurfaces>().0;
+        surfaces.retain(|(_, state)| state.upgrade().is_some());
+        if !surfaces
+            .iter()
+            .any(|(_, state)| state.entity_id() == self.state.entity_id())
+        {
+            surfaces.push((window.window_handle().window_id(), self.state.downgrade()));
+        }
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.content.paint(window, cx);
+    }
 }
 
 /// An unstyled trigger and anchored popup host.
@@ -147,12 +247,16 @@ impl RenderOnce for Popup {
             deferred(
                 Positioner::corner(anchor, position.get())
                     .margin(WINDOW_MARGIN)
-                    .child(content),
+                    .child(PopupSurface { content, state }),
             )
             .with_priority(POPUP_PRIORITY),
         )
     }
 }
+
+#[cfg(test)]
+#[path = "popup_surface_tests.rs"]
+mod surface_tests;
 
 #[cfg(test)]
 mod tests {
