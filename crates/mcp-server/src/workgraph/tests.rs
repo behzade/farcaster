@@ -48,7 +48,7 @@ fn complete(
     with_test_store(database, |store| complete_store(store, caller, params))
 }
 
-fn edit(database: &Path, caller: &CallerContext, action: EditAction) -> Result<Value, String> {
+fn edit(database: &Path, caller: &CallerContext, action: EditAction) -> Result<EditResult, String> {
     with_test_store(database, |store| super::edit(store, caller, action))
 }
 
@@ -140,24 +140,12 @@ fn task_lifecycle_uses_authenticated_identity_and_shared_database() -> Result<()
         let mut alias = alice.clone();
         alias.session = session;
         assert_eq!(
-            search(
-                &database,
-                &alias,
-                SearchParams {
-                    query: String::new()
-                }
-            )?["tasks"][0]["ownedByYou"],
+            search(&database, &alias, SearchParams::default())?["tasks"][0]["ownedByYou"],
             true
         );
     }
     assert_eq!(
-        search(
-            &database,
-            &bob,
-            SearchParams {
-                query: String::new()
-            }
-        )?["tasks"][0]["ownedByYou"],
+        search(&database, &bob, SearchParams::default())?["tasks"][0]["ownedByYou"],
         false
     );
     claim(&database, &alice, TaskParams { task: first })?;
@@ -201,13 +189,15 @@ fn task_lifecycle_uses_authenticated_identity_and_shared_database() -> Result<()
     )?;
     assert_eq!(completed["tasks"][0]["status"], "completed");
     assert_eq!(completed["newlyReady"][0]["task"], second);
-    assert_eq!(completed["tasks"][1]["status"], "ready");
-    assert!(completed["tasks"][1]["owner"].is_null());
+    assert_eq!(completed["tasks"].as_array().expect("tasks").len(), 1);
+    assert_eq!(completed["newlyReady"][0]["status"], "ready");
+    assert!(completed["newlyReady"][0]["owner"].is_null());
     let found = search(
         &database,
         &alice,
         SearchParams {
             query: "APPROVED".into(),
+            ..Default::default()
         },
     )?;
     assert_eq!(
@@ -242,8 +232,16 @@ fn task_lifecycle_uses_authenticated_identity_and_shared_database() -> Result<()
             evidence: "review.md".into(),
         },
     )?;
+    let details = search(
+        &database,
+        &alice,
+        SearchParams {
+            task: Some(second),
+            ..Default::default()
+        },
+    )?;
     assert_eq!(
-        completed["tasks"][1]["completion"]["outcome"]["evidence"]["kind"],
+        details["tasks"][0]["completion"]["outcome"]["evidence"]["kind"],
         "file"
     );
     assert_eq!(completed["newlyReady"], json!([]));
@@ -348,10 +346,19 @@ fn profile_copies_have_separate_owners_and_cannot_release_or_complete_each_other
     }
     claim(&database, &callers[0], TaskParams { task: 1 })?;
     let result = claim(&database, &callers[1], TaskParams { task: 2 })?;
-    assert_eq!(result["tasks"][0]["owner"], base_key);
-    assert_eq!(result["tasks"][1]["owner"], profile_key);
-    assert_eq!(result["tasks"][0]["ownedByYou"], false);
-    assert_eq!(result["tasks"][1]["ownedByYou"], true);
+    assert_eq!(result["tasks"].as_array().expect("tasks").len(), 1);
+    assert_eq!(result["tasks"][0]["owner"], profile_key);
+    assert_eq!(result["tasks"][0]["ownedByYou"], true);
+    let base_task = search(
+        &database,
+        &callers[1],
+        SearchParams {
+            task: Some(1),
+            ..Default::default()
+        },
+    )?;
+    assert_eq!(base_task["tasks"][0]["owner"], base_key);
+    assert_eq!(base_task["tasks"][0]["ownedByYou"], false);
     for (caller, task) in [(&callers[0], 2), (&callers[1], 1)] {
         assert!(release(&database, caller, TaskParams { task }).is_err());
         assert!(
@@ -485,15 +492,350 @@ fn caller_cannot_claim_a_different_projects_task() -> Result<(), String> {
         },
     )?;
     assert_eq!(
-        search(
-            &database,
-            &bob,
-            SearchParams {
-                query: String::new()
-            }
-        )?["tasks"],
+        search(&database, &bob, SearchParams::default())?["tasks"],
         json!([])
     );
     assert!(claim(&database, &bob, TaskParams { task: 1 }).is_err());
     Ok(())
+}
+
+fn seed_completed_history(
+    store: &mut StateStore,
+    caller: &CallerContext,
+    count: usize,
+) -> Result<(), String> {
+    use workgraph::{Persistence, TransactionMode, WorkGraphTransaction};
+    for start in (0..count).step_by(64) {
+        super::edit(
+            store,
+            caller,
+            EditAction::CreateTasks {
+                nodes: (start..(start + 64).min(count))
+                    .map(|i| NodeDraft {
+                        title: format!("Historical task {i}"),
+                        acceptance: "Historical acceptance text. ".repeat(50),
+                    })
+                    .collect(),
+                after: None,
+                before: None,
+            },
+        )?;
+    }
+    let project = project_key(caller)?;
+    store.with_connection(|connection| {
+        let mut adapter = SqliteAdapter::borrow(connection);
+        let mut transaction = adapter
+            .begin(TransactionMode::Write)
+            .map_err(|e| e.to_string())?;
+        let mut stored = transaction
+            .project(&project)
+            .map_err(|e| e.to_string())?
+            .expect("project");
+        stored.graph.tasks = stored
+            .graph
+            .nodes
+            .iter()
+            .map(|node| workgraph::TaskState {
+                plan_number: node.plan_number,
+                task: node.number,
+                owner: None,
+                completion: Some(workgraph::TaskCompletion {
+                    session_id: "historical-owner".into(),
+                    outcome: Outcome {
+                        note: if node.number == 1 {
+                            "Distinct historical note".into()
+                        } else {
+                            "Historical evidence. ".repeat(100)
+                        },
+                        evidence: Evidence {
+                            kind: EvidenceKind::Observation,
+                            reference: "Historical evidence. ".repeat(100),
+                        },
+                    },
+                    completed_at: 1,
+                }),
+            })
+            .collect();
+        transaction
+            .save_project(&project, &stored, 1)
+            .map_err(|e| e.to_string())?;
+        transaction.commit().map_err(|e| e.to_string())
+    })
+}
+
+#[test]
+fn mutation_replies_stay_small_with_large_history_and_inserted_chains() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let alice = caller(temp.path(), "alice");
+    index(&database, std::slice::from_ref(&alice))?;
+    with_test_store(&database, |store| {
+        seed_completed_history(store, &alice, 300)?;
+        let chain = patch_store(
+            store,
+            &alice,
+            PatchParams {
+                nodes: vec![
+                    PatchNode {
+                        title: "Implement".into(),
+                        acceptance: "Implement acceptance".into(),
+                    },
+                    PatchNode {
+                        title: "Review".into(),
+                        acceptance: "Review acceptance".into(),
+                    },
+                ],
+                after: None,
+                before: None,
+            },
+        )?;
+        let first = chain["tasks"][0]["task"].as_u64().expect("first task");
+        let second = chain["tasks"][1]["task"].as_u64().expect("second task");
+        assert_eq!(first, 301);
+        let inserted = patch_store(
+            store,
+            &alice,
+            PatchParams {
+                nodes: ["Middle one", "Middle two"]
+                    .into_iter()
+                    .map(|title| PatchNode {
+                        title: title.into(),
+                        acceptance: "Middle acceptance".into(),
+                    })
+                    .collect(),
+                after: Some(first),
+                before: Some(second),
+            },
+        )?;
+        let inserted_tasks = inserted["tasks"].as_array().expect("inserted tasks");
+        assert_eq!(inserted_tasks.len(), 2);
+        assert_eq!(inserted_tasks[0]["task"], 303);
+        assert_eq!(inserted_tasks[1]["task"], 304);
+        assert_eq!(inserted_tasks[0]["blockers"], json!([first]));
+        assert_eq!(inserted_tasks[1]["blockers"], json!([303]));
+        patch_store(
+            store,
+            &alice,
+            PatchParams {
+                nodes: vec![PatchNode {
+                    title: "Unrelated ready task".into(),
+                    acceptance: "Separate work".into(),
+                }],
+                after: None,
+                before: None,
+            },
+        )?;
+        let claimed = claim_store(store, &alice, TaskParams { task: first })?;
+        let released = release_store(store, &alice, TaskParams { task: first })?;
+        claim_store(store, &alice, TaskParams { task: first })?;
+        let evidence = "Current evidence must be read explicitly. ".repeat(80);
+        let completed = complete_store(
+            store,
+            &alice,
+            CompleteParams {
+                task: first,
+                evidence: evidence.clone(),
+            },
+        )?;
+        for result in [&chain, &inserted, &claimed, &released, &completed] {
+            let text = result.to_string();
+            assert!(
+                text.len() < 800,
+                "mutation reply grew to {} bytes",
+                text.len()
+            );
+            assert!(!text.contains("Historical"));
+            assert!(!text.contains("acceptance"));
+            assert!(!text.contains("evidence"));
+        }
+        assert_eq!(claimed["tasks"].as_array().expect("tasks").len(), 1);
+        assert_eq!(completed["tasks"].as_array().expect("tasks").len(), 1);
+        assert_eq!(
+            completed["newlyReady"]
+                .as_array()
+                .expect("newly ready")
+                .len(),
+            1
+        );
+        assert_eq!(completed["newlyReady"][0]["task"], 303);
+        let details = search_store(
+            store,
+            &alice,
+            SearchParams {
+                task: Some(first),
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(details["tasks"][0]["acceptance"], "Implement acceptance");
+        assert_eq!(
+            details["tasks"][0]["completion"]["outcome"]["evidence"]["reference"],
+            evidence
+        );
+        assert!(
+            details["tasks"][0]["completion"]["outcome"]
+                .get("note")
+                .is_none()
+        );
+        let graph = project_graph(store, &alice)?;
+        let persisted = graph
+            .task_state(first)
+            .expect("task state")
+            .completion
+            .expect("completion");
+        assert_eq!(persisted.outcome.note, evidence);
+        assert_eq!(persisted.outcome.evidence.reference, evidence);
+        Ok(())
+    })
+}
+
+#[test]
+fn search_pages_active_tasks_and_requires_explicit_history_and_details() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let alice = caller(temp.path(), "alice");
+    index(&database, std::slice::from_ref(&alice))?;
+    with_test_store(&database, |store| {
+        seed_completed_history(store, &alice, 205)?;
+        patch_store(
+            store,
+            &alice,
+            PatchParams {
+                nodes: (0..30)
+                    .map(|i| PatchNode {
+                        title: format!("Active task {i}"),
+                        acceptance: if i == 15 {
+                            "Find NEEDLE in acceptance".into()
+                        } else {
+                            "Active acceptance".into()
+                        },
+                    })
+                    .collect(),
+                after: None,
+                before: None,
+            },
+        )?;
+        let mut search = |params| {
+            search_store(
+                store,
+                &alice,
+                serde_json::from_value(params).map_err(|e| e.to_string())?,
+            )
+        };
+        let page = search(json!({}))?;
+        assert_eq!(page["tasks"].as_array().expect("tasks").len(), 20);
+        assert_eq!(page["tasks"][0]["task"], 206);
+        assert_eq!(page["nextAfter"], 225);
+        assert!(page.to_string().len() < 4000);
+        assert!(!page.to_string().contains("acceptance"));
+        let next = search(json!({"after": 225}))?;
+        assert_eq!(next["tasks"].as_array().expect("tasks").len(), 10);
+        assert_eq!(next["tasks"][0]["task"], 226);
+        assert!(next["nextAfter"].is_null());
+        let history = search(json!({"status": "completed", "limit": 100}))?;
+        assert_eq!(history["tasks"].as_array().expect("tasks").len(), 100);
+        assert_eq!(history["nextAfter"], 100);
+        assert!(!history.to_string().contains("Historical evidence"));
+        let all = search(json!({"status": "all", "after": 204, "limit": 2}))?;
+        assert_eq!(all["tasks"][0]["status"], "completed");
+        assert_eq!(all["tasks"][1]["status"], "ready");
+        assert_eq!(all["nextAfter"], 206);
+        let ready = search(json!({"status": "ready"}))?;
+        assert_eq!(ready["tasks"].as_array().expect("tasks").len(), 1);
+        assert!(ready["nextAfter"].is_null());
+        let blocked = search(json!({"status": "blocked", "limit": 1}))?;
+        assert_eq!(blocked["tasks"][0]["task"], 207);
+        assert_eq!(blocked["nextAfter"], 207);
+        let found = search(json!({"query": " needle "}))?;
+        assert_eq!(found["tasks"].as_array().expect("tasks").len(), 1);
+        assert_eq!(found["tasks"][0]["task"], 221);
+        let details = search(json!({"task": 1}))?;
+        assert_eq!(details["tasks"][0]["status"], "completed");
+        assert!(
+            details["tasks"][0]["completion"]["outcome"]["evidence"]["reference"]
+                .as_str()
+                .expect("evidence")
+                .contains("Historical evidence")
+        );
+        assert_eq!(
+            details["tasks"][0]["completion"]["outcome"]["note"],
+            "Distinct historical note"
+        );
+        assert!(details["nextAfter"].is_null());
+        for invalid in [
+            json!({"limit": 0}),
+            json!({"limit": 101}),
+            json!({"task": 999}),
+            json!({"task": 1, "query": "Historical"}),
+            json!({"task": 1, "after": 1}),
+        ] {
+            assert!(search(invalid).is_err());
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn completion_reports_only_successors_whose_other_blockers_are_done() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let alice = caller(temp.path(), "alice");
+    index(&database, std::slice::from_ref(&alice))?;
+    with_test_store(&database, |store| {
+        let created = patch_store(
+            store,
+            &alice,
+            PatchParams {
+                nodes: ["First", "Second", "Third"]
+                    .into_iter()
+                    .map(|title| PatchNode {
+                        title: title.into(),
+                        acceptance: "Done".into(),
+                    })
+                    .collect(),
+                after: None,
+                before: None,
+            },
+        )?;
+        super::edit(
+            store,
+            &alice,
+            EditAction::AddEdge {
+                plan: created["tasks"][0]["plan"].as_u64().expect("plan"),
+                from: 1,
+                to: 3,
+            },
+        )?;
+        claim_store(store, &alice, TaskParams { task: 1 })?;
+        let completed = complete_store(
+            store,
+            &alice,
+            CompleteParams {
+                task: 1,
+                evidence: "First done".into(),
+            },
+        )?;
+        assert_eq!(completed["newlyReady"].as_array().expect("ready").len(), 1);
+        assert_eq!(completed["newlyReady"][0]["task"], 2);
+        let blocked = search_store(
+            store,
+            &alice,
+            SearchParams {
+                task: Some(3),
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(blocked["tasks"][0]["blockers"], json!([2]));
+        claim_store(store, &alice, TaskParams { task: 2 })?;
+        let completed = complete_store(
+            store,
+            &alice,
+            CompleteParams {
+                task: 2,
+                evidence: "Second done".into(),
+            },
+        )?;
+        assert_eq!(completed["newlyReady"].as_array().expect("ready").len(), 1);
+        assert_eq!(completed["newlyReady"][0]["task"], 3);
+        Ok(())
+    })
 }

@@ -128,9 +128,7 @@ async fn workgraph_rejects_missing_authenticated_caller() {
     let (parts, _) = axum::http::Request::new(()).into_parts();
     let result = server
         .search(
-            Parameters(workgraph::SearchParams {
-                query: String::new(),
-            }),
+            Parameters(workgraph::SearchParams::default()),
             Extension(parts),
         )
         .await;

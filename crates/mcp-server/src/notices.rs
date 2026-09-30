@@ -30,7 +30,7 @@ pub(super) struct Params {
     #[serde(default)]
     pub(super) paths: Vec<String>,
     #[schemars(
-        description = "For wait, the cursor returned by the last read, post, or wait with the same path filter."
+        description = "For read or wait, the cursor from the last read or wait with the same path filter."
     )]
     pub(super) after: Option<String>,
     #[schemars(
@@ -44,7 +44,8 @@ pub(super) struct Params {
 pub(super) struct Response {
     posted: bool,
     notices: Vec<NoticeResponse>,
-    cursor: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cursor: Option<String>,
     timed_out: bool,
 }
 
@@ -82,10 +83,11 @@ impl NoticeBoard {
         if wait && params.after.is_none() {
             return Err("worker notice wait requires `after` from a previous response".into());
         }
-        if !wait && (params.after.is_some() || params.timeout_seconds.is_some()) {
-            return Err(
-                "worker notice `after` and `timeout_seconds` are valid only for wait".into(),
-            );
+        if matches!(action, Action::Post) && params.after.is_some() {
+            return Err("worker notice `after` is valid only for read or wait".into());
+        }
+        if !wait && params.timeout_seconds.is_some() {
+            return Err("worker notice `timeout_seconds` is valid only for wait".into());
         }
         let timeout_seconds = params.timeout_seconds.unwrap_or(30);
         if !(1..=60).contains(&timeout_seconds) {
@@ -108,27 +110,41 @@ impl NoticeBoard {
             (Action::Post, _) => return Err("worker notice posts require `message`".into()),
         };
 
-        let posted = message.is_some();
         if let Some(message) = message {
             self.post(
                 &caller.project,
                 caller.worker_id.clone(),
                 caller.worker_name.clone(),
                 message,
-                paths.clone(),
+                paths,
             )?;
+            return Ok(Response {
+                posted: true,
+                notices: Vec::new(),
+                cursor: None,
+                timed_out: false,
+            });
         }
-        let batch = if let Some(after) = params.after {
+        let batch = if wait {
+            let after = params
+                .after
+                .as_deref()
+                .ok_or_else(|| "worker notice wait requires `after`".to_owned())?;
             self.wait(
                 &caller.project,
                 &caller.worker_id,
                 &paths,
-                &after,
+                after,
                 Duration::from_secs(timeout_seconds),
             )
             .await?
         } else {
-            self.matching(&caller.project, &caller.worker_id, &paths, None)?
+            self.matching(
+                &caller.project,
+                &caller.worker_id,
+                &paths,
+                params.after.as_deref(),
+            )?
         };
         let timed_out = wait && batch.notices.is_empty();
         let notices = batch
@@ -137,9 +153,9 @@ impl NoticeBoard {
             .map(NoticeResponse::from)
             .collect();
         Ok(Response {
-            posted,
+            posted: false,
             notices,
-            cursor: batch.cursor,
+            cursor: Some(batch.cursor),
             timed_out,
         })
     }

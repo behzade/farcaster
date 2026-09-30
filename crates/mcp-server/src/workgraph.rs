@@ -7,19 +7,62 @@ use rmcp::schemars;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use workgraph::{
-    EditAction, EditRequest, Evidence, EvidenceKind, NodeDraft, Outcome, ProjectGraph,
-    SearchRequest, SearchResult, SqliteAdapter, WorkGraph,
+    EditAction, EditRequest, EditResult, Evidence, EvidenceKind, Node, NodeDraft, Outcome,
+    ProjectGraph, SearchRequest, SearchResult, SqliteAdapter, WorkGraph,
 };
 
 use crate::agents::CallerContext;
 
 static OPERATION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+const DEFAULT_SEARCH_LIMIT: usize = 20;
+const MAX_SEARCH_LIMIT: usize = 100;
+
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum SearchStatus {
+    #[default]
+    Active,
+    All,
+    Ready,
+    Claimed,
+    Blocked,
+    Completed,
+}
+
+impl SearchStatus {
+    fn matches(&self, status: &str) -> bool {
+        match self {
+            Self::Active => status != "completed",
+            Self::All => true,
+            Self::Ready => status == "ready",
+            Self::Claimed => status == "claimed",
+            Self::Blocked => status == "blocked",
+            Self::Completed => status == "completed",
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct SearchParams {
     #[serde(default)]
     pub(super) query: String,
+    #[schemars(
+        description = "Get full details for one task, including completed tasks. Cannot combine with query or after."
+    )]
+    pub(super) task: Option<u64>,
+    #[serde(default)]
+    #[schemars(
+        description = "List filter; defaults to active. Use all or completed for history. Ignored for task lookup."
+    )]
+    pub(super) status: SearchStatus,
+    #[schemars(description = "List page size, default 20, maximum 100.")]
+    pub(super) limit: Option<usize>,
+    #[schemars(
+        description = "Continue a list after the task number returned in nextAfter. Keep the same query and status."
+    )]
+    pub(super) after: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -82,68 +125,81 @@ fn project_graph(
     })
 }
 
+fn task_view(
+    graph: &ProjectGraph,
+    node: &Node,
+    identity: Option<&(String, String)>,
+    details: bool,
+) -> Value {
+    let state = graph.task_state(node.number);
+    let completed = state.as_ref().and_then(|state| state.completion.as_ref());
+    let owner = state.as_ref().and_then(|state| state.owner.as_ref());
+    let predecessors: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.to == node.number)
+        .map(|edge| edge.from)
+        .collect();
+    let blockers: Vec<_> = predecessors
+        .iter()
+        .copied()
+        .filter(|number| {
+            graph
+                .task_state(*number)
+                .is_none_or(|state| state.completion.is_none())
+        })
+        .collect();
+    let status = if completed.is_some() {
+        "completed"
+    } else if owner.is_some() {
+        "claimed"
+    } else if blockers.is_empty() {
+        "ready"
+    } else {
+        "blocked"
+    };
+    let mut view = json!({
+        "task": node.number,
+        "plan": node.plan_number,
+        "title": node.title,
+        "owner": owner.map(|owner| &owner.session_id),
+        "ownedByYou": owner.is_some_and(|owner| identity.is_some_and(|(id, _)| owner.session_id == *id)),
+        "status": status,
+        "blockers": blockers,
+    });
+    if details {
+        let successors: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.from == node.number)
+            .map(|edge| edge.to)
+            .collect();
+        let mut completion = json!(completed);
+        if let Some(outcome) = completion.get_mut("outcome").and_then(Value::as_object_mut)
+            && outcome.get("note")
+                == outcome
+                    .get("evidence")
+                    .and_then(|value| value.get("reference"))
+        {
+            outcome.remove("note");
+        }
+        view["acceptance"] = json!(node.acceptance);
+        view["predecessors"] = json!(predecessors);
+        view["successors"] = json!(successors);
+        view["completion"] = completion;
+    }
+    view
+}
+
 fn task_views(
     graph: &ProjectGraph,
-    query: &str,
+    tasks: &[u64],
     identity: Option<&(String, String)>,
 ) -> Vec<Value> {
-    let query = query.trim().to_lowercase();
-    graph
-        .nodes
+    tasks
         .iter()
-        .filter(|node| {
-            query.is_empty()
-                || node.title.to_lowercase().contains(&query)
-                || node.acceptance.to_lowercase().contains(&query)
-        })
-        .map(|node| {
-            let state = graph.task_state(node.number);
-            let completed = state.as_ref().and_then(|state| state.completion.as_ref());
-            let owner = state.as_ref().and_then(|state| state.owner.as_ref());
-            let predecessors: Vec<_> = graph
-                .edges
-                .iter()
-                .filter(|edge| edge.to == node.number)
-                .map(|edge| edge.from)
-                .collect();
-            let blockers: Vec<_> = predecessors
-                .iter()
-                .copied()
-                .filter(|number| {
-                    graph
-                        .task_state(*number)
-                        .is_none_or(|state| state.completion.is_none())
-                })
-                .collect();
-            let successors: Vec<_> = graph
-                .edges
-                .iter()
-                .filter(|edge| edge.from == node.number)
-                .map(|edge| edge.to)
-                .collect();
-            let status = if completed.is_some() {
-                "completed"
-            } else if owner.is_some() {
-                "claimed"
-            } else if blockers.is_empty() {
-                "ready"
-            } else {
-                "blocked"
-            };
-            json!({
-                "task": node.number,
-                "plan": node.plan_number,
-                "title": node.title,
-                "acceptance": node.acceptance,
-                "owner": owner.map(|owner| &owner.session_id),
-                "ownedByYou": owner.is_some_and(|owner| identity.is_some_and(|(id, _)| owner.session_id == *id)),
-                "status": status,
-                "blockers": blockers,
-                "predecessors": predecessors,
-                "successors": successors,
-                "completion": completed,
-            })
-        })
+        .filter_map(|task| graph.nodes.iter().find(|node| node.number == *task))
+        .map(|node| task_view(graph, node, identity, false))
         .collect()
 }
 
@@ -152,10 +208,56 @@ pub(super) fn search_store(
     caller: &CallerContext,
     params: SearchParams,
 ) -> Result<Value, String> {
+    let limit = params.limit.unwrap_or(DEFAULT_SEARCH_LIMIT);
+    if !(1..=MAX_SEARCH_LIMIT).contains(&limit) {
+        return Err(format!(
+            "search limit must be between 1 and {MAX_SEARCH_LIMIT}"
+        ));
+    }
+    if params.task.is_some() && (params.after.is_some() || !params.query.trim().is_empty()) {
+        return Err("task lookup cannot use query or after".into());
+    }
     let identity = session_identity_store(store, caller).ok();
-    Ok(
-        json!({ "tasks": task_views(&project_graph(store, caller)?, &params.query, identity.as_ref()) }),
-    )
+    let graph = project_graph(store, caller)?;
+    if let Some(task) = params.task {
+        let node = graph
+            .nodes
+            .iter()
+            .find(|node| node.number == task)
+            .ok_or_else(|| "task not found".to_owned())?;
+        return Ok(
+            json!({"tasks": [task_view(&graph, node, identity.as_ref(), true)], "nextAfter": null}),
+        );
+    }
+    let query = params.query.trim().to_lowercase();
+    let mut nodes = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            params.after.is_none_or(|after| node.number > after)
+                && (query.is_empty()
+                    || node.title.to_lowercase().contains(&query)
+                    || node.acceptance.to_lowercase().contains(&query))
+        })
+        .collect::<Vec<_>>();
+    nodes.sort_unstable_by_key(|node| node.number);
+    let mut tasks = nodes
+        .into_iter()
+        .map(|node| task_view(&graph, node, identity.as_ref(), false))
+        .filter(|task| {
+            params
+                .status
+                .matches(task["status"].as_str().unwrap_or_default())
+        })
+        .take(limit + 1)
+        .collect::<Vec<_>>();
+    let next_after = if tasks.len() > limit {
+        Some(tasks[limit - 1]["task"].clone())
+    } else {
+        None
+    };
+    tasks.truncate(limit);
+    Ok(json!({"tasks": tasks, "nextAfter": next_after}))
 }
 
 pub(super) fn patch_store(
@@ -163,7 +265,8 @@ pub(super) fn patch_store(
     caller: &CallerContext,
     params: PatchParams,
 ) -> Result<Value, String> {
-    edit(
+    let count = params.nodes.len();
+    let result = edit(
         store,
         caller,
         EditAction::CreateTasks {
@@ -178,7 +281,19 @@ pub(super) fn patch_store(
             after: params.after,
             before: params.before,
         },
-    )
+    )?;
+    let EditResult::Tasks(snapshot) = result else {
+        return Err("work graph returned an unexpected edit result".into());
+    };
+    // CreateTasks appends nodes with increasing numbers, including when extending a plan.
+    let mut tasks = snapshot
+        .nodes
+        .iter()
+        .map(|node| node.number)
+        .collect::<Vec<_>>();
+    tasks.sort_unstable();
+    let created = tasks.split_off(tasks.len().saturating_sub(count));
+    mutation_response(store, caller, &created)
 }
 
 pub(super) fn claim_store(
@@ -195,7 +310,8 @@ pub(super) fn claim_store(
             session_id,
             session_path,
         },
-    )
+    )?;
+    mutation_response(store, caller, &[params.task])
 }
 
 pub(super) fn release_store(
@@ -211,7 +327,8 @@ pub(super) fn release_store(
             task: params.task,
             session_id,
         },
-    )
+    )?;
+    mutation_response(store, caller, &[params.task])
 }
 
 pub(super) fn complete_store(
@@ -219,7 +336,7 @@ pub(super) fn complete_store(
     caller: &CallerContext,
     params: CompleteParams,
 ) -> Result<Value, String> {
-    let (session_id, _) = session_identity_store(store, caller)?;
+    let identity = session_identity_store(store, caller)?;
     let graph = project_graph(store, caller)?;
     let node = graph
         .nodes
@@ -231,12 +348,12 @@ pub(super) fn complete_store(
         workgraph::CompletionRequirement::RevisionOrObservation
         | workgraph::CompletionRequirement::Observation => EvidenceKind::Observation,
     };
-    let mut result = edit(
+    edit(
         store,
         caller,
         EditAction::CompleteTask {
             task: params.task,
-            session_id,
+            session_id: identity.0.clone(),
             outcome: Outcome {
                 note: params.evidence.clone(),
                 evidence: Evidence {
@@ -246,27 +363,40 @@ pub(super) fn complete_store(
             },
         },
     )?;
-    let newly_ready: Vec<_> = result["tasks"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|task| {
-            task["status"] == "ready"
-                && task["predecessors"]
-                    .as_array()
-                    .is_some_and(|dependencies| dependencies.contains(&json!(params.task)))
+    let updated = project_graph(store, caller)?;
+    let newly_ready = updated
+        .nodes
+        .iter()
+        .filter(|node| {
+            updated
+                .edges
+                .iter()
+                .any(|edge| edge.from == params.task && edge.to == node.number)
         })
-        .cloned()
-        .collect();
-    result["newlyReady"] = json!(newly_ready);
-    Ok(result)
+        .map(|node| task_view(&updated, node, Some(&identity), false))
+        .filter(|task| task["status"] == "ready")
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "tasks": task_views(&updated, &[params.task], Some(&identity)),
+        "newlyReady": newly_ready,
+    }))
+}
+
+fn mutation_response(
+    store: &mut crate::storage::StateStore,
+    caller: &CallerContext,
+    tasks: &[u64],
+) -> Result<Value, String> {
+    let graph = project_graph(store, caller)?;
+    let identity = session_identity_store(store, caller).ok();
+    Ok(json!({"tasks": task_views(&graph, tasks, identity.as_ref())}))
 }
 
 fn edit(
     store: &mut crate::storage::StateStore,
     caller: &CallerContext,
     action: EditAction,
-) -> Result<Value, String> {
+) -> Result<EditResult, String> {
     store.with_connection(|connection| {
         let adapter = SqliteAdapter::borrow(connection);
         let mut graph = WorkGraph::new(adapter);
@@ -277,14 +407,7 @@ fn edit(
                 action,
             })
             .map_err(|error| error.to_string())
-    })?;
-    search_store(
-        store,
-        caller,
-        SearchParams {
-            query: String::new(),
-        },
-    )
+    })
 }
 
 fn project_key(caller: &CallerContext) -> Result<String, String> {

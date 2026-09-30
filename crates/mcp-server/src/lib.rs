@@ -201,7 +201,7 @@ impl FarcasterMcp {
 
     #[tool(
         name = "worker_notices",
-        description = "Read, post, or wait for project notices when coordinating overlapping work with other top-level workers. Responses include a cursor. To wait without polling, use action=wait with after=cursor and the same paths; returns new matching notices or timedOut after timeout_seconds (default 30, max 60). A notice is advisory, not a lock."
+        description = "Read or wait for project notices; reuse after=cursor with the same paths to get only new messages. Wait timeout defaults to 30 seconds, max 60. Posts return only an acknowledgement; keep your read cursor. Notices are advisory, not locks."
     )]
     async fn worker_notices(
         &self,
@@ -226,7 +226,7 @@ impl FarcasterMcp {
 
     #[tool(
         name = "workgraph_search",
-        description = "Find tasks in your project with owners, blockers, and readiness. Omit query to list all tasks."
+        description = "List task summaries, defaulting to active tasks, 20 per page (max 100). Continue with after=nextAfter and the same filters. Use status=all or completed for history; task=N returns full details."
     )]
     async fn search(
         &self,
@@ -239,7 +239,7 @@ impl FarcasterMcp {
 
     #[tool(
         name = "workgraph_patch",
-        description = "Create or extend an ordered task chain in your project. Creating tasks does not claim them."
+        description = "Create or extend an ordered task chain. Returns only created task summaries; does not claim them."
     )]
     async fn patch(
         &self,
@@ -252,7 +252,7 @@ impl FarcasterMcp {
 
     #[tool(
         name = "workgraph_claim",
-        description = "Atomically claim a ready task for your authenticated session. Conflicts if already owned by another session."
+        description = "Atomically claim a ready task for your session. Returns only its summary; conflicts with another owner."
     )]
     async fn claim(
         &self,
@@ -265,7 +265,7 @@ impl FarcasterMcp {
 
     #[tool(
         name = "workgraph_release",
-        description = "Release a task owned by your authenticated session so another session can claim it."
+        description = "Release your task for another session to claim. Returns only its summary."
     )]
     async fn release(
         &self,
@@ -278,7 +278,7 @@ impl FarcasterMcp {
 
     #[tool(
         name = "workgraph_complete",
-        description = "Complete a task owned by your authenticated session with evidence. Returns newly ready tasks; does not claim them."
+        description = "Complete your task with evidence. Returns its summary and newly ready task summaries; does not claim them. Read task details to retrieve stored evidence."
     )]
     async fn complete(
         &self,
@@ -352,7 +352,7 @@ fn tools_for_role(child: bool, tasks: &crate::agents::WorkerProfiles) -> Vec<rmc
 #[tool_handler(
     name = "farcaster",
     version = "0.1.0",
-    instructions = "You are running inside Farcaster, a GUI app for multiple agent harnesses. Use Farcaster MCP by default to keep substantial work in a persistent task graph the user can inspect, coordinate with concurrent agents through workspace notices, and delegate independent work to workers using inherit (Same as caller) or configured profiles across harnesses for cost and visibility."
+    instructions = "Use Farcaster to track substantial work and coordinate agents. For code tool calls, print only structuredContent or selected fields."
 )]
 impl ServerHandler for FarcasterMcp {
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
