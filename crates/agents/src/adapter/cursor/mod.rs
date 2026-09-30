@@ -139,7 +139,7 @@ pub(super) fn load_history(
     let (stored_project, unpersisted) = catalog::inspect(&id)?;
     if unpersisted {
         return Ok(crate::DiscoveredHistory {
-            messages: Vec::new(),
+            messages: Default::default(),
             model: None,
             thinking_level: None,
             prompt_deliveries: None,

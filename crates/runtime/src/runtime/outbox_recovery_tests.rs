@@ -1040,7 +1040,7 @@ fn exact_history_delivery_removes_only_the_matching_saved_card() -> Result<(), S
                 project: temp.path().into(),
                 kind: HistoryLoadKind::Selection,
                 result: Ok(LoadedHistory {
-                    messages: vec![],
+                    messages: vec![].into(),
                     model: None,
                     thinking_level: None,
                     pending_question: None,

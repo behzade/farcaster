@@ -103,7 +103,7 @@ pub(super) struct WorkerSessionTransport {
     model: Option<(String, String)>,
     effort: Option<String>,
     metadata: MainSessionMetadata,
-    history: Option<Vec<Value>>,
+    history: Option<std::sync::Arc<Vec<Value>>>,
     history_prompt_deliveries: Option<farcaster_sessions::PromptDeliveryReconciliation>,
     message_count: usize,
     selected_mode: Option<String>,
@@ -181,7 +181,7 @@ impl WorkerSessionTransport {
             model: selection.model,
             effort: selection.effort,
             metadata,
-            message_count: history.as_ref().map_or(0, Vec::len),
+            message_count: history.as_ref().map_or(0, |messages| messages.len()),
             history,
             history_prompt_deliveries,
             selected_mode,
@@ -924,7 +924,7 @@ impl SessionTransport for WorkerSessionTransport {
                     .as_ref()
                     .map_or(SessionHistory::Preserve, |messages| {
                         SessionHistory::Replace {
-                            messages: messages.clone(),
+                            messages: messages.as_ref().clone(),
                             prompt_deliveries: self.history_prompt_deliveries.clone(),
                         }
                     });

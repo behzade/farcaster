@@ -265,7 +265,7 @@ pub struct RestoredQuestion {
 
 #[derive(Clone, Debug)]
 pub struct LoadedHistory {
-    pub messages: Vec<Value>,
+    pub messages: Arc<Vec<Value>>,
     pub model: Option<(String, String)>,
     pub thinking_level: Option<String>,
     pub pending_question: Option<RestoredQuestion>,

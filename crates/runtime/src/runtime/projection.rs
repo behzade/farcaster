@@ -378,10 +378,11 @@ impl RuntimeOwner {
             }
             Payload::LoadHistory(history) => {
                 if let SessionHistory::Replace {
-                    mut messages,
+                    messages,
                     prompt_deliveries,
                 } = history
                 {
+                    let mut messages = Arc::new(messages);
                     if let (Some(state), Some(session), Some(evidence)) = (
                         self.state.as_mut(),
                         self.active_session.as_deref(),

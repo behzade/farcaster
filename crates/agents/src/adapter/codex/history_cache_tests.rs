@@ -61,7 +61,7 @@ fn counted_load(home: &Path, scope: Scope, calls: &Cell<usize>) {
     load(home, "thread", scope, || {
         calls.set(calls.get() + 1);
         Ok(DiscoveredHistory {
-            messages: vec![],
+            messages: vec![].into(),
             model: None,
             thinking_level: None,
             prompt_deliveries: None,
@@ -129,7 +129,7 @@ fn missing_or_unknown_sources_bypass_and_changed_reads_are_not_cached() {
     load(home.path(), "thread", scope(), || {
         std::fs::write(&rollout, "changed while reading").unwrap();
         Ok(DiscoveredHistory {
-            messages: vec![],
+            messages: vec![].into(),
             model: None,
             thinking_level: None,
             prompt_deliveries: None,

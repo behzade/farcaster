@@ -66,7 +66,11 @@ fn load_history_uncached(locator: &str) -> Result<DiscoveredHistory, String> {
             .map(|inbox| prompt_delivery_reconciliation(rows, inbox));
         let session = server.client().get_session(locator)?;
         let identity = latest_identity(rows, session.model.as_ref());
-        let messages = rows.iter().flat_map(history_messages).collect();
+        let messages = rows
+            .iter()
+            .flat_map(history_messages)
+            .collect::<Vec<_>>()
+            .into();
         let (model, thinking_level) = identity.map_or((None, None), |identity| {
             (Some((identity.provider_id, identity.id)), identity.variant)
         });

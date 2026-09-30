@@ -5,6 +5,48 @@ use std::{
 };
 
 const LIMIT: usize = 24;
+// Bound the retained message payload as well as the number of histories.
+const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
+
+pub(super) trait CachedHistory: Clone {
+    fn messages(&self) -> &Vec<serde_json::Value>;
+}
+
+impl CachedHistory for crate::DiscoveredHistory {
+    fn messages(&self) -> &Vec<serde_json::Value> {
+        &self.messages
+    }
+}
+
+impl CachedHistory for farcaster_sessions::LoadedHistory {
+    fn messages(&self) -> &Vec<serde_json::Value> {
+        &self.messages
+    }
+}
+
+fn message_bytes(messages: &Vec<serde_json::Value>) -> usize {
+    use serde_json::Value;
+
+    fn heap_bytes(value: &Value) -> usize {
+        match value {
+            Value::String(text) => text.capacity(),
+            Value::Array(values) => message_bytes(values),
+            Value::Object(values) => values
+                .iter()
+                .map(|(key, value)| {
+                    key.capacity()
+                        + std::mem::size_of::<(String, Value)>()
+                        + 3 * std::mem::size_of::<usize>()
+                        + heap_bytes(value)
+                })
+                .sum(),
+            _ => 0,
+        }
+    }
+
+    messages.capacity() * std::mem::size_of::<Value>()
+        + messages.iter().map(heap_bytes).sum::<usize>()
+}
 
 #[derive(Clone, Eq, PartialEq)]
 pub(super) struct FileStamp {
@@ -36,6 +78,7 @@ struct Source<K, S> {
 struct Entry<K, S, T> {
     source: Arc<Source<K, S>>,
     history: Arc<T>,
+    bytes: usize,
 }
 
 struct State<K, S, T> {
@@ -63,7 +106,7 @@ impl<K, S, T> Drop for Loading<'_, K, S, T> {
     }
 }
 
-impl<K: Eq, S: Eq, T: Clone> HistoryCache<K, S, T> {
+impl<K: Eq, S: Eq, T: CachedHistory> HistoryCache<K, S, T> {
     pub(super) const fn new() -> Self {
         Self {
             state: Mutex::new(State {
@@ -120,7 +163,10 @@ impl<K: Eq, S: Eq, T: Clone> HistoryCache<K, S, T> {
         });
 
         let history = load()?;
-        if let Some(source) = source.as_ref() {
+        let bytes = message_bytes(history.messages());
+        if bytes <= MAX_MESSAGE_BYTES
+            && let Some(source) = source.as_ref()
+        {
             let cached = Arc::new(history.clone());
             let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
             if revision().as_ref() == Some(&source.revision) {
@@ -128,8 +174,12 @@ impl<K: Eq, S: Eq, T: Clone> HistoryCache<K, S, T> {
                 state.entries.push(Entry {
                     source: source.clone(),
                     history: cached,
+                    bytes,
                 });
-                if state.entries.len() > LIMIT {
+                while state.entries.len() > LIMIT
+                    || state.entries.iter().map(|entry| entry.bytes).sum::<usize>()
+                        > MAX_MESSAGE_BYTES
+                {
                     state.entries.remove(0);
                 }
             }

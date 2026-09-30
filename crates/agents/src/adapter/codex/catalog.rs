@@ -313,7 +313,7 @@ fn read_history<R: std::io::BufRead, W: std::io::Write>(
         (Some((identity.provider, identity.model)), identity.effort)
     });
     Ok(DiscoveredHistory {
-        messages,
+        messages: messages.into(),
         model,
         thinking_level,
         prompt_deliveries: Some(farcaster_sessions::PromptDeliveryReconciliation {

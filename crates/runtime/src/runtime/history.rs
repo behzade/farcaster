@@ -345,7 +345,7 @@ impl RuntimeOwner {
 pub(super) fn annotate_history_presentations(
     state: Option<&StateStore>,
     session: &std::path::Path,
-    messages: &mut Vec<Value>,
+    messages: &mut Arc<Vec<Value>>,
 ) {
     let Some(state) = state else { return };
     match state.accepted_prompt_history(session) {
@@ -359,7 +359,7 @@ pub(super) fn annotate_history_presentations(
             for message in saved {
                 let Some(id) = message.get("submissionId").and_then(Value::as_str) else {
                     if history_was_empty {
-                        messages.push(message);
+                        Arc::make_mut(messages).push(message);
                     }
                     continue;
                 };
@@ -369,7 +369,7 @@ pub(super) fn annotate_history_presentations(
                     continue;
                 }
                 if submission_ids.insert(id.to_owned()) {
-                    messages.push(message);
+                    Arc::make_mut(messages).push(message);
                 }
             }
         }
@@ -377,8 +377,10 @@ pub(super) fn annotate_history_presentations(
             zlog::error!("Restore accepted prompts: {error}");
         }
     }
-    if let Ok(presentations) = state.prompt_presentations(session) {
-        annotate_prompt_presentations(messages, &presentations);
+    if let Ok(presentations) = state.prompt_presentations(session)
+        && !presentations.is_empty()
+    {
+        annotate_prompt_presentations(Arc::make_mut(messages).as_mut_slice(), &presentations);
     }
 }
 

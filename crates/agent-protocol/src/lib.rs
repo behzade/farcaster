@@ -71,7 +71,7 @@ pub struct SessionMetadata {
 
 #[derive(Clone, Debug)]
 pub struct DiscoveredHistory {
-    pub messages: Vec<serde_json::Value>,
+    pub messages: std::sync::Arc<Vec<serde_json::Value>>,
     pub model: Option<(String, String)>,
     pub thinking_level: Option<String>,
     pub prompt_deliveries: Option<farcaster_sessions::PromptDeliveryReconciliation>,

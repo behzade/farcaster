@@ -2,7 +2,7 @@ use super::*;
 
 fn history(complete: bool) -> DiscoveredHistory {
     DiscoveredHistory {
-        messages: vec![serde_json::json!({"role": "user", "content": "cached"})],
+        messages: vec![serde_json::json!({"role": "user", "content": "cached"})].into(),
         model: Some(("provider".into(), "model".into())),
         thinking_level: Some("high".into()),
         prompt_deliveries: complete.then(|| farcaster_sessions::PromptDeliveryReconciliation {

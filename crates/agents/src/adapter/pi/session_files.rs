@@ -141,7 +141,7 @@ pub fn load_history(path: &Path) -> Result<LoadedHistory, String> {
     let branch = active_branch_entries(&entries);
     let (model, thinking_level) = session_settings(&branch);
     Ok(LoadedHistory {
-        messages: project_display_history_from_branch(&branch),
+        messages: project_display_history_from_branch(&branch).into(),
         model,
         thinking_level: Some(thinking_level),
         pending_question: pending_question_from_branch(&branch),

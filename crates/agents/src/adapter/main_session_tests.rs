@@ -2355,7 +2355,7 @@ fn worker_session_state_retains_titles_and_counts_new_messages() {
 #[test]
 fn resumed_transport_returns_persisted_history() {
     let history = crate::DiscoveredHistory {
-        messages: vec![json!({"role": "user", "content": "persisted"})],
+        messages: vec![json!({"role": "user", "content": "persisted"})].into(),
         model: Some(("openai".into(), "gpt-test".into())),
         thinking_level: Some("high".into()),
         prompt_deliveries: Some(farcaster_sessions::PromptDeliveryReconciliation {

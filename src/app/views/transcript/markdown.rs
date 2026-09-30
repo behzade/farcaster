@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, hash::Hash, rc::Rc};
+use std::{borrow::Cow, cell::RefCell, collections::HashMap, hash::Hash, rc::Rc};
 
 use gpui::{AppContext as _, Entity};
 use gpui_component::text::TextViewState;
@@ -106,12 +106,22 @@ impl TranscriptMarkdownCache {
         text: &str,
         cx: &mut gpui::App,
     ) -> Entity<TextViewState> {
+        self.state_with(key, || Cow::Borrowed(text), cx)
+    }
+
+    pub(crate) fn state_with<'a>(
+        &self,
+        key: MarkdownStateKey,
+        text: impl FnOnce() -> Cow<'a, str>,
+        cx: &mut gpui::App,
+    ) -> Entity<TextViewState> {
         let (state, hit) = self.states.borrow_mut().get_or_insert_with(key, || {
+            let text = text();
             let _timing = crate::app::infrastructure::performance::OperationTiming::new(
                 crate::app::infrastructure::performance::OperationKind::MarkdownParse,
                 text.len(),
             );
-            cx.new(|cx| TextViewState::markdown(text, cx))
+            cx.new(|cx| TextViewState::markdown(&text, cx))
         });
         if hit {
             crate::app::infrastructure::performance::count_markdown_cache_hit();

@@ -5,6 +5,16 @@ const ONE_PIXEL_PNG: &str =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 #[test]
+fn history_without_local_annotations_keeps_shared_messages() {
+    let temp = tempfile::tempdir().expect("fixture");
+    let store = StateStore::open_at(&temp.path().join("state.sqlite3")).expect("store");
+    let original = Arc::new(vec![json!({"role":"assistant","content":"answer"})]);
+    let mut messages = original.clone();
+    annotate_history_presentations(Some(&store), &temp.path().join("session"), &mut messages);
+    assert!(Arc::ptr_eq(&messages, &original));
+}
+
+#[test]
 fn refresh_history_preserves_config_and_selects_profile_from_locator() {
     let temp = tempfile::tempdir().expect("fixture");
     let session_id = uuid::Uuid::new_v4().to_string();
@@ -93,7 +103,7 @@ fn dismissed_queue_row_does_not_return_on_history_refresh_or_reopen() -> Result<
     owner.state = Some(state.into());
     owner.snapshot.selected_session = Some(session.clone());
     owner.snapshot.history_preview = true;
-    let mut history = vec![];
+    let mut history = Arc::new(vec![]);
     owner.state.as_ref().unwrap().with(|store| {
         annotate_history_presentations(Some(store), &session, &mut history);
         Ok(())
@@ -112,7 +122,7 @@ fn dismissed_queue_row_does_not_return_on_history_refresh_or_reopen() -> Result<
     assert!(owner.snapshot.conversation.pending_receipts().is_empty());
     drop(owner);
     let state = StateStore::open_at(&database)?;
-    let mut history = vec![];
+    let mut history = Arc::new(vec![]);
     annotate_history_presentations(Some(&state), &session, &mut history);
     assert!(history.is_empty());
     Ok(())
@@ -208,7 +218,7 @@ fn accepted_image_only_prompt_survives_empty_backend_history_and_reopen()
 
     let store = StateStore::open_at(&database)?;
     assert_eq!(store.queued_prompts()?.len(), 1);
-    let mut messages = Vec::new();
+    let mut messages = Arc::new(Vec::new());
     annotate_history_presentations(Some(&store), &session, &mut messages);
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0]["role"], "user");
@@ -223,10 +233,10 @@ fn accepted_image_only_prompt_survives_empty_backend_history_and_reopen()
     assert_eq!(conversation.items.len(), 1);
     assert_eq!(conversation.items[0].text, "");
     assert_eq!(conversation.items[0].images.len(), 1);
-    let mut backend = vec![serde_json::json!({
+    let mut backend = Arc::new(vec![serde_json::json!({
         "role":"assistant",
         "content":[{"type":"text", "text":"existing"}],
-    })];
+    })]);
     annotate_history_presentations(Some(&store), &session, &mut backend);
     assert_eq!(backend.len(), 1);
     assert!(
@@ -293,10 +303,10 @@ fn uncorrelated_normal_is_not_duplicated_and_correlated_normal_survives_old_hist
     drop(store);
 
     let store = StateStore::open_at(&database)?;
-    let mut history = vec![serde_json::json!({
+    let mut history = Arc::new(vec![serde_json::json!({
         "role":"user",
         "content":[{"type":"text", "text":"first"}],
-    })];
+    })]);
     assert_eq!(
         store.accepted_prompt_history(&session)?.len(),
         2,
@@ -344,8 +354,9 @@ fn cold_history_restores_queued_receipt_identity_without_claiming_delivery()
     }
     drop(store);
     let store = StateStore::open_at(&database)?;
-    let mut history =
-        vec![json!({"role":"assistant", "content":[{"type":"text", "text":"older answer"}]})];
+    let mut history = Arc::new(vec![
+        json!({"role":"assistant", "content":[{"type":"text", "text":"older answer"}]}),
+    ]);
     annotate_history_presentations(Some(&store), &session, &mut history);
     assert_eq!(
         history.len(),
@@ -422,7 +433,7 @@ fn untracked_queued_receipts_stay_pending_only_when_native_history_is_missing()
     drop(store);
     let store = StateStore::open_at(&database)?;
 
-    let mut empty = Vec::new();
+    let mut empty = Arc::new(Vec::new());
     annotate_history_presentations(Some(&store), &session, &mut empty);
     assert_eq!(empty.len(), 2);
     let mut conversation = ConversationState::default();
@@ -430,10 +441,10 @@ fn untracked_queued_receipts_stay_pending_only_when_native_history_is_missing()
     assert_eq!(conversation.pending_receipts().len(), 2);
     assert!(conversation.items.is_empty());
 
-    let mut history = vec![
+    let mut history = Arc::new(vec![
         json!({"role":"user", "content":[{"type":"text", "text":"it's an opencode session"}]}),
         json!({"role":"user", "content":[{"type":"text", "text":"I changed the model in between, messages currently shown are from openai astra, later ones are from deepseek flash 4.1"}]}),
-    ];
+    ]);
     annotate_history_presentations(Some(&store), &session, &mut history);
     assert_eq!(history.len(), 2);
     assert!(

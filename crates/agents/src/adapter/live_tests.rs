@@ -2234,7 +2234,7 @@ pub mod support {
                             self.harness
                         )
                     })?
-                    .map(|history| history.messages)
+                    .map(|history| std::sync::Arc::unwrap_or_clone(history.messages))
                     .map_err(|error| format!("load native {} history: {error}", self.harness));
             }
             let Payload::LoadHistory(SessionHistory::Replace { messages, .. }) =

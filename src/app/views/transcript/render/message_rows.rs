@@ -85,8 +85,10 @@ fn invocation_tooltip_text(item: &TranscriptItem) -> Option<String> {
     if resolved.is_empty() {
         return None;
     }
-    let compact = resolved.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut characters = compact.chars();
+    let mut characters = resolved
+        .split_whitespace()
+        .flat_map(|word| std::iter::once(' ').chain(word.chars()))
+        .skip(1);
     let mut preview = characters
         .by_ref()
         .take(MAX_PREVIEW_CHARS)
@@ -276,3 +278,7 @@ fn peer_label(font_scale: f32, label: &str) -> impl gpui::IntoElement {
         .text_color(theme().colors.muted)
         .child(label.to_owned())
 }
+
+#[cfg(test)]
+#[path = "message_rows_tests.rs"]
+mod tests;

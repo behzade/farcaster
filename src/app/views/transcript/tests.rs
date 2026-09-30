@@ -424,6 +424,30 @@ fn oversized_fenced_code_is_split_into_bounded_valid_markdown() {
 }
 
 #[test]
+fn single_long_fenced_lines_keep_bounded_utf8_chunks() {
+    for code in ["x".repeat(32 * 1024), "界".repeat(16 * 1024)] {
+        for closing in ["", "```\n"] {
+            let text = format!("```json\n{code}\n{closing}");
+            let chunks = markdown_chunks(&text);
+            assert!(chunks.len() > 1);
+            assert_eq!(
+                chunks
+                    .iter()
+                    .map(|chunk| &text[chunk.start..chunk.end])
+                    .collect::<String>(),
+                text
+            );
+            for chunk in chunks {
+                let rendered = markdown_chunk_text(&text, chunk);
+                assert!(rendered.starts_with("```json\n"));
+                assert!(rendered.trim_end().ends_with("```"));
+                assert!(rendered.len() <= MARKDOWN_CHUNK_HARD_BYTES + 64);
+            }
+        }
+    }
+}
+
+#[test]
 fn unclosed_fences_keep_code_context_and_commonmark_boundaries() {
     let text = format!(
         "  ~~~~rust\r\n{}  ~~~~not-a-close\r\n{}",

@@ -1,4 +1,4 @@
-use std::io::Write as _;
+use std::io::Read as _;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -45,19 +45,34 @@ impl StateStore {
     }
 
     fn store_image(&self, image: &PromptImage) -> Result<String, String> {
-        let bytes = image.bytes()?;
-        if bytes.is_empty() {
+        let (hash, length) = read_image(image, &mut std::io::sink())?;
+        if length == 0 {
             return Err("Cannot save an empty image".into());
         }
-        let hash = format!("{:x}", Sha256::digest(&bytes));
         let path = self.image_directory.join(&hash);
+        if let Some(source) = &image.path
+            && source.parent() == Some(self.image_directory.as_path())
+            && source
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(valid_attachment_hash)
+        {
+            if source == &path {
+                return Ok(hash);
+            }
+            return Err(format!("Saved image {} is corrupt", source.display()));
+        }
         std::fs::create_dir_all(&self.image_directory)
             .map_err(|error| format!("create image directory: {error}"))?;
         if !path.exists() {
             let mut file = tempfile::NamedTempFile::new_in(&self.image_directory)
                 .map_err(|error| format!("create image: {error}"))?;
-            file.write_all(&bytes)
-                .and_then(|()| file.as_file().sync_all())
+            let (written_hash, _) = read_image(image, &mut file)?;
+            if written_hash != hash {
+                return Err("Image changed while saving".into());
+            }
+            file.as_file()
+                .sync_all()
                 .map_err(|error| format!("write image: {error}"))?;
             if let Err(error) = file.persist_noclobber(&path)
                 && error.error.kind() != std::io::ErrorKind::AlreadyExists
@@ -68,7 +83,8 @@ impl StateStore {
                 .and_then(|dir| dir.sync_all())
                 .map_err(|error| format!("sync image directory: {error}"))?;
         }
-        if std::fs::read(&path).map_err(|error| format!("read saved image: {error}"))? != bytes {
+        let saved = PromptImage::from_file(path.clone(), image.mime_type.clone());
+        if read_image(&saved, &mut std::io::sink())?.0 != hash {
             return Err(format!("Saved image {} is corrupt", path.display()));
         }
         Ok(hash)
@@ -89,11 +105,7 @@ impl StateStore {
                 attachment,
                 mime_type,
             } => {
-                if attachment.len() != 64
-                    || !attachment
-                        .bytes()
-                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                {
+                if !valid_attachment_hash(&attachment) {
                     return Err("Invalid image attachment hash".into());
                 }
                 Ok(PromptImage::from_file(
@@ -104,6 +116,54 @@ impl StateStore {
             StoredImage::Inline(image) => Ok(image),
         }
     }
+}
+
+fn valid_attachment_hash(name: &str) -> bool {
+    name.len() == 64
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn read_image(
+    image: &PromptImage,
+    output: &mut impl std::io::Write,
+) -> Result<(String, usize), String> {
+    let mut input: Box<dyn std::io::Read + '_> = match &image.path {
+        Some(path) => Box::new(
+            std::fs::File::open(path)
+                .map_err(|error| format!("read image {}: {error}", path.display()))?,
+        ),
+        None => Box::new(base64::read::DecoderReader::new(
+            image.data.as_bytes(),
+            &base64::engine::general_purpose::STANDARD,
+        )),
+    };
+    let mut hash = Sha256::new();
+    let mut length = 0;
+    let mut buffer = [0; 8 * 1024];
+    loop {
+        let count = match input.read(&mut buffer) {
+            Ok(count) => count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => {
+                return Err(match &image.path {
+                    Some(path) => format!("read image {}: {error}", path.display()),
+                    None => format!("decode image: {error}"),
+                });
+            }
+        };
+        if count == 0 {
+            break;
+        }
+        let bytes = &buffer[..count];
+        hash.update(bytes);
+        output
+            .write_all(bytes)
+            .map_err(|error| format!("write image: {error}"))?;
+        length += count;
+    }
+    Ok((format!("{:x}", hash.finalize()), length))
 }
 
 #[cfg(test)]

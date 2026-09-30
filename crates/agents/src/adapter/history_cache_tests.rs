@@ -4,7 +4,7 @@ use std::{cell::Cell, io::Write as _, path::PathBuf, sync::mpsc};
 
 fn history(text: &str) -> LoadedHistory {
     LoadedHistory {
-        messages: vec![serde_json::Value::from(text)],
+        messages: vec![serde_json::Value::from(text)].into(),
         model: None,
         thinking_level: None,
         pending_question: None,
@@ -63,7 +63,8 @@ fn repeated_loads_skip_parsing_until_the_file_changes() {
     let mut hit = load_with(&cache, &path, counted).unwrap();
     assert_eq!(first.messages, hit.messages);
     assert_eq!(parses.get(), 1);
-    hit.messages.clear();
+    assert!(Arc::ptr_eq(&first.messages, &hit.messages));
+    Arc::make_mut(&mut hit.messages).clear();
     assert_eq!(
         load_with(&cache, &path, counted).unwrap().messages,
         first.messages
@@ -204,6 +205,48 @@ fn a_hit_protects_an_entry_from_lru_eviction() {
         .unwrap();
     assert_eq!(second.messages, history("reloaded").messages);
     assert_eq!(cache.state.lock().unwrap().entries.len(), LIMIT);
+}
+
+#[test]
+fn message_budget_evicts_old_histories_and_skips_oversized_payloads() {
+    let cache = HistoryCache::new();
+    let text = "x".repeat(MAX_MESSAGE_BYTES / 3);
+    for key in ["one", "two"] {
+        cache.load(key, || Some(1), || Ok(history(&text))).unwrap();
+    }
+    cache
+        .load("one", || Some(1), || panic!("cache hit"))
+        .unwrap();
+    cache
+        .load("three", || Some(1), || Ok(history(&text)))
+        .unwrap();
+    let keys = || {
+        cache
+            .state
+            .lock()
+            .unwrap()
+            .entries
+            .iter()
+            .map(|entry| entry.source.key)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(keys(), ["one", "three"]);
+    let oversized = history(&"x".repeat(MAX_MESSAGE_BYTES));
+    let loads = Cell::new(0);
+    for _ in 0..2 {
+        cache
+            .load(
+                "large",
+                || Some(1),
+                || {
+                    loads.set(loads.get() + 1);
+                    Ok(oversized.clone())
+                },
+            )
+            .unwrap();
+    }
+    assert_eq!(loads.get(), 2);
+    assert_eq!(keys(), ["one", "three"]);
 }
 
 fn concurrent_warm_then_select(outcome: &str) {

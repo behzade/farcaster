@@ -415,7 +415,7 @@ pub(super) fn discovered_history(
     session_id: &str,
 ) -> DiscoveredHistory {
     DiscoveredHistory {
-        messages: replay_history_for_session(queued, Some(session_id)),
+        messages: replay_history_for_session(queued, Some(session_id)).into(),
         model: selected_model(profile, response),
         thinking_level: selected_option(response, &["thought_level", "reasoning", "effort"]),
         prompt_deliveries: None,

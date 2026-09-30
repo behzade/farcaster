@@ -118,6 +118,12 @@ fn append_fenced_markdown_chunks(
     for line in text[start..closing_start].split_inclusive('\n') {
         end += line.len();
         lines += 1;
+        while end - start >= MARKDOWN_CHUNK_HARD_BYTES {
+            let split = hard_markdown_break(text, start, start + MARKDOWN_CHUNK_HARD_BYTES);
+            body.push(plain_markdown_chunk(start, split));
+            start = split;
+            lines = 0;
+        }
         if lines >= FENCED_CHUNK_LINES || end - start >= MARKDOWN_CHUNK_TARGET_BYTES {
             body.push(plain_markdown_chunk(start, end));
             start = end;
@@ -163,6 +169,9 @@ pub(in crate::app::views::transcript) fn markdown_chunk_text(
     let Some(continuation) = chunk.fence else {
         return Cow::Borrowed(&text[chunk.start..chunk.end]);
     };
+    if !continuation.prepend && !continuation.append {
+        return Cow::Borrowed(&text[chunk.start..chunk.end]);
+    }
     let fence = continuation.fence;
     let mut rendered = String::with_capacity(
         chunk.end - chunk.start + fence.opening_end - fence.opening_start + fence.marker_len + 2,

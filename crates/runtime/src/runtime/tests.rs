@@ -2279,7 +2279,7 @@ fn failed_resume_publishes_no_state_from_the_previous_process() {
         project: std::env::temp_dir(),
         kind: HistoryLoadKind::DocumentRefresh,
         result: Ok(LoadedHistory {
-            messages: vec![json!({"role":"user","content":"stale"})],
+            messages: vec![json!({"role":"user","content":"stale"})].into(),
             model: None,
             thinking_level: None,
             pending_question: None,
@@ -2468,7 +2468,7 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
         project: new_project.clone(),
         kind: HistoryLoadKind::Selection,
         result: Ok(crate::sessions::LoadedHistory {
-            messages: vec![json!({"role":"user","content":"previewed"})],
+            messages: vec![json!({"role":"user","content":"previewed"})].into(),
             model: None,
             thinking_level: None,
             pending_question: None,
@@ -2482,7 +2482,7 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
         project: new_project.clone(),
         kind: HistoryLoadKind::Selection,
         result: Ok(crate::sessions::LoadedHistory {
-            messages: vec![json!({"role":"user","content":"previewed"})],
+            messages: vec![json!({"role":"user","content":"previewed"})].into(),
             model: None,
             thinking_level: None,
             pending_question: Some(crate::sessions::RestoredQuestion {
@@ -2778,7 +2778,7 @@ fn live_session_history_load_does_not_replace_the_parked_transcript() {
         project: project.clone(),
         kind: HistoryLoadKind::Selection,
         result: Ok(LoadedHistory {
-            messages: vec![json!({"role":"user","content":"session/load lag"})],
+            messages: vec![json!({"role":"user","content":"session/load lag"})].into(),
             model: None,
             thinking_level: None,
             pending_question: None,
@@ -2819,7 +2819,7 @@ fn refreshing_visible_external_history_preserves_transcript_ui_state() {
         project,
         kind: HistoryLoadKind::DocumentRefresh,
         result: Ok(LoadedHistory {
-            messages: vec![json!({"role":"user","content":"after"})],
+            messages: vec![json!({"role":"user","content":"after"})].into(),
             model: None,
             thinking_level: None,
             pending_question: None,
@@ -2855,7 +2855,7 @@ fn external_write_during_selection_refreshes_the_newly_loaded_document() {
         project,
         kind: HistoryLoadKind::Selection,
         result: Ok(LoadedHistory {
-            messages: Vec::new(),
+            messages: Default::default(),
             model: None,
             thinking_level: None,
             pending_question: None,
@@ -2889,7 +2889,7 @@ fn external_document_refreshes_coalesce_while_a_load_is_in_flight() {
         project,
         kind: HistoryLoadKind::DocumentRefresh,
         result: Ok(LoadedHistory {
-            messages: Vec::new(),
+            messages: Default::default(),
             model: None,
             thinking_level: None,
             pending_question: None,

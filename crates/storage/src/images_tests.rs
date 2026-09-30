@@ -97,6 +97,7 @@ fn corrupt_existing_image_is_not_reused() -> Result<(), Box<dyn std::error::Erro
     let store = StateStore::open_at(&directory.path().join("state.sqlite3"))?;
     let image = PromptImage::new("AQID".into(), "image/png".into());
     let stored = store.store_prompt_images(std::slice::from_ref(&image))?;
+    assert_eq!(store.store_prompt_images(&stored)?, stored);
     std::fs::write(
         stored[0]
             .path
@@ -110,5 +111,16 @@ fn corrupt_existing_image_is_not_reused() -> Result<(), Box<dyn std::error::Erro
             .expect_err("invalid test input must fail")
             .contains("corrupt")
     );
+    assert!(
+        store
+            .store_prompt_images(&stored)
+            .expect_err("a changed stored reference must fail")
+            .contains("corrupt")
+    );
+    let imported = store.image_directory.join("import.png");
+    std::fs::write(&imported, [1, 2, 3])?;
+    let imported = PromptImage::from_file(imported, "image/png".into());
+    std::fs::remove_file(stored[0].path.as_ref().unwrap())?;
+    assert_eq!(store.store_prompt_images(&[imported])?, stored);
     Ok(())
 }

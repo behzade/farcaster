@@ -56,7 +56,7 @@ done
             service_tier: None,
         };
         let history = (kind != "new").then(|| crate::DiscoveredHistory {
-            messages: Vec::new(),
+            messages: Default::default(),
             model: Some(("saved-provider".into(), "saved-model".into())),
             thinking_level: Some("high".into()),
             prompt_deliveries: None,

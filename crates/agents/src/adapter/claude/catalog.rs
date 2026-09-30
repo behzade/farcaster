@@ -242,7 +242,8 @@ fn history(rows: &[Value], sidechain: bool) -> DiscoveredHistory {
             .iter()
             .filter(|row| row["isMeta"] != true)
             .flat_map(|row| history_messages(&row["message"]))
-            .collect(),
+            .collect::<Vec<_>>()
+            .into(),
         model,
         thinking_level: None,
         prompt_deliveries: None,

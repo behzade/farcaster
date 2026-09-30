@@ -528,25 +528,21 @@ fn render_row(
             first,
             last,
             fence,
-        } => {
-            let markdown =
-                markdown_chunk_text(&items[index].text, MarkdownChunk { start, end, fence });
-            render_message_chunk(
-                font_scale,
-                key,
-                block,
-                &items[index],
-                first,
-                last,
-                follows_tool,
-                markdown_cache.state(
-                    MarkdownStateKey::message_chunk(index, block, revision),
-                    &markdown,
-                    cx,
-                ),
-                entity.clone(),
-            )
-        }
+        } => render_message_chunk(
+            font_scale,
+            key,
+            block,
+            &items[index],
+            first,
+            last,
+            follows_tool,
+            markdown_cache.state_with(
+                MarkdownStateKey::message_chunk(index, block, revision),
+                || markdown_chunk_text(&items[index].text, MarkdownChunk { start, end, fence }),
+                cx,
+            ),
+            entity.clone(),
+        ),
         TranscriptRow::StreamChunk {
             index,
             chunk,
