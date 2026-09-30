@@ -41,3 +41,46 @@ fn distinguishes_notifications_from_server_requests() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn decodes_null_results_and_error_data_without_changing_frame_validation() {
+    assert_eq!(
+        decode_frame(br#"{"id":1,"result":null,"method":false}"#).unwrap(),
+        CodexInbound::Response {
+            id: CodexRequestId::Number(1),
+            result: Value::Null
+        }
+    );
+    assert_eq!(
+        decode_frame(
+            br#"{"id":"request","error":{"code":42,"message":"failed","data":{"detail":[1,2]}}}"#
+        )
+        .unwrap(),
+        CodexInbound::Error {
+            id: CodexRequestId::String("request".into()),
+            error: CodexRpcError {
+                code: 42,
+                message: "failed".into(),
+                data: json!({"detail":[1,2]})
+            },
+        }
+    );
+    assert_eq!(
+        decode_frame(br#"{"method":"notice"}"#).unwrap(),
+        CodexInbound::Notification {
+            method: "notice".into(),
+            params: Value::Null
+        }
+    );
+    for frame in [
+        "[]",
+        "{}",
+        "{\"id\":null,\"method\":\"notice\"}",
+        "{\"id\":1,\"result\":null,\"error\":null}",
+        "{\"id\":1,\"method\":\"request\",\"result\":null}",
+        "{\"method\":\"notice\",\"error\":{}}",
+        "{\"id\":1,\"error\":{\"message\":\"missing code\"}}",
+    ] {
+        assert!(decode_frame(frame.as_bytes()).is_err(), "{frame}");
+    }
+}

@@ -52,33 +52,31 @@ fn encode_message(value: Map<String, Value>) -> Result<Vec<u8>, String> {
 pub(super) fn decode_frame(frame: &[u8]) -> Result<CodexInbound, String> {
     let value: Value = serde_json::from_slice(frame)
         .map_err(|error| format!("malformed Codex app-server frame: {error}"))?;
-    let object = value
-        .as_object()
-        .ok_or_else(|| "Codex app-server frame is not an object".to_owned())?;
+    let Value::Object(mut object) = value else {
+        return Err("Codex app-server frame is not an object".to_owned());
+    };
     let id = object
-        .get("id")
-        .map(|value| serde_json::from_value::<CodexRequestId>(value.clone()).map_err(json_error))
+        .remove("id")
+        .map(|value| serde_json::from_value::<CodexRequestId>(value).map_err(json_error))
         .transpose()?;
-    let method = object.get("method").and_then(Value::as_str);
-    match (id, method, object.get("result"), object.get("error")) {
+    let method = object.remove("method").and_then(|value| match value {
+        Value::String(method) => Some(method),
+        _ => None,
+    });
+    match (id, method, object.remove("result"), object.remove("error")) {
         (Some(id), Some(method), None, None) => Ok(CodexInbound::ServerRequest {
             id,
-            method: method.into(),
-            params: object.get("params").cloned().unwrap_or(Value::Null),
+            method,
+            params: object.remove("params").unwrap_or(Value::Null),
         }),
         (None, Some(method), None, None) => Ok(CodexInbound::Notification {
-            method: method.into(),
-            params: object.get("params").cloned().unwrap_or(Value::Null),
+            method,
+            params: object.remove("params").unwrap_or(Value::Null),
         }),
-        (Some(id), None, Some(result), None) => Ok(CodexInbound::Response {
-            id,
-            result: result.clone(),
-        }),
-        (Some(id), None, None, Some(error)) => {
-            serde_json::from_value::<CodexRpcError>(error.clone())
-                .map(|error| CodexInbound::Error { id, error })
-                .map_err(json_error)
-        }
+        (Some(id), None, Some(result), None) => Ok(CodexInbound::Response { id, result }),
+        (Some(id), None, None, Some(error)) => serde_json::from_value::<CodexRpcError>(error)
+            .map(|error| CodexInbound::Error { id, error })
+            .map_err(json_error),
         _ => Err("unrecognized Codex app-server frame shape".into()),
     }
 }
