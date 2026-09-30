@@ -1,4 +1,5 @@
 use super::*;
+use std::borrow::Cow;
 
 impl ConversationState {
     pub(super) fn tool_index(&self, id: &str) -> Option<usize> {
@@ -432,12 +433,12 @@ fn write_readable_json(value: &Value, depth: usize, output: &mut String) {
     }
 }
 
-fn readable_scalar(value: &Value) -> Option<String> {
+fn readable_scalar(value: &Value) -> Option<Cow<'_, str>> {
     match value {
         Value::Null => Some("None".into()),
         Value::Bool(value) => Some(if *value { "Yes" } else { "No" }.into()),
-        Value::Number(value) => Some(value.to_string()),
-        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(Cow::Owned(value.to_string())),
+        Value::String(value) => Some(Cow::Borrowed(value)),
         Value::Array(_) | Value::Object(_) => None,
     }
 }
