@@ -356,10 +356,10 @@ pub(super) fn annotate_history_presentations(
                 .filter_map(|message| message.get("submissionId").and_then(Value::as_str))
                 .map(str::to_owned)
                 .collect::<std::collections::HashSet<_>>();
-            for message in &saved {
+            for message in saved {
                 let Some(id) = message.get("submissionId").and_then(Value::as_str) else {
                     if history_was_empty {
-                        messages.push(message.clone());
+                        messages.push(message);
                     }
                     continue;
                 };
@@ -369,7 +369,7 @@ pub(super) fn annotate_history_presentations(
                     continue;
                 }
                 if submission_ids.insert(id.to_owned()) {
-                    messages.push(message.clone());
+                    messages.push(message);
                 }
             }
         }

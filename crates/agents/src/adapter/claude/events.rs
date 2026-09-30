@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet, VecDeque},
+};
 
 use crate::adapter::stream_text::TextUpdate;
 use crate::{TokenUsage, ToolCategory, ToolMetadata, WorkerActivity, WorkerEvent, WorkerUsage};
@@ -12,11 +15,11 @@ pub(super) fn string<'a>(value: &'a Value, key: &str) -> &'a str {
     value.get(key).and_then(Value::as_str).unwrap_or_default()
 }
 
-pub(super) fn blocks(message: &Value) -> Vec<Value> {
+pub(super) fn blocks(message: &Value) -> Cow<'_, [Value]> {
     match &message["content"] {
-        Value::String(text) => vec![json!({"type":"text","text":text})],
-        Value::Array(blocks) => blocks.clone(),
-        _ => Vec::new(),
+        Value::String(text) => Cow::Owned(vec![json!({"type":"text","text":text})]),
+        Value::Array(blocks) => Cow::Borrowed(blocks),
+        _ => Cow::Borrowed(&[]),
     }
 }
 
@@ -64,18 +67,21 @@ pub(super) fn tokens(usage: &Value) -> TokenUsage {
 }
 
 pub(super) fn history_messages(message: &Value) -> Vec<Value> {
+    if let Some(text) = message.get("content").and_then(Value::as_str) {
+        return vec![json!({"role":message["role"], "content":[{"type":"text", "text":text}]})];
+    }
     let mut messages = Vec::new();
     let mut content = Vec::new();
-    for block in blocks(message) {
-        match string(&block, "type") {
+    for block in blocks(message).iter() {
+        match string(block, "type") {
             "tool_result" => messages.push(json!({"role":"toolResult",
                 "toolCallId":block["tool_use_id"], "isError":block["is_error"].as_bool().unwrap_or(false),
                 "content":[{"type":"text","text":text(&block["content"])}]})),
             "tool_use" => content.push(json!({"type":"toolCall", "id":block["id"],
                 "name":block["name"], "arguments":block["input"],
-                "metadata":tool_metadata(string(&block,"name"), &block["input"])})),
+                "metadata":tool_metadata(string(block,"name"), &block["input"])})),
             "thinking" => content.push(json!({"type":"thinking", "thinking":block["thinking"]})),
-            "text" => content.push(block),
+            "text" => content.push(block.clone()),
             "image" => content.push(json!({"type":"image", "mimeType":block["source"]["media_type"],
                 "data":block["source"]["data"]})),
             _ => {},
@@ -240,9 +246,9 @@ impl Events {
                 }
             }
             "user" => {
-                for block in blocks(&frame["message"]) {
-                    if block["type"] == "tool_result" && self.tools.remove(string(&block,"tool_use_id")) {
-                        self.activity(WorkerActivity::ToolFinished { id:string(&block,"tool_use_id").into(),
+                for block in blocks(&frame["message"]).iter() {
+                    if block["type"] == "tool_result" && self.tools.remove(string(block,"tool_use_id")) {
+                        self.activity(WorkerActivity::ToolFinished { id:string(block,"tool_use_id").into(),
                             result:json!({"content":[{"type":"text","text":text(&block["content"])}]}),
                             is_error:block["is_error"].as_bool().unwrap_or(false) });
                     }

@@ -643,6 +643,67 @@ impl RuntimeOwner {
         self.publish();
     }
 
+    fn update_prompt_queue(&mut self) {
+        if self.saved_prompts.is_empty() && self.queued_prompts.is_empty() {
+            self.snapshot.prompt_queue = None;
+            return;
+        }
+        let source = &self.snapshot.conversation.queue;
+        let unchanged = self.snapshot.prompt_queue.as_ref().is_some_and(|previous| {
+            previous.steering == source.steering
+                && previous.follow_up == source.follow_up
+                && previous.steering_ids == source.steering_ids
+                && previous.follow_up_ids == source.follow_up_ids
+                && previous
+                    .cancellable_ids
+                    .iter()
+                    .map(String::as_str)
+                    .eq(source.cancellable_ids.iter().map(String::as_str).chain(
+                        self.queued_prompts
+                            .iter()
+                            .filter_map(|prompt| prompt.submission_id.as_deref()),
+                    ))
+                && previous.saved.len() == self.saved_prompts.len()
+                && previous
+                    .saved
+                    .iter()
+                    .zip(&self.saved_prompts)
+                    .all(|(saved, prompt)| {
+                        saved.id == prompt.id
+                            && saved.target == prompt.target
+                            && saved.text
+                                == prompt.display_message.as_deref().unwrap_or(&prompt.message)
+                            && saved.image_count == prompt.images.len()
+                            && saved.sendable == self.can_deliver_queued(prompt.mode)
+                    })
+        });
+        if unchanged {
+            return;
+        }
+        let mut queue = source.clone();
+        queue.cancellable_ids.extend(
+            self.queued_prompts
+                .iter()
+                .filter_map(|prompt| prompt.submission_id.clone()),
+        );
+        queue.saved = self
+            .saved_prompts
+            .iter()
+            .map(|prompt| crate::conversation::SavedPrompt {
+                id: prompt.id,
+                target: prompt.target.clone(),
+                text: prompt
+                    .display_message
+                    .as_deref()
+                    .unwrap_or(&prompt.message)
+                    .to_owned(),
+                image_count: prompt.images.len(),
+                sendable: self.can_deliver_queued(prompt.mode),
+            })
+            .collect();
+        self.snapshot.prompt_queue = Some(Arc::new(queue));
+    }
+
     pub(super) fn publish(&mut self) {
         self.host.count_snapshot();
         self.snapshot.harness.clone_from(&self.harness);
@@ -652,33 +713,12 @@ impl RuntimeOwner {
             .requested_mode(self.process_command.access_mode);
         self.snapshot.sandbox_adapter = self.selected_sandbox_adapter();
         self.snapshot.sandbox_state = self.sandbox_state();
-        conversation_mut(self.active_snapshot_mut()).flush_live_projection();
+        if self.active_snapshot().conversation.has_pending_projection() {
+            conversation_mut(self.active_snapshot_mut()).flush_live_projection();
+        }
+        self.update_prompt_queue();
         let active_snapshot = self.active_snapshot();
         let mut snapshot = self.snapshot.clone();
-        if !self.queued_prompts.is_empty() {
-            conversation_mut(&mut snapshot)
-                .queue
-                .cancellable_ids
-                .extend(
-                    self.queued_prompts
-                        .iter()
-                        .filter_map(|prompt| prompt.submission_id.clone()),
-                );
-        }
-        conversation_mut(&mut snapshot).queue.saved = self
-            .saved_prompts
-            .iter()
-            .map(|prompt| crate::conversation::SavedPrompt {
-                id: prompt.id,
-                target: prompt.target.clone(),
-                text: prompt
-                    .display_message
-                    .clone()
-                    .unwrap_or_else(|| prompt.message.clone()),
-                image_count: prompt.images.len(),
-                sendable: self.can_deliver_queued(prompt.mode),
-            })
-            .collect();
         snapshot.harness.clone_from(&self.harness);
         snapshot.live_session = self
             .active_session

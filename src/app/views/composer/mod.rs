@@ -79,7 +79,7 @@ impl FarcasterApp {
             self.snapshot.conversation.running,
         );
         let visible_queue = crate::app::composer::submissions::visible_prompt_queue(
-            &self.snapshot.conversation.queue,
+            self.snapshot.prompt_queue(),
             &self.composer.pending_submissions,
             self.composer.sessions.current_target(),
         );

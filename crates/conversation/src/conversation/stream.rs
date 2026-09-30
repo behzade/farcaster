@@ -3,49 +3,52 @@ use super::*;
 impl ConversationState {
     #[allow(dead_code)]
     pub fn reduce(&mut self, event: &Value) -> Option<usize> {
-        self.reduce_with_projection(event, true)
+        self.reduce_with_projection(event, true).0
     }
 
     pub fn reduce_deferred(&mut self, event: &Value) -> Option<usize> {
-        self.reduce_with_projection(event, false)
+        self.reduce_with_projection(event, false).0
     }
 
     pub fn reduce_deferred_with_change(&mut self, event: &Value) -> (Option<usize>, bool) {
-        let previous_state = (
-            self.running,
-            self.settled,
-            self.compacting,
-            self.retrying,
-            self.queue.clone(),
-            self.average_cache_hit_rate,
-            self.diagnostics.len(),
-        );
-        let changed_from = self.reduce_deferred(event);
-        let state_changed = previous_state
-            != (
-                self.running,
-                self.settled,
-                self.compacting,
-                self.retrying,
-                self.queue.clone(),
-                self.average_cache_hit_rate,
-                self.diagnostics.len(),
-            );
-        (changed_from, state_changed)
+        self.reduce_with_projection(event, false)
     }
 
-    fn reduce_with_projection(&mut self, event: &Value, project_live: bool) -> Option<usize> {
+    fn reduce_with_projection(
+        &mut self,
+        event: &Value,
+        project_live: bool,
+    ) -> (Option<usize>, bool) {
+        let state = |this: &Self| {
+            (
+                this.running,
+                this.settled,
+                this.compacting,
+                this.retrying,
+                this.queue.steering.len(),
+                this.queue.follow_up.len(),
+                this.average_cache_hit_rate,
+                this.diagnostics.len(),
+            )
+        };
+        let previous_state = state(self);
         let kind = event
             .get("type")
             .and_then(Value::as_str)
             .unwrap_or_default();
         if kind == "prompt_delivery" {
-            let delivery: farcaster_agent_protocol::PromptDelivery =
-                serde_json::from_value(event.clone()).ok()?;
-            return self.record_prompt_delivery(
-                &delivery.submission_id,
-                delivery.message.as_ref(),
-                delivery.status,
+            let Ok(delivery) =
+                serde_json::from_value::<farcaster_agent_protocol::PromptDelivery>(event.clone())
+            else {
+                return (None, false);
+            };
+            return (
+                self.record_prompt_delivery(
+                    &delivery.submission_id,
+                    delivery.message.as_ref(),
+                    delivery.status,
+                ),
+                false,
             );
         }
         let previous_len = self.items.len();
@@ -56,6 +59,7 @@ impl ConversationState {
             .and_then(Value::as_str)
             .and_then(|id| self.tools.get(id).copied().or_else(|| self.tool_index(id)));
         let mut incremental_content_changed = true;
+        let mut queue_changed = false;
         match kind {
             "agent_start" => {
                 self.begin_run();
@@ -90,11 +94,19 @@ impl ConversationState {
             "tool_execution_end" => self.end_tool(event),
             "tool_review_changed" => self.review_tool(event),
             "queue_update" => {
-                self.queue.steering = strings(event.get("steering"));
-                self.queue.follow_up = strings(event.get("followUp"));
-                self.queue.steering_ids = strings(event.get("steeringIds"));
-                self.queue.follow_up_ids = strings(event.get("followUpIds"));
-                self.queue.cancellable_ids = strings(event.get("cancellableIds"));
+                for (values, field) in [
+                    (&mut self.queue.steering, "steering"),
+                    (&mut self.queue.follow_up, "followUp"),
+                    (&mut self.queue.steering_ids, "steeringIds"),
+                    (&mut self.queue.follow_up_ids, "followUpIds"),
+                    (&mut self.queue.cancellable_ids, "cancellableIds"),
+                ] {
+                    let next = strings(event.get(field));
+                    if *values != next {
+                        *values = next;
+                        queue_changed = true;
+                    }
+                }
             }
             "compaction_start" => {
                 self.compacting = true;
@@ -128,7 +140,7 @@ impl ConversationState {
             "turn_start" | "turn_end" => {}
             unknown => self.diagnostic(format!("Unknown RPC event: {unknown}")),
         }
-        match kind {
+        let changed_from = match kind {
             "message_start" => Some(previous_len.saturating_sub(1)),
             "message_update" if incremental_content_changed => previous_live_start,
             "message_update" => None,
@@ -153,7 +165,9 @@ impl ConversationState {
             | "summarization_retry_finished"
             | "extension_error" => Some(previous_len),
             _ => None,
-        }
+        };
+        let state_changed = queue_changed || previous_state != state(self);
+        (changed_from, state_changed)
     }
 
     pub(super) fn start_message(&mut self, message: Option<&Value>) {
@@ -271,6 +285,10 @@ impl ConversationState {
         true
     }
 
+    pub fn has_pending_projection(&self) -> bool {
+        !self.dirty_content.is_empty()
+    }
+
     pub fn flush_live_projection(&mut self) {
         let dirty = std::mem::take(&mut self.dirty_content);
         for content_index in dirty {
@@ -348,9 +366,8 @@ impl ConversationState {
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             if let Some(index) = self.tool_index(id) {
-                let mut item = self.items[index].clone();
-                apply_tool_result(Arc::make_mut(&mut item), message, true);
-                self.items.set(index, item);
+                let item = apply_tool_result(&self.items[index], message, true);
+                self.items.set(index, Arc::new(item));
                 self.content.clear();
                 self.dirty_content.clear();
                 self.projected_content.clear();

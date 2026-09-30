@@ -1,6 +1,23 @@
 use super::*;
 
 #[test]
+fn blocks_borrows_array_content_and_normalizes_strings() {
+    let message = json!({"content":[{"type":"text","text":"answer"}]});
+    let content = blocks(&message);
+    assert_eq!(
+        content.as_ptr(),
+        message["content"]
+            .as_array()
+            .expect("content array")
+            .as_ptr()
+    );
+    assert_eq!(
+        history_messages(&json!({"role":"assistant","content":"answer"})),
+        history_messages(&json!({"role":"assistant","content":[{"type":"text","text":"answer"}]}))
+    );
+}
+
+#[test]
 fn seven_day_rate_limit_maps_to_neutral_weekly_usage() {
     let mut events = Events::default();
     events.message(&json!({

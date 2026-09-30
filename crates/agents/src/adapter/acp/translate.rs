@@ -229,12 +229,15 @@ pub(super) fn normalize_tool_name(update: &Value, title: &str) -> String {
     }
 }
 
-pub(super) fn merge_tool_metadata(metadata: &mut ToolMetadata, update: &Value) {
-    let mut native = metadata
+pub(super) fn merge_tool_metadata(metadata: &mut ToolMetadata, update: &Value) -> bool {
+    let missing = metadata.native.is_none();
+    let native = metadata
         .native
-        .take()
-        .unwrap_or_else(|| Value::Object(Default::default()));
-    merge_value(&mut native, update);
+        .get_or_insert_with(|| Value::Object(Default::default()));
+    let changed = merge_value(native, update) || missing;
+    if !changed {
+        return false;
+    }
 
     metadata.category = native
         .get("kind")
@@ -266,7 +269,7 @@ pub(super) fn merge_tool_metadata(metadata: &mut ToolMetadata, update: &Value) {
                 .map(str::to_owned)
         })
         .collect();
-    metadata.native = Some(native);
+    true
 }
 
 pub(super) fn tool_metadata(update: &Value) -> ToolMetadata {
@@ -346,18 +349,22 @@ fn unwrap_content_block(value: &Value) -> &Value {
     }
 }
 
-fn merge_value(current: &mut Value, update: &Value) {
+fn merge_value(current: &mut Value, update: &Value) -> bool {
+    let mut changed = false;
     if let (Some(current), Some(update)) = (current.as_object_mut(), update.as_object()) {
         for (key, value) in update {
             if let Some(previous) = current.get_mut(key) {
-                merge_value(previous, value);
+                changed |= merge_value(previous, value);
             } else {
                 current.insert(key.clone(), value.clone());
+                changed = true;
             }
         }
-    } else {
+    } else if current != update {
         *current = update.clone();
+        changed = true;
     }
+    changed
 }
 
 pub(super) fn merged_tool_content(metadata: &ToolMetadata, update: &Value) -> Value {

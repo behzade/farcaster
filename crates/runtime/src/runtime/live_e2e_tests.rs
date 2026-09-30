@@ -561,7 +561,7 @@ fn live_e2e_runtime_accepted_steer_and_follow_up_queue_until_delivery() -> Resul
             ))?;
             wait_for(&runtime, &mut trace, TURN_TIMEOUT, |trace| {
                 trace.snapshot.as_ref().is_some_and(|snapshot| {
-                    let queue = &snapshot.conversation.queue;
+                    let queue = snapshot.prompt_queue();
                     queue
                         .follow_up
                         .iter()
@@ -598,8 +598,8 @@ fn live_e2e_runtime_accepted_steer_and_follow_up_queue_until_delivery() -> Resul
                 .count();
             trace.record(format!(
                 "pre-delivery queues steering={} follow_up={} user_rows steer={} follow_up={}",
-                snapshot.conversation.queue.steering.len(),
-                snapshot.conversation.queue.follow_up.len(),
+                snapshot.prompt_queue().steering.len(),
+                snapshot.prompt_queue().follow_up.len(),
                 steer_rows,
                 follow_up_rows,
             ))?;
@@ -622,8 +622,7 @@ fn live_e2e_runtime_accepted_steer_and_follow_up_queue_until_delivery() -> Resul
                         && contains_assistant_token(snapshot, &steer_effect)
                         && contains_assistant_token(snapshot, &follow_up_effect)
                         && !snapshot
-                            .conversation
-                            .queue
+                            .prompt_queue()
                             .steering
                             .iter()
                             .any(|queued| queued == &steer_message)
@@ -659,8 +658,8 @@ fn live_e2e_runtime_accepted_steer_and_follow_up_queue_until_delivery() -> Resul
             })?;
             trace.record(format!(
                 "post-delivery queues steering={} follow_up={} user_rows steer={} follow_up={}",
-                snapshot.conversation.queue.steering.len(),
-                snapshot.conversation.queue.follow_up.len(),
+                snapshot.prompt_queue().steering.len(),
+                snapshot.prompt_queue().follow_up.len(),
                 snapshot
                     .conversation
                     .items
@@ -901,8 +900,7 @@ fn contains_tool_gate(snapshot: &RuntimeSnapshot, message: &str) -> bool {
 
 fn contains_follow_up_queue(snapshot: &RuntimeSnapshot, message: &str) -> bool {
     snapshot
-        .conversation
-        .queue
+        .prompt_queue()
         .follow_up
         .iter()
         .any(|queued| queued == message)

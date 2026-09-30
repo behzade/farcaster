@@ -76,9 +76,22 @@ fn tool_metadata_merges_partial_acp_updates() {
         "title": "Read file",
         "locations": [{"path": "src/main.rs", "line": 4}]
     }));
-    merge_tool_metadata(
-        &mut metadata,
-        &json!({"sessionUpdate":"tool_call_update", "rawInput":{"path":"src/main.rs"}}),
+    let update = json!({"sessionUpdate":"tool_call_update", "rawInput":{"path":"src/main.rs"}});
+    assert!(merge_tool_metadata(&mut metadata, &update));
+    assert!(!merge_tool_metadata(&mut metadata, &update));
+    let input = metadata.native.as_ref().expect("native metadata")["rawInput"]["path"]
+        .as_str()
+        .expect("path")
+        .as_ptr();
+    let output = json!({"rawOutput":{"text":"done"}});
+    assert!(merge_tool_metadata(&mut metadata, &output));
+    assert!(!merge_tool_metadata(&mut metadata, &output));
+    assert_eq!(
+        metadata.native.as_ref().expect("native metadata")["rawInput"]["path"]
+            .as_str()
+            .expect("path")
+            .as_ptr(),
+        input
     );
     assert_eq!(metadata.category, Some(ToolCategory::Read));
     assert_eq!(metadata.title.as_deref(), Some("Read file"));

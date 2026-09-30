@@ -1123,8 +1123,7 @@ fn published_saved_ids(events: &[RuntimeEvent]) -> Vec<i64> {
         .find_map(|event| match event {
             RuntimeEvent::Snapshot { snapshot, .. } => Some(
                 snapshot
-                    .conversation
-                    .queue
+                    .prompt_queue()
                     .saved
                     .iter()
                     .map(|prompt| prompt.id)

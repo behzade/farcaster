@@ -196,8 +196,8 @@ impl FarcasterApp {
         let target = self.composer.sessions.current_target();
         let (action, arm) = composer_escape(
             self.snapshot.conversation.running,
-            !self.snapshot.conversation.queue.steering.is_empty(),
-            !self.snapshot.conversation.queue.follow_up.is_empty(),
+            !self.snapshot.prompt_queue().steering.is_empty(),
+            !self.snapshot.prompt_queue().follow_up.is_empty(),
             has_pending_submission(&self.composer.pending_submissions, target),
             target,
             self.composer.escape_armed.as_ref(),

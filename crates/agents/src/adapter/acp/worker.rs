@@ -783,10 +783,18 @@ impl AcpWorkerSession {
         let mut emitted = VecDeque::new();
         {
             let state = self.tool_states.entry(id.clone()).or_default();
-            let previous_metadata = state.metadata.clone();
-            let previous_args = state.args.clone();
-            merge_tool_metadata(&mut state.metadata, update);
-            state.args = tool_args(&state.metadata);
+            let metadata_changed = merge_tool_metadata(&mut state.metadata, update);
+            let args_changed = if metadata_changed {
+                let args = tool_args(&state.metadata);
+                if state.args != args {
+                    state.args = args;
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
 
             if !state.started {
                 state.started = true;
@@ -799,10 +807,10 @@ impl AcpWorkerSession {
                     args: state.args.clone(),
                     metadata: state.metadata.clone(),
                 }));
-            } else if state.metadata != previous_metadata || state.args != previous_args {
+            } else if metadata_changed {
                 emitted.push_back(WorkerEvent::Activity(WorkerActivity::ToolMetadataChanged {
                     id: id.clone(),
-                    args: (state.args != previous_args).then(|| state.args.clone()),
+                    args: args_changed.then(|| state.args.clone()),
                     metadata: state.metadata.clone(),
                 }));
             }

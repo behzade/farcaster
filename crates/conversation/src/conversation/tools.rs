@@ -103,13 +103,8 @@ impl ConversationState {
         {
             return false;
         }
-        let mut item = item.clone();
-        let value = Arc::make_mut(&mut item);
-        value.tool_output = output;
-        if let Some(details) = value.tool_details.as_mut().map(Arc::make_mut) {
-            details.result = event.get("partialResult").cloned();
-        }
-        self.items.set(index, item);
+        let item = item.with_tool_output(output, event.get("partialResult"));
+        self.items.set(index, Arc::new(item));
         true
     }
 
@@ -122,13 +117,12 @@ impl ConversationState {
         if let Some(index) = self.tools.remove(&id)
             && let Some(item) = self.items.get(index)
         {
-            let mut item = item.clone();
-            let value = Arc::make_mut(&mut item);
-            if let Some(result) = event.get("result") {
-                apply_tool_result(value, result, false);
-            }
-            value.finish_tool(is_error);
-            self.items.set(index, item);
+            let mut item = event.get("result").map_or_else(
+                || item.as_ref().clone(),
+                |result| apply_tool_result(item, result, false),
+            );
+            item.finish_tool(is_error);
+            self.items.set(index, Arc::new(item));
         }
     }
 
@@ -270,21 +264,52 @@ fn edit_pair_counts<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a str)>) -> 
         })
 }
 
-pub(super) fn apply_tool_result(item: &mut TranscriptItem, result: &Value, message: bool) {
-    item.tool_output = if message {
+impl TranscriptItem {
+    fn with_tool_output(&self, output: String, result: Option<&Value>) -> Self {
+        Self {
+            kind: self.kind,
+            label: self.label.clone(),
+            text: self.text.clone(),
+            images: self.images.clone(),
+            files: self.files.clone(),
+            stream_chunks: self.stream_chunks.clone(),
+            streaming: self.streaming,
+            is_error: self.is_error,
+            tool_call_id: self.tool_call_id.clone(),
+            tool_output: output,
+            tool_presentation: self.tool_presentation.clone(),
+            tool_details: self.tool_details.as_ref().map(|details| {
+                Arc::new(ToolDetails {
+                    name: details.name.clone(),
+                    arguments: details.arguments.clone(),
+                    result: result.cloned(),
+                    metadata: details.metadata.clone(),
+                    state: details.state,
+                })
+            }),
+            tool_review: self.tool_review.clone(),
+            invocation: self.invocation.clone(),
+        }
+    }
+}
+
+pub(super) fn apply_tool_result(
+    item: &TranscriptItem,
+    result: &Value,
+    message: bool,
+) -> TranscriptItem {
+    let output = if message {
         message_text(result)
     } else {
         result_text(result)
     };
+    let mut item = item.with_tool_output(output, Some(result));
     item.finish_tool(
         result
             .get("isError")
             .and_then(Value::as_bool)
             .unwrap_or(false),
     );
-    if let Some(details) = item.tool_details.as_mut().map(Arc::make_mut) {
-        details.result = Some(result.clone());
-    }
     let details = result.get("details");
     if let Some(diff) = details
         .and_then(|details| details.get("diff"))
@@ -297,6 +322,7 @@ pub(super) fn apply_tool_result(item: &mut TranscriptItem, result: &Value, messa
             .and_then(Value::as_u64);
         presentation.apply_edit_result(diff, first_changed_line);
     }
+    item
 }
 
 pub fn display_tool_name(name: &str) -> String {

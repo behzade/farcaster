@@ -90,9 +90,8 @@ impl ConversationState {
             if !id.is_empty()
                 && let Some(index) = self.tool_index(id)
             {
-                let mut item = self.items[index].clone();
-                apply_tool_result(Arc::make_mut(&mut item), message, true);
-                self.items.set(index, item);
+                let item = apply_tool_result(&self.items[index], message, true);
+                self.items.set(index, Arc::new(item));
                 return;
             }
         }

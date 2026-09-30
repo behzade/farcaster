@@ -645,11 +645,54 @@ fn tool_updates_replace_snapshots_and_correlate() {
         &json!({"type":"tool_execution_start","toolCallId":"a","toolName":"bash","args":{}}),
     );
     state.reduce(&json!({"type":"tool_execution_update","toolCallId":"a","partialResult":{"content":[{"type":"text","text":"one"}]}}));
+    let previous = state.items[0].clone();
     state.reduce(&json!({"type":"tool_execution_update","toolCallId":"a","partialResult":{"content":[{"type":"text","text":"one two"}]}}));
     state.reduce(&json!({"type":"tool_execution_end","toolCallId":"a","result":{"content":[{"type":"text","text":"done"}]},"isError":false}));
     assert_eq!(state.items[0].tool_output, "done");
     assert_eq!(state.items[0].label, "Bash");
     assert!(!state.items[0].streaming);
+    assert_eq!(previous.tool_output, "one");
+    assert!(previous.streaming);
+    assert_eq!(
+        previous.tool_details.as_ref().expect("tool details").result,
+        Some(json!({"content":[{"type":"text","text":"one"}]}))
+    );
+    assert_eq!(
+        state.items[0]
+            .tool_details
+            .as_ref()
+            .expect("tool details")
+            .result,
+        Some(json!({"content":[{"type":"text","text":"done"}]}))
+    );
+}
+
+#[test]
+fn deferred_queue_change_detection_covers_replacements_ids_and_acknowledgement() {
+    let mut state = ConversationState::default();
+    let queue = json!({"type":"queue_update","steering":["one"],"steeringIds":["id-1"],"cancellableIds":["id-1"]});
+    assert!(state.reduce_deferred_with_change(&queue).1);
+    assert!(!state.reduce_deferred_with_change(&queue).1);
+    assert!(state.reduce_deferred_with_change(&json!({"type":"queue_update","steering":["two"],"steeringIds":["id-1"],"cancellableIds":["id-1"]})).1);
+    assert!(state.reduce_deferred_with_change(&json!({"type":"queue_update","steering":["two"],"steeringIds":["id-2"],"cancellableIds":["id-2"]})).1);
+    assert!(!state.reduce_deferred_with_change(&json!({"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"answer"}})).1);
+    assert!(
+        !state
+            .reduce_deferred_with_change(
+                &json!({"type":"message_start","message":{"role":"user","content":"other"}})
+            )
+            .1
+    );
+    assert!(
+        state
+            .reduce_deferred_with_change(
+                &json!({"type":"message_start","message":{"role":"user","content":"two"}})
+            )
+            .1
+    );
+    assert!(state.queue.steering.is_empty());
+    assert!(state.queue.steering_ids.is_empty());
+    assert!(state.queue.cancellable_ids.is_empty());
 }
 
 #[test]

@@ -464,6 +464,11 @@ fn composer_and_run_panel_track_their_rendered_snapshot_inputs() {
     composer_context.stats = serde_json::json!({
         "contextUsage": {"tokens": 10_000, "contextWindow": 200_000}
     });
+    let mut composer_queue = previous.clone();
+    composer_queue.prompt_queue = Some(Arc::new(crate::conversation::QueueState {
+        cancellable_ids: vec!["queued-input".into()],
+        ..Default::default()
+    }));
     let mut run_panel = previous.clone();
     run_panel.selected_session = Some(PathBuf::from("/root.jsonl"));
 
@@ -473,6 +478,8 @@ fn composer_and_run_panel_track_their_rendered_snapshot_inputs() {
     assert!(!run_panel_snapshot_changed(&previous, &composer_usage));
     assert!(composer_snapshot_changed(&previous, &composer_context));
     assert!(!run_panel_snapshot_changed(&previous, &composer_context));
+    assert!(composer_snapshot_changed(&previous, &composer_queue));
+    assert!(!run_panel_snapshot_changed(&previous, &composer_queue));
     assert!(composer_snapshot_changed(&previous, &run_panel));
     assert!(run_panel_snapshot_changed(&previous, &run_panel));
 }

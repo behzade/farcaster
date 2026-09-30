@@ -271,6 +271,8 @@ pub struct RuntimeSnapshot {
     pub pending_initial_service_tier: bool,
     pub selected_session: Option<PathBuf>,
     pub conversation: Arc<ConversationState>,
+    /// Adds locally saved prompts and cancellation IDs to the backend queue for display.
+    pub prompt_queue: Option<Arc<crate::conversation::QueueState>>,
     pub models: Vec<Model>,
     pub thinking_levels: Vec<String>,
     pub configuration_status: ConfigurationStatus,
@@ -292,6 +294,12 @@ pub struct RuntimeSnapshot {
 }
 
 impl RuntimeSnapshot {
+    pub fn prompt_queue(&self) -> &crate::conversation::QueueState {
+        self.prompt_queue
+            .as_deref()
+            .unwrap_or(&self.conversation.queue)
+    }
+
     pub fn transcript_presentation(
         &self,
     ) -> Arc<crate::reviews::presentation::TranscriptPresentation> {

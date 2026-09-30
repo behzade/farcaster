@@ -183,7 +183,7 @@ fn recovered_draft_prompts_follow_their_own_actors_and_stay_saved() -> Result<()
             supervisor
                 .latest
                 .get(*key)
-                .is_some_and(|snapshot| snapshot.conversation.queue.saved.len() == 1)
+                .is_some_and(|snapshot| snapshot.prompt_queue().saved.len() == 1)
         }) {
             break;
         }
@@ -196,9 +196,9 @@ fn recovered_draft_prompts_follow_their_own_actors_and_stay_saved() -> Result<()
         let snapshot = supervisor.latest.get(key).ok_or(format!("missing {key}"))?;
         assert_eq!(snapshot.harness, Some(harness));
         assert_eq!(snapshot.project, project);
-        assert_eq!(snapshot.conversation.queue.saved.len(), 1);
-        assert_eq!(snapshot.conversation.queue.saved[0].id, id);
-        assert_eq!(snapshot.conversation.queue.saved[0].target, key);
+        assert_eq!(snapshot.prompt_queue().saved.len(), 1);
+        assert_eq!(snapshot.prompt_queue().saved[0].id, id);
+        assert_eq!(snapshot.prompt_queue().saved[0].target, key);
         assert!(
             snapshot.live_session.is_none(),
             "recovery must not replay input"
@@ -215,8 +215,8 @@ fn recovered_draft_prompts_follow_their_own_actors_and_stay_saved() -> Result<()
         assert!(events.try_iter().any(|event| matches!(
             event,
             RuntimeEvent::Snapshot { snapshot, .. }
-                if snapshot.conversation.queue.saved.len() == 1
-                    && snapshot.conversation.queue.saved[0].id == id
+                if snapshot.prompt_queue().saved.len() == 1
+                    && snapshot.prompt_queue().saved[0].id == id
         )));
     }
     assert_eq!(state.with(|store| store.queued_prompts())?.len(), 2);

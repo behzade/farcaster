@@ -171,7 +171,7 @@ fn queued_follow_up(app: &FarcasterApp, marker: &str) -> bool {
 
 fn visible_prompt_queue(app: &FarcasterApp) -> crate::conversation::QueueState {
     crate::app::composer::submissions::visible_prompt_queue(
-        &app.snapshot.conversation.queue,
+        app.snapshot.prompt_queue(),
         &app.composer.pending_submissions,
         app.composer.sessions.current_target(),
     )

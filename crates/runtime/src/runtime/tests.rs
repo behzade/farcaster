@@ -159,6 +159,81 @@ pub(super) fn owner_without_process(
 }
 
 #[test]
+fn publishing_reuses_conversation_and_queue_storage_until_the_queue_changes() {
+    let project = PathBuf::from("/project");
+    let prompt = crate::agents::QueuedPrompt {
+        id: 1,
+        submission_id: Some("local".into()),
+        target: "draft:one".into(),
+        harness: Backend::Pi,
+        project: project.clone(),
+        session: None,
+        mode: PromptMode::Normal,
+        message: "saved text".into(),
+        display_message: None,
+        invocation: None,
+        images: Vec::new(),
+    };
+    let (mut owner, events) = owner_without_process(project);
+    conversation_mut(&mut owner.snapshot)
+        .queue
+        .cancellable_ids
+        .push("remote".into());
+    let conversation = owner.snapshot.conversation.clone();
+    let snapshot = |events: &mpsc::Receiver<RuntimeEvent>| {
+        events
+            .try_iter()
+            .find_map(|event| match event {
+                RuntimeEvent::Snapshot { snapshot, .. } => Some(snapshot),
+                _ => None,
+            })
+            .expect("published snapshot")
+    };
+    owner.publish();
+    let empty = snapshot(&events);
+    assert!(Arc::ptr_eq(&empty.conversation, &conversation));
+    assert!(empty.prompt_queue.is_none());
+
+    owner.saved_prompts.push_back(prompt.clone());
+    owner.queued_prompts.push_back(prompt);
+    owner.publish();
+    let first = snapshot(&events);
+    assert!(Arc::ptr_eq(&first.conversation, &conversation));
+    assert_eq!(first.prompt_queue().saved[0].text, "saved text");
+    assert!(first.prompt_queue().can_cancel("local"));
+    assert!(first.prompt_queue().can_cancel("remote"));
+    assert!(!conversation.queue.can_cancel("local"));
+    assert!(conversation.queue.saved.is_empty());
+    owner.publish();
+    let second = snapshot(&events);
+    assert!(Arc::ptr_eq(
+        first.prompt_queue.as_ref().expect("queue"),
+        second.prompt_queue.as_ref().expect("queue")
+    ));
+
+    owner
+        .saved_prompts
+        .front_mut()
+        .expect("saved prompt")
+        .display_message = Some("changed display".into());
+    owner.queued_prompts.clear();
+    owner.publish();
+    let changed = snapshot(&events);
+    assert_eq!(changed.prompt_queue().saved[0].text, "changed display");
+    assert!(!changed.prompt_queue().can_cancel("local"));
+    assert!(changed.prompt_queue().can_cancel("remote"));
+    assert_eq!(first.prompt_queue().saved[0].text, "saved text");
+    assert!(first.prompt_queue().can_cancel("local"));
+
+    owner.saved_prompts.clear();
+    owner.publish();
+    let cleared = snapshot(&events);
+    assert!(cleared.prompt_queue.is_none());
+    assert!(cleared.prompt_queue().saved.is_empty());
+    assert!(cleared.prompt_queue().can_cancel("remote"));
+}
+
+#[test]
 fn model_switch_gates_prompts_and_recovers_after_rejection() {
     struct Recorder(std::rc::Rc<std::cell::RefCell<Vec<SessionCommand>>>);
     impl SessionTransport for Recorder {
