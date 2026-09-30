@@ -1,24 +1,38 @@
 use std::{
     collections::BTreeMap,
+    io::{self, Read},
     path::{Path, PathBuf},
 };
 
 const BINARY_SNIFF_BYTES: usize = 8000;
+const FILE_BUFFER_BYTES: usize = 64 * 1024;
 
-pub(crate) fn untracked(contents: &[u8]) -> Option<(usize, usize)> {
-    if contents
-        .iter()
-        .take(BINARY_SNIFF_BYTES)
-        .any(|byte| *byte == 0)
-    {
-        return None;
+pub(crate) fn untracked(mut reader: impl Read) -> io::Result<Option<(usize, usize)>> {
+    let mut buffer = [0_u8; FILE_BUFFER_BYTES];
+    let mut sniff_remaining = BINARY_SNIFF_BYTES;
+    let mut binary = false;
+    let mut lines = 0;
+    let mut last = None;
+    loop {
+        let length = match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(length) => length,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        let sniff = length.min(sniff_remaining);
+        binary |= buffer[..sniff].contains(&0);
+        sniff_remaining -= sniff;
+        lines += buffer[..length]
+            .iter()
+            .filter(|byte| **byte == b'\n')
+            .count();
+        last = Some(buffer[length - 1]);
     }
-    let lines = contents.iter().filter(|byte| **byte == b'\n').count();
-    let lines = match contents.last() {
-        Some(last) if *last != b'\n' => lines + 1,
-        _ => lines,
-    };
-    Some((lines, 0))
+    if last.is_some_and(|byte| byte != b'\n') {
+        lines += 1;
+    }
+    Ok((!binary).then_some((lines, 0)))
 }
 
 pub(crate) fn parse(patch: &str) -> BTreeMap<PathBuf, Option<(usize, usize)>> {

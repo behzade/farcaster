@@ -66,13 +66,13 @@ impl RepositoryOperations for GitOperations {
             .filter(|change| change.layer == ChangeLayer::GitUntracked)
         {
             let path = change.target.absolute_path();
-            let contents = std::fs::symlink_metadata(&path)
+            let counts = std::fs::symlink_metadata(&path)
                 .ok()
                 .filter(|metadata| metadata.is_file())
-                .and_then(|_| std::fs::read(&path).ok());
-            let counts = match contents {
-                Some(contents) => {
-                    let counts = crate::core::untracked_file_counts(&contents);
+                .and_then(|_| std::fs::File::open(&path).ok())
+                .and_then(|file| crate::core::untracked_file_counts(file).ok());
+            let counts = match counts {
+                Some(counts) => {
                     match counts {
                         Some((additions, _)) => {
                             untracked.additions =
