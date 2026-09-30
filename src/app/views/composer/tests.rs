@@ -165,10 +165,34 @@ fn queue_close_button_requires_owner_evidence_for_that_exact_row() {
 
 #[test]
 fn queued_message_preview_hides_multiline_payloads() {
-    assert_eq!(
-        queued_message_preview("inspect this\n\nPasted text files:\n- file.txt"),
-        "inspect this…"
-    );
+    for (message, expected) in [
+        (
+            "inspect this\n\nPasted text files:\n- file.txt",
+            "inspect this…",
+        ),
+        (" \r\n\t ", "Message"),
+        ("  سلام  \r\nmore\n", "سلام…"),
+        (" single line \n\t", "single line"),
+        (
+            "Message from Farcaster worker review:\n\n done \r\nmore",
+            "review:  done…",
+        ),
+        (
+            "Message from Farcaster peer worker-7:\n\nlegacy\n",
+            "worker-7: legacy",
+        ),
+        ("Message from Farcaster worker review:\n\n \t", "review:"),
+        (
+            "Message from Farcaster worker review:\n\n\nnext",
+            "review:…",
+        ),
+        (
+            "Message from Farcaster worker bad id:\n\nbody",
+            "Message from Farcaster worker bad id:…",
+        ),
+    ] {
+        assert_eq!(queued_message_preview(message), expected, "{message:?}");
+    }
 }
 
 #[test]

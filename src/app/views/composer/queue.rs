@@ -94,18 +94,33 @@ pub(super) fn queued_message_groups(
 }
 
 pub(super) fn queued_message_preview(message: &str) -> String {
-    let message = PeerMessage::from_prompt(message).map_or_else(
-        || message.to_owned(),
-        |peer| format!("{}: {}", peer.from, peer.message),
-    );
-    let message = message.trim();
-    if message.is_empty() {
+    let (from, message) = PeerMessage::prompt_parts(message)
+        .map_or((None, message.trim()), |(from, message)| {
+            (Some(from), message.trim_end())
+        });
+    if from.is_none() && message.is_empty() {
         return "Message".to_owned();
     }
-    match message.split_once(['\r', '\n']) {
-        Some((first, _)) => format!("{}…", first.trim_end()),
-        None => message.to_owned(),
+    let (first, multiline) = message
+        .split_once(['\r', '\n'])
+        .map_or((message, false), |(first, _)| (first.trim_end(), true));
+    let mut preview = String::with_capacity(
+        first.len()
+            + from.map_or(0, |from| from.len() + 1 + usize::from(!first.is_empty()))
+            + if multiline { '…'.len_utf8() } else { 0 },
+    );
+    if let Some(from) = from {
+        preview.push_str(from);
+        preview.push(':');
+        if !first.is_empty() {
+            preview.push(' ');
+        }
     }
+    preview.push_str(first);
+    if multiline {
+        preview.push('…');
+    }
+    preview
 }
 
 pub(super) fn saved_prompt_body(id: i64, text: &str) -> gpui::Stateful<gpui::Div> {

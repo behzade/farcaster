@@ -19,6 +19,13 @@ impl PeerMessage {
     }
 
     pub fn from_prompt(prompt: &str) -> Option<Self> {
+        Self::prompt_parts(prompt).map(|(from, message)| Self {
+            from: from.to_owned(),
+            message: message.to_owned(),
+        })
+    }
+
+    pub fn prompt_parts(prompt: &str) -> Option<(&str, &str)> {
         let (heading, message) = prompt.split_once("\n\n")?;
         let from = [Self::PROMPT_PREFIX, Self::LEGACY_PROMPT_PREFIX]
             .into_iter()
@@ -27,10 +34,7 @@ impl PeerMessage {
         if !valid_worker_name(from) {
             return None;
         }
-        Some(Self {
-            from: from.to_owned(),
-            message: message.to_owned(),
-        })
+        Some((from, message))
     }
 }
 
