@@ -1,5 +1,6 @@
-use std::collections::VecDeque;
+use std::{borrow::Cow, collections::VecDeque};
 
+use serde::Deserialize as _;
 use serde_json::{Value, json};
 
 use crate::{
@@ -34,20 +35,23 @@ impl Deliveries {
     }
 
     pub fn observe(&mut self, event: &Value) -> Option<SessionEvent> {
+        if self.is_empty() {
+            return None;
+        }
         let message = &event["message"];
         if message["role"] != "user" {
             return None;
         }
         let content = if let Some(text) = message["content"].as_str() {
-            json!([{"type":"text", "text":text}])
+            Cow::Owned(json!([{"type":"text", "text":text}]))
         } else {
-            message["content"].clone()
+            Cow::Borrowed(&message["content"])
         };
         let index = self
             .0
             .iter()
             .enumerate()
-            .filter(|(_, (_, _, pending))| pending == &content)
+            .filter(|(_, (_, _, pending))| pending == content.as_ref())
             .min_by_key(|(_, (_, mode, _))| match mode {
                 PromptMode::Normal => 0,
                 PromptMode::Steer => 1,
@@ -57,8 +61,7 @@ impl Deliveries {
         match event["type"].as_str()? {
             "message_start" => Some(SessionEvent::Stderr(String::new())),
             "message_end" => {
-                let mut message: crate::DeliveredMessage =
-                    serde_json::from_value(message.clone()).ok()?;
+                let mut message = crate::DeliveredMessage::deserialize(message).ok()?;
                 let (id, mode, _) = self.0.remove(index)?;
                 message.queued = mode != PromptMode::Normal;
                 message.delivery_tracked = true;
