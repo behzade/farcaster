@@ -648,6 +648,80 @@ fn permission_prompt_uses_only_the_matching_tool_input() {
 }
 
 #[test]
+fn tool_progress_keeps_cached_arguments_until_input_changes() {
+    let mut tool = ActiveOpenCodeTool {
+        name: "write".into(),
+        args: Some(json!({"path":"a.rs", "content":"x".repeat(4096)})),
+        native: json!({}),
+        ..Default::default()
+    };
+    let pointer = tool.args.as_ref().unwrap()["content"]
+        .as_str()
+        .unwrap()
+        .as_ptr();
+    let (args, metadata) = tool.update_progress(&json!({"metadata":{"title":"Writing"}}));
+    assert!(args.is_none());
+    assert_eq!(metadata.title.as_deref(), Some("Writing"));
+    assert_eq!(metadata.targets, ["a.rs"]);
+    assert_eq!(
+        tool.args.as_ref().unwrap()["content"]
+            .as_str()
+            .unwrap()
+            .as_ptr(),
+        pointer
+    );
+
+    let input = tool.args.clone().unwrap();
+    assert!(tool.update_progress(&json!({"input":input})).0.is_none());
+    assert_eq!(
+        tool.args.as_ref().unwrap()["content"]
+            .as_str()
+            .unwrap()
+            .as_ptr(),
+        pointer
+    );
+    let (args, metadata) =
+        tool.update_progress(&json!({"input":{"filePath":"b.rs", "content":"new"}}));
+    assert_eq!(args, Some(json!({"path":"b.rs", "content":"new"})));
+    assert_eq!(tool.args, args);
+    assert_eq!(metadata.targets, ["b.rs"]);
+}
+
+#[test]
+fn tool_progress_updates_file_patches_without_explicit_input() {
+    for field in ["metadata", "state"] {
+        let mut tool = ActiveOpenCodeTool {
+            name: "edit".into(),
+            args: Some(json!({"path":"a.rs", "oldText":"old", "newText":"new"})),
+            native: json!({}),
+            ..Default::default()
+        };
+        let metadata = json!({"files":[{"file":"a.rs", "patch":"@@ -1 +1 @@\n-old\n+new"}]});
+        let update = if field == "state" {
+            json!({"state":{"metadata":metadata}})
+        } else {
+            json!({"metadata":metadata})
+        };
+        let (args, metadata) = tool.update_progress(&update);
+        let args = args.expect("file metadata must update normalized arguments");
+        assert_eq!(args["changes"][0]["diff"], "@@ -1 +1 @@\n-old\n+new");
+        assert_eq!(metadata.targets, ["a.rs"]);
+        assert_eq!(tool.args.as_ref(), Some(&args));
+        assert!(tool.update_progress(&update).0.is_none());
+    }
+    let mut tool = ActiveOpenCodeTool {
+        name: "edit".into(),
+        args: Some(json!({"path":"a.rs"})),
+        native: json!({"state":{"metadata":{"files":[{"file":"a.rs", "patch":"fallback"}]}}}),
+        ..Default::default()
+    };
+    let _ =
+        tool.update_progress(&json!({"metadata":{"files":[{"file":"a.rs", "patch":"primary"}]}}));
+    let (args, _) = tool.update_progress(&json!({"metadata":null}));
+    assert_eq!(args.unwrap()["changes"][0]["diff"], "fallback");
+}
+
+#[test]
 fn permission_prompt_preserves_metadata_when_resources_are_vague() {
     let diff = "@@ -1 +1 @@\n-old\n+<new>&";
     let mut data = json!({

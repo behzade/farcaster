@@ -557,6 +557,39 @@ struct ActiveOpenCodeTool {
     started: bool,
 }
 
+impl ActiveOpenCodeTool {
+    fn update_progress(&mut self, update: &Value) -> (Option<Value>, crate::ToolMetadata) {
+        let files_updated =
+            |metadata: &Value| !metadata.is_object() || metadata.get("files").is_some();
+        let normalize_args = update
+            .get("input")
+            .is_some_and(|input| self.args.as_ref() != Some(input))
+            || update.get("metadata").is_some_and(files_updated)
+            || update.get("state").is_some_and(|state| {
+                !state.is_object() || state.get("metadata").is_some_and(files_updated)
+            });
+        merge_opencode_native(&mut self.native, update);
+        let args = normalize_args
+            .then(|| {
+                update
+                    .get("input")
+                    .or(self.args.as_ref())
+                    .map(|input| normalize_opencode_tool(&self.name, input, &self.native).1)
+            })
+            .flatten()
+            .filter(|args| self.args.as_ref() != Some(args));
+        if let Some(args) = &args {
+            self.args = Some(args.clone());
+        }
+        let metadata = opencode_tool_metadata(
+            &self.name,
+            self.args.as_ref().unwrap_or(&Value::Null),
+            self.native.clone(),
+        );
+        (args, metadata)
+    }
+}
+
 enum PendingOpenCodeInput {
     Permission {
         session_id: String,
@@ -1241,21 +1274,7 @@ impl OpenCodeWorkerSession {
                         continue;
                     };
                     let tool = self.active_tools.entry(id.clone()).or_default();
-                    merge_opencode_native(&mut tool.native, &event.data);
-                    let name = tool.name.as_str();
-                    let args = event
-                        .data
-                        .get("input")
-                        .or(tool.args.as_ref())
-                        .map(|input| normalize_opencode_tool(name, input, &tool.native).1);
-                    if let Some(args) = &args {
-                        tool.args = Some(args.clone());
-                    }
-                    let metadata = opencode_tool_metadata(
-                        name,
-                        args.as_ref().unwrap_or(&Value::Null),
-                        tool.native.clone(),
-                    );
+                    let (args, metadata) = tool.update_progress(&event.data);
                     self.pending
                         .push_back(WorkerEvent::Activity(WorkerActivity::ToolUpdated {
                             id: id.clone(),
