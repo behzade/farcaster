@@ -69,6 +69,7 @@ impl ConversationState {
         };
         let metadata = event
             .get("toolMetadata")
+            .filter(|metadata| !details.metadata.matches_value(metadata))
             .and_then(|metadata| serde_json::from_value(metadata.clone()).ok())
             .filter(|metadata| *metadata != details.metadata);
         let args = event.get("args");
