@@ -22,8 +22,8 @@ impl RepositoryOperations for GitOperations {
             ));
         }
         let mut file_counts = std::collections::BTreeMap::new();
-        let mut patch = Vec::new();
-        for staged in [true, false] {
+        let mut patches = [Vec::new(), Vec::new()];
+        for (patch, staged) in patches.iter_mut().zip([true, false]) {
             let mut arguments = [
                 "--no-pager",
                 "--no-optional-locks",
@@ -57,7 +57,7 @@ impl RepositoryOperations for GitOperations {
                     .into_iter()
                     .map(|(path, counts)| ((layer, path), counts)),
             );
-            patch.extend(output.stdout);
+            *patch = output.stdout;
         }
         let mut untracked = crate::core::UntrackedTotals::default();
         for change in snapshot
@@ -101,7 +101,7 @@ impl RepositoryOperations for GitOperations {
         Ok(crate::core::finish_working_copy_totals(
             snapshot,
             &file_counts,
-            &patch,
+            &[&patches[0], &patches[1]],
             untracked,
         ))
     }

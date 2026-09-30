@@ -38,7 +38,7 @@ pub(crate) struct UntrackedTotals {
 pub(crate) fn finish_working_copy_totals(
     snapshot: &mut WorkingCopySnapshot,
     file_counts: &BTreeMap<(ChangeLayer, PathBuf), Option<(usize, usize)>>,
-    patch: &[u8],
+    patches: &[&[u8]],
     untracked: UntrackedTotals,
 ) -> (Option<u64>, Option<u64>) {
     for change in &mut snapshot.changes {
@@ -50,7 +50,7 @@ pub(crate) fn finish_working_copy_totals(
     if untracked.binary {
         return (None, None);
     }
-    let (additions, deletions) = patch_counts(&String::from_utf8_lossy(patch));
+    let (additions, deletions) = patch_counts_many(patches);
     (
         additions.map(|additions| additions.saturating_add(untracked.additions)),
         deletions,
@@ -459,6 +459,29 @@ pub(super) fn patch_counts(patch: &str) -> (Option<u64>, Option<u64>) {
         } else if line.starts_with('-') {
             deletions = deletions.saturating_add(1);
         }
+    }
+    (Some(additions), Some(deletions))
+}
+
+fn patch_counts_many(patches: &[&[u8]]) -> (Option<u64>, Option<u64>) {
+    // A partial line can join a header or binary marker in the next output.
+    if patches
+        .iter()
+        .take(patches.len().saturating_sub(1))
+        .any(|patch| !patch.is_empty() && !patch.ends_with(b"\n"))
+    {
+        return patch_counts(&String::from_utf8_lossy(&patches.concat()));
+    }
+    let mut additions = 0_u64;
+    let mut deletions = 0_u64;
+    for patch in patches {
+        let (Some(next_additions), Some(next_deletions)) =
+            patch_counts(&String::from_utf8_lossy(patch))
+        else {
+            return (None, None);
+        };
+        additions = additions.saturating_add(next_additions);
+        deletions = deletions.saturating_add(next_deletions);
     }
     (Some(additions), Some(deletions))
 }

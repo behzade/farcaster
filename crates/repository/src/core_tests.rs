@@ -1,6 +1,41 @@
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[test]
+fn split_patch_counts_preserve_concatenated_semantics() {
+    let cases: &[&[u8]] = &[
+        b"",
+        b"+added\n-deleted\n",
+        b"+++ b/file\n--- a/file\n+++content\n---content\n",
+        b"+added\r\n-deleted",
+        b"GIT binary patch\nliteral 1\n",
+        b"+Binary files a and b differ\n",
+        b"Binary file x",
+        b"+\xf0\x9f\x99\x82\n-\xff",
+    ];
+    for bytes in cases {
+        let expected = patch_counts(&String::from_utf8_lossy(bytes));
+        for split in 0..=bytes.len() {
+            assert_eq!(
+                patch_counts_many(&[&bytes[..split], &[], &bytes[split..]]),
+                expected,
+                "split at {split}: {bytes:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn patch_totals_preserve_both_layers_and_binary_unknowns() {
+    let staged = b"--- a/file\n+++ b/file\n-removed\n+++content\n";
+    let working = b"--- a/file\n+++ b/file\n+added\n---content\n";
+    assert_eq!(patch_counts_many(&[staged, working]), (Some(1), Some(1)));
+    assert_eq!(
+        patch_counts_many(&[staged, b"Binary files a/blob and b/blob differ\n"]),
+        (None, None)
+    );
+}
+
 struct NoCommands;
 
 impl CommandExecutor for NoCommands {
