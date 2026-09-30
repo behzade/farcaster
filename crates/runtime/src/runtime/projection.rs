@@ -3,20 +3,35 @@ use super::*;
 use crate::agents::{SessionHistory, SessionResponsePayload as Payload};
 
 pub(super) fn stable_session_stats(previous: &Value, next: Value, running: bool) -> Value {
-    if !running || context_usage_is_meaningful(&next) {
-        return next;
-    }
+    let meaningful_context = context_usage_is_meaningful(&next);
     let mut next = match next {
         Value::Object(next) => next,
+        Value::Null => return previous.clone(),
         other => return other,
     };
-    if let Some(context) = previous
-        .get("contextUsage")
-        .filter(|_| context_usage_is_meaningful(previous))
-    {
-        next.insert("contextUsage".into(), context.clone());
-    } else {
-        next.remove("contextUsage");
+    for key in ["tokens", "totalCost"] {
+        if !next.contains_key(key)
+            && let Some(value) = previous.get(key)
+        {
+            next.insert(key.into(), value.clone());
+        }
+    }
+    let context_known = next.get("contextUsage").is_some_and(|context| {
+        context.get("tokens").and_then(Value::as_u64).is_some()
+            || context
+                .get("percent")
+                .and_then(Value::as_f64)
+                .is_some_and(f64::is_finite)
+    });
+    if !context_known || (running && !meaningful_context) {
+        if let Some(context) = previous
+            .get("contextUsage")
+            .filter(|_| !running || context_usage_is_meaningful(previous))
+        {
+            next.insert("contextUsage".into(), context.clone());
+        } else {
+            next.remove("contextUsage");
+        }
     }
     Value::Object(next)
 }
@@ -374,6 +389,7 @@ impl RuntimeOwner {
                 }
                 snapshot.status = "Ready".into();
                 self.startup_state_loaded = true;
+                self.active_snapshot_mut().document_ready |= self.startup_history_loaded;
                 self.publish_session_metadata();
             }
             Payload::LoadHistory(history) => {
@@ -403,12 +419,19 @@ impl RuntimeOwner {
                             zlog::error!("Annotate prompt deliveries: {error}");
                         }
                     }
-                    conversation_mut(self.active_snapshot_mut()).replace_history(&messages);
+                    let previous_cache_hit_rate =
+                        self.active_snapshot().conversation.average_cache_hit_rate;
+                    let conversation = conversation_mut(self.active_snapshot_mut());
+                    conversation.replace_history(&messages);
+                    conversation.average_cache_hit_rate = conversation
+                        .average_cache_hit_rate
+                        .or(previous_cache_hit_rate);
                     if let Some(prompt) = &mut self.pending_prompt {
                         prompt.item = None;
                     }
                 }
                 self.startup_history_loaded = true;
+                self.active_snapshot_mut().document_ready |= self.startup_state_loaded;
                 self.publish_session_metadata();
             }
             Payload::ListModels(models) => self.active_snapshot_mut().models = models,
@@ -423,8 +446,25 @@ impl RuntimeOwner {
             Payload::LoadUsage(usage) => {
                 let running = self.active_snapshot().conversation.running;
                 let previous = self.active_snapshot().stats.clone();
+                let resuming = self.resumed_usage_pending;
+                let mut next = json!(usage);
+                if usage.tokens.total_tokens > 0 || context_usage_is_meaningful(&next) {
+                    self.resumed_usage_pending = false;
+                }
+                if resuming
+                    && usage.tokens.total_tokens == 0
+                    && previous
+                        .pointer("/tokens/totalTokens")
+                        .and_then(Value::as_u64)
+                        .is_some_and(|total| total > 0)
+                {
+                    next["tokens"] = previous["tokens"].clone();
+                    if let Some(cost) = previous.get("totalCost") {
+                        next["totalCost"] = cost.clone();
+                    }
+                }
                 self.active_snapshot_mut().stats =
-                    stable_session_stats(&previous, json!(usage), running);
+                    stable_session_stats(&previous, next, running || resuming);
                 self.publish_session_metadata();
             }
             Payload::ListCommands(commands) => self.active_snapshot_mut().commands = commands,
@@ -495,7 +535,7 @@ pub(super) fn update_session_goal_from_event(
 }
 
 pub(super) fn update_account_usage_from_event(
-    usage: &mut crate::agents::AccountUsage,
+    snapshot: &mut RuntimeSnapshot,
     kind: &SessionActivityKind,
     event: &Value,
 ) -> bool {
@@ -508,10 +548,8 @@ pub(super) fn update_account_usage_from_event(
     let Ok(updated) = serde_json::from_value::<crate::agents::AccountUsage>(value.clone()) else {
         return false;
     };
-    if *usage == updated {
-        return false;
-    }
-    *usage = updated;
+    snapshot.account_usage = updated;
+    snapshot.account_usage_observed_at = Some(Instant::now());
     true
 }
 

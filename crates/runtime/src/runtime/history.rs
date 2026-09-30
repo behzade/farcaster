@@ -24,14 +24,14 @@ impl RuntimeOwner {
         let _timing = self.host.timer(RuntimeMetric::SelectDocument);
         self.history_generation = self.history_generation.saturating_add(1);
         self.pending_document_refresh = None;
-        if self.covers_live_session(&path) {
+        if self.covers_resident_session(&path) {
             if !self.showing_live_session(&path) {
                 self.restore_live_session(project);
             }
             return;
         }
         if self.snapshot.selected_session.as_deref() == Some(path.as_path())
-            && (self.snapshot.history_preview || self.process.is_some())
+            && self.snapshot.document_ready
         {
             return;
         }
@@ -40,9 +40,11 @@ impl RuntimeOwner {
         }
     }
 
-    fn covers_live_session(&self, path: &std::path::Path) -> bool {
+    fn covers_resident_session(&self, path: &std::path::Path) -> bool {
         self.active_session.as_deref() == Some(path)
-            && (self.process.is_some() || self.parked_snapshot.is_some())
+            && (self.process.is_some()
+                || self.parked_snapshot.is_some()
+                || self.snapshot.document_ready)
     }
 
     fn showing_live_session(&self, path: &std::path::Path) -> bool {
@@ -72,6 +74,7 @@ impl RuntimeOwner {
     }
 
     fn bind_history_selection(&mut self, path: PathBuf, project: PathBuf) -> bool {
+        let previous_harness = self.harness;
         let profile_id = match configuration_for_target(
             &self.process_command,
             self.state.as_ref(),
@@ -95,8 +98,15 @@ impl RuntimeOwner {
         self.project = project.clone();
         self.snapshot.project = project;
         self.snapshot.selected_session = Some(path);
+        if previous_harness != self.harness || self.snapshot.profile_id != profile_id {
+            self.snapshot.account_usage = Default::default();
+            self.snapshot.account_usage_observed_at = None;
+        }
         self.snapshot.profile_id = profile_id;
         self.snapshot.status = "Loading history".into();
+        self.snapshot.document_ready = false;
+        self.snapshot.stats = Value::Null;
+        self.snapshot.session = None;
         self.snapshot.conversation = Default::default();
         self.transcript_changed_from = Some(0);
         self.publish();
@@ -235,7 +245,9 @@ impl RuntimeOwner {
             self.start_pending_document_refresh();
             return;
         }
-        if self.covers_live_session(&result.path) {
+        if (result.kind == HistoryLoadKind::Selection && self.covers_resident_session(&result.path))
+            || (self.active_session.as_ref() == Some(&result.path) && self.process.is_some())
+        {
             self.start_pending_document_refresh();
             return;
         }
@@ -252,9 +264,10 @@ impl RuntimeOwner {
             }
         };
         self.bind_external_session_identity(&result.path);
-        let refreshing_visible_history = result.kind == HistoryLoadKind::DocumentRefresh
-            && self.snapshot.history_preview
+        let same_document = self.snapshot.document_ready
             && self.snapshot.selected_session.as_ref() == Some(&result.path);
+        let refreshing_visible_history =
+            result.kind == HistoryLoadKind::DocumentRefresh && same_document;
         let mut history = match result.result {
             Ok(history) => history,
             Err(error) => {
@@ -286,33 +299,69 @@ impl RuntimeOwner {
                 zlog::error!("Annotate saved prompt deliveries: {error}");
             }
         }
-        if self.parked_snapshot.is_none() {
+        if self.parked_snapshot.is_none() && !same_document {
             self.parked_snapshot = Some(std::mem::take(&mut self.snapshot));
         }
         self.project = result.project.clone();
-        let parked = self.parked_snapshot.as_ref();
-        let auto_retry = parked.is_some_and(|snapshot| snapshot.auto_retry);
-        let models = parked
-            .map(|snapshot| snapshot.models.clone())
-            .unwrap_or_default();
-        let stats = historical_context_stats(&history.messages, &models);
+        let previous = if same_document {
+            &self.snapshot
+        } else {
+            self.parked_snapshot.as_ref().unwrap_or(&self.snapshot)
+        };
+        let auto_retry = previous.auto_retry;
+        let models = previous.models.clone();
+        let history_stats = historical_context_stats(&history.messages, &models);
+        let stats = if same_document {
+            projection::stable_session_stats(&previous.stats, history_stats, false)
+        } else {
+            history_stats
+        };
+        let account_matches = previous.harness == self.harness && previous.profile_id == profile_id;
+        let account_usage = if account_matches {
+            previous.account_usage.clone()
+        } else {
+            Default::default()
+        };
+        let account_usage_observed_at = previous
+            .account_usage_observed_at
+            .filter(|_| account_matches);
+        let mut session = previous.session.as_ref().filter(|_| same_document).cloned();
+        let history_preview = !same_document || previous.history_preview;
+        let cache_hit_rate = previous
+            .conversation
+            .average_cache_hit_rate
+            .filter(|_| same_document);
         let prefill_model =
             HarnessConfigurationStore::history_model(&models, history.model.as_ref());
+        if let Some(session) = &mut session {
+            if let Some(model) = &prefill_model {
+                session.model = Some(model.clone());
+            }
+            if let Some(effort) = &history.thinking_level {
+                session.thinking_level = Some(effort.clone());
+            }
+        }
         let mut conversation = ConversationState::default();
         conversation.replace_history(&history.messages);
+        conversation.average_cache_hit_rate =
+            conversation.average_cache_hit_rate.or(cache_hit_rate);
         drop(projection);
         self.transcript_changed_from = Some(0);
         self.snapshot = RuntimeSnapshot {
             profile_id,
-            connected: true,
+            connected: false,
+            document_ready: true,
             status: "Ready".into(),
             project: result.project,
             selected_session: Some(result.path),
             conversation: Arc::new(conversation),
             models,
             stats,
+            session,
+            account_usage,
+            account_usage_observed_at,
             auto_retry,
-            history_preview: true,
+            history_preview,
             pending_question: history.pending_question.map(restored_question_request),
             prefill_model,
             prefill_thinking_level: history.thinking_level,
@@ -334,7 +383,7 @@ impl RuntimeOwner {
             return;
         }
         if let Some((path, project)) = self.pending_document_refresh.take()
-            && self.snapshot.history_preview
+            && self.snapshot.document_ready
             && self.snapshot.selected_session.as_ref() == Some(&path)
         {
             self.refresh_session_document(path, project);

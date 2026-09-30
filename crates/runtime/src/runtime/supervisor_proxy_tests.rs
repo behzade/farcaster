@@ -64,6 +64,7 @@ fn test_supervisor(
     let (_, configuration_rx) = mpsc::channel();
     (
         Supervisor {
+            account_usage: HashMap::new(),
             host: crate::test_support::host(),
             process_command,
             command_rx,

@@ -183,6 +183,7 @@ fn supervisor_for_family(
     let (_, configuration_rx) = mpsc::channel();
     (
         Supervisor {
+            account_usage: HashMap::new(),
             host: crate::test_support::host(),
             process_command: AgentLaunchConfig::default(),
             command_rx,

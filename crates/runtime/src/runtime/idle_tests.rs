@@ -50,7 +50,42 @@ fn ready_owner() -> (RuntimeOwner, Rc<Cell<usize>>) {
     );
     owner.startup_state_loaded = true;
     owner.startup_history_loaded = true;
+    owner.snapshot.document_ready = true;
     (owner, closes)
+}
+
+#[test]
+fn retired_session_selection_reuses_transcript_and_metrics_without_loading_history() {
+    let (mut owner, closes) = ready_owner();
+    owner.snapshot.harness = owner.harness;
+    owner.snapshot.stats = json!({
+        "tokens": {"input": 100, "output": 20, "cacheRead": 10, "cacheWrite": 0, "totalTokens": 130},
+        "contextUsage": {"tokens": 130, "contextWindow": 1000, "percent": 13.0}
+    });
+    owner.snapshot.account_usage.weekly = Some(agents::AccountUsageWindow {
+        remaining_percent: 68.0,
+        resets_at: Some(1234),
+    });
+    conversation_mut(&mut owner.snapshot)
+        .replace_history(&[json!({"role": "assistant", "content": "kept"})]);
+    let previous = owner.snapshot.clone();
+    owner.apply_command(RuntimeCommand::SystemWake);
+    assert_eq!(closes.get(), 1);
+    assert!(owner.process.is_none());
+    assert!(!owner.snapshot.connected);
+    owner.select_history(
+        owner.active_session.clone().expect("active session"),
+        owner.project.clone(),
+    );
+    assert!(owner.snapshot.document_ready);
+    assert!(Arc::ptr_eq(
+        &owner.snapshot.conversation,
+        &previous.conversation
+    ));
+    assert_eq!(owner.snapshot.stats, previous.stats);
+    assert_eq!(owner.snapshot.account_usage, previous.account_usage);
+    assert!(owner.history_selection_generation.is_none());
+    assert!(owner.process.is_none());
 }
 
 #[test]

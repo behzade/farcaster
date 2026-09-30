@@ -7,7 +7,7 @@ use crate::runtime::tests::owner_without_process;
 
 #[test]
 fn account_usage_event_updates_the_runtime_snapshot() {
-    let mut usage = crate::agents::AccountUsage::default();
+    let mut snapshot = RuntimeSnapshot::default();
     let event = json!({
         "type": "account_usage_changed",
         "usage": {
@@ -19,11 +19,81 @@ fn account_usage_event_updates_the_runtime_snapshot() {
     });
 
     assert!(update_account_usage_from_event(
-        &mut usage,
+        &mut snapshot,
         &SessionActivityKind::AccountUsageChanged,
         &event,
     ));
-    assert_eq!(usage.weekly.unwrap().remaining_percent, 68.0);
+    assert_eq!(
+        snapshot
+            .account_usage
+            .weekly
+            .expect("fixture value")
+            .remaining_percent,
+        68.0
+    );
+    assert!(snapshot.account_usage_observed_at.is_some());
+}
+
+#[test]
+fn missing_usage_preserves_known_metrics() {
+    let previous = json!({
+        "tokens": {"input": 100, "output": 20, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 120},
+        "totalCost": 0.5,
+        "contextUsage": {"tokens": 120, "contextWindow": 1000, "percent": 12.0}
+    });
+    assert_eq!(
+        stable_session_stats(&previous, Value::Null, false),
+        previous
+    );
+    assert_eq!(stable_session_stats(&previous, json!({}), false), previous);
+    assert_eq!(
+        stable_session_stats(
+            &previous,
+            json!({"contextUsage": {
+                "tokens": null, "contextWindow": 0, "percent": null
+            }}),
+            false
+        ),
+        previous
+    );
+}
+
+#[test]
+fn startup_usage_keeps_saved_metrics_until_a_fresh_report_arrives() {
+    let (mut owner, _) = owner_without_process(std::env::temp_dir());
+    owner.resumed_usage_pending = true;
+    owner.snapshot.stats = json!({
+        "tokens": {"input": 100, "output": 20, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 120},
+        "contextUsage": {"tokens": 120, "contextWindow": 1000, "percent": 12.0}
+    });
+    let report = |tokens, context| {
+        serde_json::from_value(json!({
+            "tokens": {"input": tokens, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": tokens},
+            "contextUsage": {"tokens": context, "contextWindow": 1000, "percent": context as f64 / 10.0}
+        })).expect("fixture value")
+    };
+    let previous = owner.snapshot.stats.clone();
+    owner.apply_response(SessionResponse::success(
+        None,
+        Payload::LoadUsage(report(0, 0)),
+    ));
+    assert_eq!(owner.snapshot.stats, previous);
+    owner.apply_response(SessionResponse::success(
+        None,
+        Payload::LoadUsage(report(0, 0)),
+    ));
+    assert_eq!(owner.snapshot.stats, previous);
+    owner.apply_response(SessionResponse::success(
+        None,
+        Payload::LoadUsage(report(200, 50)),
+    ));
+    assert_eq!(owner.snapshot.stats["tokens"]["totalTokens"], 200);
+    assert_eq!(owner.snapshot.stats["contextUsage"]["tokens"], 50);
+    owner.apply_response(SessionResponse::success(
+        None,
+        Payload::LoadUsage(report(200, 0)),
+    ));
+    assert_eq!(owner.snapshot.stats["contextUsage"]["tokens"], 0);
 }
 
 #[test]

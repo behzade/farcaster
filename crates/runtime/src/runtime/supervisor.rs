@@ -414,6 +414,7 @@ struct Supervisor {
     selected_session: Option<PathBuf>,
     generation: u64,
     latest: HashMap<String, Arc<RuntimeSnapshot>>,
+    account_usage: HashMap<(Backend, Option<String>), (Instant, crate::agents::AccountUsage)>,
     catalog_sessions: Vec<SessionSummary>,
     catalog_generation: u64,
     actor_paths: HashMap<PathBuf, String>,
@@ -613,6 +614,7 @@ impl Supervisor {
             selected_session,
             generation,
             latest,
+            account_usage: HashMap::new(),
             catalog_sessions,
             catalog_generation,
             actor_paths,
@@ -781,7 +783,7 @@ pub(super) fn target_command_needs_actor_message(
             harness, project, ..
         } => snapshot.harness != *harness || snapshot.project != *project,
         RuntimeCommand::SelectSession { harness, .. } => {
-            snapshot.harness != Some(*harness) || (!snapshot.connected && !snapshot.history_preview)
+            snapshot.harness != Some(*harness) || !snapshot.document_ready
         }
         _ => true,
     }

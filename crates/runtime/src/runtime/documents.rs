@@ -35,7 +35,11 @@ pub(super) fn reconcile_live_session_documents(
         }
         live_keys.insert(key.clone());
         let revision = (session.modified, session.message_count);
-        if revisions.get(&session.path) == Some(&revision) || rpc_attached {
+        if rpc_attached {
+            revisions.insert(session.path.clone(), revision);
+            continue;
+        }
+        if revisions.get(&session.path) == Some(&revision) {
             continue;
         }
         revisions.insert(session.path.clone(), revision);

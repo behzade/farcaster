@@ -118,6 +118,7 @@ impl RuntimeOwner {
         self.parked_snapshot = None;
         self.startup_state_loaded = false;
         self.startup_history_loaded = false;
+        self.resumed_usage_pending = false;
         self.normal_prompt_in_flight = false;
         self.invalidate_auto_title_generation();
         self.title_generation.new_session = false;
@@ -151,6 +152,20 @@ impl RuntimeOwner {
             || self.deferred_prompt().is_some()
             || !self.queued_prompts.is_empty()
             || (!self.pending_session_controls.is_empty() && self.snapshot.history_preview);
+        let resume_document = fork.is_none()
+            && session.is_some()
+            && self.snapshot.selected_session == session
+            && self.snapshot.document_ready;
+        let preserved_stats = resume_document.then(|| self.snapshot.stats.clone());
+        let preserved_account_usage = (self.snapshot.harness == self.harness
+            && self.snapshot.profile_id == self.process_command.profile_id)
+            .then(|| {
+                (
+                    self.snapshot.account_usage.clone(),
+                    self.snapshot.account_usage_observed_at,
+                )
+            });
+        let preserve_transcript = preserve_transcript || resume_document;
         let keep_preview = preserve_transcript && self.snapshot.history_preview;
         let preserved_conversation =
             (preserve_transcript && !keep_preview).then(|| self.snapshot.conversation.clone());
@@ -250,6 +265,17 @@ impl RuntimeOwner {
             }
         }
         self.active_snapshot_mut().profile_id = self.process_command.profile_id.clone();
+        if let Some(stats) = preserved_stats {
+            self.resumed_usage_pending = true;
+            let snapshot = self.active_snapshot_mut();
+            snapshot.stats = stats;
+            snapshot.document_ready = true;
+        }
+        if let Some((usage, observed_at)) = preserved_account_usage {
+            let snapshot = self.active_snapshot_mut();
+            snapshot.account_usage = usage;
+            snapshot.account_usage_observed_at = observed_at;
+        }
         if let Some((
             models,
             thinking_levels,
@@ -404,6 +430,12 @@ impl RuntimeOwner {
             }
             SessionEvent::Interaction(request) => self.apply_interaction(request),
             SessionEvent::Activity(event) => {
+                if matches!(
+                    event.kind(),
+                    SessionActivityKind::AgentStarted | SessionActivityKind::CompactionStarted
+                ) {
+                    self.resumed_usage_pending = false;
+                }
                 if event.kind() == &SessionActivityKind::PromptDelivery {
                     let Some(delivery) = event.prompt_delivery() else {
                         zlog::warn!("Ignoring malformed prompt delivery event");
@@ -453,11 +485,8 @@ impl RuntimeOwner {
                         event.kind(),
                         event.value(),
                     );
-                    let account_usage_changed = update_account_usage_from_event(
-                        &mut snapshot.account_usage,
-                        event.kind(),
-                        event.value(),
-                    );
+                    let account_usage_changed =
+                        update_account_usage_from_event(snapshot, event.kind(), event.value());
                     let status = run_status(&snapshot.conversation);
                     let status_changed = snapshot.status != status;
                     snapshot.status = status.to_owned();

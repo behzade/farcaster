@@ -3,6 +3,52 @@ use crate::agents::Backend;
 use std::path::Path;
 
 impl Supervisor {
+    pub(super) fn restore_account_usage(&self, snapshot: &mut RuntimeSnapshot) {
+        let Some(harness) = snapshot.harness else {
+            return;
+        };
+        if let Some((observed_at, usage)) = self
+            .account_usage
+            .get(&(harness, snapshot.profile_id.clone()))
+        {
+            snapshot.account_usage.clone_from(usage);
+            snapshot.account_usage_observed_at = Some(*observed_at);
+        }
+    }
+
+    fn reconcile_account_usage(&mut self, source: &str, snapshot: &mut RuntimeSnapshot) {
+        let Some(harness) = snapshot.harness else {
+            return;
+        };
+        let scope = (harness, snapshot.profile_id.clone());
+        if let Some(observed_at) = snapshot.account_usage_observed_at
+            && self
+                .account_usage
+                .get(&scope)
+                .is_none_or(|(previous, _)| observed_at > *previous)
+        {
+            self.account_usage
+                .insert(scope.clone(), (observed_at, snapshot.account_usage.clone()));
+            for (key, resident) in &mut self.latest {
+                if key != source
+                    && resident.harness == Some(harness)
+                    && resident.profile_id == scope.1
+                {
+                    let updated = Arc::make_mut(resident);
+                    updated.account_usage.clone_from(&snapshot.account_usage);
+                    updated.account_usage_observed_at = Some(observed_at);
+                    if key == &self.selected {
+                        let _ = self.event_tx.send(RuntimeEvent::Snapshot {
+                            generation: self.generation,
+                            snapshot: resident.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        self.restore_account_usage(snapshot);
+    }
+
     pub(super) fn drain_configuration_updates(&mut self) {
         while let Ok((harness, profile_id, project, result)) = self.configuration_rx.try_recv() {
             match result {
@@ -172,6 +218,7 @@ impl Supervisor {
                 let identity_changed = self
                     .configurations
                     .reconcile_snapshot(Arc::make_mut(&mut snapshot), adopts_identity);
+                self.reconcile_account_usage(&key, Arc::make_mut(&mut snapshot));
                 if identity_changed {
                     persist_configurations(self.catalog_state.as_ref(), &self.configurations);
                 }

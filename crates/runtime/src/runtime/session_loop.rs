@@ -55,6 +55,7 @@ pub(super) fn run(
         access_mode_changes: AccessModeChangeState::default(),
         startup_state_loaded: false,
         startup_history_loaded: false,
+        resumed_usage_pending: false,
         state,
         session_query: String::new(),
     };

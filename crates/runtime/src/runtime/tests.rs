@@ -151,6 +151,7 @@ pub(super) fn owner_without_process(
             access_mode_changes: AccessModeChangeState::default(),
             startup_state_loaded: false,
             startup_history_loaded: false,
+            resumed_usage_pending: false,
             state: None,
             session_query: String::new(),
         },
@@ -348,6 +349,7 @@ fn model_switch_gates_prompts_and_recovers_after_rejection() {
 
 fn preview_history(owner: &mut RuntimeOwner, session: PathBuf, message: &str) {
     owner.snapshot.history_preview = true;
+    owner.snapshot.document_ready = true;
     owner.snapshot.selected_session = Some(session);
     conversation_mut(&mut owner.snapshot).replace_history(&[json!({
         "role": "user",
@@ -1052,6 +1054,7 @@ fn selecting_a_resident_document_does_not_reload_or_message_its_actor() {
     };
     let history = RuntimeSnapshot {
         connected: false,
+        document_ready: true,
         history_preview: true,
         harness: Some(Backend::Pi),
         ..RuntimeSnapshot::default()
@@ -2404,6 +2407,15 @@ fn selecting_from_an_idle_session_does_not_start_pi() {
     let (mut owner, events) = owner_without_process(old_project);
     owner.active_session = Some(old_path.clone());
     owner.snapshot.selected_session = Some(old_path.clone());
+    owner.snapshot.document_ready = true;
+    owner.snapshot.stats = json!({"contextUsage": {"tokens": 100}});
+    owner.snapshot.session = Some(
+        serde_json::from_value(json!({
+            "isStreaming": false, "isCompacting": false, "sessionId": "old",
+            "autoCompactionEnabled": true, "messageCount": 1, "pendingMessageCount": 0
+        }))
+        .expect("saved session state"),
+    );
     owner.process_generation = 4;
 
     owner.select_history(new_path, new_project);
@@ -2411,6 +2423,9 @@ fn selecting_from_an_idle_session_does_not_start_pi() {
     assert_eq!(owner.process_generation, 4);
     assert_eq!(owner.active_session, Some(old_path));
     assert!(owner.process.is_none());
+    assert!(!owner.snapshot.document_ready);
+    assert_eq!(owner.snapshot.stats, Value::Null);
+    assert!(owner.snapshot.session.is_none());
     assert!(
         events
             .try_iter()
@@ -2649,6 +2664,7 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
         access_mode_changes: AccessModeChangeState::default(),
         startup_state_loaded: true,
         startup_history_loaded: true,
+        resumed_usage_pending: false,
         state: None,
         session_query: String::new(),
     };

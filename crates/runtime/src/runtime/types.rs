@@ -257,6 +257,8 @@ pub enum ConfigurationStatus {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RuntimeSnapshot {
     pub connected: bool,
+    /// A complete session document can remain ready without a running harness.
+    pub document_ready: bool,
     pub status: String,
     pub harness: Option<Backend>,
     pub profile_id: Option<String>,
@@ -280,6 +282,8 @@ pub struct RuntimeSnapshot {
     pub selected_mode: Option<String>,
     pub session_goal: Option<crate::agents::SessionGoal>,
     pub account_usage: crate::agents::AccountUsage,
+    /// Set only for backend reports, so cached sessions cannot replace newer account usage.
+    pub account_usage_observed_at: Option<Instant>,
     pub stats: Value,
     pub commands: Vec<SlashCommand>,
     pub stderr: String,

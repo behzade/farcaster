@@ -36,6 +36,7 @@ impl SupervisorFixture {
                         ..RuntimeSnapshot::default()
                     }),
                 )]),
+                account_usage: HashMap::new(),
                 catalog_sessions: Vec::new(),
                 catalog_generation: 0,
                 actor_paths: HashMap::new(),
@@ -126,6 +127,222 @@ fn catalog_session(path: &Path, project: &Path, running: bool) -> crate::session
         running,
         String::new(),
     )
+}
+
+#[test]
+fn selecting_a_retired_session_publishes_the_retained_document_without_actor_commands() {
+    let project = PathBuf::from("/project");
+    let path = PathBuf::from("/sessions/retired.jsonl");
+    let key = format!("session:{}", path.display());
+    let mut fixture = SupervisorFixture::new("session:b", project.clone(), None);
+    let actor = fixture.add_recording_actor(&key);
+    let mut conversation = ConversationState::default();
+    conversation.replace_history(&[json!({"role": "assistant", "content": "retained"})]);
+    let conversation = Arc::new(conversation);
+    let stats = json!({"contextUsage": {"tokens": 100, "contextWindow": 1000, "percent": 10.0}});
+    fixture.supervisor.latest.insert(
+        key.clone(),
+        Arc::new(RuntimeSnapshot {
+            harness: Some(Backend::Pi),
+            project: project.clone(),
+            selected_session: Some(path.clone()),
+            live_session: Some(path.clone()),
+            document_ready: true,
+            conversation: conversation.clone(),
+            stats: stats.clone(),
+            ..RuntimeSnapshot::default()
+        }),
+    );
+    fixture
+        .commands
+        .send(RuntimeCommand::SelectSession {
+            path,
+            harness: Backend::Pi,
+            session_id: "retired".into(),
+            project,
+        })
+        .expect("fixture value");
+    assert!(fixture.supervisor.process_next_command());
+    let displayed = fixture
+        .drain()
+        .into_iter()
+        .find_map(|event| match event {
+            RuntimeEvent::Snapshot { snapshot, .. } => Some(snapshot),
+            _ => None,
+        })
+        .expect("cached document published");
+    assert!(Arc::ptr_eq(&displayed.conversation, &conversation));
+    assert_eq!(displayed.stats, stats);
+    assert!(!displayed.connected);
+    fixture.supervisor.actors[&key].send(RuntimeCommand::SystemWake);
+    assert!(matches!(
+        actor.recv_timeout(Duration::from_secs(1)),
+        Ok(RuntimeCommand::SystemWake)
+    ));
+    assert_eq!(fixture.supervisor.selected, key);
+}
+
+#[test]
+fn retirement_refreshes_history_only_when_the_document_revision_changes() {
+    let project = PathBuf::from("/project");
+    let path = PathBuf::from("/sessions/retired.jsonl");
+    let key = format!("session:{}", path.display());
+    let mut fixture = SupervisorFixture::new(&key, project.clone(), None);
+    let actor = fixture.add_recording_actor(&key);
+    fixture.supervisor.interacted.insert(key.clone());
+    fixture.supervisor.latest.insert(
+        key.clone(),
+        Arc::new(RuntimeSnapshot {
+            harness: Some(Backend::Pi),
+            project: project.clone(),
+            selected_session: Some(path.clone()),
+            live_session: Some(path.clone()),
+            connected: true,
+            document_ready: true,
+            ..RuntimeSnapshot::default()
+        }),
+    );
+    let mut session = catalog_session(&path, &project, false);
+    let reconcile = |fixture: &mut SupervisorFixture, session: &SessionSummary| {
+        let supervisor = &mut fixture.supervisor;
+        reconcile_live_session_documents(
+            std::slice::from_ref(session),
+            &supervisor.interacted,
+            &supervisor.selected,
+            &mut supervisor.actors,
+            &mut supervisor.latest,
+            &mut supervisor.last_touch,
+            &mut supervisor.document_revisions,
+            &mut supervisor.actor_paths,
+            &supervisor.process_command,
+            &supervisor.supervisor_thread,
+            &supervisor.host,
+        );
+    };
+    reconcile(&mut fixture, &session);
+    Arc::make_mut(
+        fixture
+            .supervisor
+            .latest
+            .get_mut(&key)
+            .expect("fixture value"),
+    )
+    .connected = false;
+    reconcile(&mut fixture, &session);
+    fixture.supervisor.actors[&key].send(RuntimeCommand::SystemWake);
+    assert!(matches!(
+        actor.recv_timeout(Duration::from_secs(1)),
+        Ok(RuntimeCommand::SystemWake)
+    ));
+    session.message_count += 1;
+    reconcile(&mut fixture, &session);
+    assert!(matches!(actor.recv_timeout(Duration::from_secs(1)),
+        Ok(RuntimeCommand::RefreshSessionDocument { path: refreshed, .. }) if refreshed == path));
+}
+
+#[test]
+fn account_usage_follows_the_profile_and_newest_observation_across_sessions() {
+    let mut fixture = SupervisorFixture::new("selected", PathBuf::from("/project"), None);
+    let selected = Arc::make_mut(
+        fixture
+            .supervisor
+            .latest
+            .get_mut("selected")
+            .expect("fixture value"),
+    );
+    selected.harness = Some(Backend::Codex);
+    selected.profile_id = Some("one".into());
+    let initial = Instant::now();
+    let snapshot = |harness, profile: &str, observed_at, remaining: Option<f64>| {
+        Arc::new(RuntimeSnapshot {
+            harness: Some(harness),
+            profile_id: Some(profile.into()),
+            account_usage_observed_at: observed_at,
+            account_usage: agents::AccountUsage {
+                weekly: remaining.map(|remaining_percent| agents::AccountUsageWindow {
+                    remaining_percent,
+                    resets_at: Some(1234),
+                }),
+            },
+            ..RuntimeSnapshot::default()
+        })
+    };
+    let send = |fixture: &mut SupervisorFixture, key: &str, snapshot| {
+        fixture.supervisor.handle_actor_event(
+            key.into(),
+            RuntimeEvent::Snapshot {
+                generation: 0,
+                snapshot,
+            },
+        )
+    };
+    send(
+        &mut fixture,
+        "older",
+        snapshot(Backend::Codex, "one", Some(initial), Some(68.0)),
+    );
+    assert!(fixture.drain().iter().any(|event| matches!(event,
+        RuntimeEvent::Snapshot { snapshot, .. } if snapshot.account_usage.weekly.is_some_and(|window| window.remaining_percent == 68.0)
+    )));
+    send(
+        &mut fixture,
+        "newer",
+        snapshot(
+            Backend::Codex,
+            "one",
+            Some(initial + Duration::from_secs(1)),
+            Some(60.0),
+        ),
+    );
+    send(
+        &mut fixture,
+        "older",
+        snapshot(Backend::Codex, "one", Some(initial), Some(68.0)),
+    );
+    send(
+        &mut fixture,
+        "unknown",
+        snapshot(Backend::Codex, "one", None, None),
+    );
+    for key in ["selected", "older", "unknown"] {
+        assert_eq!(
+            fixture.supervisor.latest[key]
+                .account_usage
+                .weekly
+                .map(|window| window.remaining_percent),
+            Some(60.0),
+            "{key} must use the newest account report"
+        );
+    }
+    for (harness, profile) in [(Backend::Codex, "two"), (Backend::Claude, "one")] {
+        send(
+            &mut fixture,
+            "other",
+            snapshot(harness, profile, None, None),
+        );
+        assert!(
+            fixture.supervisor.latest["other"]
+                .account_usage
+                .weekly
+                .is_none()
+        );
+    }
+    send(
+        &mut fixture,
+        "newer",
+        snapshot(
+            Backend::Codex,
+            "one",
+            Some(initial + Duration::from_secs(2)),
+            None,
+        ),
+    );
+    assert!(
+        fixture.supervisor.latest["selected"]
+            .account_usage
+            .weekly
+            .is_none()
+    );
 }
 
 #[test]

@@ -5,6 +5,67 @@ const ONE_PIXEL_PNG: &str =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 #[test]
+fn background_refresh_updates_a_retired_document_without_losing_metrics() {
+    let project = PathBuf::from("/project");
+    let path = PathBuf::from("/sessions/retired.jsonl");
+    let (mut owner, events) = crate::runtime::tests::owner_without_process(project.clone());
+    owner.active_session = Some(path.clone());
+    owner.idle_retirement.retired = true;
+    owner.snapshot.harness = owner.harness;
+    owner.snapshot.connected = false;
+    owner.snapshot.document_ready = true;
+    owner.snapshot.selected_session = Some(path.clone());
+    owner.snapshot.stats = json!({
+        "tokens": {"input": 100, "output": 20, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 120},
+        "contextUsage": {"tokens": 120, "contextWindow": 1000, "percent": 12.0}
+    });
+    owner.snapshot.account_usage.weekly = Some(agents::AccountUsageWindow {
+        remaining_percent: 68.0,
+        resets_at: None,
+    });
+    owner.snapshot.account_usage_observed_at = Some(Instant::now());
+    conversation_mut(&mut owner.snapshot).average_cache_hit_rate = Some(30.0);
+    let previous = owner.snapshot.clone();
+    owner.apply_history(HistoryResult {
+        generation: owner.history_generation,
+        path: path.clone(),
+        project,
+        kind: HistoryLoadKind::DocumentRefresh,
+        result: Ok(LoadedHistory {
+            messages: vec![
+                json!({"role": "assistant", "content": [{"type": "text", "text": "new history"}]}),
+            ]
+            .into(),
+            model: None,
+            thinking_level: None,
+            pending_question: None,
+            prompt_deliveries: None,
+        }),
+    });
+    assert_eq!(owner.snapshot.conversation.items[0].text, "new history");
+    assert_eq!(owner.snapshot.stats, previous.stats);
+    assert_eq!(owner.snapshot.account_usage, previous.account_usage);
+    assert_eq!(
+        owner.snapshot.account_usage_observed_at,
+        previous.account_usage_observed_at
+    );
+    assert_eq!(
+        owner.snapshot.conversation.average_cache_hit_rate,
+        Some(30.0)
+    );
+    assert!(owner.snapshot.document_ready);
+    assert!(!owner.snapshot.connected);
+    assert!(!owner.snapshot.history_preview);
+    assert!(owner.parked_snapshot.is_none());
+    assert_eq!(owner.active_session, Some(path));
+    assert!(
+        !events
+            .try_iter()
+            .any(|event| matches!(event, RuntimeEvent::HistoryReset { .. }))
+    );
+}
+
+#[test]
 fn history_without_local_annotations_keeps_shared_messages() {
     let temp = tempfile::tempdir().expect("fixture");
     let store = StateStore::open_at(&temp.path().join("state.sqlite3")).expect("store");

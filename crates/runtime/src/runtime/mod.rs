@@ -135,6 +135,8 @@ struct RuntimeOwner {
     access_mode_changes: AccessModeChangeState,
     startup_state_loaded: bool,
     startup_history_loaded: bool,
+    /// Ignore empty transport defaults until resumed work or a usage report arrives.
+    resumed_usage_pending: bool,
     state: Option<SharedStateStore>,
     session_query: String,
 }
