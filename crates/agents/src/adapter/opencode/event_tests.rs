@@ -21,6 +21,32 @@ fn parses_native_data_only_envelope() -> Result<(), String> {
 }
 
 #[test]
+fn envelope_extraction_keeps_sse_precedence_and_unrecognized_envelopes() {
+    for data in [json!({"large":"payload"}), Value::Null] {
+        let input = format!(
+            "id: sse-id\nevent: sse-event\ndata: {}\n\n",
+            json!({"id":"native-id", "type":"native-type", "data":data})
+        );
+        let event = read_event(&mut Cursor::new(input)).unwrap().unwrap();
+        assert_eq!(event.id.as_deref(), Some("sse-id"));
+        assert_eq!(event.event.as_deref(), Some("sse-event"));
+        assert_eq!(event.data, data);
+    }
+    for envelope in [
+        json!({"type":"native-type"}),
+        json!({"type":42, "data":{"keep":"nested"}}),
+        json!({"data":null}),
+        json!([1, 2]),
+    ] {
+        let input = format!("data: {envelope}\n\n");
+        let event = read_event(&mut Cursor::new(input)).unwrap().unwrap();
+        assert!(event.id.is_none());
+        assert!(event.event.is_none());
+        assert_eq!(event.data, envelope);
+    }
+}
+
+#[test]
 fn reads_renamed_sessions_from_the_captured_native_stream() -> Result<(), String> {
     let input = b"data: {\"id\":\"evt_086002066001YblBJbai0du50R\",\"created\":1788954550374,\"type\":\"session.renamed\",\"location\":{\"directory\":\"/Users/behzad/Projects/personal/farcaster\"},\"data\":{\"sessionID\":\"ses_f7a01a4f4ffeN35QB351HErGTN\",\"title\":\"Second rename title\"},\"durable\":{\"aggregateID\":\"ses_f7a01a4f4ffeN35QB351HErGTN\",\"seq\":2,\"version\":1}}\n\n";
     let mut reader = BufReader::new(Cursor::new(input));

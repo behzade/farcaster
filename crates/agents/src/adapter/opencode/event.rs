@@ -62,21 +62,20 @@ pub fn read_event(reader: &mut impl BufRead) -> Result<Option<OpenCodeEvent>, St
 
     let data = data.join("\n");
     let mut data = serde_json::from_str(&data).unwrap_or(Value::String(data));
-    if let Value::Object(envelope) = &data {
-        let native_type = envelope.get("type").and_then(Value::as_str);
-        let native_data = envelope.get("data");
-        if let (Some(native_type), Some(native_data)) = (native_type, native_data) {
-            if id.is_none() {
-                id = envelope
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
-            }
-            if event.is_none() {
-                event = Some(native_type.to_owned());
-            }
-            data = native_data.clone();
+    if let Value::Object(envelope) = &mut data
+        && let Some(native_type) = envelope.get("type").and_then(Value::as_str)
+        && envelope.contains_key("data")
+    {
+        if id.is_none() {
+            id = envelope
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
         }
+        if event.is_none() {
+            event = Some(native_type.to_owned());
+        }
+        data = envelope.remove("data").unwrap_or(Value::Null);
     }
     Ok(Some(OpenCodeEvent { id, event, data }))
 }
