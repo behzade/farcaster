@@ -83,7 +83,7 @@ impl FarcasterApp {
             &self.composer.pending_submissions,
             self.composer.sessions.current_target(),
         );
-        let restored_receipts = self.snapshot.conversation.pending_receipts();
+        let restored_receipts = self.snapshot.conversation.pending_receipts_ref();
         let mention_query = file_mentions::query_at_cursor(
             &self.composer.input.read(cx).value(),
             self.composer.input.read(cx).cursor(),

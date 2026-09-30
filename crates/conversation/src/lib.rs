@@ -22,7 +22,7 @@ mod notices_tests;
 mod attachments;
 #[path = "conversation/delivery.rs"]
 mod delivery;
-pub use delivery::PendingReceipt;
+pub use delivery::{PendingReceipt, PendingReceiptRef};
 #[cfg(test)]
 #[path = "conversation/delivery_tests.rs"]
 mod delivery_tests;

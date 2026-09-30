@@ -1,4 +1,5 @@
 use super::*;
+use crate::conversation::PendingReceipt;
 use gpui::{Context, Render, px};
 
 struct QueueHarness {
@@ -13,7 +14,11 @@ impl Render for QueueHarness {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div().w(px(self.width)).children(render(
             &self.queue,
-            &self.receipts,
+            &self
+                .receipts
+                .iter()
+                .map(PendingReceipt::as_ref)
+                .collect::<Vec<_>>(),
             &self.target,
             Some(std::path::Path::new("/test/session")),
             self.app.clone(),

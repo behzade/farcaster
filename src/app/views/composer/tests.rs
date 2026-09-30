@@ -186,6 +186,9 @@ fn receipt_overlay_preserves_duplicate_occurrences_and_live_cancel_actions() {
         images: Default::default(),
         unknown: false,
     });
+    let receipts = receipts
+        .each_ref()
+        .map(crate::conversation::PendingReceipt::as_ref);
     let groups = super::queue::pending_message_groups(&queue, &receipts, false);
     assert_eq!(groups[0].1.len(), 2);
     assert_eq!(groups[0].1[0].id.map(String::as_str), Some("first"));

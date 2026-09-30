@@ -263,11 +263,7 @@ impl RuntimeOwner {
             self.idle_retirement.schedule(&*self.host, now);
             return;
         }
-        if !workers_idle
-            || !tools_idle
-            || !conversation.pending_receipts().is_empty()
-            || !inputs_idle
-        {
+        if !workers_idle || !tools_idle || conversation.has_pending_receipts() || !inputs_idle {
             self.idle_retirement.deadline = None;
             self.idle_retirement.blocked = true;
             return;

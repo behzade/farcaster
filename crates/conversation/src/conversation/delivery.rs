@@ -10,6 +10,27 @@ pub struct PendingReceipt {
     pub unknown: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PendingReceiptRef<'a> {
+    pub id: &'a String,
+    pub mode: Option<PromptMode>,
+    pub text: &'a String,
+    pub images: &'a Arc<Vec<Arc<EncodedImage>>>,
+    pub unknown: bool,
+}
+
+impl PendingReceipt {
+    pub fn as_ref(&self) -> PendingReceiptRef<'_> {
+        PendingReceiptRef {
+            id: &self.id,
+            mode: self.mode,
+            text: &self.text,
+            images: &self.images,
+            unknown: self.unknown,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct SubmittedUser {
     pub(super) item: Arc<TranscriptItem>,
@@ -40,6 +61,25 @@ impl ConversationState {
     }
 
     pub fn pending_receipts(&self) -> Vec<PendingReceipt> {
+        self.pending_receipts_ref()
+            .into_iter()
+            .map(|receipt| PendingReceipt {
+                id: receipt.id.clone(),
+                mode: receipt.mode,
+                text: receipt.text.clone(),
+                images: receipt.images.clone(),
+                unknown: receipt.unknown,
+            })
+            .collect()
+    }
+
+    pub fn has_pending_receipts(&self) -> bool {
+        self.submitted_users
+            .values()
+            .any(|entry| !entry.is_visible())
+    }
+
+    pub fn pending_receipts_ref(&self) -> Vec<PendingReceiptRef<'_>> {
         let mut pending = self
             .submitted_users
             .iter()
@@ -48,11 +88,11 @@ impl ConversationState {
         pending.sort_by_key(|(_, entry)| entry.order);
         pending
             .into_iter()
-            .map(|(id, entry)| PendingReceipt {
-                id: id.clone(),
+            .map(|(id, entry)| PendingReceiptRef {
+                id,
                 mode: entry.mode,
-                text: entry.item.text.clone(),
-                images: entry.item.images.clone(),
+                text: &entry.item.text,
+                images: &entry.item.images,
                 unknown: entry.unknown,
             })
             .collect()

@@ -20,7 +20,7 @@ use crate::app::{
 use crate::{
     agents::PeerMessage,
     app::ui::theme::theme,
-    conversation::{PendingReceipt, QueueState},
+    conversation::{PendingReceiptRef, QueueState},
     protocol::PromptMode,
 };
 use gpui::WeakEntity;
@@ -319,7 +319,7 @@ fn queued_message_row(
 
 pub(super) fn render(
     queue: &QueueState,
-    receipts: &[PendingReceipt],
+    receipts: &[PendingReceiptRef<'_>],
     target: &str,
     session: Option<&std::path::Path>,
     entity: WeakEntity<FarcasterApp>,
@@ -458,7 +458,7 @@ pub(super) fn render(
 
 pub(super) fn pending_message_groups<'a>(
     queue: &'a QueueState,
-    receipts: &'a [PendingReceipt],
+    receipts: &[PendingReceiptRef<'a>],
     history_preview: bool,
 ) -> Vec<(QueuedMessageKind, Vec<QueuedMessage<'a>>)> {
     let mut groups = queued_message_groups(queue);
@@ -466,7 +466,7 @@ pub(super) fn pending_message_groups<'a>(
         for message in messages {
             message.unknown = receipts
                 .iter()
-                .any(|receipt| message.id == Some(&receipt.id) && receipt.unknown);
+                .any(|receipt| message.id == Some(receipt.id) && receipt.unknown);
         }
     }
     if !history_preview {
@@ -476,7 +476,7 @@ pub(super) fn pending_message_groups<'a>(
         if groups.iter().any(|(_, messages)| {
             messages
                 .iter()
-                .any(|message| message.id == Some(&receipt.id))
+                .any(|message| message.id == Some(receipt.id))
         }) {
             continue;
         }
@@ -494,8 +494,8 @@ pub(super) fn pending_message_groups<'a>(
             });
         let messages = &mut groups[index].1;
         messages.push(QueuedMessage {
-            text: &receipt.text,
-            id: Some(&receipt.id),
+            text: receipt.text,
+            id: Some(receipt.id),
             cancellable: true,
             dismiss: true,
             unknown: receipt.unknown,

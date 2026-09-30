@@ -8,6 +8,43 @@ fn delivery(id: &str, text: &str, status: &str) -> Value {
 }
 
 #[test]
+fn borrowed_receipts_preserve_order_payload_and_delivery_changes() {
+    let mut state = ConversationState::default();
+    assert!(!state.has_pending_receipts());
+    for (id, status) in [("z", "unknown"), ("a", "accepted")] {
+        state.reduce(&delivery(id, "same text", status));
+    }
+    let owned = state.pending_receipts();
+    assert_eq!(
+        state.pending_receipts_ref(),
+        owned.iter().map(PendingReceipt::as_ref).collect::<Vec<_>>()
+    );
+    let borrowed = state.pending_receipts_ref();
+    assert_eq!(
+        borrowed
+            .iter()
+            .map(|receipt| receipt.id.as_str())
+            .collect::<Vec<_>>(),
+        ["z", "a"]
+    );
+    assert!(std::ptr::eq(
+        borrowed[0].text,
+        &state.submitted_users["z"].item.text
+    ));
+    assert!(state.has_pending_receipts());
+    let previous = state.clone();
+    state.reduce(&delivery("z", "same text", "accepted"));
+    assert_ne!(
+        previous.pending_receipts_ref(),
+        state.pending_receipts_ref()
+    );
+    for id in ["z", "a"] {
+        state.reduce(&delivery(id, "same text", "delivered"));
+    }
+    assert!(!state.has_pending_receipts());
+}
+
+#[test]
 fn queue_cancellation_requires_current_owner_evidence_not_an_id_or_receipt() {
     let mut state = ConversationState::default();
     state.reduce(&json!({"type":"queue_update", "steering":["same", "same"],

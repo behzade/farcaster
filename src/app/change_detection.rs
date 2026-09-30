@@ -260,7 +260,8 @@ pub(in crate::app) fn composer_snapshot_changed(
         || previous.configuration_status != next.configuration_status
         || previous.access_mode != next.access_mode
         || (!Arc::ptr_eq(&previous.conversation, &next.conversation)
-            && previous.conversation.pending_receipts() != next.conversation.pending_receipts())
+            && previous.conversation.pending_receipts_ref()
+                != next.conversation.pending_receipts_ref())
 }
 
 pub(in crate::app) fn run_panel_snapshot_changed(
