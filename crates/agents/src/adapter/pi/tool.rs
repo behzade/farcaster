@@ -70,17 +70,18 @@ fn annotate_tool(value: &mut Value, name_field: &str, args_field: &str) {
     let Some(name) = value.get(name_field).and_then(Value::as_str) else {
         return;
     };
-    let args = value.get(args_field).cloned().unwrap_or(Value::Null);
+    let args = value.get(args_field).unwrap_or(&Value::Null);
+    let metadata = pi_tool_metadata(name, args);
+    let mut metadata = serde_json::to_value(metadata).expect("tool metadata serializes");
     let native = value
-        .get("toolMetadata")
-        .and_then(|metadata| metadata.get("native"))
-        .cloned()
-        .unwrap_or_else(|| args.clone());
-    let metadata = pi_tool_metadata(name, &args, native);
-    value["toolMetadata"] = serde_json::to_value(metadata).expect("tool metadata serializes");
+        .pointer_mut("/toolMetadata/native")
+        .map(Value::take)
+        .unwrap_or_else(|| value.get(args_field).cloned().unwrap_or(Value::Null));
+    metadata["native"] = native;
+    value["toolMetadata"] = metadata;
 }
 
-fn pi_tool_metadata(name: &str, args: &Value, native: Value) -> ToolMetadata {
+fn pi_tool_metadata(name: &str, args: &Value) -> ToolMetadata {
     let name = name.strip_prefix("farcaster_").unwrap_or(name);
     let (category, verb, target_keys): (ToolCategory, Option<&str>, &[&str]) = match name {
         "read" => (ToolCategory::Read, Some("Read"), &["path"]),
@@ -113,7 +114,7 @@ fn pi_tool_metadata(name: &str, args: &Value, native: Value) -> ToolMetadata {
         category: Some(category),
         title,
         targets,
-        native: Some(native),
+        native: None,
     }
 }
 

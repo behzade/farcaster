@@ -119,6 +119,36 @@ fn leaves_custom_tool_intent_unknown_and_keeps_native_metadata() {
 }
 
 #[test]
+fn reannotation_moves_existing_native_payload_and_preserves_null_native() {
+    let mut value = json!({
+        "type": "tool_execution_start",
+        "toolName": "write",
+        "args": {"path": "a.rs", "content": "raw arguments"},
+        "toolMetadata": {"native": {"content": "x".repeat(4096)}},
+    });
+    let native_pointer = value["toolMetadata"]["native"]["content"]
+        .as_str()
+        .unwrap()
+        .as_ptr();
+    annotate_pi_value(&mut value);
+    assert_eq!(value["args"]["content"], "raw arguments");
+    assert_eq!(value["toolMetadata"]["targets"], json!(["a.rs"]));
+    assert_eq!(
+        value["toolMetadata"]["native"]["content"]
+            .as_str()
+            .unwrap()
+            .as_ptr(),
+        native_pointer
+    );
+    let annotated = value.clone();
+    annotate_pi_value(&mut value);
+    assert_eq!(value, annotated);
+    value["toolMetadata"]["native"] = Value::Null;
+    annotate_pi_value(&mut value);
+    assert_eq!(value["toolMetadata"]["native"], Value::Null);
+}
+
+#[test]
 fn cancelled_provider_setup_is_an_abort_in_live_events_and_history() {
     for (error, reason) in [
         ("This operation was aborted", "aborted"),
