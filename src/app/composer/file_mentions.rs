@@ -1,7 +1,7 @@
 use std::{cell::RefCell, path::Path};
 
 use nucleo_matcher::{
-    Config, Matcher,
+    Config, Matcher, Utf32Str,
     pattern::{Atom, AtomKind, CaseMatching, Normalization},
 };
 
@@ -62,16 +62,32 @@ pub(in crate::app) fn matches(files: &[String], query: &str) -> Vec<String> {
         AtomKind::Fuzzy,
         false,
     );
-    let mut matches =
-        FILE_MATCHER.with(|matcher| pattern.match_list(files, &mut matcher.borrow_mut()));
-    matches.sort_by(|(left, left_score), (right, right_score)| {
-        right_score.cmp(left_score).then_with(|| left.cmp(right))
+    let mut matches: Vec<(&String, u16)> = Vec::with_capacity(MAX_RESULTS);
+    FILE_MATCHER.with(|matcher| {
+        let mut matcher = matcher.borrow_mut();
+        let mut buffer = Vec::new();
+        for path in files {
+            let score = if pattern.needle_text().is_empty() {
+                0
+            } else {
+                let Some(score) = pattern.score(Utf32Str::new(path, &mut buffer), &mut matcher)
+                else {
+                    continue;
+                };
+                score
+            };
+            let index = matches.partition_point(|(existing, existing_score)| {
+                *existing_score > score || (*existing_score == score && *existing <= path)
+            });
+            if index < MAX_RESULTS {
+                if matches.len() == MAX_RESULTS {
+                    matches.pop();
+                }
+                matches.insert(index, (path, score));
+            }
+        }
     });
-    matches
-        .into_iter()
-        .take(MAX_RESULTS)
-        .map(|(path, _)| path.clone())
-        .collect()
+    matches.into_iter().map(|(path, _)| path.clone()).collect()
 }
 
 pub(in crate::app) fn insert(value: &str, query: &MentionQuery, path: &str) -> (String, usize) {

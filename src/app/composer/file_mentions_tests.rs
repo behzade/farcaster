@@ -37,6 +37,48 @@ fn unicode_matching_uses_character_boundaries() {
 }
 
 #[test]
+fn bounded_matching_preserves_full_ranking() {
+    let mut files = (0..256)
+        .rev()
+        .map(|index| format!("src/{index:03}/main.rs"))
+        .collect::<Vec<_>>();
+    files.extend(
+        [
+            "main.rs",
+            "main.rs",
+            "src/café.rs",
+            "src/café.rs",
+            "SRC/MAIN.rs",
+            "🙂.rs",
+        ]
+        .map(str::to_owned),
+    );
+    for count in [0, 1, 7, 8, 9, files.len()] {
+        let files = &files[..count];
+        for query in ["", "main", "sr", "MAIN", "café", "café", "🙂", "missing"] {
+            let pattern = Atom::new(
+                query,
+                CaseMatching::Ignore,
+                Normalization::Smart,
+                AtomKind::Fuzzy,
+                false,
+            );
+            let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
+            let mut expected = pattern.match_list(files, &mut matcher);
+            expected.sort_by(|(left, left_score), (right, right_score)| {
+                right_score.cmp(left_score).then_with(|| left.cmp(right))
+            });
+            let expected = expected
+                .into_iter()
+                .take(MAX_RESULTS)
+                .map(|(path, _)| path.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(matches(files, query), expected, "{count} files, {query:?}");
+        }
+    }
+}
+
+#[test]
 fn insertion_replaces_only_the_active_token_and_tracks_byte_cursor() {
     let query = query_at_cursor("🙂 see @ma now", 12).expect("query");
     let (text, cursor) = insert("🙂 see @ma now", &query, "src/main.rs");
