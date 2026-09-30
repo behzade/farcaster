@@ -185,8 +185,8 @@ pub(crate) fn sync_arguments(
 
 pub fn snapshot(backend: &RepositoryBackend) -> Result<WorkingCopySnapshot, RepositoryError> {
     let output = status_output(backend)?;
-    let token = SnapshotToken::Git(Arc::from(output.stdout.clone()));
     let (identity, parsed) = parse_status(&output.stdout)?;
+    let token = SnapshotToken::Git(Arc::from(output.stdout));
     let changes = parsed
         .into_iter()
         .map(|parsed| {
