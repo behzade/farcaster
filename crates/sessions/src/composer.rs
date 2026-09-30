@@ -323,24 +323,35 @@ impl<A: Clone + Eq> ComposerSessions<A> {
         session.composer.clone()
     }
 
-    pub fn sync_history(&mut self, target: &str, messages: &[String]) {
-        if messages.is_empty() {
+    pub fn sync_history<'a>(
+        &mut self,
+        target: &str,
+        messages_newest_first: impl Iterator<Item = &'a str>,
+    ) {
+        let mut messages = messages_newest_first.peekable();
+        if messages.peek().is_none() {
             return;
         }
-        let mut history = Vec::new();
+        let mut history = Vec::with_capacity(MAX_HISTORY);
         for message in messages {
             let message = message.trim();
-            if !message.is_empty() && history.last().is_none_or(|entry| entry != message) {
-                history.push(message.to_owned());
+            if !message.is_empty() && history.last().is_none_or(|entry| *entry != message) {
+                history.push(message);
+                if history.len() == MAX_HISTORY {
+                    break;
+                }
             }
         }
-        history.reverse();
-        history.truncate(MAX_HISTORY);
         let session = self.sessions.entry(target.to_owned()).or_default();
-        if session.history == history {
+        if session
+            .history
+            .iter()
+            .map(String::as_str)
+            .eq(history.iter().copied())
+        {
             return;
         }
-        session.history = history;
+        session.history = history.into_iter().map(str::to_owned).collect();
         session.history_index = None;
         session.history_draft = None;
         self.persistence.save(session.record(target.to_owned()));

@@ -73,6 +73,31 @@ fn history_cycles_and_restores_the_unsent_draft() {
 }
 
 #[test]
+fn synced_history_trims_deduplicates_and_bounds_the_latest_messages() {
+    let mut sessions = sessions("session:one");
+    let mut messages = (0..105).map(|index| index.to_string()).collect::<Vec<_>>();
+    messages.extend([" 104 ".into(), " ".into(), " 105 ".into(), "105".into()]);
+    sessions.sync_history("session:one", messages.iter().rev().map(String::as_str));
+    let history = &sessions.sessions["session:one"].history;
+    assert_eq!(history.len(), 100);
+    assert_eq!(history.first().map(String::as_str), Some("105"));
+    assert_eq!(history.last().map(String::as_str), Some("6"));
+
+    let first = history[0].as_ptr();
+    let draft = ComposerSnapshot::new("unsent".into(), 6, 6..6);
+    let _ = sessions.previous_history(draft.clone());
+    sessions.sync_history("session:one", messages.iter().rev().map(String::as_str));
+    assert_eq!(sessions.sessions["session:one"].history[0].as_ptr(), first);
+    assert_eq!(sessions.sessions["session:one"].history_index, Some(0));
+    assert_eq!(sessions.sessions["session:one"].history_draft, Some(draft));
+
+    sessions.sync_history("session:one", std::iter::empty());
+    assert_eq!(sessions.sessions["session:one"].history.len(), 100);
+    sessions.sync_history("session:one", [" ", "\n"].into_iter());
+    assert!(sessions.sessions["session:one"].history.is_empty());
+}
+
+#[test]
 fn history_keys_only_take_over_at_the_text_edges() {
     let mut sessions = sessions("session:one");
     sessions.record_submission("session:one", "sent");

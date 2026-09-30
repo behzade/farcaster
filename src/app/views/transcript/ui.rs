@@ -158,11 +158,10 @@ impl FarcasterApp {
             .snapshot
             .conversation
             .items
-            .iter()
+            .iter_rev()
             .filter(|item| item.kind == TranscriptKind::User && !item.is_error)
-            .map(|item| item.text.clone())
-            .collect::<Vec<_>>();
-        self.composer.sessions.sync_history(&target, &history);
+            .map(|item| item.text.as_str());
+        self.composer.sessions.sync_history(&target, history);
         self.composer.history_marker = Some((target, user_count, last_user.to_owned()));
     }
 
