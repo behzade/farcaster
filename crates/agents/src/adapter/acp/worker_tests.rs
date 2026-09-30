@@ -863,11 +863,13 @@ impl futures::io::AsyncRead for PendingReader {
 
 #[cfg(unix)]
 fn inert_session() -> AcpWorkerSession {
+    let mut child = std::process::Command::new("true")
+        .spawn()
+        .expect("spawn inert child");
+    child.wait().expect("inert child exits before fixture use");
     AcpWorkerSession {
         profile: PROFILE.clone(),
-        child: std::process::Command::new("true")
-            .spawn()
-            .expect("test operation should succeed"),
+        child,
         connection: AcpConnection::new(
             PendingReader,
             futures::io::Cursor::new(Vec::<u8>::new()),
@@ -876,10 +878,9 @@ fn inert_session() -> AcpWorkerSession {
         .expect("test operation should succeed"),
         session_id: "one".into(),
         current_prompt: Some(AcpRequestId::Number(1)),
-        current_inputs: Vec::new(),
-        current_prompt_proven: false,
+        current_inputs: PromptBatch::default(),
         prompt_acks: VecDeque::new(),
-        queued_prompts: VecDeque::new(),
+        queued_prompts: Vec::new(),
         handoff: None,
         output: String::new(),
         thought_started: false,
@@ -944,12 +945,13 @@ fn acp_caller_tracks_selected_model_on_attach_and_configuration_change() {
 
 #[cfg(unix)]
 fn track_inert_submission(session: &mut AcpWorkerSession, id: &str) {
-    session.current_inputs.push(PendingPrompt {
+    session.current_inputs = vec![PendingPrompt {
         mode: WorkerSendMode::Prompt,
         message: "work".into(),
         images: Vec::new(),
         submission_id: Some(id.into()),
-    });
+    }]
+    .into();
 }
 
 #[cfg(unix)]
@@ -1648,6 +1650,50 @@ fn acp_terminal_response_without_evidence_is_unknown_not_rejected() {
 }
 
 #[test]
+fn acp_repeated_unknown_retains_the_input_for_late_delivery() {
+    let mut session = inert_session();
+    track_inert_submission(&mut session, "submission");
+    session.record_prompt_result(AcpRequestId::Number(1), json!({"stopReason":"cancelled"}));
+    session.mark_current_prompt_unknown("still no receipt");
+    assert!(
+        matches!(session.poll(), Some(WorkerEvent::PromptDeliveryUnknown { submission_id, .. })
+        if submission_id == "submission")
+    );
+    assert!(
+        session.events.is_empty(),
+        "unknown is reported once per input"
+    );
+    assert!(session.poll_prompt_ack().is_none());
+
+    session.connection.restore_queued(VecDeque::from([
+        agent_message_chunk("late"),
+        agent_message_chunk(" proof"),
+    ]));
+    assert!(
+        matches!(session.poll(), Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+        submission_id: Some(id), message, ..
+    })) if id == "submission" && message == "work")
+    );
+    assert_eq!(
+        session.poll_prompt_ack(),
+        Some(("submission".into(), Ok(())))
+    );
+    session.mark_current_prompt_unknown("delivery is already proven");
+    for text in ["late", " proof"] {
+        assert!(
+            matches!(session.poll(), Some(WorkerEvent::Activity(WorkerActivity::TextDelta { delta, .. }))
+            if delta == text)
+        );
+    }
+    assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
+    assert!(
+        session.poll_prompt_ack().is_none(),
+        "proof is acknowledged once"
+    );
+    assert!(session.events.is_empty());
+}
+
+#[test]
 fn acp_claims_queued_steering_and_abort_rejects_only_local_inputs() {
     use std::os::unix::net::UnixStream;
 
@@ -1707,7 +1753,7 @@ fn acp_claims_queued_steering_and_abort_rejects_only_local_inputs() {
             Err("Prompt cancelled before delivery".into())
         ))
     );
-    assert_eq!(session.current_inputs.len(), 0);
+    assert!(session.current_inputs.is_empty());
 }
 
 #[test]
@@ -1727,7 +1773,7 @@ fn acp_in_memory_queue_is_not_an_acknowledgement() {
     assert_eq!(
         session
             .queued_prompts
-            .back()
+            .last()
             .expect("queued prompt")
             .submission_id
             .as_deref(),
@@ -1878,7 +1924,7 @@ fn acp_abort_keeps_deadline_when_a_pending_input_reply_fails() {
 fn acp_prompt_reply_fails_closed_if_updates_never_stop() {
     let mut session = inert_session();
     let prompt = session.current_prompt.clone().expect("active prompt");
-    session.queued_prompts.push_back(PendingPrompt {
+    session.queued_prompts.push(PendingPrompt {
         mode: WorkerSendMode::Queue,
         message: "next prompt".into(),
         images: Vec::new(),
@@ -1909,7 +1955,7 @@ fn acp_prompt_reply_fails_closed_if_updates_never_stop() {
 fn acp_prompt_reply_has_a_wall_deadline_under_slow_updates() {
     let mut session = inert_session();
     let prompt = session.current_prompt.clone().expect("active prompt");
-    session.queued_prompts.push_back(PendingPrompt {
+    session.queued_prompts.push(PendingPrompt {
         mode: WorkerSendMode::Queue,
         message: "next prompt".into(),
         images: Vec::new(),
@@ -1994,14 +2040,22 @@ fn acp_prompt_result_settles_after_queued_chunks_and_still_applies_late_text() {
 #[test]
 fn acp_user_message_chunk_delivers_current_inputs_before_the_model_reply() {
     let mut session = inert_session();
-    track_inert_submission(&mut session, "prompt");
     let image = crate::extensions::PromptImage::new("YWJj".into(), "image/png".into());
-    session.current_inputs.push(PendingPrompt {
-        mode: WorkerSendMode::Queue,
-        message: "follow-up with image".into(),
-        images: vec![image.clone()],
-        submission_id: Some("follow-up".into()),
-    });
+    session.current_inputs = vec![
+        PendingPrompt {
+            mode: WorkerSendMode::Prompt,
+            message: "work".into(),
+            images: Vec::new(),
+            submission_id: Some("prompt".into()),
+        },
+        PendingPrompt {
+            mode: WorkerSendMode::Queue,
+            message: "follow-up with image".into(),
+            images: vec![image.clone()],
+            submission_id: Some("follow-up".into()),
+        },
+    ]
+    .into();
     session
         .connection
         .restore_queued(VecDeque::from([AcpInbound::Notification {
@@ -2153,7 +2207,7 @@ fn acp_user_message_chunk_malformed_content_preserves_cancel_and_error_recovery(
                 ),
                 "malformed echo must not deliver: {content:?}"
             );
-            assert!(!session.current_prompt_proven);
+            assert!(!session.current_inputs.is_delivered());
             assert!(session.poll_prompt_ack().is_none());
             assert!(session.events.is_empty());
 
@@ -2271,7 +2325,7 @@ fn acp_user_message_chunk_requires_the_current_prompt_and_session() {
         ));
         assert!(session.poll_prompt_ack().is_none());
         assert!(session.events.is_empty());
-        assert!(!session.current_prompt_proven);
+        assert!(!session.current_inputs.is_delivered());
     }
 }
 

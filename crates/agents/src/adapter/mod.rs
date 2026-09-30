@@ -22,6 +22,7 @@ mod main_session;
 mod opencode;
 mod pi;
 mod process_command;
+mod prompt_batch;
 mod prompt_boundary;
 mod queued_session;
 mod session_storage;

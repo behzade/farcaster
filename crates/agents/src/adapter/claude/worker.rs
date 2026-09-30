@@ -4,6 +4,7 @@ use std::{
 };
 
 use super::super::main_session::{self, MainSessionMetadata};
+use super::super::prompt_batch::PromptBatch;
 use super::{
     BACKEND,
     events::{Events, string},
@@ -239,7 +240,7 @@ fn attach(
         dispatched: HashMap::new(),
         prompt_acks: VecDeque::new(),
         closed: false,
-        queued: VecDeque::new(),
+        queued: Vec::new(),
         handoff_pending: false,
         handoff_uuid: None,
         abort_waiting_on_handoff_interrupt: None,
@@ -255,17 +256,7 @@ fn attach(
 
 struct Prompt {
     message: SDKUserMessage,
-    deliveries: Vec<PromptDelivery>,
-}
-
-struct PromptDelivery {
-    submission_id: Option<String>,
-    activity: WorkerActivity,
-}
-
-struct DispatchedPrompt {
-    deliveries: Vec<PromptDelivery>,
-    unknown: bool,
+    delivery: WorkerActivity,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -286,10 +277,10 @@ struct ClaudeSession {
     events: Events,
     active: bool,
     active_uuid: Option<String>,
-    dispatched: HashMap<String, DispatchedPrompt>,
+    dispatched: HashMap<String, PromptBatch>,
     prompt_acks: VecDeque<(String, Result<(), crate::PromptRejection>)>,
     closed: bool,
-    queued: VecDeque<Prompt>,
+    queued: Vec<Prompt>,
     handoff_pending: bool,
     handoff_uuid: Option<String>,
     abort_waiting_on_handoff_interrupt: Option<String>,
@@ -339,10 +330,7 @@ impl ClaudeSession {
         };
         Ok(Prompt {
             message: message_frame,
-            deliveries: vec![PromptDelivery {
-                submission_id: submission_id.map(str::to_owned),
-                activity: delivery,
-            }],
+            delivery,
         })
     }
 
@@ -358,16 +346,16 @@ impl ClaudeSession {
             return Err("Claude session is closed".into());
         }
         if self.active || self.handoff_pending || mode == WorkerSendMode::Steer {
-            self.queued.push_back(prompt);
+            self.queued.push(prompt);
             Ok(())
         } else {
-            self.deliver(prompt);
+            self.deliver(prompt.message, vec![prompt.delivery]);
             Ok(())
         }
     }
 
-    fn deliver(&mut self, prompt: Prompt) {
-        let active_uuid = match &prompt.message.uuid {
+    fn deliver(&mut self, message: SDKUserMessage, deliveries: Vec<WorkerActivity>) {
+        let active_uuid = match &message.uuid {
             Presence::Present(uuid) => uuid.clone(),
             Presence::Missing => {
                 self.events.pending.push_back(WorkerEvent::Failed(
@@ -377,22 +365,13 @@ impl ClaudeSession {
             }
         };
         self.active_uuid = Some(active_uuid.clone());
-        self.caller.begin_execution(
-            prompt
-                .deliveries
-                .first()
-                .and_then(|delivery| delivery.submission_id.as_deref()),
-        );
+        let deliveries = PromptBatch::from(deliveries);
+        self.caller
+            .begin_execution(deliveries.first_submission_id());
         self.active = true;
         self.caller.set_activity(WorkerActivityState::Working);
-        self.dispatched.insert(
-            active_uuid.clone(),
-            DispatchedPrompt {
-                deliveries: prompt.deliveries,
-                unknown: false,
-            },
-        );
-        match self.process.prompt(prompt.message) {
+        self.dispatched.insert(active_uuid.clone(), deliveries);
+        match self.process.prompt(message) {
             Ok(()) => self.events.start(),
             Err(error) => {
                 self.delivery_unknown(
@@ -408,46 +387,24 @@ impl ClaudeSession {
         let Some(prompt) = self.dispatched.get_mut(uuid) else {
             return;
         };
-        if prompt.unknown {
-            return;
-        }
-        prompt.unknown = true;
-        let submission_ids = prompt
-            .deliveries
-            .iter()
-            .filter_map(|delivery| delivery.submission_id.clone())
-            .collect::<Vec<_>>();
-        for submission_id in submission_ids {
-            self.events
-                .pending
-                .push_back(WorkerEvent::PromptDeliveryUnknown {
-                    submission_id,
-                    error: error.clone(),
-                });
-        }
+        prompt.mark_unknown(&error, &mut self.events.pending);
     }
 
     fn receive_prompt(&mut self, uuid: &str) {
-        let Some(prompt) = self.dispatched.remove(uuid) else {
+        let Some(mut prompt) = self.dispatched.remove(uuid) else {
             return;
         };
-        for delivery in prompt.deliveries {
-            if let Some(submission_id) = delivery.submission_id {
-                self.prompt_acks.push_back((submission_id, Ok(())));
-            }
-            self.events.activity(delivery.activity);
-        }
+        prompt.acknowledge(&mut self.prompt_acks, &mut self.events.pending);
     }
 
     fn reject_queued(&mut self, error: &str) {
-        for prompt in self.queued.drain(..) {
-            for delivery in prompt.deliveries {
-                if let Some(submission_id) = delivery.submission_id {
-                    self.prompt_acks
-                        .push_back((submission_id, Err(error.into())));
-                }
-            }
-        }
+        PromptBatch::from(
+            self.queued
+                .drain(..)
+                .map(|prompt| prompt.delivery)
+                .collect::<Vec<_>>(),
+        )
+        .reject(error.into(), &mut self.prompt_acks);
     }
 
     fn interrupt(&mut self, purpose: InterruptPurpose) -> Result<(), String> {
@@ -484,16 +441,17 @@ impl ClaudeSession {
     }
 
     fn dispatch_queued(&mut self) -> Option<String> {
-        let prompt = self.queued.pop_front()?;
-        if self.queued.is_empty() {
+        let mut prompts = std::mem::take(&mut self.queued).into_iter();
+        let prompt = prompts.next()?;
+        if prompts.len() == 0 {
             let uuid = match &prompt.message.uuid {
                 Presence::Present(uuid) => Some(uuid.clone()),
                 Presence::Missing => None,
             };
-            self.deliver(prompt);
+            self.deliver(prompt.message, vec![prompt.delivery]);
             return uuid;
         }
-        let prompts = std::iter::once(prompt).chain(self.queued.drain(..));
+        let prompts = std::iter::once(prompt).chain(prompts);
         let mut content = Vec::new();
         let mut deliveries = Vec::new();
         for (index, prompt) in prompts.enumerate() {
@@ -509,7 +467,7 @@ impl ClaudeSession {
                     .iter()
                     .cloned(),
             );
-            deliveries.extend(prompt.deliveries);
+            deliveries.push(prompt.delivery);
         }
         let message: Result<SDKUserMessage, String> = decode(json!({
             "type":"user", "session_id":self.id,
@@ -522,10 +480,7 @@ impl ClaudeSession {
                     Presence::Present(uuid) => Some(uuid.clone()),
                     Presence::Missing => None,
                 };
-                self.deliver(Prompt {
-                    message,
-                    deliveries,
-                });
+                self.deliver(message, deliveries);
                 uuid
             }
             Err(error) => {
@@ -816,12 +771,9 @@ impl WorkerSession for ClaudeSession {
         self.admit(
             Prompt {
                 message: prompt(&self.id, &message.prompt(), Vec::new())?,
-                deliveries: vec![PromptDelivery {
-                    submission_id: None,
-                    activity: WorkerActivity::PeerInputDelivered {
-                        message: message.clone(),
-                    },
-                }],
+                delivery: WorkerActivity::PeerInputDelivered {
+                    message: message.clone(),
+                },
             },
             mode,
         )

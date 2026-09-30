@@ -978,10 +978,7 @@ fn aborting_dispatched_handoff_is_unknown_and_session_accepts_later_input() {
         "dispatch uncertainty is not rejection"
     );
     assert!(
-        session
-            .dispatched
-            .get(&handoff_uuid)
-            .is_some_and(|prompt| prompt.unknown),
+        session.dispatched.contains_key(&handoff_uuid),
         "unknown delivery keeps its UUID correlation tombstone"
     );
 

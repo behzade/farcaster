@@ -20,7 +20,7 @@ use super::{
     },
 };
 use crate::{
-    adapter::{child_stderr, farcaster_mcp, main_session},
+    adapter::{child_stderr, farcaster_mcp, main_session, prompt_batch::PromptBatch},
     agents::{
         AgentLaunchConfig, HarnessAccessMode, PeerMessage, ToolMetadata, WorkerActivity,
         WorkerActivityState, WorkerEvent, WorkerInput, WorkerInputResponse, WorkerLaunch,
@@ -256,10 +256,9 @@ fn spawn_session(
             connection,
             session_id,
             current_prompt: None,
-            current_inputs: Vec::new(),
-            current_prompt_proven: false,
+            current_inputs: PromptBatch::default(),
             prompt_acks: VecDeque::new(),
-            queued_prompts: VecDeque::new(),
+            queued_prompts: Vec::new(),
             handoff: None,
             output: String::new(),
             thought_started: false,
@@ -461,6 +460,21 @@ struct PendingPrompt {
     submission_id: Option<String>,
 }
 
+impl From<Vec<PendingPrompt>> for PromptBatch {
+    fn from(inputs: Vec<PendingPrompt>) -> Self {
+        inputs
+            .into_iter()
+            .map(|input| WorkerActivity::InputDelivered {
+                submission_id: input.submission_id,
+                mode: input.mode,
+                message: input.message,
+                images: input.images,
+            })
+            .collect::<Vec<_>>()
+            .into()
+    }
+}
+
 struct Handoff {
     interrupted_prompt: AcpRequestId,
     inputs: Vec<PendingPrompt>,
@@ -498,10 +512,9 @@ struct AcpWorkerSession {
     connection: AcpConnection,
     session_id: String,
     current_prompt: Option<AcpRequestId>,
-    current_inputs: Vec<PendingPrompt>,
-    current_prompt_proven: bool,
+    current_inputs: PromptBatch,
     prompt_acks: VecDeque<(String, Result<(), crate::PromptRejection>)>,
-    queued_prompts: VecDeque<PendingPrompt>,
+    queued_prompts: Vec<PendingPrompt>,
     handoff: Option<Handoff>,
     output: String,
     thought_started: bool,
@@ -557,11 +570,26 @@ impl AcpWorkerSession {
             json!({"sessionId": self.session_id, "prompt": prompt}),
         )?;
         self.current_prompt = Some(id);
-        self.current_inputs = inputs;
-        self.current_prompt_proven = false;
+        self.current_inputs = inputs.into();
         if let Some(identity) = &self.caller_identity {
             identity.set_activity(WorkerActivityState::Working);
         }
+        Ok(())
+    }
+
+    fn admit(&mut self, input: PendingPrompt) -> Result<(), String> {
+        if self.current_prompt.is_some() {
+            if matches!(input.mode, WorkerSendMode::Queue | WorkerSendMode::Steer) {
+                self.queued_prompts.push(input);
+                return Ok(());
+            }
+            return Err(format!(
+                "{} ACP session is already working",
+                self.profile.name
+            ));
+        }
+        self.start_prompt_request(vec![input])?;
+        self.events.push_back(WorkerEvent::Started);
         Ok(())
     }
 
@@ -933,22 +961,11 @@ impl AcpWorkerSession {
     }
 
     fn acknowledge_current_prompt_started(&mut self) {
-        if self.current_prompt.is_none() || self.current_prompt_proven {
+        if self.current_prompt.is_none() {
             return;
         }
-        self.current_prompt_proven = true;
-        for input in &self.current_inputs {
-            if let Some(id) = &input.submission_id {
-                self.prompt_acks.push_back((id.clone(), Ok(())));
-            }
-            self.events
-                .push_back(WorkerEvent::Activity(Self::input_delivery(
-                    input.submission_id.as_deref(),
-                    input.mode,
-                    input.message.clone(),
-                    input.images.clone(),
-                )));
-        }
+        self.current_inputs
+            .acknowledge(&mut self.prompt_acks, &mut self.events);
     }
 
     fn acknowledge_current_prompt_before(&mut self, event: WorkerEvent) -> WorkerEvent {
@@ -961,30 +978,12 @@ impl AcpWorkerSession {
             .expect("the translated ACP event was queued")
     }
 
-    fn reject_inputs(
-        &mut self,
-        inputs: impl IntoIterator<Item = PendingPrompt>,
-        error: crate::PromptRejection,
-    ) {
-        for input in inputs {
-            if let Some(id) = input.submission_id {
-                self.prompt_acks.push_back((id, Err(error.clone())));
-            }
-        }
+    fn reject_inputs(&mut self, inputs: Vec<PendingPrompt>, error: crate::PromptRejection) {
+        PromptBatch::from(inputs).reject(error, &mut self.prompt_acks);
     }
 
     fn mark_current_prompt_unknown(&mut self, error: &str) {
-        if self.current_prompt_proven {
-            return;
-        }
-        for input in &self.current_inputs {
-            if let Some(submission_id) = &input.submission_id {
-                self.events.push_back(WorkerEvent::PromptDeliveryUnknown {
-                    submission_id: submission_id.clone(),
-                    error: error.into(),
-                });
-            }
-        }
+        self.current_inputs.mark_unknown(error, &mut self.events);
     }
 
     fn cancel_pending_inputs(&mut self) -> Result<(), String> {
@@ -1030,7 +1029,7 @@ impl AcpWorkerSession {
             }
             return;
         }
-        let inputs = self.queued_prompts.drain(..).collect::<Vec<_>>();
+        let inputs = std::mem::take(&mut self.queued_prompts);
         if let Err(error) = self.start_prompt_request(inputs.clone()) {
             self.reject_inputs(inputs, error.as_str().into());
             self.events.push_back(WorkerEvent::Failed(error));
@@ -1062,20 +1061,6 @@ impl AcpWorkerSession {
         )
     }
 
-    fn input_delivery(
-        submission_id: Option<&str>,
-        mode: WorkerSendMode,
-        message: String,
-        images: Vec<crate::extensions::PromptImage>,
-    ) -> WorkerActivity {
-        WorkerActivity::InputDelivered {
-            submission_id: submission_id.map(str::to_owned),
-            mode,
-            message,
-            images,
-        }
-    }
-
     fn record_prompt_result(&mut self, id: AcpRequestId, result: Value) {
         if self.pending_prompt_result.as_ref() == Some(&id) {
             return;
@@ -1094,7 +1079,7 @@ impl AcpWorkerSession {
             Some("cancelled") => self
                 .mark_current_prompt_unknown("ACP prompt stopped before delivery acknowledgement"),
             Some(stop_reason) if Self::prompt_stop_reason_is_receipt(stop_reason) => {
-                if self.current_prompt_proven {
+                if self.current_inputs.is_delivered() {
                     self.acknowledge_current_prompt_started();
                 } else {
                     self.mark_current_prompt_unknown(
@@ -1126,8 +1111,7 @@ impl AcpWorkerSession {
             self.cancel_deadline = None;
         }
         self.current_prompt = None;
-        self.current_inputs.clear();
-        self.current_prompt_proven = false;
+        self.current_inputs = PromptBatch::default();
         self.pending_prompt_result = None;
         self.post_reply_frames = 0;
         self.reply_deadline = None;
@@ -1219,25 +1203,12 @@ impl WorkerSession for AcpWorkerSession {
         mode: WorkerSendMode,
         images: Vec<crate::extensions::PromptImage>,
     ) -> Result<(), String> {
-        let input = PendingPrompt {
+        self.admit(PendingPrompt {
             mode,
             message,
             images,
             submission_id: None,
-        };
-        if self.current_prompt.is_some() {
-            if matches!(mode, WorkerSendMode::Queue | WorkerSendMode::Steer) {
-                self.queued_prompts.push_back(input);
-                return Ok(());
-            }
-            return Err(format!(
-                "{} ACP session is already working",
-                self.profile.name
-            ));
-        }
-        self.start_prompt_request(vec![input])?;
-        self.events.push_back(WorkerEvent::Started);
-        Ok(())
+        })
     }
 
     fn submit_prompt(
@@ -1247,21 +1218,12 @@ impl WorkerSession for AcpWorkerSession {
         mode: WorkerSendMode,
         images: Vec<crate::extensions::PromptImage>,
     ) -> Result<bool, crate::PromptRejection> {
-        let input = PendingPrompt {
+        self.admit(PendingPrompt {
             mode,
             message,
             images,
             submission_id: Some(id),
-        };
-        if self.current_prompt.is_some() {
-            if matches!(mode, WorkerSendMode::Queue | WorkerSendMode::Steer) {
-                self.queued_prompts.push_back(input);
-                return Ok(false);
-            }
-            return Err(format!("{} ACP session is already working", self.profile.name).into());
-        }
-        self.start_prompt_request(vec![input])?;
-        self.events.push_back(WorkerEvent::Started);
+        })?;
         Ok(false)
     }
 
@@ -1399,8 +1361,10 @@ impl WorkerSession for AcpWorkerSession {
     }
 
     fn abort(&mut self) -> Result<(), String> {
-        let queued = self.queued_prompts.drain(..).collect::<Vec<_>>();
-        self.reject_inputs(queued, "Prompt cancelled before delivery".into());
+        PromptBatch::from(std::mem::take(&mut self.queued_prompts)).reject(
+            "Prompt cancelled before delivery".into(),
+            &mut self.prompt_acks,
+        );
         if let Some(handoff) = self.handoff.take() {
             self.reject_inputs(handoff.inputs, "Prompt cancelled before delivery".into());
         }
@@ -1432,7 +1396,7 @@ impl WorkerSession for AcpWorkerSession {
         if self.handoff.is_some() || self.queued_prompts.is_empty() {
             return Ok(());
         }
-        let inputs = self.queued_prompts.drain(..).collect::<Vec<_>>();
+        let inputs = std::mem::take(&mut self.queued_prompts);
         let Some(interrupted_prompt) = self.current_prompt.clone() else {
             self.start_prompt_request(inputs)?;
             self.events.push_back(WorkerEvent::Started);
@@ -1628,9 +1592,7 @@ impl WorkerSession for AcpWorkerSession {
                     let rejected_current_prompt = self.current_prompt.as_ref() == Some(&id);
                     if rejected_current_prompt {
                         let inputs = std::mem::take(&mut self.current_inputs);
-                        if !self.current_prompt_proven {
-                            self.reject_inputs(inputs, rejection);
-                        }
+                        inputs.reject(rejection, &mut self.prompt_acks);
                         self.finish_current_prompt(&id);
                         return Some(WorkerEvent::Settled {
                             output: self.output.clone(),
