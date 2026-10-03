@@ -28,8 +28,6 @@ resources = [
     { src = "assets/lilex/OFL.txt", target = "THIRD_PARTY_LICENSES/LILEX-OFL.txt" },
     { src = "assets/vazirmatn/OFL.txt", target = "THIRD_PARTY_LICENSES/VAZIRMATN-OFL.txt" },
     { src = "third_party/gpui-component-bd83329/LICENSE-APACHE", target = "THIRD_PARTY_LICENSES/GPUI-COMPONENT-APACHE-2.0.txt" },
-    { src = "third_party/zed-gpui-cc053a4/LICENSE-APACHE", target = "THIRD_PARTY_LICENSES/ZED-GPUI-APACHE-2.0.txt" },
-    { src = "third_party/zed-gpui-cc053a4/LICENSE-GPL", target = "THIRD_PARTY_LICENSES/ZED-GPUI-GPL-3.0.txt" },
 ]
 binaries = [{ path = "farcaster", main = true }]
 before-packaging-command = "cargo build --release --locked --bin farcaster"

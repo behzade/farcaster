@@ -45,17 +45,11 @@ with the corresponding source under `third_party/gpui-component-bd83329`.
 
 The application uses the crates.io `gpui-pre` 0.3.7 snapshot and related
 packages, built from Zed commit `1a28cff4b409169bac058bca40dfbfeb7621d19b`.
-These packages retain their upstream Apache-2.0 or GPL-3.0-or-later licenses.
+They declare Apache-2.0 and retain Copyright 2022 - 2025 Zed Industries, Inc.
+The Apache-2.0 license text is included at
+`THIRD_PARTY_LICENSES/GPUI-COMPONENT-APACHE-2.0.txt`.
 
-The earlier GPUI framework and narrow Zed package closure remain as source
-from Zed commit `cc053a4a6fa2fd0e8793201ed9099466af1be0b1` under
-`third_party/zed-gpui-cc053a4`. The included packages declare Apache-2.0 or
-GPL-3.0-or-later licensing. Their license texts are included as
-`THIRD_PARTY_LICENSES/ZED-GPUI-APACHE-2.0.txt` and
-`THIRD_PARTY_LICENSES/ZED-GPUI-GPL-3.0.txt`; detailed provenance remains with
-the corresponding source.
-
-The `gpui-libghostty` dependency uses crates.io release `0.2.1` from
+The `gpui-libghostty` dependency uses crates.io release `0.3.1` from
 <https://github.com/behzade/gpui-libghostty>. It and the pinned Ghostty source
 are distributed under MIT. The local Neovim transport in
 `src/app/workspace/neovim.rs` is derived from that project's `gpui-neovim` 0.1.6.
@@ -79,7 +73,7 @@ Lobe Icons and distributed under MIT. Their upstream source is
 <https://github.com/lobehub/lobe-icons>, and the exact license is included at
 `THIRD_PARTY_LICENSES/LOBE-ICONS-MIT.txt`.
 
-Linux AppImages explicitly bundle libxcb, Wayland client/EGL, the Vulkan
+Linux AppImages explicitly bundle libxcb, Wayland EGL, the Vulkan
 loader, and libglvnd's libEGL and libGLdispatch. Their license and attribution
 texts are included under `THIRD_PARTY_LICENSES`.
 

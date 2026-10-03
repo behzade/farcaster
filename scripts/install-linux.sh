@@ -14,9 +14,7 @@ licenses="$prefix/share/licenses/farcaster"
 install -Dm644 "$root/LICENSE" "$licenses/LICENSE"
 install -m644 "$root/NOTICE.md" "$licenses/NOTICE.md"
 cp -R "$root/THIRD_PARTY_LICENSES" "$licenses/"
-for font in ibm-plex-sans lilex vazirmatn; do
-    install -m644 "$root/assets/$font/OFL.txt" "$licenses/$font-OFL.txt"
-done
-install -m644 "$root/third_party/gpui-component-bd83329/LICENSE-APACHE" "$licenses/GPUI-COMPONENT-APACHE-2.0.txt"
-install -m644 "$root/third_party/zed-gpui-cc053a4/LICENSE-APACHE" "$licenses/ZED-GPUI-APACHE-2.0.txt"
-install -m644 "$root/third_party/zed-gpui-cc053a4/LICENSE-GPL" "$licenses/ZED-GPUI-GPL-3.0.txt"
+install -m644 "$root/assets/ibm-plex-sans/OFL.txt" "$licenses/THIRD_PARTY_LICENSES/IBM-PLEX-OFL.txt"
+install -m644 "$root/assets/lilex/OFL.txt" "$licenses/THIRD_PARTY_LICENSES/LILEX-OFL.txt"
+install -m644 "$root/assets/vazirmatn/OFL.txt" "$licenses/THIRD_PARTY_LICENSES/VAZIRMATN-OFL.txt"
+install -m644 "$root/third_party/gpui-component-bd83329/LICENSE-APACHE" "$licenses/THIRD_PARTY_LICENSES/GPUI-COMPONENT-APACHE-2.0.txt"
