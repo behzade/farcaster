@@ -1051,6 +1051,69 @@ fn installed_pi_apply_steering_resumes_after_tool_and_stream_abort() -> TestResu
 }
 
 #[test]
+#[ignore = "requires installed Pi 1.0 codemode; isolated provider and native tool responses, no network"]
+fn installed_pi_codemode_preserves_structured_results_and_review_text() -> TestResult {
+    let _mcp = DisabledMcp::new();
+    let project = tempdir()?;
+    fs::write(project.path().join("fixture-native-tools"), "")?;
+    let command = installed_pi_fixture(project.path())?;
+    let mut rpc = PiRpcProcess::spawn(&command, project.path(), None)?;
+    prompt(
+        &mut rpc,
+        crate::extensions::PromptMode::Normal,
+        "compose fixture",
+    )?;
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut finished_tools = Vec::new();
+    let mut settled = false;
+    while Instant::now() < deadline && !settled {
+        match rpc.try_next() {
+            Some(SessionEvent::Activity(event)) => {
+                if event.value()["type"] == "tool_execution_end" {
+                    finished_tools.push(event.value().clone());
+                }
+                settled = *event.kind() == crate::SessionActivityKind::AgentSettled;
+            }
+            Some(SessionEvent::Failure(error)) => return Err(error.into()),
+            _ => {}
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    rpc.terminate()?;
+    assert!(settled, "codemode did not settle: {finished_tools:?}");
+    let parent = finished_tools
+        .iter()
+        .find(|event| event["toolCallId"] == "fixture-compose")
+        .ok_or("missing codemode result")?;
+    assert_eq!(parent["isError"], false, "{parent}");
+    let output = parent["result"]["content"]
+        .as_array()
+        .ok_or("missing codemode script output")?
+        .iter()
+        .filter_map(|block| block["text"].as_str())
+        .filter_map(|text| serde_json::from_str::<Value>(text).ok())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        output,
+        vec![serde_json::json!({"ok": 42, "error": "fixture-error", "review": 1})],
+        "{parent}"
+    );
+    let children = finished_tools
+        .iter()
+        .filter(|event| event["toolName"] == "farcaster_fixture_result")
+        .collect::<Vec<_>>();
+    assert_eq!(children.len(), 3, "{finished_tools:?}");
+    assert_eq!(children[0]["isError"], false);
+    assert_eq!(children[1]["isError"], true);
+    assert_eq!(children[2]["isError"], false);
+    assert_eq!(
+        children[2]["result"]["content"],
+        serde_json::json!([{"type": "text", "text": "{\"farcaster_review\":{\"version\":1}}"}])
+    );
+    Ok(())
+}
+
+#[test]
 #[ignore = "requires Pi 0.84.2 or newer installed on PATH"]
 fn installed_pi_abort_and_apply_steering_control_real_stream_requests() -> TestResult {
     let _mcp = DisabledMcp::new();
