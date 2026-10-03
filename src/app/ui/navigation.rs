@@ -192,6 +192,15 @@ impl FarcasterApp {
             this.notify_composer(cx);
         })
         .detach();
+        cx.on_focus(&self.navigation.chat.focus, window, |this, window, cx| {
+            if this.workspace.surface == AppSurface::Chat
+                && this.navigation.chat.focus.is_focused(window)
+                && this.keyboard_overlay_focus(window, cx).is_none()
+            {
+                this.composer_region_focus(cx).focus(window, cx);
+            }
+        })
+        .detach();
     }
 
     pub(in crate::app) fn return_to_chat_composer(

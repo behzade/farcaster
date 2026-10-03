@@ -12,7 +12,7 @@ struct InputHarness {
 
 impl Render for InputHarness {
     fn render(&mut self, _: &mut gpui::Window, _: &mut Context<Self>) -> impl IntoElement {
-        composer_editor(&self.input, theme().type_scale.line_composer * 8)
+        composer_editor(&self.input, composer_line_height() * 8)
     }
 }
 
@@ -97,7 +97,7 @@ fn composer_remains_plain_text_and_restores_highlights_after_draft_replacement(
 fn composer_grows_with_wrapping_and_caps_at_eight_rows(cx: &mut gpui::TestAppContext) {
     let cx = cx.add_empty_window();
     cx.update(|window, _| {
-        let line_height = theme().type_scale.line_composer;
+        let line_height = composer_line_height();
         assert_eq!(
             composer_height(&"".into(), Some(px(100.)), window),
             line_height
@@ -141,6 +141,32 @@ fn composer_clicks_focus_blank_space_and_keep_visible_text_in_place(cx: &mut gpu
             });
             draw(cx);
             draw(cx);
+            cx.update(|window, cx| {
+                let input = input.read(cx);
+                // Match the old textarea's text_sm and 1.25rem styles.
+                assert_eq!(
+                    input.line_height(),
+                    Some((theme().type_scale.body * 1.25).round())
+                );
+                let text = "one";
+                let expected = window.text_system().shape_line(
+                    text.into(),
+                    theme().type_scale.body * 0.875,
+                    &[gpui::TextRun {
+                        len: text.len(),
+                        font: gpui::font(UI_FONT_FAMILY),
+                        color: theme().colors.text.into(),
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    }],
+                    None,
+                );
+                assert!(
+                    (input.range_to_bounds(&(0..3)).unwrap().size.width - expected.width).abs()
+                        < px(0.01)
+                );
+            });
             for draft in [true, false] {
                 if !draft {
                     app.update(cx, |app, cx| {

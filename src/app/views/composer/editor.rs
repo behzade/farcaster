@@ -92,8 +92,8 @@ impl RenderOnce for ComposerInput {
             .flex_1()
             .min_h(theme().size(48.0))
             .font_family(UI_FONT_FAMILY)
-            .text_size(theme().type_scale.reading)
-            .line_height(theme().type_scale.line_composer)
+            .text_size(composer_font_size())
+            .line_height(composer_line_height())
             .pl(theme().space.sm)
             .pr(theme().size(48.0))
             .capture_action(move |_: &Paste, _, cx| {
@@ -213,8 +213,8 @@ fn composer_height(
     width: Option<gpui::Pixels>,
     window: &gpui::Window,
 ) -> gpui::Pixels {
-    let font_size = theme().type_scale.reading;
-    let line_height = theme().type_scale.line_composer;
+    let font_size = composer_font_size();
+    let line_height = composer_line_height();
     let run = gpui::TextRun {
         len: value.len(),
         font: gpui::font(UI_FONT_FAMILY),
@@ -240,6 +240,15 @@ fn composer_height(
         })
         .unwrap_or_else(|_| value.lines().count());
     line_height * rows.clamp(1, 8)
+}
+
+// The former textarea used text_sm and 1.25rem, with the UI body size as one rem.
+fn composer_font_size() -> gpui::Pixels {
+    theme().type_scale.body * 0.875
+}
+
+fn composer_line_height() -> gpui::Pixels {
+    (theme().type_scale.body * 1.25).round()
 }
 
 fn composer_editor(input: &Entity<EditorState>, height: gpui::Pixels) -> gpui::Stateful<gpui::Div> {
@@ -268,8 +277,8 @@ fn composer_editor(input: &Entity<EditorState>, height: gpui::Pixels) -> gpui::S
                 .w_full()
                 .h(height)
                 .font_family(UI_FONT_FAMILY)
-                .text_size(theme().type_scale.reading)
-                .line_height(theme().type_scale.line_composer)
+                .text_size(composer_font_size())
+                .line_height(composer_line_height())
                 .appearance(false)
                 .p_0(),
         )

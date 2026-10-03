@@ -215,3 +215,136 @@ fn help_lists_ctrl_g_prefix_and_direct_composer_return() {
                 && *label == "Return to chat composer")
     );
 }
+
+#[gpui::test]
+fn chat_background_clicks_return_to_composer_without_taking_input_focus(
+    cx: &mut gpui::TestAppContext,
+) {
+    use gpui::{Focusable as _, point, px, size};
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::chat_background_clicks_return_to_composer_without_taking_input_focus"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.simulate_resize(size(px(1_400.), px(900.)));
+            cx.update(|window, cx| {
+                window.activate_window();
+                app.update(cx, |app, cx| {
+                    app.sessions.selected_draft = None;
+                    app.workspace.session_rail_hidden = false;
+                    app.workspace.run_panel_hidden = false;
+                    app.composer.focus.focus(window, cx);
+                    app.notify_composer(cx);
+                    cx.notify();
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            let (input, left, right, bounds) = cx.update(|_, cx| {
+                let app = app.read(cx);
+                (
+                    app.composer.input.clone(),
+                    app.views.session_rail.read(cx).width(),
+                    px(1_400.) - app.views.run_panel.read(cx).width(),
+                    app.composer.input.read(cx).input_bounds(),
+                )
+            });
+            for position in [
+                point(left + px(16.), bounds.center().y),
+                point(right - px(16.), bounds.center().y),
+                point(bounds.center().x, bounds.top() - px(40.)),
+                point(px(20.), px(450.)),
+                point(px(1_380.), px(450.)),
+            ] {
+                cx.simulate_mouse_move(position, None, Default::default());
+                cx.simulate_click(position, Default::default());
+                cx.update(|window, cx| {
+                    window.draw(cx).clear(cx);
+                    assert!(
+                        input.read(cx).focus_handle(cx).is_focused(window),
+                        "background click at {position:?} lost composer focus"
+                    );
+                });
+            }
+            cx.simulate_input("still typing");
+            cx.update(|_, cx| assert_eq!(input.read(cx).value().as_ref(), "still typing"));
+
+            // An explicit input keeps its keyboard ownership.
+            let search = cx.update(|_, cx| app.read(cx).navigation.search.clone());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            let search_bounds = cx.update(|_, cx| search.read(cx).input_bounds());
+            let search_position = search_bounds.center();
+            cx.simulate_mouse_move(search_position, None, Default::default());
+            cx.simulate_click(search_position, Default::default());
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                assert!(
+                    search.read(cx).focus_handle(cx).is_focused(window),
+                    "search click must retain search focus"
+                );
+            });
+            cx.simulate_input("search query");
+            cx.update(|_, cx| {
+                assert_eq!(search.read(cx).value().as_ref(), "search query");
+                assert_eq!(input.read(cx).value().as_ref(), "still typing");
+            });
+
+            // Only Chat redirects the fallback; native surfaces retain it.
+            for surface in [
+                crate::app::AppSurface::Editor,
+                crate::app::AppSurface::Terminal,
+            ] {
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| {
+                        app.workspace.surface = surface;
+                        app.composer.focus.focus(window, cx);
+                    });
+                    window.draw(cx).clear(cx);
+                });
+                cx.update(|window, cx| {
+                    let root_focus = app.read(cx).navigation.chat.focus.clone();
+                    root_focus.focus(window, cx);
+                    window.draw(cx).clear(cx);
+                    assert!(app.read(cx).navigation.chat.focus.is_focused(window))
+                });
+            }
+
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.workspace.surface = crate::app::AppSurface::Chat;
+                    app.extensions
+                        .active
+                        .apply(crate::protocol::ExtensionUiRequest::Input {
+                            id: "focus-test".into(),
+                            title: "Question".into(),
+                            placeholder: None,
+                            timeout: None,
+                        });
+                    app.extensions
+                        .dialog_input
+                        .read(cx)
+                        .focus_handle(cx)
+                        .focus(window, cx);
+                    cx.notify();
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.update(|window, cx| {
+                let root_focus = app.read(cx).navigation.chat.focus.clone();
+                root_focus.focus(window, cx);
+                window.draw(cx).clear(cx);
+                assert!(
+                    app.read(cx)
+                        .extensions
+                        .dialog_input
+                        .read(cx)
+                        .focus_handle(cx)
+                        .is_focused(window)
+                )
+            });
+        },
+    );
+}
