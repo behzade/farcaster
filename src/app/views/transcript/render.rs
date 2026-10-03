@@ -747,7 +747,7 @@ pub(super) fn invocation_transcript_markdown_style(resolved: &str) -> TextViewSt
 
 fn transcript_markdown_style_with_inline_code(inline_code: HighlightStyle) -> TextViewStyle {
     let mut code_block = StyleRefinement::default();
-    code_block.padding.top = Some((theme().controls.icon_button + theme().size(16.0)).into());
+    code_block.padding.right = Some((theme().controls.icon_button + theme().size(16.0)).into());
     code_block.overflow.x = Some(Overflow::Scroll);
     code_block.restrict_scroll_to_axis = Some(true);
     TextViewStyle {
