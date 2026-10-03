@@ -14,8 +14,8 @@ inspector = ["gpui_macros/inspector", "gpui/inspector"]
 [dependencies]
 anyhow = "1"
 aho-corasick = "1.1.3"
-gpui = { path = "../../zed-gpui-cc053a4/crates/gpui" }
-gpui_macros = { path = "../../zed-gpui-cc053a4/crates/gpui_macros" }
+gpui = { package = "gpui-pre", version = "=0.3.7" }
+gpui_macros = { package = "gpui-pre-macros", version = "=0.3.7" }
 instant = { version = "0.1", features = ["wasm-bindgen"] }
 lsp-types = { version = "0.97.0", features = ["proposed"] }
 regex = "1"
@@ -37,5 +37,5 @@ async-channel = "2.3.1"
 [target.'cfg(target_os = "macos")'.dependencies]
 raw-window-handle = "0.6.2"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSView", "NSWindow"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSResponder", "NSView", "NSWindow"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSGeometry", "NSString"] }

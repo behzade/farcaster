@@ -51,7 +51,7 @@ changes:
   asset source.
 - `ui/src/icon.rs` replaces the generated upstream icon enum and asset build
   pipeline with a hand-written enum mapped to Pi's bundled Phosphor icons.
-- The crate manifests use Pi's vendored GPUI revision, remove dependencies of
+- The crate manifests use crates.io `gpui-pre` 0.3.7, remove dependencies of
   omitted modules, and disable unused default AppKit features. Retained
   crate-local unit tests are enabled. Tests for omitted OTP/progress controls,
   the Aurora theme, and tree-sitter integrations are removed; focus and Markdown

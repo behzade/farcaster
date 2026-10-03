@@ -93,18 +93,24 @@ pub(crate) fn run(
     let notification_app: Rc<RefCell<Option<WeakEntity<FarcasterApp>>>> =
         Rc::new(RefCell::new(None));
     let wake_app = notification_app.clone();
-    platform_application.on_system_wake(move |cx| {
-        if let Some(app) = wake_app.borrow().clone() {
-            let _ = app.update(cx, |app, _| {
-                if let Err(error) = app.runtime.send(crate::runtime::RuntimeCommand::SystemWake) {
-                    zlog::warn!("Could not refresh idle harnesses after system wake: {error}");
-                }
-            });
-        }
-    });
+
     platform_application
         .with_assets(AppAssets)
         .run(move |cx: &mut App| {
+            cx.on_system_wake(move |cx| {
+                if let Some(app) = wake_app.borrow().clone() {
+                    let _ = app.update(cx, |app, _| {
+                        if let Err(error) =
+                            app.runtime.send(crate::runtime::RuntimeCommand::SystemWake)
+                        {
+                            zlog::warn!(
+                                "Could not refresh idle harnesses after system wake: {error}"
+                            );
+                        }
+                    });
+                }
+            })
+            .detach();
             drop(event_loop_timing);
             let (app_id, app_name) = if isolation::is_isolated() {
                 (

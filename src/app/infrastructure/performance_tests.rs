@@ -1,5 +1,33 @@
 use super::*;
 
+#[gpui::test]
+fn basic_monitor_reads_each_draw_once_without_full_tracing(cx: &mut gpui::TestAppContext) {
+    let cx = cx.add_empty_window();
+    cx.update(|window, cx| {
+        let id = window.window_handle().window_id();
+        let mut monitor = PerformanceMonitor::new(id, false, cx);
+        assert!(!profiler::trace_enabled());
+        window.refresh();
+        window.draw(cx).clear(cx);
+        let summary = collect_summary(&mut monitor.frames, id, SAMPLE_INTERVAL, false);
+        assert_eq!(summary.frame_count, 1);
+        assert!(summary.draw_max > Duration::ZERO);
+        assert!(summary.dirty_requests_max > 0);
+        assert_eq!(
+            collect_summary(&mut monitor.frames, id, SAMPLE_INTERVAL, false).frame_count,
+            0
+        );
+        profiler::set_trace_enabled(true);
+        window.refresh();
+        window.draw(cx).clear(cx);
+        profiler::set_trace_enabled(false);
+        assert_eq!(
+            collect_summary(&mut monitor.frames, id, SAMPLE_INTERVAL, false).frame_count,
+            1
+        );
+    });
+}
+
 #[test]
 fn operation_slots_follow_enum_discriminants() {
     for (index, kind) in OperationKind::ALL.into_iter().enumerate() {

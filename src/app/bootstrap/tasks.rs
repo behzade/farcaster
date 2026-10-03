@@ -134,6 +134,7 @@ pub(super) fn start_performance_monitor(
         crate::app::infrastructure::performance::PerformanceMonitor::new(
             window.window_handle().window_id(),
             debug,
+            cx,
         ),
     );
     let task = Some(cx.spawn(async move |weak, cx| {

@@ -33,7 +33,7 @@ toml = "1.1.3"
 tpt-logfmt-parse = "0.3.0"
 url = "2.5.8"
 uuid = { version = "1.24.0", features = ["v4"] }
-zlog = { path = "../../third_party/zed-gpui-cc053a4/crates/zlog" }
+zlog = { package = "gpui-pre-zlog", version = "=0.3.7" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 uzers = { version = "0.12.2", default-features = false }

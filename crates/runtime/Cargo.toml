@@ -19,7 +19,7 @@ farcaster-sessions = { path = "../sessions" }
 farcaster-storage = { path = "../storage" }
 serde_json = "1.0.151"
 uuid = { version = "1.24.0", features = ["v4"] }
-zlog = { path = "../../third_party/zed-gpui-cc053a4/crates/zlog" }
+zlog = { package = "gpui-pre-zlog", version = "=0.3.7" }
 
 [dev-dependencies]
 farcaster-agents = { path = "../agents", features = ["test-support"] }

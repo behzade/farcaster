@@ -7,7 +7,7 @@ publish = false
 license = "GPL-3.0-or-later"
 
 [dependencies]
-sum_tree = { path = "../../third_party/zed-gpui-cc053a4/crates/sum_tree" }
+sum_tree = { package = "gpui-pre-sum-tree", version = "=0.3.7" }
 
 [lints.rust]
 unsafe_code = "forbid"

@@ -10,7 +10,7 @@ doctest = false
 
 [dependencies]
 anyhow = "1"
-gpui = { path = "../../zed-gpui-cc053a4/crates/gpui" }
+gpui = { package = "gpui-pre", version = "=0.3.7" }
 gpui-base = { path = "../base" }
 notify = "7.0.0"
 ropey = { version = "=2.0.0-beta.1", features = ["metric_chars", "metric_lines_lf", "metric_utf16"] }

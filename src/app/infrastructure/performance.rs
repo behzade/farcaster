@@ -7,7 +7,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui::{FrameTimingCollector, TasksIncluded, TouchPhase, WindowId, profiler};
+use gpui::profiler::journal::{
+    ForegroundEvent, ForegroundJournalCollector, ForegroundJournalEntry,
+};
+use gpui::{App, TasksIncluded, TouchPhase, WindowId, profiler};
 
 const SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 const SLOW_OPERATION: Duration = Duration::from_millis(2);
@@ -370,7 +373,7 @@ impl Drop for Timing {
 }
 
 pub(crate) struct PerformanceMonitor {
-    frames: FrameTimingCollector,
+    frames: ForegroundJournalCollector,
     window_id: WindowId,
     sampled_at: Instant,
     detailed: bool,
@@ -423,14 +426,14 @@ pub(crate) struct OperationSummary {
 }
 
 impl PerformanceMonitor {
-    pub(crate) fn new(window_id: WindowId, detailed: bool) -> Self {
+    pub(crate) fn new(window_id: WindowId, detailed: bool, cx: &App) -> Self {
         reset_counters();
         MONITORING.store(true, Ordering::Relaxed);
         DETAILED.store(detailed, Ordering::Relaxed);
         profiler::set_trace_enabled(detailed);
-        profiler::set_frame_trace_enabled(true);
         Self {
-            frames: FrameTimingCollector::new(),
+            // The journal records frames even when expensive task tracing is off.
+            frames: cx.foreground_journal().collector(),
             window_id,
             sampled_at: Instant::now(),
             detailed,
@@ -481,12 +484,11 @@ impl Drop for PerformanceMonitor {
         MONITORING.store(false, Ordering::Relaxed);
         DETAILED.store(false, Ordering::Relaxed);
         profiler::set_trace_enabled(false);
-        profiler::set_frame_trace_enabled(false);
     }
 }
 
 fn collect_summary(
-    frames: &mut FrameTimingCollector,
+    frames: &mut ForegroundJournalCollector,
     window_id: WindowId,
     sample_interval: Duration,
     detailed: bool,
@@ -494,8 +496,16 @@ fn collect_summary(
     record_catalog_metrics(crate::sessions::take_catalog_metrics());
     let frames = frames
         .collect_unseen()
+        .entries
         .into_iter()
-        .filter(|frame| frame.window_id == window_id)
+        .filter_map(|entry| match entry {
+            ForegroundJournalEntry::Event(ForegroundEvent::Draw(frame))
+                if frame.window_id == window_id =>
+            {
+                Some(frame)
+            }
+            _ => None,
+        })
         .collect::<Vec<_>>();
     let mut draw = frames
         .iter()

@@ -1,6 +1,7 @@
 use gpui::{App, SystemNotification};
 
-#[cfg(not(target_os = "macos"))]
+// Headless tests use GPUI's notification recorder.
+#[cfg(any(not(target_os = "macos"), test))]
 pub(in crate::app) fn show(notification: SystemNotification, cx: &mut App) {
     cx.show_system_notification(notification);
 }
@@ -31,7 +32,7 @@ impl NotificationAuthorization {
 #[cfg(target_os = "macos")]
 impl gpui::Global for NotificationAuthorization {}
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(test)))]
 pub(in crate::app) fn show(notification: SystemNotification, cx: &mut App) {
     use block2::RcBlock;
     use objc2::runtime::Bool;

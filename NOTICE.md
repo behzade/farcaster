@@ -43,8 +43,12 @@ The upstream license is included at
 `THIRD_PARTY_LICENSES/GPUI-COMPONENT-APACHE-2.0.txt`; extraction details remain
 with the corresponding source under `third_party/gpui-component-bd83329`.
 
-The GPUI framework and its narrow Zed package closure are included from Zed
-commit `cc053a4a6fa2fd0e8793201ed9099466af1be0b1` under
+The application uses the crates.io `gpui-pre` 0.3.7 snapshot and related
+packages, built from Zed commit `1a28cff4b409169bac058bca40dfbfeb7621d19b`.
+These packages retain their upstream Apache-2.0 or GPL-3.0-or-later licenses.
+
+The earlier GPUI framework and narrow Zed package closure remain as source
+from Zed commit `cc053a4a6fa2fd0e8793201ed9099466af1be0b1` under
 `third_party/zed-gpui-cc053a4`. The included packages declare Apache-2.0 or
 GPL-3.0-or-later licensing. Their license texts are included as
 `THIRD_PARTY_LICENSES/ZED-GPUI-APACHE-2.0.txt` and

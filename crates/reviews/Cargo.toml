@@ -11,7 +11,7 @@ farcaster-conversation = { path = "../conversation" }
 farcaster-utility = { path = "../utility" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
-zlog = { path = "../../third_party/zed-gpui-cc053a4/crates/zlog" }
+zlog = { package = "gpui-pre-zlog", version = "=0.3.7" }
 
 [dev-dependencies]
 tempfile = "3.27.0"
