@@ -27,7 +27,7 @@ pub(in crate::app::views) fn render(
         div()
             .id("composer-attachments")
             .px(theme().space.sm)
-            .pb(theme().space.xs)
+            .py(theme().space.sm)
             .flex()
             .flex_wrap()
             .gap(theme().space.xs)
@@ -40,6 +40,7 @@ pub(in crate::app::views) fn render(
                     images.len(),
                     entity.clone(),
                 )
+                .debug_selector(|| "composer-attachment-card".into())
                 .child(remove_button(
                     ("remove-composer-image", index),
                     "Remove image",
@@ -65,6 +66,7 @@ pub(in crate::app::views) fn render(
                             open.update(cx, |this, cx| this.open_composer_paste(index, window, cx));
                     },
                 )
+                .debug_selector(|| "composer-attachment-card".into())
                 .child(remove_button(
                     ("remove-composer-paste", index),
                     "Remove pasted text",

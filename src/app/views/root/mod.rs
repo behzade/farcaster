@@ -66,6 +66,19 @@ impl Render for FarcasterApp {
             .font(ui_font())
             .key_context(key_context)
             .track_focus(&self.navigation.chat.focus)
+            // Handle unused Chat clicks before GPUI focuses the root.
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    if this.workspace.surface == AppSurface::Chat
+                        && !window.default_prevented()
+                        && this.keyboard_overlay_focus(window, cx).is_none()
+                    {
+                        this.composer_region_focus(cx).focus(window, cx);
+                        window.prevent_default();
+                    }
+                }),
+            )
             .capture_key_down(cx.listener(|this, event, window, cx| {
                 if this.handle_composer_escape_key(event, window, cx) {
                     window.prevent_default();

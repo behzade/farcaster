@@ -94,7 +94,11 @@ impl RenderOnce for ComposerInput {
             .font_family(UI_FONT_FAMILY)
             .text_size(composer_font_size())
             .line_height(composer_line_height())
-            .pl(theme().space.sm)
+            // Kit adds 6px inside the editor; include that in the body inset.
+            .pl(
+                (theme().space.sm - gpui_component::Size::default().input_px().min(px(6.)))
+                    .max(px(0.)),
+            )
             .pr(theme().size(48.0))
             .capture_action(move |_: &Paste, _, cx| {
                 if paste_entity

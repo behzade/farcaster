@@ -42,6 +42,7 @@ pub(super) fn harness_selector(
             }
         });
     dropdown_button("draft-harness", label, ButtonTone::Quiet, true)
+        .pl_0()
         .text_color(theme().colors.text)
         .dropdown_menu_with_anchor(gpui::Anchor::BottomLeft, move |mut menu, _, _| {
             for backend in &backends {

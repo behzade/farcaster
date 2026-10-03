@@ -92,8 +92,8 @@ impl FarcasterApp {
         let abort_entity = entity;
         div()
             .absolute()
-            .right(theme().size(12.0))
-            .bottom(theme().size(10.0))
+            .right(theme().space.sm)
+            .bottom(theme().space.sm)
             .occlude()
             .flex()
             .items_center()

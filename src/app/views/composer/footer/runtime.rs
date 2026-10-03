@@ -1,6 +1,7 @@
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, IntoElement as _, ParentElement as _, Styled as _,
-    Transformation, WeakEntity, div, percentage, prelude::FluentBuilder as _,
+    Animation, AnimationExt as _, AnyElement, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, Styled as _, Transformation, WeakEntity, div, percentage,
+    prelude::FluentBuilder as _,
 };
 use gpui_component::{
     menu::{DropdownMenu as _, PopupMenuItem},
@@ -47,6 +48,7 @@ pub(in crate::app::views) fn render(
     let shows_effort = !app.snapshot.available_thinking_levels().is_empty()
         || identity.effort.is_some_and(|effort| effort != "off");
     let runtime_content = div()
+        .debug_selector(|| "composer-runtime-content".into())
         .flex()
         .items_center()
         .font_family(MONO_FONT_FAMILY)
@@ -75,6 +77,9 @@ pub(in crate::app::views) fn render(
                 ButtonTone::Neutral,
                 true,
             )
+            .when(app.editable_draft_harness().is_none(), |button| {
+                button.pl_0()
+            })
             .flex_none(),
         )
         .on_open_change(move |open, window, cx| {

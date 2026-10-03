@@ -119,6 +119,62 @@ fn composer_grows_with_wrapping_and_caps_at_eight_rows(cx: &mut gpui::TestAppCon
 }
 
 #[gpui::test]
+fn composer_text_attachments_and_controls_share_an_inset(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::composer_text_attachments_and_controls_share_an_inset"
+        ),
+        cx,
+        |cx, app, _, project| {
+            cx.simulate_resize(gpui::size(px(1_400.), px(900.)));
+            for (text, attachment) in [("", false), ("one", false), ("one", true)] {
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| {
+                        app.sessions.selected_draft = None;
+                        if attachment {
+                            app.composer.pastes.insert(
+                                app.composer.sessions.current_target().to_owned(),
+                                vec![crate::app::composer::pastes::ComposerPaste {
+                                    path: project.join("paste.txt"),
+                                    content: "pasted text".into(),
+                                    line_count: 1,
+                                }],
+                            );
+                        }
+                        app.composer
+                            .input
+                            .update(cx, |input, cx| input.set_value(text, window, cx));
+                        app.notify_composer(cx);
+                        cx.notify();
+                    });
+                    window.draw(cx).clear(cx);
+                });
+                cx.update(|window, cx| window.draw(cx).clear(cx));
+                let frame = cx.debug_bounds("composer-frame").expect("composer frame");
+                let runtime = cx
+                    .debug_bounds("composer-runtime-content")
+                    .expect("runtime controls");
+                let input = cx.update(|_, cx| app.read(cx).composer.input.read(cx).input_bounds());
+                let left = frame.left() + theme().border + theme().space.md;
+                assert_eq!(input.left(), left, "text and placeholder inset");
+                assert_eq!(runtime.left(), left, "footer label inset");
+                if attachment {
+                    let card = cx
+                        .debug_bounds("composer-attachment-card")
+                        .expect("attachment card");
+                    assert_eq!(card.left(), left, "attachment inset");
+                    assert_eq!(card.top(), frame.top() + theme().border + theme().space.md);
+                    assert_eq!(input.top() - card.bottom(), theme().space.md);
+                } else {
+                    assert_eq!(input.top(), frame.top() + theme().border + theme().space.md);
+                }
+            }
+        },
+    );
+}
+
+#[gpui::test]
 fn composer_clicks_focus_blank_space_and_keep_visible_text_in_place(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
         concat!(

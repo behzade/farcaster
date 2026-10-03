@@ -112,6 +112,7 @@ impl FarcasterApp {
 
         let composer_focus = self.composer.focus.clone();
         let composer = div()
+            .debug_selector(|| "composer-frame".into())
             .relative()
             .w_full()
             .min_h(theme().layout.composer_min)
@@ -168,7 +169,7 @@ impl FarcasterApp {
                     .flex_none()
                     .flex()
                     .items_center()
-                    .px(theme().size(12.0))
+                    .px(theme().space.md)
                     .border_t(theme().border)
                     .border_color(theme().colors.surface)
                     .bg(theme().colors.panel)

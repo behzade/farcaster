@@ -252,6 +252,18 @@ fn chat_background_clicks_return_to_composer_without_taking_input_focus(
                     app.composer.input.read(cx).input_bounds(),
                 )
             });
+            let blurs = std::rc::Rc::new(std::cell::Cell::new(0));
+            let _subscription = cx.update(|_, cx| {
+                let blurs = blurs.clone();
+                cx.subscribe(
+                    &input,
+                    move |_, event: &gpui_component::input::InputEvent, _| {
+                        if matches!(event, gpui_component::input::InputEvent::Blur) {
+                            blurs.set(blurs.get() + 1);
+                        }
+                    },
+                )
+            });
             for position in [
                 point(left + px(16.), bounds.center().y),
                 point(right - px(16.), bounds.center().y),
@@ -268,6 +280,11 @@ fn chat_background_clicks_return_to_composer_without_taking_input_focus(
                         "background click at {position:?} lost composer focus"
                     );
                 });
+                assert_eq!(
+                    blurs.get(),
+                    0,
+                    "background click at {position:?} blurred composer"
+                );
             }
             cx.simulate_input("still typing");
             cx.update(|_, cx| assert_eq!(input.read(cx).value().as_ref(), "still typing"));
