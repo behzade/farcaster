@@ -1,79 +1,86 @@
 use std::{
-    ffi::OsString,
-    path::{Path, PathBuf},
-    process::Command,
+    ffi::{OsStr, OsString},
+    io::Write as _,
+    os::unix::{ffi::OsStrExt as _, fs::OpenOptionsExt as _},
+    path::Path,
 };
-
-use serde::{Deserialize, Serialize};
-
-pub(crate) const ARGUMENT: &str = "--internal-editor-launch";
-
-#[derive(Serialize, Deserialize)]
-struct Launch {
-    program: PathBuf,
-    arguments: Vec<OsString>,
-    project: PathBuf,
-    environment: Vec<(OsString, OsString)>,
-}
 
 pub(crate) fn prepare(
     path: &Path,
-    program: PathBuf,
-    arguments: Vec<OsString>,
-    project: PathBuf,
-) -> Result<(), String> {
-    let environment = crate::agents::project_shell_environment(&project)?
+    program: &Path,
+    arguments: &[OsString],
+    project: &Path,
+) -> Result<String, String> {
+    let environment = crate::agents::project_shell_environment(project)?
         .unwrap_or_else(|| std::env::vars_os().collect());
-    write_launch(
-        path,
-        &Launch {
-            program,
-            arguments,
-            project,
-            environment,
-        },
-    )
+    write_launch(path, program, arguments, project, &environment)
 }
 
-fn write_launch(path: &Path, launch: &Launch) -> Result<(), String> {
-    use std::os::unix::fs::OpenOptionsExt as _;
-    let file = std::fs::OpenOptions::new()
+fn write_launch(
+    path: &Path,
+    program: &Path,
+    arguments: &[OsString],
+    project: &Path,
+    environment: &[(OsString, OsString)],
+) -> Result<String, String> {
+    if path.as_os_str().as_bytes().contains(&0) {
+        return Err("editor launch path contains a NUL byte".to_owned());
+    }
+    let mut command = b"/usr/bin/env -i /bin/sh ".to_vec();
+    quote(&mut command, path.as_os_str());
+    let command =
+        String::from_utf8(command).map_err(|_| "editor launch path is not UTF-8".to_owned())?;
+    if program.as_os_str().is_empty() {
+        return Err("editor program is empty".to_owned());
+    }
+    let mut script = b"/bin/rm -- \"$0\" || exit\ncd -- ".to_vec();
+    quote(&mut script, project.as_os_str());
+    script.extend_from_slice(b" || exit\nexec /usr/bin/env -i --");
+    for (key, value) in environment {
+        if key.is_empty() || key.as_bytes().contains(&b'=') {
+            return Err("invalid editor environment name".to_owned());
+        }
+        if matches!(key.to_str(), Some("TERM" | "COLORTERM" | "TERM_PROGRAM")) {
+            continue;
+        }
+        let mut assignment = key.clone();
+        assignment.push("=");
+        assignment.push(value);
+        script.push(b' ');
+        quote(&mut script, &assignment);
+    }
+    script
+        .extend_from_slice(b" TERM=xterm-256color COLORTERM=truecolor TERM_PROGRAM=gpui-ghostty ");
+    quote(&mut script, program.as_os_str());
+    for argument in arguments {
+        script.push(b' ');
+        quote(&mut script, argument);
+    }
+    script.push(b'\n');
+    if script.contains(&0) {
+        return Err("editor launch contains a NUL byte".to_owned());
+    }
+    let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
         .open(path)
         .map_err(|error| format!("create editor launch file: {error}"))?;
-    serde_json::to_writer(file, launch)
-        .map_err(|error| format!("write editor launch file: {error}"))
-}
-
-fn take_command(path: &Path) -> Result<Command, String> {
-    let file =
-        std::fs::File::open(path).map_err(|error| format!("open editor launch file: {error}"))?;
-    let launch: Launch = serde_json::from_reader(file)
-        .map_err(|error| format!("read editor launch file: {error}"))?;
-    std::fs::remove_file(path).map_err(|error| format!("remove editor launch file: {error}"))?;
-    let mut command = Command::new(launch.program);
-    command
-        .args(launch.arguments)
-        .current_dir(launch.project)
-        .env_clear()
-        .envs(launch.environment)
-        .env("TERM", "xterm-256color")
-        .env("COLORTERM", "truecolor")
-        .env("TERM_PROGRAM", "gpui-ghostty");
+    file.write_all(&script)
+        .map_err(|error| format!("write editor launch file: {error}"))?;
     Ok(command)
 }
 
-pub(crate) fn run_if_requested() -> Result<(), String> {
-    use std::os::unix::process::CommandExt as _;
-    let mut arguments = std::env::args_os().skip(1);
-    if arguments.next().as_deref() != Some(std::ffi::OsStr::new(ARGUMENT)) {
-        return Ok(());
+fn quote(output: &mut Vec<u8>, value: &OsStr) {
+    output.push(b'\'');
+    for byte in value.as_bytes() {
+        if *byte == b'\'' {
+            output.extend_from_slice(b"'\\''");
+        } else {
+            output.push(*byte);
+        }
     }
-    let path = arguments.next().ok_or("missing editor launch file")?;
-    let error = take_command(Path::new(&path))?.exec();
-    Err(format!("launch editor: {error}"))
+    output.push(b'\'');
 }
 
 #[cfg(test)]

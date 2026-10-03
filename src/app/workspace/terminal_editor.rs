@@ -1,7 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
 use farcaster_editors::EditorCommand;
 use gpui::{
@@ -174,26 +171,19 @@ impl TerminalEditor {
             .prefix("farcaster-editor-")
             .tempdir()
             .map_err(|error| format!("prepare {}: {error}", self.choice.label()))?;
-        let launch_file = directory.path().join("launch.json");
-        editor_launch::prepare(
+        let launch_file = directory.path().join("launch.sh");
+        let command = editor_launch::prepare(
             &launch_file,
-            self.command.program.clone(),
-            self.command
+            &self.command.program,
+            &self
+                .command
                 .arguments
                 .iter()
                 .chain(&arguments)
                 .cloned()
-                .collect(),
-            self.project.clone(),
+                .collect::<Vec<_>>(),
+            &self.project,
         )?;
-        let executable = std::env::current_exe()
-            .map_err(|error| format!("resolve {} launcher: {error}", self.choice.label()))?;
-        let command = format!(
-            "{} {} {}",
-            shell_quote(&executable),
-            editor_launch::ARGUMENT,
-            shell_quote(&launch_file)
-        );
         let mut options = TerminalOptions::new(command, self.project.clone());
         options.quiet_login = true;
         let terminal = Terminal::spawn(options, window, cx)?;
@@ -304,8 +294,4 @@ impl Render for TerminalEditor {
                     .children(self.tabs.get(self.active).map(|tab| tab.terminal.clone())),
             )
     }
-}
-
-fn shell_quote(path: &Path) -> String {
-    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
 }

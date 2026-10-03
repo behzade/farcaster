@@ -1,15 +1,56 @@
 use super::*;
-use std::os::unix::{
-    ffi::{OsStrExt as _, OsStringExt as _},
-    fs::PermissionsExt as _,
-};
+use std::os::unix::{ffi::OsStringExt as _, fs::PermissionsExt as _};
+use std::process::{Command, Output};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+fn run_launch(command: &str) -> std::io::Result<Output> {
+    Command::new("/bin/sh").args(["-c", command]).output()
+}
+
+#[test]
+fn prepare_launches_from_ghostty_without_login_scripts_or_environment_in_command() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("launch.sh");
+    let marker = directory.path().join("profile-ran");
+    std::fs::write(
+        directory.path().join(".profile"),
+        format!("touch '{}'\n", marker.display()),
+    )?;
+    crate::agents::set_test_project_environment(
+        directory.path(),
+        vec![(
+            "FARCASTER_LAUNCH_TEST_SECRET".into(),
+            "private value".into(),
+        )],
+    );
+    let command = prepare(
+        &path,
+        Path::new("/usr/bin/env"),
+        &["-0".into()],
+        directory.path(),
+    )?;
+    assert!(!command.contains("private value"));
+    let output = Command::new("/bin/bash")
+        .args(["--noprofile", "--norc", "-c", &format!("exec -l {command}")])
+        .env("HOME", directory.path())
+        .output()?;
+    assert!(output.status.success(), "{:?}", output.stderr);
+    assert!(
+        output
+            .stdout
+            .split(|byte| *byte == 0)
+            .any(|entry| entry == b"FARCASTER_LAUNCH_TEST_SECRET=private value")
+    );
+    assert!(!marker.exists());
+    assert!(!path.exists());
+    Ok(())
+}
 
 #[test]
 fn launch_preserves_project_environment_with_ghostty_terminal_settings() -> TestResult {
     let directory = tempfile::tempdir()?;
-    let path = directory.path().join("launch.json");
+    let path = directory.path().join("it's $HOME `not a command`.sh");
     let environment = vec![
         ("PATH".into(), "/captured/project/bin".into()),
         (
@@ -26,26 +67,25 @@ fn launch_preserves_project_environment_with_ghostty_terminal_settings() -> Test
         ("COLORTERM".into(), "".into()),
         ("TERM_PROGRAM".into(), "another-terminal".into()),
     ];
-    write_launch(
+    let command = write_launch(
         &path,
-        &Launch {
-            program: "/usr/bin/env".into(),
-            arguments: vec!["-0".into()],
-            project: directory.path().into(),
-            environment: environment.clone(),
-        },
+        Path::new("/usr/bin/env"),
+        &["-0".into()],
+        directory.path(),
+        &environment,
     )?;
     assert_eq!(
         std::fs::metadata(&path)?.permissions().mode() & 0o777,
         0o600
     );
-    let mut child = take_command(&path)?;
+    let output = Command::new("/bin/sh")
+        .args(["-c", &command])
+        .env("FARCASTER_UNCAPTURED", "must not leak")
+        .output()?;
     assert!(
         !path.exists(),
         "consume the private environment snapshot before launch"
     );
-    assert_eq!(child.get_current_dir(), Some(directory.path()));
-    let output = child.output()?;
     assert!(output.status.success());
     let mut actual: Vec<Vec<u8>> = output
         .stdout
@@ -75,27 +115,27 @@ fn launch_preserves_project_environment_with_ghostty_terminal_settings() -> Test
 }
 
 #[test]
-fn launch_preserves_arguments_and_uses_captured_path() -> TestResult {
+fn launch_uses_captured_path_and_preserves_argument_bytes() -> TestResult {
     let directory = tempfile::tempdir()?;
     std::os::unix::fs::symlink("/bin/sh", directory.path().join("editor"))?;
-    let path = directory.path().join("launch.json");
-    write_launch(
+    let path = directory.path().join("launch.sh");
+    let argument = OsString::from_vec(b"a 'quoted' $argument\n\xff`".to_vec());
+    let command = write_launch(
         &path,
-        &Launch {
-            program: "editor".into(),
-            arguments: vec![
-                "-c".into(),
-                "printf '%s' \"$1\"".into(),
-                "editor".into(),
-                "a 'quoted' $argument\n".into(),
-            ],
-            project: directory.path().into(),
-            environment: vec![("PATH".into(), directory.path().as_os_str().into())],
-        },
+        Path::new("editor"),
+        &[
+            "-c".into(),
+            "test ! -e \"$1\" && printf '%s' \"$2\"".into(),
+            "editor".into(),
+            path.as_os_str().into(),
+            argument.clone(),
+        ],
+        directory.path(),
+        &[("PATH".into(), directory.path().as_os_str().into())],
     )?;
-    let output = take_command(&path)?.output()?;
+    let output = run_launch(&command)?;
     assert!(output.status.success());
-    assert_eq!(output.stdout, b"a 'quoted' $argument\n");
+    assert_eq!(output.stdout, argument.as_bytes());
     Ok(())
 }
 
@@ -112,17 +152,9 @@ fn custom_editor_launch_preserves_options_and_starts_in_project() -> TestResult 
     ))?;
     let mut arguments = command.arguments.clone();
     arguments.extend(command.project_arguments(&project));
-    let path = project.join("launch.json");
-    write_launch(
-        &path,
-        &Launch {
-            program: command.program,
-            arguments,
-            project: project.clone(),
-            environment: Vec::new(),
-        },
-    )?;
-    let output = take_command(&path)?.output()?;
+    let path = project.join("launch.sh");
+    let command = write_launch(&path, &command.program, &arguments, &project, &[])?;
+    let output = run_launch(&command)?;
     assert!(output.status.success());
     let values: Vec<_> = output.stdout.split(|byte| *byte == 0).collect();
     assert_eq!(
@@ -135,5 +167,40 @@ fn custom_editor_launch_preserves_options_and_starts_in_project() -> TestResult 
             b""
         ]
     );
+    Ok(())
+}
+
+#[test]
+fn null_argument_does_not_write_a_script() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("launch.sh");
+    assert!(
+        write_launch(
+            &path,
+            Path::new("/bin/sh"),
+            &["a\0b".into()],
+            directory.path(),
+            &[],
+        )
+        .is_err()
+    );
+    assert!(!path.exists());
+    Ok(())
+}
+
+#[test]
+fn failed_editor_launch_consumes_private_script() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("launch.sh");
+    let command = write_launch(
+        &path,
+        &directory.path().join("missing-editor"),
+        &[],
+        directory.path(),
+        &[],
+    )?;
+    let output = run_launch(&command)?;
+    assert!(!output.status.success());
+    assert!(!path.exists());
     Ok(())
 }

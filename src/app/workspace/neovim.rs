@@ -157,11 +157,11 @@ impl NvimEditor {
                 zlog::warn!("{error}");
             })
             .ok();
-        let launch_file = socket_dir.path().join("launch.json");
-        editor_launch::prepare(
+        let launch_file = socket_dir.path().join("launch.sh");
+        let command = editor_launch::prepare(
             &launch_file,
-            executable.clone(),
-            vec![
+            &executable,
+            &[
                 "-i".into(),
                 socket_dir.path().join("shada").into_os_string(),
                 "--cmd".into(),
@@ -171,17 +171,8 @@ impl NvimEditor {
                 "--".into(),
                 project.clone().into_os_string(),
             ],
-            project.clone(),
+            &project,
         )?;
-        let command = format!(
-            "{} {} {}",
-            shell_quote(
-                &std::env::current_exe()
-                    .map_err(|error| format!("resolve Neovim launcher: {error}"))?
-            ),
-            editor_launch::ARGUMENT,
-            shell_quote(&launch_file),
-        );
         let mut options = TerminalOptions::new(command, project.clone());
         options.quiet_login = true;
         let terminal = Terminal::spawn(options, window, cx)?;
@@ -268,10 +259,6 @@ impl Render for NvimEditor {
 
 pub(super) fn nvim_executable() -> PathBuf {
     farcaster_editors::EditorChoice::Neovim.program(Path::new("."), None)
-}
-
-fn shell_quote(path: &Path) -> String {
-    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
 }
 
 fn state_setup(state_dir: &Path) -> String {

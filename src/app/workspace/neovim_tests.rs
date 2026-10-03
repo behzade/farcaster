@@ -277,8 +277,4 @@ fn session_request_quotes_file_data_separately_from_lua() {
     let expression = session_expression(7, Some(Path::new("/tmp/it's | tricky.rs")), Some(42));
     assert!(expression.ends_with(", [7, '/tmp/it''s | tricky.rs', 42])"));
     assert!(session_expression(8, None, None).ends_with(", [8, v:null, v:null])"));
-    assert_eq!(
-        shell_quote(Path::new("/tmp/it's nvim")),
-        "'/tmp/it'\\''s nvim'"
-    );
 }
