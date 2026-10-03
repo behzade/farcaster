@@ -8,7 +8,7 @@ use gpui_component::input::{
 };
 
 use super::super::FarcasterApp;
-use crate::app::ui::theme::{UI_FONT_FAMILY, theme};
+use crate::app::ui::theme::{UI_FONT_FAMILY, theme, ui_font};
 use crate::app::{
     COMPOSER_KEY_CONTEXT, ComposerCompletionNext, ComposerCompletionPrevious, ComposerHistoryNext,
     ComposerHistoryPrevious,
@@ -94,7 +94,8 @@ impl RenderOnce for ComposerInput {
             .font_family(UI_FONT_FAMILY)
             .text_size(composer_font_size())
             .line_height(composer_line_height())
-            // Kit adds 6px inside the editor; include that in the body inset.
+            // Kit adds 6px of padding and a 6px gutter even without line numbers.
+            .ml(-px(6.))
             .pl(
                 (theme().space.sm - gpui_component::Size::default().input_px().min(px(6.)))
                     .max(px(0.)),
@@ -164,9 +165,12 @@ impl RenderOnce for ComposerInput {
             .child(
                 composer_editor(&self.composer, height).on_prepaint(move |bounds, _, cx| {
                     // Kit adds padding inside the editor state, independently
-                    // of the outer frame's style. Shape at the text area's width.
+                    // of the outer frame's style. Even with line numbers off,
+                    // Editor keeps a 6px gutter and reserves 10px for the caret.
+                    // Match its wrap width so the editor grows before it scrolls.
                     let padding = gpui_component::Size::default().input_px();
-                    let width = bounds.size.width - padding - padding.min(px(6.));
+                    let width =
+                        bounds.size.width - padding - padding.min(px(6.)) - px(6.) - px(10.);
                     if measured.read(cx).width != Some(width) {
                         measured.update(cx, |state, _| state.width = Some(width));
                         cx.notify(current_view);
@@ -217,33 +221,25 @@ fn composer_height(
     width: Option<gpui::Pixels>,
     window: &gpui::Window,
 ) -> gpui::Pixels {
-    let font_size = composer_font_size();
-    let line_height = composer_line_height();
-    let run = gpui::TextRun {
-        len: value.len(),
-        font: gpui::font(UI_FONT_FAMILY),
-        color: theme().colors.text.into(),
-        background_color: None,
-        underline: None,
-        strikethrough: None,
-    };
-    let rows = window
+    // Kit's display map uses LineWrapper, whose breaks differ from shape_text.
+    let mut wrapper = window
         .text_system()
-        .shape_text(
-            value.clone(),
-            font_size,
-            &[run],
-            width.filter(|width| *width > px(0.0)),
-            Some(8),
-        )
-        .map(|lines| {
-            lines
-                .iter()
-                .map(|line| line.wrap_boundaries().len() + 1)
-                .sum::<usize>()
-        })
-        .unwrap_or_else(|_| value.lines().count());
-    line_height * rows.clamp(1, 8)
+        .line_wrapper(ui_font(), composer_font_size());
+    let width = width.filter(|width| *width > px(0.0));
+    let mut rows = 0;
+    for line in value.split('\n') {
+        rows += 1;
+        if let Some(width) = width {
+            rows += wrapper
+                .wrap_line(&[gpui::LineFragment::text(line)], width)
+                .take(8 - rows)
+                .count();
+        }
+        if rows >= 8 {
+            break;
+        }
+    }
+    composer_line_height() * rows.clamp(1, 8)
 }
 
 // The former textarea used text_sm and 1.25rem, with the UI body size as one rem.

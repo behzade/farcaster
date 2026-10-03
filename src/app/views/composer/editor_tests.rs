@@ -119,6 +119,52 @@ fn composer_grows_with_wrapping_and_caps_at_eight_rows(cx: &mut gpui::TestAppCon
 }
 
 #[gpui::test]
+fn typing_through_wrapping_keeps_composer_position_and_text_scroll_stable(
+    cx: &mut gpui::TestAppContext,
+) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::typing_through_wrapping_keeps_composer_position_and_text_scroll_stable"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.simulate_resize(gpui::size(px(1_400.), px(900.)));
+            cx.update(|window, cx| {
+                window.activate_window();
+                app.update(cx, |app, cx| {
+                    app.composer.focus.focus(window, cx);
+                    cx.notify();
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            let frame = cx.debug_bounds("composer-frame").expect("composer frame");
+            let input = cx.update(|_, cx| app.read(cx).composer.input.clone());
+            for i in 0..350 {
+                cx.simulate_input("w");
+                cx.update(|window, cx| window.draw(cx).clear(cx));
+                let current = cx.debug_bounds("composer-frame").expect("composer frame");
+                cx.update(|_, cx| {
+                    let input = input.read(cx);
+                    assert_eq!(current, frame, "typing character {i} moved composer");
+                    assert_eq!(
+                        input.scroll_offset(),
+                        point(px(0.), px(0.)),
+                        "typing character {i} scrolled short text"
+                    );
+                });
+            }
+            cx.update(|_, cx| {
+                let input = input.read(cx);
+                assert_eq!(input.value().len(), 350);
+                assert!(input.input_bounds().size.height > input.line_height().unwrap());
+            });
+        },
+    );
+}
+
+#[gpui::test]
 fn composer_text_attachments_and_controls_share_an_inset(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
         concat!(
@@ -155,9 +201,24 @@ fn composer_text_attachments_and_controls_share_an_inset(cx: &mut gpui::TestAppC
                 let runtime = cx
                     .debug_bounds("composer-runtime-content")
                     .expect("runtime controls");
-                let input = cx.update(|_, cx| app.read(cx).composer.input.read(cx).input_bounds());
+                let (input, text_left) = cx.update(|_, cx| {
+                    let input = app.read(cx).composer.input.read(cx);
+                    (
+                        input.input_bounds(),
+                        input
+                            .range_to_bounds(&(0..text.len()))
+                            .map(|bounds| bounds.left()),
+                    )
+                });
                 let left = frame.left() + theme().border + theme().space.md;
-                assert_eq!(input.left(), left, "text and placeholder inset");
+                assert_eq!(
+                    input.left() + px(6.),
+                    left,
+                    "editor gutter and placeholder inset"
+                );
+                if let Some(text_left) = text_left {
+                    assert_eq!(text_left, left, "rendered text inset");
+                }
                 assert_eq!(runtime.left(), left, "footer label inset");
                 if attachment {
                     let card = cx
