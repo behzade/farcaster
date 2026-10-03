@@ -91,6 +91,7 @@ pub(in crate::app) fn composer_input(
         .smart_indent(false)
         .searchable(false)
         .soft_wrap(true)
+        .scroll_beyond_last_line(Some(0))
         .submit_on_enter(true)
         .placeholder("What would you like to work on?")
 }

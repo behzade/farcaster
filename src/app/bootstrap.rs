@@ -1,6 +1,7 @@
 use super::*;
 
 mod inputs;
+#[cfg(test)]
 pub(in crate::app) use inputs::composer_input;
 mod persisted;
 mod regions;

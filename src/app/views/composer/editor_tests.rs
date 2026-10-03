@@ -117,3 +117,102 @@ fn composer_grows_with_wrapping_and_caps_at_eight_rows(cx: &mut gpui::TestAppCon
         );
     });
 }
+
+#[gpui::test]
+fn composer_clicks_focus_blank_space_and_keep_visible_text_in_place(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::composer_clicks_focus_blank_space_and_keep_visible_text_in_place"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.simulate_resize(gpui::size(px(900.), px(700.)));
+            let draw = |cx: &mut gpui::VisualTestContext| {
+                cx.update(|window, cx| window.draw(cx).clear(cx));
+            };
+            let input = cx.update(|window, cx| {
+                let input = app.read(cx).composer.input.clone();
+                input.update(cx, |input, cx| {
+                    input.set_value("one\ntwo\nthree", window, cx);
+                    input.set_selected_range(0..0, cx);
+                });
+                input
+            });
+            draw(cx);
+            draw(cx);
+            for draft in [true, false] {
+                if !draft {
+                    app.update(cx, |app, cx| {
+                        app.sessions.selected_draft = None;
+                        app.notify_composer(cx);
+                        cx.notify();
+                    });
+                    draw(cx);
+                }
+                let bounds = cx.update(|_, cx| input.read(cx).input_bounds());
+                for position in [
+                    point(bounds.right() - px(20.), bounds.top() + px(10.)),
+                    point(bounds.left() - px(10.), bounds.top() + px(10.)),
+                ] {
+                    cx.update(|window, cx| window.blur(cx));
+                    draw(cx);
+                    cx.simulate_click(position, Default::default());
+                    cx.update(|window, cx| {
+                        assert!(
+                            input.read(cx).focus_handle(cx).is_focused(window),
+                            "blank click at {position:?}, draft={draft} must focus composer"
+                        );
+                    });
+                }
+            }
+            let bounds = cx.update(|_, cx| input.read(cx).input_bounds());
+            cx.simulate_event(gpui::ScrollWheelEvent {
+                position: bounds.center(),
+                delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-1_000.))),
+                ..Default::default()
+            });
+            draw(cx);
+            cx.update(|_, cx| {
+                assert_eq!(
+                    input.read(cx).scroll_offset().y,
+                    px(0.),
+                    "short text must not scroll into empty editor rows"
+                );
+            });
+            cx.update(|window, cx| {
+                input.update(cx, |input, cx| {
+                    input.set_value("word\n".repeat(12), window, cx);
+                    input.set_selected_range(0..0, cx);
+                    input.set_scroll_offset(point(px(0.), px(0.)), cx);
+                });
+            });
+            draw(cx);
+            draw(cx);
+            let (bounds, line_height) = cx.update(|_, cx| {
+                let input = input.read(cx);
+                assert_eq!(input.scroll_offset().y, px(0.));
+                assert_eq!(
+                    input.input_bounds().size.height,
+                    input.line_height().unwrap() * 8.
+                );
+                (input.input_bounds(), input.line_height().unwrap())
+            });
+            cx.simulate_click(
+                bounds.origin + point(px(8.), line_height * 7.5),
+                Default::default(),
+            );
+            draw(cx);
+            cx.update(|window, cx| {
+                let input = input.read(cx);
+                assert_eq!(input.cursor_position().line, 7);
+                assert!(input.focus_handle(cx).is_focused(window));
+                assert_eq!(
+                    input.scroll_offset().y,
+                    px(0.),
+                    "clicking visible text must not scroll it"
+                );
+            });
+        },
+    );
+}

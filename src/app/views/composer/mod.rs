@@ -125,6 +125,7 @@ impl FarcasterApp {
             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                 if !window.default_prevented() {
                     composer_focus.focus(window, cx);
+                    window.prevent_default();
                 }
             })
             .child(

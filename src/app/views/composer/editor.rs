@@ -75,7 +75,6 @@ impl RenderOnce for ComposerInput {
         let paste_entity = self.app.clone();
         let key_entity = self.app.clone();
         let cursor_entity = self.app.clone();
-        let focus_entity = self.app;
         let composer_for_paste = self.composer.clone();
         let suggestion_count = self.suggestion_count;
         let mut key_context = gpui::KeyContext::default();
@@ -97,7 +96,6 @@ impl RenderOnce for ComposerInput {
             .line_height(theme().type_scale.line_composer)
             .pl(theme().space.sm)
             .pr(theme().size(48.0))
-            .py(theme().space.sm)
             .capture_action(move |_: &Paste, _, cx| {
                 if paste_entity
                     .update(cx, |this, cx| {
@@ -156,21 +154,17 @@ impl RenderOnce for ComposerInput {
             .capture_key_down(move |_: &KeyDownEvent, _, cx| {
                 capture_after_input(key_entity.clone(), cx);
             })
-            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                if window.default_prevented() {
-                    return;
-                }
-                let _ = focus_entity.update(cx, |this, cx| {
-                    this.composer.focus.focus(window, cx);
-                });
-            })
             .on_mouse_up(MouseButton::Left, move |_, _, cx| {
                 capture_after_input(cursor_entity.clone(), cx);
             })
             .child(
                 composer_editor(&self.composer, height).on_prepaint(move |bounds, _, cx| {
-                    if measured.read(cx).width != Some(bounds.size.width) {
-                        measured.update(cx, |state, _| state.width = Some(bounds.size.width));
+                    // Kit adds padding inside the editor state, independently
+                    // of the outer frame's style. Shape at the text area's width.
+                    let padding = gpui_component::Size::default().input_px();
+                    let width = bounds.size.width - padding - padding.min(px(6.));
+                    if measured.read(cx).width != Some(width) {
+                        measured.update(cx, |state, _| state.width = Some(width));
                         cx.notify(current_view);
                     }
                 }),
@@ -250,6 +244,8 @@ fn composer_height(
 
 fn composer_editor(input: &Entity<EditorState>, height: gpui::Pixels) -> gpui::Stateful<gpui::Div> {
     let newline = input.clone();
+    // Keep the requested number of text rows after Kit's internal padding.
+    let height = height + gpui_component::Size::default().input_py() * 2.;
     div()
         .id("composer-editor")
         .w_full()
