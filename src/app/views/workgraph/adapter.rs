@@ -1,3 +1,4 @@
+use crate::app::ui::primitives::AppTooltip as _;
 mod catalog;
 mod create;
 mod detail;
@@ -479,7 +480,7 @@ fn render_board_header(
                     true,
                     move |window, cx| plans.update(cx, |this, cx| this.back_to_plans(window, cx)),
                 )
-                .tooltip("Back to all plans")
+                .app_tooltip("Back to all plans")
                 .child(
                     Kbd::new(gpui::Keystroke::parse("backspace").expect("static shortcut"))
                         .outline(),

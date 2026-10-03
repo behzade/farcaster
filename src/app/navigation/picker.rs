@@ -12,7 +12,6 @@ use gpui::{
     Styled as _, Subscription, WeakEntity, Window, div,
 };
 use gpui_component::{
-    IndexPath,
     input::Backspace,
     list::{List, ListEvent, ListState as ComponentListState},
 };

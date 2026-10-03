@@ -518,7 +518,7 @@ impl FarcasterApp {
         self.native_workspace_covered_by_overlay()
             || self.workspace.bar_hovered
             || gpui_base::GlobalState::is_in_deferred_context(cx)
-            || gpui_component::Root::tooltip_overlay(window, cx)
+            || crate::app::ui::primitives::tooltip_overlay(window, cx)
                 .is_some_and(|overlay| overlay.read(cx).is_visible())
     }
 
@@ -542,7 +542,7 @@ impl FarcasterApp {
         if self.workspace.tooltip_watch.is_some() {
             return;
         }
-        let Some(overlay) = gpui_component::Root::tooltip_overlay(window, cx) else {
+        let Some(overlay) = crate::app::ui::primitives::tooltip_overlay(window, cx) else {
             return;
         };
         self.workspace.tooltip_watch = Some(cx.observe(&overlay, |_, _, cx| cx.notify()));

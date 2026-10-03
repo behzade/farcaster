@@ -110,7 +110,7 @@ pub(super) fn repository_header(
                                 syncing.is_some() || app.project.repository.edits.pending.is_some(),
                             )
                             .accessibility_label(label)
-                            .tooltip(label)
+                            .app_tooltip(label)
                     };
                     row.child(
                         selection_button(
@@ -217,7 +217,7 @@ fn repository_actions(
         .size(theme().controls.icon_button)
         .px(gpui::px(0.0))
         .accessibility_label("Repository actions")
-        .tooltip("Repository actions")
+        .app_tooltip("Repository actions")
         .dropdown_menu(move |mut menu, _, _| {
             for (label, open) in [
                 ("Expand all folders", true),

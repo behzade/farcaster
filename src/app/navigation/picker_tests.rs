@@ -1,4 +1,5 @@
 use super::*;
+use gpui_component::IndexPath;
 
 #[gpui::test]
 fn back_restores_search_selection_scroll_and_parent_history(cx: &mut gpui::TestAppContext) {

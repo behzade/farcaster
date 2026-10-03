@@ -30,6 +30,8 @@ struct StateInner {
     next_frame_token: u64,
     scheduled_frame: Option<u64>,
     selection_drag_active: bool,
+    selection_press: Option<gpui::Point<Pixels>>,
+    selection_moved: bool,
     selection_anchor_candidate: Option<usize>,
     selection_anchor: Option<usize>,
     selection_cursor: Option<usize>,
@@ -178,6 +180,7 @@ impl StateInner {
 
     fn clear_selection(&mut self) {
         self.selection_drag_active = false;
+        self.selection_press = None;
         self.selection_anchor_candidate = None;
         self.selection_anchor = None;
         self.selection_cursor = None;
@@ -524,6 +527,54 @@ impl Element for TranscriptList {
             );
         });
 
+        // Rich-text selection may focus its own handle. Keep the keyboard owner
+        // that held focus when the user started selecting transcript text.
+        let focus_state = self.state.clone();
+        window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+            if phase != DispatchPhase::Capture || !bounds.contains(&event.position) {
+                return;
+            }
+            if event.button != MouseButton::Left {
+                // Context menus own focus explicitly; rich text must not take it
+                // through GPUI's default mouse-down focus on any button.
+                window.prevent_default();
+                return;
+            }
+            let focus = window.focused(cx);
+            let mut state = focus_state.0.borrow_mut();
+            state.selection_press = Some(event.position);
+            state.selection_moved = false;
+            drop(state);
+            restore_selection_focus(focus, window, cx);
+        });
+        let focus_state = self.state.clone();
+        window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+            if phase == DispatchPhase::Capture
+                && event.pressed_button == Some(MouseButton::Left)
+                && focus_state.0.borrow().selection_press.is_some()
+            {
+                let mut state = focus_state.0.borrow_mut();
+                let press = state.selection_press.unwrap();
+                state.selection_moved |= (event.position.x - press.x).abs() > px(2.)
+                    || (event.position.y - press.y).abs() > px(2.);
+                let jitter = !state.selection_moved;
+                drop(state);
+                if jitter {
+                    // Keep pointer jitter from turning a link click into a selection.
+                    cx.stop_propagation();
+                }
+            }
+        });
+        let focus_state = self.state.clone();
+        window.on_mouse_event(move |event: &MouseUpEvent, phase, _, _| {
+            if phase == DispatchPhase::Capture
+                && event.button == MouseButton::Left
+                && focus_state.0.borrow().selection_press.is_some()
+            {
+                focus_state.0.borrow_mut().selection_press = None;
+            }
+        });
+
         let selection_state = self.state.clone();
         let selection_key = self.selection_key.clone();
         let selection_hitbox_id = prepaint.hitbox.id;
@@ -625,6 +676,20 @@ impl Element for TranscriptList {
             request_scroll_frame(window, current_view, self.state.clone(), token);
         }
     }
+}
+
+fn restore_selection_focus(focus: Option<gpui::FocusHandle>, window: &mut Window, cx: &mut App) {
+    // Base queues participant focus during bubbling. Queue the restoration
+    // again so it runs after that callback, even for double and triple clicks.
+    window.defer(cx, move |window, cx| {
+        window.defer(cx, move |window, cx| {
+            if let Some(focus) = focus {
+                focus.focus(window, cx);
+            } else {
+                window.blur(cx);
+            }
+        });
+    });
 }
 
 fn request_scroll_frame(window: &Window, view: EntityId, state: TranscriptListState, token: u64) {

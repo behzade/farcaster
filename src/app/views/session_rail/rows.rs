@@ -1,4 +1,5 @@
 use crate::agents::Backend;
+use gpui_component::menu::ContextMenuExt as _;
 use std::{
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
@@ -13,7 +14,7 @@ use gpui::{
 use gpui_component::{
     input::{Escape, Input, InputState},
     kbd::Kbd,
-    menu::{DropdownMenu as _, PopupMenuItem},
+    menu::PopupMenuItem,
 };
 
 use super::{
@@ -487,7 +488,7 @@ fn session_context_menu(
     let app_session_id = session.app_session_id;
     ContextMenuTrigger::new(format!("{identity}:context-trigger"), row)
         .size_full()
-        .dropdown_menu_with_anchor(gpui::Anchor::TopLeft, move |menu, window, cx| {
+        .context_menu(move |menu, window, cx| {
             let rename_path = path.clone();
             let rename_project = project.clone();
             let rename_title = title.clone();
@@ -597,8 +598,6 @@ fn session_context_menu(
             }
             menu
         })
-        .mouse_button(MouseButton::Right)
-        .anchor_to_cursor()
         .into_any_element()
 }
 

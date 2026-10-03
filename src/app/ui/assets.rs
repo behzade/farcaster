@@ -133,6 +133,29 @@ impl AppAssets {
 
 impl AssetSource for AppAssets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+        let path = match path {
+            "icons/case-sensitive.svg" => "icons/phosphor/text-aa.svg",
+            "icons/check.svg" => "icons/phosphor/check.svg",
+            "icons/chevron-down.svg" => "icons/phosphor/caret-down.svg",
+            "icons/chevron-left.svg" => "icons/phosphor/caret-left.svg",
+            "icons/chevron-right.svg" => "icons/phosphor/caret-right.svg",
+            "icons/circle-check.svg" => "icons/phosphor/check-circle.svg",
+            "icons/circle-x.svg" => "icons/phosphor/x-circle.svg",
+            "icons/close.svg" => "icons/phosphor/x.svg",
+            "icons/external-link.svg" => "icons/phosphor/arrow-square-out.svg",
+            "icons/eye.svg" => "icons/phosphor/eye.svg",
+            "icons/eye-off.svg" => "icons/phosphor/eye-slash.svg",
+            "icons/inbox.svg" => "icons/phosphor/tray.svg",
+            "icons/info.svg" => "icons/phosphor/info.svg",
+            "icons/loader.svg" => "icons/phosphor/spinner-gap.svg",
+            "icons/plus.svg" => "icons/phosphor/plus.svg",
+            "icons/replace.svg" => "icons/phosphor/arrows-clockwise.svg",
+            "icons/search.svg" => "icons/phosphor/magnifying-glass.svg",
+            "icons/triangle-alert.svg" => "icons/phosphor/warning-circle.svg",
+            "icons/copy.svg" => "icons/phosphor/copy.svg",
+            "icons/minus.svg" => "icons/phosphor/minus.svg",
+            path => path,
+        };
         if let Some(bytes) = super::file_icons::load(path) {
             return Ok(Some(bytes));
         }

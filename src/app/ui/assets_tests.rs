@@ -49,7 +49,7 @@ fn harnesses_use_their_brand_icons() {
 fn asset_source_serves_themeable_and_editor_brand_icons() {
     assert!(
         AppAssets
-            .load("icons/search.svg")
+            .load("icons/unknown.svg")
             .expect("asset lookup should work")
             .is_none()
     );

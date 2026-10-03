@@ -1,11 +1,11 @@
 mod runtime;
 
+use crate::app::ui::primitives::AppTooltip as _;
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _, PathBuilder,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, canvas, div, point,
     prelude::FluentBuilder as _, px,
 };
-use gpui_component::tooltip::Tooltip;
 
 use super::super::usage::{
     ComposerUsage, composer_usage, format_cost, format_tokens, has_meaningful_usage,
@@ -310,9 +310,7 @@ fn labeled_metric(
                 .child(label),
         )
         .child(div().text_color(value_color).child(value))
-        .when_some(tooltip, |metric, tooltip| {
-            metric.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
-        })
+        .when_some(tooltip, |metric, tooltip| metric.app_tooltip(tooltip))
         .into_any_element()
 }
 

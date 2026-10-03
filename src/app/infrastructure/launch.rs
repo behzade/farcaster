@@ -123,6 +123,7 @@ pub(crate) fn run(
             cx.set_app_identity(app_id, app_name);
             let components_timing = StartupTiming::always("launch.init_components");
             gpui_component::init(cx);
+            crate::app::ui::primitives::init_tooltips(cx);
             drop(components_timing);
             let fonts_timing = StartupTiming::always("launch.load_fonts");
             if AppAssets.load_fonts(cx).is_err() {

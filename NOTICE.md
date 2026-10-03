@@ -36,12 +36,10 @@ the SIL Open Font License 1.1. Its license is included at
 `THIRD_PARTY_LICENSES/VAZIRMATN-OFL.txt`. Upstream:
 <https://github.com/rastikerdar/vazirmatn>.
 
-The application-specific `gpui-base` and `gpui-component` source subset is
-extracted from Longbridge GPUI Component commit
-`bd833291311289f3468479d31b629d3de279d3d4` and distributed under Apache-2.0.
-The upstream license is included at
-`THIRD_PARTY_LICENSES/GPUI-COMPONENT-APACHE-2.0.txt`; extraction details remain
-with the corresponding source under `third_party/gpui-component-bd83329`.
+The application uses crates.io GPUI Kit 0.7.0 and its `gpui-base` and
+`gpui-component` packages from Longbridge, distributed under Apache-2.0.
+The license is included at
+`THIRD_PARTY_LICENSES/GPUI-COMPONENT-APACHE-2.0.txt`.
 
 The application uses the crates.io `gpui-pre` 0.3.7 snapshot and related
 packages, built from Zed commit `1a28cff4b409169bac058bca40dfbfeb7621d19b`.

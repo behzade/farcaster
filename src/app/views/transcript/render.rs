@@ -1,3 +1,4 @@
+use gpui_component::menu::ContextMenuExt as _;
 use std::{
     borrow::Cow,
     hash::{Hash, Hasher},
@@ -6,11 +7,11 @@ use std::{
 
 use gpui::{
     AnyElement, ClipboardItem, Div, Entity, FontWeight, HighlightStyle, InteractiveElement as _,
-    IntoElement as _, MouseButton, Overflow, ParentElement as _, Pixels, Stateful, StyleRefinement,
-    Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px, rems,
+    IntoElement as _, Overflow, ParentElement as _, Pixels, Stateful, StyleRefinement, Styled as _,
+    WeakEntity, div, prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
-    menu::{DropdownMenu as _, PopupMenuItem},
+    menu::PopupMenuItem,
     text::{TextView, TextViewState, TextViewStyle},
 };
 
@@ -372,7 +373,7 @@ fn transcript_context_menu(
     content: AnyElement,
 ) -> AnyElement {
     ContextMenuTrigger::new(format!("transcript-context-trigger-{row_index}"), content)
-        .dropdown_menu_with_anchor(gpui::Anchor::TopLeft, move |menu, window, cx| {
+        .context_menu(move |menu, window, cx| {
             let selected_text = selection_state.copy_selection_text(window, cx);
             let mut menu = menu.min_w(theme().size(190.0));
             if let Some(text) = selected_text {
@@ -464,8 +465,6 @@ fn transcript_context_menu(
                     }),
             )
         })
-        .mouse_button(MouseButton::Right)
-        .anchor_to_cursor()
         .into_any_element()
 }
 
@@ -692,7 +691,6 @@ fn styled_selectable_text(font_scale: f32, text: TextView) -> TextView {
     text.style(style)
         .code_block_actions(|block, _, _| copy_code::CopyCodeButton::new(block.code()))
         .selectable(true)
-        .focusable(false)
         .w_full()
         .min_w_0()
         .text_size(theme().type_scale.reading * font_scale)

@@ -1,3 +1,4 @@
+use crate::app::ui::primitives::AppTooltip as _;
 mod appearance;
 mod harness_profiles;
 mod worker_tasks;
@@ -174,7 +175,7 @@ fn settings_action(
     let label = label.into();
     Button::new(id)
         .accessibility_label(label.clone())
-        .tooltip(label)
+        .app_tooltip(label)
         .ghost()
         .with_size(Size::Small)
         .size(theme().controls.icon_button)

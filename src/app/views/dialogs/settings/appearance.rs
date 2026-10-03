@@ -1,9 +1,6 @@
 use super::*;
 use crate::app::{
-    ui::{
-        primitives::AppTooltip as _,
-        theme::{Appearance, Colors, LengthKey, ThemeToken, length_label, token_label},
-    },
+    ui::theme::{Appearance, Colors, LengthKey, ThemeToken, length_label, token_label},
     workspace::theme_settings::ThemeSettings,
 };
 use gpui::SharedString;

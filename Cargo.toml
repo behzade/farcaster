@@ -27,7 +27,6 @@ resources = [
     { src = "assets/ibm-plex-sans/OFL.txt", target = "THIRD_PARTY_LICENSES/IBM-PLEX-OFL.txt" },
     { src = "assets/lilex/OFL.txt", target = "THIRD_PARTY_LICENSES/LILEX-OFL.txt" },
     { src = "assets/vazirmatn/OFL.txt", target = "THIRD_PARTY_LICENSES/VAZIRMATN-OFL.txt" },
-    { src = "third_party/gpui-component-bd83329/LICENSE-APACHE", target = "THIRD_PARTY_LICENSES/GPUI-COMPONENT-APACHE-2.0.txt" },
 ]
 binaries = [{ path = "farcaster", main = true }]
 before-packaging-command = "cargo build --release --locked --bin farcaster"
@@ -53,9 +52,9 @@ farcaster-sessions = { path = "crates/sessions" }
 farcaster-storage = { path = "crates/storage" }
 farcaster-utility = { path = "crates/utility" }
 futures = "0.3.32"
-gpui = { package = "gpui-pre", version = "=0.3.7", features = ["profiler"] }
-gpui-base = { path = "third_party/gpui-component-bd83329/base" }
-gpui-component = { path = "third_party/gpui-component-bd83329/ui" }
+gpui = { package = "gpui-kit", version = "=0.7.0", default-features = false, features = ["component", "profiler"] }
+gpui-base = "=0.7.0"
+gpui-component = "=0.7.0"
 gpui-libghostty = "0.3.1"
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 notify = "7.0.0"
@@ -90,7 +89,7 @@ farcaster-sessions = { path = "crates/sessions", features = ["test-support"] }
 farcaster-storage = { path = "crates/storage", features = ["test-support"] }
 farcaster-mcp-server = { path = "crates/mcp-server", features = ["test-support"] }
 farcaster-runtime = { path = "crates/runtime", features = ["test-support"] }
-gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
+gpui = { package = "gpui-kit", version = "=0.7.0", default-features = false, features = ["component", "test-support"] }
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 sha2 = "0.10.9"
 

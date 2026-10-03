@@ -1,6 +1,7 @@
 use super::*;
 
 mod inputs;
+pub(in crate::app) use inputs::composer_input;
 mod persisted;
 mod regions;
 mod subscriptions;
@@ -256,6 +257,7 @@ impl FarcasterApp {
             },
             composer: composer::ComposerState {
                 input: inputs.composer,
+                decorations: inputs.composer_decorations,
                 project_files: Vec::new(),
                 project_files_project: None,
                 project_files_loading: None,

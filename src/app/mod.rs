@@ -51,7 +51,9 @@ use gpui::{
     AppContext as _, Context, Entity, FocusHandle, Focusable as _, Image, PathPromptOptions,
     RenderImage, Subscription, SystemNotification, Task, Window, actions,
 };
-use gpui_component::input::{InputEvent, InputState, TextareaState};
+use gpui_component::input::{
+    EditorState, InputEvent, InputState, TextDecorationCollection, TextareaState,
+};
 use workspace::Terminal;
 use workspace::neovim::NvimEditor;
 use workspace::terminal_editor::TerminalEditor;

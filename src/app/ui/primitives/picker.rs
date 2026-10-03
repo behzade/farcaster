@@ -103,6 +103,7 @@ pub(crate) struct PickerDelegate {
     visible_rows: Vec<PickerRow>,
     sections: Vec<Range<usize>>,
     selected_index: Option<IndexPath>,
+    searching: bool,
     confirmed_id: Rc<RefCell<Option<String>>>,
     query: Rc<RefCell<String>>,
 }
@@ -121,6 +122,7 @@ impl PickerDelegate {
             sections: Vec::new(),
             all_rows: rows,
             selected_index: None,
+            searching: false,
             confirmed_id: Rc::clone(&confirmed_id),
             query: Rc::clone(&query),
         };
@@ -219,6 +221,7 @@ impl ListDelegate for PickerDelegate {
     ) -> gpui::Task<()> {
         *self.query.borrow_mut() = query.to_owned();
         self.filter_rows(query.trim());
+        self.searching = true;
         gpui::Task::ready(())
     }
 
@@ -228,10 +231,6 @@ impl ListDelegate for PickerDelegate {
 
     fn items_count(&self, section: usize, _: &App) -> usize {
         self.sections.get(section).map_or(0, Range::len)
-    }
-
-    fn is_selectable(&self, index: IndexPath, _: &App) -> bool {
-        self.row(index).is_some_and(|row| !row.disabled)
     }
 
     fn render_section_header(
@@ -355,10 +354,45 @@ impl ListDelegate for PickerDelegate {
     fn set_selected_index(
         &mut self,
         index: Option<IndexPath>,
-        _: &mut Window,
-        _: &mut Context<ListState<Self>>,
+        window: &mut Window,
+        cx: &mut Context<ListState<Self>>,
     ) {
-        self.selected_index = index;
+        let corrected = index.and_then(|index| {
+            let range = self.sections.get(index.section)?;
+            if index.row >= range.len() {
+                return None;
+            }
+            let flat = range.start + index.row;
+            let previous = self.selected_index.and_then(|index| {
+                self.sections
+                    .get(index.section)
+                    .map(|range| range.start + index.row)
+            });
+            let len = self.visible_rows.len();
+            let backwards = !self.searching
+                && previous.is_some_and(|previous| {
+                    flat == (previous + len - 1) % len && flat != (previous + 1) % len
+                });
+            (0..len).find_map(|step| {
+                let next = if backwards {
+                    (flat + len - step) % len
+                } else {
+                    (flat + step) % len
+                };
+                (!self.visible_rows[next].disabled)
+                    .then(|| self.index(next))
+                    .flatten()
+            })
+        });
+        self.searching = false;
+        self.selected_index = corrected;
+        if corrected != index {
+            cx.defer_in(window, move |list, window, cx| {
+                list.set_selected_index(corrected, window, cx);
+                list.scroll_to_selected_item(window, cx);
+                cx.notify();
+            });
+        }
     }
 
     fn confirm(&mut self, _: bool, _: &mut Window, _: &mut Context<ListState<Self>>) {

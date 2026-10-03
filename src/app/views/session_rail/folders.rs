@@ -1,3 +1,4 @@
+use gpui_component::menu::ContextMenuExt as _;
 use std::path::PathBuf;
 
 use super::{
@@ -20,9 +21,8 @@ use crate::app::{
     },
 };
 use gpui::{
-    Anchor, AnyElement, Entity, InteractiveElement as _, IntoElement as _, MouseButton,
-    ParentElement as _, StatefulInteractiveElement as _, Styled as _, WeakEntity, div,
-    prelude::FluentBuilder as _,
+    Anchor, AnyElement, Entity, InteractiveElement as _, IntoElement as _, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
 use gpui_component::{
     input::{Input, InputState},
@@ -476,8 +476,7 @@ pub(super) fn folder_header(
             ),
     );
     let header = ContextMenuTrigger::new(format!("folder-context-{id}"), row.into_any_element())
-        .dropdown_menu_with_anchor(Anchor::TopLeft, folder_menu)
-        .mouse_button(MouseButton::Right);
+        .context_menu(folder_menu);
     section.child(header).into_any_element()
 }
 

@@ -1,11 +1,11 @@
 use std::rc::Rc;
 
+use crate::app::ui::primitives::AppTooltip as _;
 use gpui::{
     AnyElement, App, CursorStyle, ElementId, FontWeight, InteractiveElement as _, IntoElement as _,
     MouseButton, ParentElement as _, Role, SharedString, Stateful, StatefulInteractiveElement as _,
     Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _,
 };
-use gpui_component::tooltip::Tooltip;
 
 use crate::app::FarcasterApp;
 use crate::{
@@ -265,7 +265,7 @@ fn candidate_row(
         .role(Role::Button)
         .aria_label(accessible)
         .aria_selected(checked)
-        .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+        .app_tooltip(tooltip)
         .tab_index(0)
         .on_mouse_down(
             MouseButton::Left,

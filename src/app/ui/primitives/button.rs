@@ -1,3 +1,4 @@
+use crate::app::ui::primitives::AppTooltip as _;
 use std::rc::Rc;
 
 use gpui::{
@@ -69,7 +70,7 @@ pub(crate) fn dropdown_content_button(
     let accessible_label = accessible_label.into();
     let button = Button::new(id)
         .accessibility_label(accessible_label.clone())
-        .tooltip(accessible_label)
+        .app_tooltip(accessible_label)
         .child(content)
         .dropdown_caret(true)
         .with_size(Size::Small)

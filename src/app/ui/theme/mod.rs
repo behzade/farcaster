@@ -668,7 +668,6 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     component.radius = theme.radius;
     component.radius_lg = theme.radius;
     component.shadow = true;
-    component.menu_item_height = theme.controls.menu_row;
     let component_colors = &mut component.colors;
     component_colors.background = colors.canvas.into();
     component_colors.foreground = colors.text.into();
@@ -721,16 +720,20 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     component_colors.caret = colors.text.into();
     component_colors.selection = colors.highlight.into();
     component.tokens = ThemeTokens::from(component.colors);
+    ComponentTheme::sync_base(cx);
     install_scrollbar_theme(theme, cx);
 }
 
 fn install_scrollbar_theme(theme: Theme, cx: &mut App) {
     let base = gpui_base::Theme::global_mut(cx);
-    let styles = base.scrollbar.styles.clone();
+    let styles = base.scrollbar.styles().clone();
     let thumb = |style: gpui_base::ScrollbarThumbStyle| {
         style
             .width(theme.scrollbar.width)
             .inset(theme.scrollbar.inset)
     };
-    base.scrollbar.styles = styles.thumb(thumb).thumb_hover(thumb).thumb_active(thumb);
+    base.scrollbar = base
+        .scrollbar
+        .clone()
+        .with_styles(styles.thumb(thumb).thumb_hover(thumb).thumb_active(thumb));
 }

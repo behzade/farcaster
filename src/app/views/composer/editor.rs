@@ -2,7 +2,10 @@ use gpui::{
     AnyElement, App, Entity, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton,
     ParentElement as _, RenderOnce, Styled as _, WeakEntity, div, point, px,
 };
-use gpui_component::input::{MoveDown, MoveUp, Paste, Textarea, TextareaState};
+use gpui_component::ElementExt as _;
+use gpui_component::input::{
+    Editor, EditorState, MoveDown, MoveUp, Paste, TextDecoration, TextDecorationCollection,
+};
 
 use super::super::FarcasterApp;
 use crate::app::ui::theme::{UI_FONT_FAMILY, theme};
@@ -13,7 +16,7 @@ use crate::app::{
 
 #[derive(IntoElement)]
 pub(super) struct ComposerInput {
-    composer: Entity<TextareaState>,
+    composer: Entity<EditorState>,
     app: WeakEntity<FarcasterApp>,
     suggestion_count: usize,
     actions: AnyElement,
@@ -21,7 +24,7 @@ pub(super) struct ComposerInput {
 
 impl ComposerInput {
     pub(super) fn new(
-        composer: Entity<TextareaState>,
+        composer: Entity<EditorState>,
         app: WeakEntity<FarcasterApp>,
         suggestion_count: usize,
         actions: AnyElement,
@@ -36,21 +39,35 @@ impl ComposerInput {
 }
 
 impl RenderOnce for ComposerInput {
-    fn render(self, _: &mut gpui::Window, cx: &mut App) -> impl IntoElement {
-        let decorations = self
-            .app
-            .upgrade()
-            .map(|app| {
-                let app = app.read(cx);
+    fn render(self, window: &mut gpui::Window, cx: &mut App) -> impl IntoElement {
+        let highlights = self.app.upgrade().map(|app| {
+            let app = app.read(cx);
+            (
+                app.composer.decorations.clone(),
                 crate::app::composer::highlighting::decorations(
                     &self.composer.read(cx).value(),
                     &app.snapshot.commands,
                     &app.composer.project_files,
-                )
-            })
-            .unwrap_or_default();
-        self.composer
-            .update(cx, |input, _| input.set_text_decorations(decorations));
+                ),
+            )
+        });
+        let presentation = window.use_keyed_state(
+            gpui::ElementId::NamedInteger(
+                "composer-presentation".into(),
+                self.composer.entity_id().as_u64(),
+            ),
+            cx,
+            |_, _| ComposerPresentation::default(),
+        );
+        let value = self.composer.read(cx).value();
+        if let Some((collection, decorations)) = highlights {
+            presentation.update(cx, |state, cx| {
+                state.update_highlights(&collection, &value, decorations, cx)
+            });
+        }
+        let height = composer_height(&value, presentation.read(cx).width, window);
+        let current_view = window.current_view();
+        let measured = presentation.clone();
         let previous_history_entity = self.app.clone();
         let next_history_entity = self.app.clone();
         let previous_completion_entity = self.app.clone();
@@ -151,12 +168,12 @@ impl RenderOnce for ComposerInput {
                 capture_after_input(cursor_entity.clone(), cx);
             })
             .child(
-                Textarea::new(&self.composer)
-                    .w_full()
-                    .h_full()
-                    .flex_1()
-                    .appearance(false)
-                    .p_0(),
+                composer_editor(&self.composer, height).on_prepaint(move |bounds, _, cx| {
+                    if measured.read(cx).width != Some(bounds.size.width) {
+                        measured.update(cx, |state, _| state.width = Some(bounds.size.width));
+                        cx.notify(current_view);
+                    }
+                }),
             )
             .child(self.actions)
     }
@@ -167,3 +184,101 @@ fn capture_after_input(entity: WeakEntity<FarcasterApp>, cx: &mut App) {
         let _ = entity.update(cx, |this, cx| this.capture_composer_session(cx));
     });
 }
+
+#[derive(Default)]
+struct ComposerPresentation {
+    width: Option<gpui::Pixels>,
+    value: gpui::SharedString,
+    decorations: Vec<TextDecoration>,
+}
+
+impl ComposerPresentation {
+    fn update_highlights(
+        &mut self,
+        collection: &TextDecorationCollection,
+        value: &gpui::SharedString,
+        decorations: Vec<TextDecoration>,
+        cx: &mut App,
+    ) {
+        let ranges: Vec<_> = decorations
+            .iter()
+            .map(|decoration| decoration.range.clone())
+            .collect();
+        let intact = collection.get_ranges(cx) == ranges;
+        if self.value == *value && self.decorations == decorations && intact {
+            return;
+        }
+        collection.set(decorations.clone(), cx);
+        self.value = value.clone();
+        self.decorations = decorations;
+    }
+}
+
+fn composer_height(
+    value: &gpui::SharedString,
+    width: Option<gpui::Pixels>,
+    window: &gpui::Window,
+) -> gpui::Pixels {
+    let font_size = theme().type_scale.reading;
+    let line_height = theme().type_scale.line_composer;
+    let run = gpui::TextRun {
+        len: value.len(),
+        font: gpui::font(UI_FONT_FAMILY),
+        color: theme().colors.text.into(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let rows = window
+        .text_system()
+        .shape_text(
+            value.clone(),
+            font_size,
+            &[run],
+            width.filter(|width| *width > px(0.0)),
+            Some(8),
+        )
+        .map(|lines| {
+            lines
+                .iter()
+                .map(|line| line.wrap_boundaries().len() + 1)
+                .sum::<usize>()
+        })
+        .unwrap_or_else(|_| value.lines().count());
+    line_height * rows.clamp(1, 8)
+}
+
+fn composer_editor(input: &Entity<EditorState>, height: gpui::Pixels) -> gpui::Stateful<gpui::Div> {
+    let newline = input.clone();
+    div()
+        .id("composer-editor")
+        .w_full()
+        .h(height)
+        .capture_action(move |action: &gpui_component::input::Enter, window, cx| {
+            if action.shift {
+                use gpui::EntityInputHandler as _;
+                newline.update(cx, |input, cx| {
+                    input.replace_text_in_range(None, "\n", window, cx);
+                    cx.emit(gpui_component::input::InputEvent::PressEnter {
+                        secondary: action.secondary,
+                        shift: true,
+                    });
+                });
+                cx.stop_propagation();
+            }
+        })
+        .child(
+            Editor::new(input)
+                .w_full()
+                .h(height)
+                .font_family(UI_FONT_FAMILY)
+                .text_size(theme().type_scale.reading)
+                .line_height(theme().type_scale.line_composer)
+                .appearance(false)
+                .p_0(),
+        )
+}
+
+#[cfg(test)]
+#[path = "editor_tests.rs"]
+mod tests;

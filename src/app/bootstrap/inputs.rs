@@ -1,7 +1,8 @@
 use super::*;
 
 pub(super) struct BootstrapInputs {
-    pub(super) composer: Entity<TextareaState>,
+    pub(super) composer: Entity<EditorState>,
+    pub(super) composer_decorations: TextDecorationCollection,
     pub(super) composer_focus: FocusHandle,
     pub(super) search: Entity<InputState>,
     pub(super) search_focus: FocusHandle,
@@ -22,16 +23,14 @@ pub(super) fn create(
     window: &mut Window,
     cx: &mut Context<FarcasterApp>,
 ) -> BootstrapInputs {
-    let composer = cx.new(|cx| {
-        TextareaState::new(window, cx)
-            .auto_grow(1, 8)
-            .submit_on_enter(true)
-            .placeholder("What would you like to work on?")
-    });
+    let composer = cx.new(|cx| composer_input(window, cx));
     let initial_composer = composer_sessions.current();
     composer.update(cx, |input, cx| {
         input.set_value(initial_composer.text.clone(), window, cx);
         input.set_selected_range(initial_composer.restore_range(), cx);
+    });
+    let composer_decorations = composer.update(cx, |input, cx| {
+        input.create_decorations_collection(Vec::new(), cx)
     });
     let composer_focus = composer.read(cx).focus_handle(cx);
 
@@ -64,6 +63,7 @@ pub(super) fn create(
 
     BootstrapInputs {
         composer,
+        composer_decorations,
         composer_focus,
         search,
         search_focus,
@@ -76,4 +76,21 @@ pub(super) fn create(
         dialog,
         dialog_focus: cx.focus_handle(),
     }
+}
+
+pub(in crate::app) fn composer_input(
+    window: &mut Window,
+    cx: &mut Context<EditorState>,
+) -> EditorState {
+    EditorState::new(window, cx)
+        .language("plaintext")
+        .line_number(false)
+        .indent_guides(false)
+        .folding(false)
+        .auto_close(false)
+        .smart_indent(false)
+        .searchable(false)
+        .soft_wrap(true)
+        .submit_on_enter(true)
+        .placeholder("What would you like to work on?")
 }

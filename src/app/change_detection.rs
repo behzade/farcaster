@@ -271,7 +271,7 @@ pub(in crate::app) fn run_panel_snapshot_changed(
     previous.selected_session != next.selected_session
 }
 
-pub(in crate::app) fn input_snapshot(input: &TextareaState) -> ComposerSnapshot {
+pub(in crate::app) fn input_snapshot(input: &EditorState) -> ComposerSnapshot {
     ComposerSnapshot::new(
         input.value().to_string(),
         input.cursor(),

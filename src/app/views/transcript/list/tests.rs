@@ -1,8 +1,8 @@
 use super::*;
 use crate::app::ui::theme::theme;
 use gpui::{
-    AppContext as _, Context, ParentElement as _, Render, ScrollDelta, Styled as _, TestAppContext,
-    VisualTestContext, div, size,
+    AppContext as _, Context, InteractiveElement as _, ParentElement as _, Render, ScrollDelta,
+    Styled as _, TestAppContext, VisualTestContext, div, size,
 };
 
 struct FixedHeightView {
@@ -143,7 +143,6 @@ fn check_transcript_link_gesture(cx: &mut TestAppContext, movement: f32, opens: 
                     move |_, _, _| {
                         gpui_component::text::TextView::new(&text)
                             .selectable(true)
-                            .focusable(false)
                             .into_any_element()
                     },
                 ))
@@ -182,12 +181,14 @@ fn copy_resolves_highlight_within_a_message(cx: &mut TestAppContext) {
     struct TextRows(
         TranscriptListState,
         gpui::Entity<gpui_component::text::TextViewState>,
+        gpui::FocusHandle,
     );
 
     impl Render for TextRows {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let text = self.1.clone();
             div()
+                .track_focus(&self.2)
                 .w(px(240.))
                 .h(px(100.))
                 .child(gpui_base::TextSelectionLayer)
@@ -198,7 +199,6 @@ fn copy_resolves_highlight_within_a_message(cx: &mut TestAppContext) {
                     move |_, _, _| {
                         gpui_component::text::TextView::new(&text)
                             .selectable(true)
-                            .focusable(false)
                             .into_any_element()
                     },
                 ))
@@ -207,17 +207,23 @@ fn copy_resolves_highlight_within_a_message(cx: &mut TestAppContext) {
 
     cx.update(gpui_component::init);
     let state = state_with_rows(1);
-    let (_, cx) = cx.add_window_view(|_, cx| {
+    let (_, cx) = cx.add_window_view(|window, cx| {
         let text =
             cx.new(|cx| gpui_component::text::TextViewState::markdown("select this text", cx));
-        TextRows(state.clone(), text)
+        let focus = cx.focus_handle();
+        focus.focus(window, cx);
+        TextRows(state.clone(), text, focus)
     });
+    let focus = cx.update(|window, cx| window.focused(cx).unwrap());
     let start = point(px(10.), px(10.));
     let end = point(px(90.), px(10.));
     cx.simulate_mouse_down(start, MouseButton::Left, gpui::Modifiers::default());
+    cx.update(|window, _| assert!(focus.is_focused(window)));
     cx.simulate_mouse_move(end, Some(MouseButton::Left), gpui::Modifiers::default());
+    cx.update(|window, _| assert!(focus.is_focused(window)));
     cx.simulate_mouse_up(end, MouseButton::Left, gpui::Modifiers::default());
     let selected = cx.update(|window, cx| {
+        assert!(focus.is_focused(window));
         assert_eq!(state.selected_text(), None, "not a whole-row selection");
         let selected = gpui_base::TextSelection::selected_text(window, cx);
         assert!(!selected.is_empty());
@@ -232,10 +238,25 @@ fn copy_resolves_highlight_within_a_message(cx: &mut TestAppContext) {
     cx.simulate_mouse_down(end, MouseButton::Right, gpui::Modifiers::default());
     cx.simulate_mouse_up(end, MouseButton::Right, gpui::Modifiers::default());
     cx.update(|window, cx| {
+        assert!(focus.is_focused(window));
         assert_eq!(state.copy_selection_text(window, cx), Some(selected));
         gpui_base::TextSelection::clear(window, cx);
         assert_eq!(state.copy_selection_text(window, cx), None);
     });
+    for click_count in [2, 3] {
+        cx.simulate_event(MouseDownEvent {
+            button: MouseButton::Left,
+            position: start,
+            click_count,
+            ..Default::default()
+        });
+        cx.simulate_mouse_up(start, MouseButton::Left, Default::default());
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            assert!(focus.is_focused(window));
+            assert!(!gpui_base::TextSelection::selected_text(window, cx).is_empty());
+        });
+    }
 }
 
 #[test]

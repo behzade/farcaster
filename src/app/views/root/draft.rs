@@ -1,3 +1,4 @@
+use crate::app::ui::primitives::AppTooltip as _;
 use gpui::{
     AnyElement, FocusHandle, FontWeight, InteractiveElement as _, IntoElement, MouseButton,
     ParentElement as _, StatefulInteractiveElement as _, Styled as _, WeakEntity, div,
@@ -81,7 +82,7 @@ pub(super) fn render_heading(
                 });
             },
         )
-        .tooltip(project.display().to_string())
+        .app_tooltip(project.display().to_string())
         .max_w_full()
         .px_0()
         .text_size(theme().type_scale.display)

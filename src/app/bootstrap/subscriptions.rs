@@ -90,7 +90,7 @@ pub(super) fn create(
 }
 
 fn subscribe_composer(
-    composer: &Entity<TextareaState>,
+    composer: &Entity<EditorState>,
     window: &mut Window,
     cx: &mut Context<FarcasterApp>,
 ) -> Subscription {

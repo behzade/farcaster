@@ -46,6 +46,12 @@ impl gpui::InteractiveElement for ContextMenuTrigger {
 
 impl gpui::StatefulInteractiveElement for ContextMenuTrigger {}
 
+impl gpui::ParentElement for ContextMenuTrigger {
+    fn extend(&mut self, children: impl IntoIterator<Item = AnyElement>) {
+        self.base.extend(children);
+    }
+}
+
 impl RenderOnce for ContextMenuTrigger {
     fn render(self, _: &mut gpui::Window, _: &mut gpui::App) -> impl IntoElement {
         self.base.refine_style(&self.style)
@@ -53,3 +59,7 @@ impl RenderOnce for ContextMenuTrigger {
 }
 
 impl gpui_component::menu::DropdownMenu for ContextMenuTrigger {}
+
+#[cfg(test)]
+#[path = "context_menu_tests.rs"]
+mod tests;

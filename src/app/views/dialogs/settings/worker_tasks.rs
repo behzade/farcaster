@@ -105,7 +105,7 @@ fn profile_button(
     let label = label.into();
     Button::new(id)
         .accessibility_label(label.clone())
-        .tooltip(label.clone())
+        .app_tooltip(label.clone())
         .custom(
             ButtonCustomVariant::new(cx)
                 .hover(theme().colors.surface.into())
@@ -763,7 +763,7 @@ fn actions_button(
     Button::new(id)
         .icon(AppIcon::DotsThree)
         .accessibility_label(label.clone())
-        .tooltip(label)
+        .app_tooltip(label)
         .with_size(Size::Small)
         .ghost()
         .disabled(!enabled)

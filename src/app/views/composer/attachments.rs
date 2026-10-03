@@ -1,3 +1,4 @@
+use crate::app::ui::primitives::AppTooltip as _;
 use gpui::{
     AnyElement, App, ElementId, InteractiveElement as _, IntoElement as _, ParentElement as _,
     Styled as _, WeakEntity, div,
@@ -83,7 +84,7 @@ fn remove_button(
 ) -> Button {
     Button::new(id)
         .label("×")
-        .tooltip(tooltip)
+        .app_tooltip(tooltip)
         .with_size(Size::XSmall)
         .ghost()
         .on_click(move |_, _, cx| {

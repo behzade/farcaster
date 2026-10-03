@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::ui::primitives::AppTooltip as _;
 mod layout;
 mod mechanics;
 use mechanics::{model_matches, option_button, option_row, picker_panel, result_list};
@@ -44,7 +45,7 @@ fn model_result_button(
 ) -> impl gpui::IntoElement {
     button(id, "", ButtonTone::Quiet, true, on_press)
         .accessibility_label(label.clone())
-        .tooltip(label.clone())
+        .app_tooltip(label.clone())
         .child(
             div()
                 .w_full()
