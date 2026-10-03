@@ -111,6 +111,9 @@ impl FarcasterApp {
                     self.set_session_active(path, cx);
                 }
                 self.begin_draft_submission(&target, &value);
+                if show_in_transcript {
+                    self.record_run_status(target.clone(), "Working".into(), false);
+                }
                 self.notify_session_rail(cx);
                 self.composer.sessions.record_submission(&target, &value);
                 let pending_images = self.composer.images.remove(&target).unwrap_or_default();

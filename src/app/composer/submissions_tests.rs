@@ -43,6 +43,79 @@ fn image(data: &str) -> ComposerImage {
     }
 }
 
+#[gpui::test]
+fn existing_session_submit_keeps_working_until_the_prompt_result(cx: &mut gpui::TestAppContext) {
+    use crate::{agents::Backend, runtime::RuntimeEvent};
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::existing_session_submit_keeps_working_until_the_prompt_result"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let path = project.join("existing.jsonl");
+            let target = session_target(&path);
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions.selected_draft = None;
+                    let current = app.composer.sessions.current_target().to_owned();
+                    app.composer
+                        .sessions
+                        .discard_and_switch(&current, target.clone());
+                    let snapshot = Arc::make_mut(&mut app.snapshot);
+                    snapshot.harness = Some(Backend::Claude);
+                    snapshot.selected_session = Some(path.clone());
+                    snapshot.history_preview = true;
+                    snapshot.live_status = "Done".into();
+                    app.record_run_status(target.clone(), "Done".into(), true);
+                    app.submit("Continue".into(), PromptMode::Normal, window, cx);
+                    assert_eq!(app.activity.run_statuses[&target], "Working");
+                    assert!(!app.activity.recent_completions.contains_key(&target));
+                    assert_eq!(app.composer.pending_submissions.len(), 1);
+                });
+            });
+            let submission_id = cx.update(|_, cx| {
+                app.read(cx)
+                    .composer
+                    .pending_submissions
+                    .keys()
+                    .next()
+                    .unwrap()
+                    .clone()
+            });
+            runtime.send_event(RuntimeEvent::SessionStatus {
+                target: target.clone(),
+                session: Some(path.clone()),
+                status: "Done".into(),
+            });
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    app.drain_runtime(cx);
+                    assert_eq!(app.activity.run_statuses[&target], "Working");
+                });
+            });
+            runtime.send_event(RuntimeEvent::PromptResult {
+                submission_id: Some(submission_id),
+                target: target.clone(),
+                outcome: crate::agents::PromptOutcome::Accepted,
+                session: Some(path.clone()),
+            });
+            runtime.send_event(RuntimeEvent::SessionStatus {
+                target: target.clone(),
+                session: Some(path),
+                status: "Done".into(),
+            });
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    app.drain_runtime(cx);
+                    assert_eq!(app.activity.run_statuses[&target], "Done");
+                });
+            });
+        },
+    );
+}
+
 #[test]
 fn archived_sessions_activate_when_their_message_is_sent() {
     let path = Path::new("/sessions/inactive.jsonl");

@@ -128,7 +128,7 @@ fn draft_archive_sends_durable_intent_without_a_ui_locator(cx: &mut gpui::TestAp
 }
 
 #[test]
-fn startup_idle_preserves_only_the_unresolved_draft_submission() {
+fn startup_idle_preserves_only_the_unresolved_normal_submission() {
     use crate::{agents::PromptOutcome, protocol::PromptMode};
 
     let target = draft_target("starting");
@@ -165,11 +165,24 @@ fn startup_idle_preserves_only_the_unresolved_draft_submission() {
         .expect("pending submission")
         .submitted_target = session_key.clone();
     assert!(preserves(&target, "Done", &pending, &statuses));
+    assert!(preserves(&session_key, "Done", &pending, &statuses));
+    for mode in [PromptMode::Steer, PromptMode::FollowUp] {
+        pending
+            .get_mut("submission")
+            .expect("pending submission")
+            .mode = mode;
+        assert!(!preserves(&session_key, "Done", &pending, &statuses));
+    }
+    pending
+        .get_mut("submission")
+        .expect("pending submission")
+        .mode = PromptMode::Normal;
     for terminal in ["Done", "Failed", "Stopped", "Delivery unknown"] {
         statuses.insert(session_key.clone(), terminal.into());
         assert!(!preserves(&target, "Done", &pending, &statuses));
+        assert!(!preserves(&session_key, "Done", &pending, &statuses));
     }
-    statuses.insert(session_key, "Working".into());
+    statuses.insert(session_key.clone(), "Working".into());
     for outcome in [
         PromptOutcome::Accepted,
         PromptOutcome::RejectedBeforeAcceptance,
@@ -180,6 +193,7 @@ fn startup_idle_preserves_only_the_unresolved_draft_submission() {
             .expect("pending submission")
             .result = Some((outcome, Some(path.clone())));
         assert!(!preserves(&target, "Done", &pending, &statuses));
+        assert!(!preserves(&session_key, "Done", &pending, &statuses));
     }
     pending.clear();
     assert!(!preserves(&target, "Done", &pending, &statuses));

@@ -673,7 +673,7 @@ fn preserve_submission_working_status(
     pending: &HashMap<String, PendingSubmission>,
     statuses: &HashMap<String, String>,
 ) -> bool {
-    if status != "Done" || draft_id(target).is_none() {
+    if status != "Done" {
         return false;
     }
     let session_key = session.map(session_target);
