@@ -84,6 +84,7 @@ async function registerFarcasterTools(pi, url, token, header) {
       label: toolLabel(tool.name),
       description: tool.description || tool.name,
       parameters: tool.inputSchema || {type: "object", properties: {}},
+      ...(tool.outputSchema ? {outputSchema: tool.outputSchema} : {}),
       async execute(_toolCallId, params, signal) {
         return toPiResult(await client.request("tools/call", {
           name: tool.name,
@@ -160,6 +161,7 @@ function toPiResult(mcp) {
   return {
     content,
     details: structured ?? {},
+    structuredContent: structured,
     isError: Boolean(mcp?.isError),
   };
 }
