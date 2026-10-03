@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -41,12 +42,23 @@ elif name == "linuxdeploy":
     output.chmod(0o755)
     if json.loads((root / "settings.json").read_text()).get("deploy_failure"):
         sys.exit(1)
-elif name.endswith(".AppImage"):
-    assert args == ["--appimage-extract"]
-    assert "APPIMAGE_EXTRACT_AND_RUN" not in os.environ
-    shutil.copytree(root / "image", "squashfs-root", symlinks=True)
+elif name == "appimage-run" or name.endswith(".AppImage"):
     settings = json.loads((root / "settings.json").read_text())
-    appdir = pathlib.Path("squashfs-root")
+    assert "APPIMAGE_EXTRACT_AND_RUN" not in os.environ
+    if name == "appimage-run":
+        assert args[0] == "-x" and len(args) == 3
+        assert pathlib.Path(args[2]).is_file()
+        appdir = pathlib.Path(args[1])
+        assert appdir.is_absolute()
+    else:
+        if settings.get("runner"):
+            sys.exit("resolve project --appimage-extract: No such file or directory")
+        assert args == ["--appimage-extract"]
+        appdir = pathlib.Path("squashfs-root")
+    (root / "extract.json").write_text(json.dumps({"tool": name, "args": args}))
+    if settings.get("extract_failure"):
+        sys.exit(1)
+    shutil.copytree(root / "image", appdir, symlinks=True)
     if settings.get("apprun_mode") is not None:
         (appdir / "AppRun").unlink()
         (appdir / "AppRun").write_text("fixture launcher")
@@ -77,12 +89,18 @@ class AppImagePackagingTests(unittest.TestCase):
             tool = self.root / "tools" / name
             tool.write_text(f"#!{sys.executable}\n" + TOOLS)
             tool.chmod(0o755)
+        # Do not accidentally use the host's appimage-run in native-runtime tests.
+        for name in ("bash", "sh", "env", "dirname", "realpath", "mkdir", "mktemp",
+                     "install", "cp", "stat", "find", "mv", "rm", "python3"):
+            (self.root / "tools" / name).symlink_to(shutil.which(name))
         self.output = self.root / "release/Farcaster-v1.2.3-x86_64.AppImage"
 
     def package(self, **settings):
         (self.root / "settings.json").write_text(json.dumps(settings))
+        if settings.get("runner"):
+            (self.root / "tools/appimage-run").symlink_to("linuxdeploy")
         environment = dict(os.environ, PACKAGE_FIXTURE=str(self.root),
-                           PATH=str(self.root / "tools") + os.pathsep + os.environ["PATH"],
+                           PATH=str(self.root / "tools"),
                            CARGO_TARGET_DIR=str(self.root), BUNDLE_FORMATS="appimage",
                            APPIMAGE_EXTRACT_AND_RUN="1")
         return subprocess.run(["sh", str(SCRIPT)],
@@ -105,6 +123,36 @@ class AppImagePackagingTests(unittest.TestCase):
         self.assertTrue((staged / "usr/share/licenses/farcaster/NOTICE.md").is_file())
         args = json.loads((self.root / "deploy.json").read_text())
         self.assertEqual(args[args.index("--exclude-library") + 1], "libwayland-client.so*")
+
+    def test_extracts_with_nixos_runner_without_launching_application(self):
+        result = self.package(runner=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.output.is_file())
+        extraction = json.loads((self.root / "extract.json").read_text())
+        self.assertEqual(extraction["tool"], "appimage-run")
+        self.assertEqual(extraction["args"][0], "-x")
+
+    def test_runner_extraction_still_checks_permissions(self):
+        result = self.package(runner=True, binary_mode=0o764)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("execute permission for all users", result.stderr)
+        self.assertFalse(self.output.exists())
+
+    def test_runner_extraction_still_rejects_bundled_host_wayland(self):
+        result = self.package(runner=True, bundled_wayland=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("host libwayland-client", result.stderr)
+        self.assertFalse(self.output.exists())
+
+    def test_runner_extraction_failure_preserves_previous_image(self):
+        self.output.write_text("previous image")
+        result = self.package(runner=True, extract_failure=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(json.loads((self.root / "extract.json").read_text())["tool"],
+                         "appimage-run")
+        self.assertEqual(self.output.read_text(), "previous image")
+        self.assertEqual({p.name for p in self.output.parent.iterdir()},
+                         {"farcaster", self.output.name})
 
     def test_rejects_owner_only_execution_in_finished_image(self):
         result = self.package(apprun_mode=0o744)

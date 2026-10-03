@@ -40,7 +40,13 @@ APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$arch" VERSION="$version" OUTPUT="$candidate" \
 
 (
     cd "$stage"
-    env -u APPIMAGE_EXTRACT_AND_RUN "$candidate" --appimage-extract > /dev/null
+    # NixOS binfmt launches AppRun, passing runtime flags to the application.
+    # Use its runner's extraction mode instead of executing the image there.
+    if command -v appimage-run >/dev/null; then
+        env -u APPIMAGE_EXTRACT_AND_RUN appimage-run -x "$PWD/squashfs-root" "$candidate" > /dev/null
+    else
+        env -u APPIMAGE_EXTRACT_AND_RUN "$candidate" --appimage-extract > /dev/null
+    fi
     for executable in squashfs-root/AppRun squashfs-root/usr/bin/farcaster; do
         if [ ! -f "$executable" ]; then
             echo "Missing AppImage executable: $executable" >&2
