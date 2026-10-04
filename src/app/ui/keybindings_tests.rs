@@ -131,7 +131,7 @@ fn application_and_picker_shortcuts_route_only_in_their_owned_contexts() {
             assert!(bindings.is_empty(), "{key} must remain unbound");
         }
         for (context, expected) in [
-            ("PiPicker", true),
+            ("Picker", true),
             (APP_INPUT_CONTEXT, false),
             (NATIVE_INPUT_CONTEXT, false),
         ] {
@@ -163,7 +163,7 @@ fn picker_navigation_stays_in_picker_input() {
         ("ctrl-p", &super::SelectUp as &dyn gpui::Action),
     ] {
         for context in [
-            "PiPicker",
+            "Picker",
             "FarcasterComposer",
             crate::app::NATIVE_INPUT_CONTEXT,
         ] {
@@ -179,7 +179,7 @@ fn picker_navigation_stays_in_picker_input() {
                 bindings
                     .first()
                     .is_some_and(|binding| binding.action().name() == action.name()),
-                context == "PiPicker",
+                context == "Picker",
                 "{key} in {context}",
             );
         }
@@ -426,7 +426,7 @@ fn modified_jk_navigates_chat_sessions_and_workers_with_composer_focus() {
             for names in [
                 vec![APP_INPUT_CONTEXT],
                 vec![APP_INPUT_CONTEXT, "FarcasterComposer", "Input"],
-                vec![APP_INPUT_CONTEXT, "PiPicker", "Input"],
+                vec![APP_INPUT_CONTEXT, "Picker", "Input"],
                 vec![NATIVE_INPUT_CONTEXT],
             ] {
                 let (matched, _) =

@@ -17,7 +17,7 @@ use gpui_base::actions::{SelectDown, SelectUp};
 
 const COMPOSER_COMPLETION_CONTEXT: &str = "(FarcasterComposer && Completions) > Input";
 const PICKER_NAVIGATION_CONTEXT: &str =
-    "(PiPicker > Input) || (FarcasterSendToChat > List > Input)";
+    "(Picker > Input) || (FarcasterSendToChat > List > Input)";
 
 pub(crate) fn application_key(suffix: &str) -> String {
     format!("{}-{suffix}", platform_key("cmd", "ctrl"))
@@ -478,7 +478,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             "Previous picker item",
             "shift-tab",
             SelectUp,
-            Some("PiPicker > Input"),
+            Some("Picker > Input"),
             false
         ),
         shortcut!(
@@ -486,7 +486,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             "Next picker item",
             "tab",
             SelectDown,
-            Some("PiPicker > Input"),
+            Some("Picker > Input"),
             false
         ),
         shortcut!(
@@ -502,7 +502,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             keystroke: "backspace".into(),
             show_in_help: false,
             show_in_picker: false,
-            binding: KeyBinding::new("backspace", PickerBack, Some("PiPicker > Input")),
+            binding: KeyBinding::new("backspace", PickerBack, Some("Picker > Input")),
         },
         Shortcut {
             section: "Application",

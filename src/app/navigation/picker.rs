@@ -26,7 +26,7 @@ use crate::{
     sessions::SessionSummary,
 };
 
-pub(crate) const PICKER_KEY_CONTEXT: &str = "PiPicker";
+pub(crate) const PICKER_KEY_CONTEXT: &str = "Picker";
 
 mod actions;
 mod configuration;
