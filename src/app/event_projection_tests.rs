@@ -581,7 +581,7 @@ fn promoted_draft_completion_clears_status_and_saved_attachments(cx: &mut gpui::
             runtime.send_event(RuntimeEvent::SessionStatus {
                 target: target.into(),
                 session: Some(path.clone()),
-                status: "Working".into(),
+                status: RunStatus::Working,
             });
             runtime.send_event(RuntimeEvent::SessionUpdated(row));
             cx.update(|_, cx| {
@@ -608,17 +608,14 @@ fn promoted_draft_completion_clears_status_and_saved_attachments(cx: &mut gpui::
             runtime.send_event(RuntimeEvent::SessionStatus {
                 target: target.into(),
                 session: Some(path.clone()),
-                status: "Done".into(),
+                status: RunStatus::Done,
             });
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
                     app.drain_runtime(cx);
                     assert_eq!(
-                        app.activity
-                            .run_statuses
-                            .get(&session_key)
-                            .map(String::as_str),
-                        Some("Done")
+                        app.activity.run_statuses.get(&session_key),
+                        Some(&RunStatus::Done)
                     );
                 });
                 window.draw(cx).clear(cx);

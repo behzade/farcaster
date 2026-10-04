@@ -3,6 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::runtime::RunStatus;
+
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, agent_activity_key},
     sessions::{SessionRootIndex, SessionSummary},
@@ -10,28 +12,74 @@ use crate::{
 
 pub(in crate::app) fn resolved_session_status(
     session: &SessionSummary,
-    explicit_status: Option<&str>,
+    explicit_status: Option<RunStatus>,
     live_session_path: Option<&Path>,
-    live_status: &str,
+    live_status: RunStatus,
     waiting_for_descendant: bool,
-) -> String {
-    let explicit_status = explicit_status.and_then(normalized_session_status);
-    let live_status = (live_session_path == Some(session.path.as_path()))
-        .then(|| normalized_session_status(live_status))
-        .flatten();
+) -> RunStatus {
     explicit_status
-        .filter(|status| status != "Done" || !waiting_for_descendant)
-        .or_else(|| live_status.filter(|status| status != "Done" || !waiting_for_descendant))
-        .or_else(|| waiting_for_descendant.then(|| "Waiting".into()))
-        .or_else(|| session.is_running.then(|| "Working".into()))
-        .unwrap_or_else(|| "Done".into())
+        .into_iter()
+        .chain((live_session_path == Some(session.path.as_path())).then_some(live_status))
+        .find(|status| {
+            *status != RunStatus::Invalid && (*status != RunStatus::Done || !waiting_for_descendant)
+        })
+        .unwrap_or_else(|| {
+            if waiting_for_descendant {
+                RunStatus::Waiting
+            } else if session.is_running {
+                RunStatus::Working
+            } else {
+                RunStatus::Done
+            }
+        })
 }
 
-fn normalized_session_status(status: &str) -> Option<String> {
+pub(in crate::app) fn run_status_label(status: RunStatus) -> &'static str {
     match status {
-        "" | "Idle" => None,
-        "Ready" => Some("Done".into()),
-        status => Some(status.into()),
+        RunStatus::Invalid => "",
+        RunStatus::Draft => "Draft",
+        RunStatus::Done => "Done",
+        RunStatus::Working => "Working",
+        RunStatus::Compacting => "Compacting",
+        RunStatus::Retrying => "Retrying",
+        RunStatus::NeedsInput => "Needs input",
+        RunStatus::Waiting => "Waiting",
+        RunStatus::Stopped => "Stopped",
+        RunStatus::Failed => "Failed",
+    }
+}
+
+impl crate::app::FarcasterApp {
+    pub(in crate::app) fn record_run_status(
+        &mut self,
+        target: String,
+        status: RunStatus,
+        force_recent: bool,
+    ) -> bool {
+        let recent = match status {
+            RunStatus::Done => {
+                if crate::app::starts_recent_completion(
+                    self.activity.run_statuses.get(&target),
+                    &status,
+                    force_recent,
+                ) {
+                    self.activity
+                        .recent_completions
+                        .insert(target.clone(), std::time::Instant::now());
+                }
+                self.activity.recent_completions.contains_key(&target)
+            }
+            _ => {
+                self.activity.recent_completions.remove(&target);
+                false
+            }
+        };
+        if status == RunStatus::Done && !recent {
+            self.activity.run_statuses.remove(&target);
+        } else {
+            self.activity.run_statuses.insert(target, status);
+        }
+        recent
     }
 }
 

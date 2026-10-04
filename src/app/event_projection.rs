@@ -1,3 +1,5 @@
+use crate::runtime::RunStatus;
+
 use super::*;
 
 fn update_session_row(sessions: &mut Vec<SessionSummary>, session: SessionSummary) {
@@ -656,7 +658,7 @@ impl FarcasterApp {
         if outcome == crate::agents::PromptOutcome::RejectedBeforeAcceptance {
             self.activity
                 .run_statuses
-                .insert(target.clone(), "Failed".into());
+                .insert(target.clone(), RunStatus::Failed);
         }
         record_pending_prompt_result_for_submission(
             &mut self.composer.pending_submissions,
@@ -887,7 +889,7 @@ impl FarcasterApp {
                 session,
                 status,
             } => {
-                if status == "Stopped" {
+                if status == RunStatus::Stopped {
                     let session_key = session.as_deref().map(session_target);
                     for pending in self.composer.pending_submissions.values_mut() {
                         if pending.submitted_target == target
@@ -920,7 +922,7 @@ impl FarcasterApp {
                     .code_tasks
                     .associate(&target, session.as_deref());
                 dirty.root |= self.workspace.code_tasks.notice_message().is_some();
-                if status == "Stopped" {
+                if status == RunStatus::Stopped {
                     self.code_tasks_stopped(&target, session.as_deref(), cx);
                 }
                 self.record_session_status(target, session, status);
@@ -1065,7 +1067,7 @@ fn clear_stopped_snapshot(snapshot: &mut RuntimeSnapshot, path: &Path) {
     snapshot.pending_question = None;
     snapshot.connected = false;
     snapshot.status = "Stopped".into();
-    snapshot.live_status = "Stopped".into();
+    snapshot.live_status = RunStatus::Stopped;
     if let Some(session) = snapshot.session.as_mut() {
         session.is_streaming = false;
     }

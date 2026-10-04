@@ -597,14 +597,14 @@ fn session_status_publication_deduplicates_but_tracks_session_changes() {
     };
     let mut published = HashMap::new();
 
-    publish_session_status_if_changed(&sender, &mut published, "target", None, "Working");
-    publish_session_status_if_changed(&sender, &mut published, "target", None, "Working");
+    publish_session_status_if_changed(&sender, &mut published, "target", None, RunStatus::Working);
+    publish_session_status_if_changed(&sender, &mut published, "target", None, RunStatus::Working);
     publish_session_status_if_changed(
         &sender,
         &mut published,
         "target",
         Some(PathBuf::from("session.jsonl")),
-        "Working",
+        RunStatus::Working,
     );
 
     assert_eq!(events_rx.try_iter().count(), 2);
@@ -684,7 +684,7 @@ fn failed_tool_does_not_mark_the_whole_session_failed() {
             conversation: Arc::new(conversation),
             ..RuntimeSnapshot::default()
         }),
-        "Done"
+        RunStatus::Done
     );
 }
 
@@ -692,12 +692,12 @@ fn failed_tool_does_not_mark_the_whole_session_failed() {
 fn semantic_status_keeps_compacting_and_retrying_sessions_active() {
     let mut snapshot = RuntimeSnapshot::default();
     Arc::make_mut(&mut snapshot.conversation).compacting = true;
-    assert_eq!(semantic_status(&snapshot), "Compacting");
+    assert_eq!(semantic_status(&snapshot), RunStatus::Compacting);
     Arc::make_mut(&mut snapshot.conversation).compacting = false;
     Arc::make_mut(&mut snapshot.conversation).retrying = true;
-    assert_eq!(semantic_status(&snapshot), "Retrying");
+    assert_eq!(semantic_status(&snapshot), RunStatus::Retrying);
     Arc::make_mut(&mut snapshot.conversation).retrying = false;
-    assert_eq!(semantic_status(&snapshot), "Done");
+    assert_eq!(semantic_status(&snapshot), RunStatus::Done);
 }
 
 #[test]
@@ -711,7 +711,7 @@ fn history_preview_does_not_claim_to_know_an_external_run_failed() {
             history_preview: true,
             ..RuntimeSnapshot::default()
         }),
-        "Done"
+        RunStatus::Done
     );
 }
 
@@ -2707,7 +2707,7 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
         .last()
         .expect("history preview should publish");
     assert_eq!(visible.live_session, Some(active_path.clone()));
-    assert_eq!(visible.live_status, "Working");
+    assert_eq!(visible.live_status, RunStatus::Working);
     assert_eq!(visible.conversation.items[0].text, "history message");
 
     assert_eq!(
@@ -2756,7 +2756,7 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
         .last()
         .expect("live badge change should publish");
     assert_eq!(visible.live_session, Some(active_path.clone()));
-    assert_eq!(visible.live_status, "Compacting");
+    assert_eq!(visible.live_status, RunStatus::Compacting);
     assert_eq!(visible.conversation.items[0].text, "history message");
 
     owner.select_history(active_path.clone(), temp.path().to_path_buf());

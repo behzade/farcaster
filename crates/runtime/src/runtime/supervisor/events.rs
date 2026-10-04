@@ -347,7 +347,7 @@ impl Supervisor {
                         &mut self.published_statuses,
                         &key,
                         session,
-                        "Needs input",
+                        RunStatus::NeedsInput,
                     );
                 }
                 if key == self.selected {
@@ -457,9 +457,12 @@ impl Supervisor {
 
 fn live_catalog_running(snapshot: &RuntimeSnapshot) -> Option<bool> {
     if snapshot.history_preview {
-        match snapshot.live_status.as_str() {
-            "Working" | "Compacting" | "Retrying" | "Needs input" => Some(true),
-            "Done" | "Failed" | "Stopped" => Some(false),
+        match snapshot.live_status {
+            RunStatus::Working
+            | RunStatus::Compacting
+            | RunStatus::Retrying
+            | RunStatus::NeedsInput => Some(true),
+            RunStatus::Done | RunStatus::Failed | RunStatus::Stopped => Some(false),
             _ => None,
         }
     } else if snapshot.conversation.running
@@ -481,15 +484,15 @@ fn live_catalog_running(snapshot: &RuntimeSnapshot) -> Option<bool> {
     }
 }
 
-fn session_status<'a>(
+fn session_status(
     needs_input: &HashSet<String>,
     key: &str,
-    snapshot: &'a RuntimeSnapshot,
-) -> &'a str {
+    snapshot: &RuntimeSnapshot,
+) -> RunStatus {
     if needs_input.contains(key) {
-        "Needs input"
-    } else if snapshot.history_preview && !snapshot.live_status.is_empty() {
-        &snapshot.live_status
+        RunStatus::NeedsInput
+    } else if snapshot.history_preview && snapshot.live_status != RunStatus::Invalid {
+        snapshot.live_status
     } else {
         semantic_status(snapshot)
     }

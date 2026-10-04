@@ -92,7 +92,9 @@ use supervisor::{
     initial_draft_command, is_view_only_selection, publish_session_status_if_changed,
     route_session_discovery, target_command_needs_actor_message,
 };
-pub use types::{ConfigurationStatus, RuntimeCommand, RuntimeEvent, RuntimeSnapshot, TaskSettings};
+pub use types::{
+    ConfigurationStatus, RunStatus, RuntimeCommand, RuntimeEvent, RuntimeSnapshot, TaskSettings,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SnapshotChange {

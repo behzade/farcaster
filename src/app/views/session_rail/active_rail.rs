@@ -156,7 +156,7 @@ impl FarcasterApp {
         let submitted_drafts = self.sessions.submitted_drafts.clone();
         let active_selected_root = selected_root.clone();
         let active_live_root = live_root.clone();
-        let active_live_status = self.snapshot.live_status.clone();
+        let active_live_status = self.snapshot.live_status;
         let active_run_statuses = self.activity.run_statuses.clone();
         let active_waiting_roots = waiting_roots.clone();
         let active_row_entity = entity.clone();
@@ -201,9 +201,9 @@ impl FarcasterApp {
                         let target = format!("session:{}", item.session.path.display());
                         let badge = Some(resolved_session_status(
                             &item.session,
-                            active_run_statuses.get(&target).map(String::as_str),
+                            active_run_statuses.get(&target).copied(),
                             active_live_root.as_deref(),
-                            &active_live_status,
+                            active_live_status,
                             active_waiting_roots.contains(&item.session.path),
                         ));
                         let editing =

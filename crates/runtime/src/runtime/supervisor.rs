@@ -243,12 +243,12 @@ impl SessionRuntimeHandle {
 
 pub(super) fn publish_session_status_if_changed(
     sender: &UiEventSender,
-    published: &mut HashMap<String, (Option<PathBuf>, String)>,
+    published: &mut HashMap<String, (Option<PathBuf>, RunStatus)>,
     target: &str,
     session: Option<PathBuf>,
-    status: &str,
+    status: RunStatus,
 ) {
-    let next = (session.clone(), status.to_owned());
+    let next = (session.clone(), status);
     if published.get(target) == Some(&next) {
         return;
     }
@@ -256,7 +256,7 @@ pub(super) fn publish_session_status_if_changed(
     let _ = sender.send(RuntimeEvent::SessionStatus {
         target: target.to_owned(),
         session,
-        status: status.to_owned(),
+        status,
     });
 }
 
@@ -433,7 +433,7 @@ struct Supervisor {
     configuration_tx: Option<mpsc::Sender<ConfigurationUpdate>>,
     configuration_requests: HashSet<(Backend, Option<String>, PathBuf)>,
     requested_access_modes: HashMap<String, (Backend, PathBuf, HarnessAccessMode)>,
-    published_statuses: HashMap<String, (Option<PathBuf>, String)>,
+    published_statuses: HashMap<String, (Option<PathBuf>, RunStatus)>,
 }
 
 fn run_supervisor(
@@ -573,7 +573,7 @@ impl Supervisor {
             }
         }
         let (configuration_tx, configuration_rx) = mpsc::channel();
-        let published_statuses = HashMap::<String, (Option<PathBuf>, String)>::new();
+        let published_statuses = HashMap::<String, (Option<PathBuf>, RunStatus)>::new();
         if let Ok(state) = host.state_store()
             && let Ok(prompts) = state.with(|store| agents::queued_prompts(store))
         {

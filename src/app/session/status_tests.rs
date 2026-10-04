@@ -13,32 +13,44 @@ fn status_combines_live_catalog_and_family_activity() {
             &done,
             None,
             Some(Path::new("/other.jsonl")),
-            "Working",
+            RunStatus::Working,
             false
         ),
-        "Done"
+        RunStatus::Done
     );
     assert_eq!(
-        resolved_session_status(&done, Some("Ready"), None, "", false),
-        "Done"
+        resolved_session_status(
+            &done,
+            Some(RunStatus::Done),
+            None,
+            RunStatus::Invalid,
+            false
+        ),
+        RunStatus::Done
     );
     assert_eq!(
-        resolved_session_status(&running, None, None, "", false),
-        "Working"
+        resolved_session_status(&running, None, None, RunStatus::Invalid, false),
+        RunStatus::Working
     );
     assert_eq!(
         resolved_session_status(
             &done,
             None,
             Some(Path::new("/done.jsonl")),
-            "Needs input",
+            RunStatus::NeedsInput,
             false
         ),
-        "Needs input"
+        RunStatus::NeedsInput
     );
     assert_eq!(
-        resolved_session_status(&running, Some("Ready"), None, "", true),
-        "Waiting"
+        resolved_session_status(
+            &running,
+            Some(RunStatus::Done),
+            None,
+            RunStatus::Invalid,
+            true
+        ),
+        RunStatus::Waiting
     );
 }
 
@@ -50,6 +62,80 @@ fn parent_waits_while_a_descendant_is_running() {
     let waiting = roots_waiting_for_descendants(&[parent, child]);
 
     assert!(waiting.contains(Path::new("/parent.jsonl")));
+}
+
+#[test]
+fn unknown_status_falls_back_and_explicit_activity_wins_over_waiting() {
+    let running = session("running", None, true);
+    assert_eq!(
+        resolved_session_status(
+            &running,
+            Some(RunStatus::Invalid),
+            Some(&running.path),
+            RunStatus::Invalid,
+            false
+        ),
+        RunStatus::Working
+    );
+    assert_eq!(
+        resolved_session_status(
+            &running,
+            Some(RunStatus::Invalid),
+            Some(&running.path),
+            RunStatus::Done,
+            true
+        ),
+        RunStatus::Waiting
+    );
+    assert_eq!(
+        resolved_session_status(
+            &running,
+            Some(RunStatus::Failed),
+            Some(&running.path),
+            RunStatus::Working,
+            true
+        ),
+        RunStatus::Failed
+    );
+}
+
+#[gpui::test]
+fn completion_badge_does_not_restart_on_repeated_done_or_survive_new_work(
+    cx: &mut gpui::TestAppContext,
+) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::completion_badge_does_not_restart_on_repeated_done_or_survive_new_work"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.update(|_, cx| {
+                app.update(cx, |app, _| {
+                    let target = "session:completion".to_owned();
+                    assert!(!app.record_run_status(target.clone(), RunStatus::Done, false));
+                    assert!(!app.activity.run_statuses.contains_key(&target));
+                    assert!(!app.record_run_status(target.clone(), RunStatus::Working, false));
+                    assert!(app.record_run_status(target.clone(), RunStatus::Done, false));
+                    let completed = std::time::Instant::now() - std::time::Duration::from_secs(1);
+                    app.activity
+                        .recent_completions
+                        .insert(target.clone(), completed);
+                    assert!(app.record_run_status(target.clone(), RunStatus::Done, false));
+                    assert_eq!(app.activity.recent_completions[&target], completed);
+                    assert!(!app.record_run_status(target.clone(), RunStatus::Working, false));
+                    assert!(!app.activity.recent_completions.contains_key(&target));
+                    assert_eq!(app.activity.run_statuses[&target], RunStatus::Working);
+                    let alias = "session:alias".to_owned();
+                    assert!(app.record_run_status(alias.clone(), RunStatus::Done, true));
+                    assert!(app.activity.recent_completions.contains_key(&alias));
+                    assert!(!app.record_run_status(alias.clone(), RunStatus::Failed, false));
+                    assert_eq!(app.activity.run_statuses[&alias], RunStatus::Failed);
+                    assert!(!app.activity.recent_completions.contains_key(&alias));
+                });
+            });
+        },
+    );
 }
 
 #[test]
@@ -110,8 +196,8 @@ fn family_status_uses_profile_identity_and_explicit_parent_links() {
         HashSet::from([first.path.clone()])
     );
     assert_eq!(
-        resolved_session_status(&second, None, Some(&first.path), "Working", false),
-        "Done"
+        resolved_session_status(&second, None, Some(&first.path), RunStatus::Working, false),
+        RunStatus::Done
     );
 
     child.parent_app_session_id = Some(second.app_session_id);

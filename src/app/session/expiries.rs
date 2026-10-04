@@ -3,6 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::runtime::RunStatus;
 use gpui::Context;
 
 use super::FarcasterApp;
@@ -105,7 +106,7 @@ impl FarcasterApp {
 
 fn expire_recent_completion(
     recent_completions: &mut HashMap<String, Instant>,
-    run_statuses: &mut HashMap<String, String>,
+    run_statuses: &mut HashMap<String, RunStatus>,
     target: &str,
     completed_at: Instant,
 ) -> bool {
@@ -115,7 +116,7 @@ fn expire_recent_completion(
     recent_completions.remove(target);
     if run_statuses
         .get(target)
-        .is_some_and(|status| status == "Done")
+        .is_some_and(|status| *status == RunStatus::Done)
     {
         run_statuses.remove(target);
     }

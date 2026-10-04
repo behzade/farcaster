@@ -99,7 +99,7 @@ impl FarcasterApp {
             .as_ref()
             .map(|edit| edit.path.clone());
         let title_input = self.sessions.title_input.clone();
-        let live_status = self.snapshot.live_status.clone();
+        let live_status = self.snapshot.live_status;
         let run_statuses = self.activity.run_statuses.clone();
         let section_scrollbar = list_state.clone();
         let rows_list = uniform_list("archived-session-rows", rows.len(), move |range, _, _| {
@@ -134,7 +134,7 @@ impl FarcasterApp {
                             item,
                             &run_statuses,
                             live_root.as_deref(),
-                            &live_status,
+                            live_status,
                             &waiting_roots,
                         );
                         let editing = editing_path.as_deref() == Some(item.session.path.as_path());

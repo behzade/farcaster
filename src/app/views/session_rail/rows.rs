@@ -1,4 +1,5 @@
 use crate::agents::Backend;
+use crate::{app::session::status::run_status_label, runtime::RunStatus};
 use gpui_component::menu::ContextMenuExt as _;
 use std::{
     path::{Path, PathBuf},
@@ -36,7 +37,7 @@ use crate::{
 pub(super) struct SessionRowInput {
     pub(super) selected: bool,
     pub(super) color: Option<Rgba>,
-    pub(super) status: Option<String>,
+    pub(super) status: Option<RunStatus>,
     pub(super) drop_position: Option<ReorderPosition>,
     pub(super) draggable: bool,
     pub(super) title_editor: Option<Entity<InputState>>,
@@ -46,7 +47,7 @@ pub(super) struct SessionRowInput {
 }
 
 impl SessionRowInput {
-    pub(super) fn standard(selected: bool, status: Option<String>) -> Self {
+    pub(super) fn standard(selected: bool, status: Option<RunStatus>) -> Self {
         Self {
             selected,
             color: None,
@@ -127,12 +128,8 @@ impl RenderOnce for SessionRow {
         let age = relative_age(session.modified);
         let target_kind = item.kind;
         let is_archived = target_kind == SessionRailKind::Archived;
-        let status_text = status.unwrap_or_default();
-        let accessible_state = if is_archived {
-            "Archived"
-        } else {
-            status_text.as_str()
-        };
+        let status_text = status.map(run_status_label).unwrap_or_default();
+        let accessible_state = if is_archived { "Archived" } else { status_text };
         let accessible_label = session_accessible_label(&session.title, accessible_state, &age);
         let hover_details = session_hover_details(session, accessible_state, &age, subagents);
         let action_group = format!("{identity}:actions");
@@ -300,7 +297,7 @@ impl RenderOnce for SessionRow {
                     .into_any_element(),
                 session_row_trailing(
                     session.harness,
-                    session_status_icon(&identity, &status_text),
+                    session_status_icon(&identity, status_text),
                     age,
                     shortcut,
                     Some(archive_action),

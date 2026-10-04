@@ -3,14 +3,14 @@ use std::{collections::HashMap, path::Path};
 use crate::{
     app::composer::{sessions::session_target, submissions::PendingSubmission},
     protocol::{BackgroundJob, BackgroundJobState},
-    runtime::RuntimeSnapshot,
+    runtime::{RunStatus, RuntimeSnapshot},
     sessions::{SessionSummary, session_family_for_path},
 };
 
-pub(in crate::app) fn status_has_active_work(status: &str) -> bool {
+pub(in crate::app) fn status_has_active_work(status: &RunStatus) -> bool {
     matches!(
         status,
-        "Working" | "Compacting" | "Retrying" | "Needs input"
+        RunStatus::Working | RunStatus::Compacting | RunStatus::Retrying | RunStatus::NeedsInput
     )
 }
 
@@ -23,7 +23,7 @@ pub(in crate::app) fn snapshot_has_active_work(snapshot: &RuntimeSnapshot) -> bo
 }
 
 pub(in crate::app) fn application_has_active_work(
-    statuses: &HashMap<String, String>,
+    statuses: &HashMap<String, RunStatus>,
     snapshot: &RuntimeSnapshot,
     submissions: &HashMap<String, PendingSubmission>,
     sessions: &[SessionSummary],
@@ -45,7 +45,7 @@ pub(in crate::app) fn application_has_active_work(
 
 pub(in crate::app) fn session_has_live_work(
     path: &Path,
-    statuses: &HashMap<String, String>,
+    statuses: &HashMap<String, RunStatus>,
     snapshot: &RuntimeSnapshot,
 ) -> bool {
     statuses
@@ -74,7 +74,7 @@ impl super::FarcasterApp {
 pub(in crate::app) fn session_family_has_active_work(
     sessions: &[SessionSummary],
     path: &Path,
-    statuses: &HashMap<String, String>,
+    statuses: &HashMap<String, RunStatus>,
     snapshot: &RuntimeSnapshot,
     pending_submissions: &HashMap<String, PendingSubmission>,
 ) -> bool {

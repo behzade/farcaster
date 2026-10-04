@@ -609,7 +609,7 @@ fn supervisor_waits_for_pool_shutdown_before_archiving_and_leaves_other_families
         assert!(!archived(&database, &root.path)?);
         assert!(events.try_iter().all(|event| !matches!(
             event,
-            RuntimeEvent::SessionStatus { ref status, .. } if status == "Stopped"
+            RuntimeEvent::SessionStatus { ref status, .. } if *status == RunStatus::Stopped
         )));
         assert_eq!(factory.aborts.load(Ordering::SeqCst), 1);
 
@@ -630,7 +630,7 @@ fn supervisor_waits_for_pool_shutdown_before_archiving_and_leaves_other_families
         );
         assert!(events.try_iter().any(|event| matches!(
             event,
-            RuntimeEvent::SessionStatus { ref status, .. } if status == "Stopped"
+            RuntimeEvent::SessionStatus { ref status, .. } if *status == RunStatus::Stopped
         )));
         assert!(
             supervisor
@@ -672,7 +672,7 @@ fn supervisor_does_not_archive_or_report_stopped_when_pool_close_fails() -> Resu
         )));
         assert!(first_events.iter().all(|event| !matches!(
             event,
-            RuntimeEvent::SessionStatus { status, .. } if status == "Stopped"
+            RuntimeEvent::SessionStatus { status, .. } if *status == RunStatus::Stopped
         )));
         assert_eq!(factory.aborts.load(Ordering::SeqCst), 1);
         assert_eq!(factory.closes.load(Ordering::SeqCst), 1);
@@ -722,7 +722,7 @@ fn supervisor_does_not_archive_or_report_stopped_when_actor_close_fails() -> Res
         )));
         assert!(first_events.iter().all(|event| !matches!(
             event,
-            RuntimeEvent::SessionStatus { status, .. } if status == "Stopped"
+            RuntimeEvent::SessionStatus { status, .. } if *status == RunStatus::Stopped
         )));
         assert!(
             supervisor.handle_session_family_command(&RuntimeCommand::StopSessionFamily {
@@ -738,7 +738,7 @@ fn supervisor_does_not_archive_or_report_stopped_when_actor_close_fails() -> Res
         )));
         assert!(retry_events.iter().all(|event| !matches!(
             event,
-            RuntimeEvent::SessionStatus { status, .. } if status == "Stopped"
+            RuntimeEvent::SessionStatus { status, .. } if *status == RunStatus::Stopped
         )));
         Ok(())
     })

@@ -13,10 +13,12 @@ use super::{
     ComposerImage, ComposerPaste, FarcasterApp, pastes as composer_pastes, prompt_fragments,
 };
 use crate::{
-    app::composer::sessions::{ComposerSessions, ComposerSnapshot, session_target},
-    app::composer::user_invocations,
+    app::composer::{
+        sessions::{ComposerSessions, ComposerSnapshot, session_target},
+        user_invocations,
+    },
     protocol::{PromptImage, PromptMode},
-    runtime::RuntimeCommand,
+    runtime::{RunStatus, RuntimeCommand},
     sessions::{SessionSummary, normalize_session_path},
 };
 
@@ -112,7 +114,7 @@ impl FarcasterApp {
                 }
                 self.begin_draft_submission(&target, &value);
                 if show_in_transcript {
-                    self.record_run_status(target.clone(), "Working".into(), false);
+                    self.record_run_status(target.clone(), RunStatus::Working, false);
                 }
                 self.notify_session_rail(cx);
                 self.composer.sessions.record_submission(&target, &value);

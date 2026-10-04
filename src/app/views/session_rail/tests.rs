@@ -1,4 +1,5 @@
 use crate::agents::Backend;
+use crate::runtime::RunStatus;
 use gpui::px;
 use std::{path::PathBuf, time::SystemTime};
 
@@ -176,7 +177,11 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
                     &draft,
                     super::draft_row::DraftRowInput {
                         selected: false,
-                        status: if self.submitted { "Working" } else { "Draft" }.into(),
+                        status: if self.submitted {
+                            RunStatus::Working
+                        } else {
+                            RunStatus::Draft
+                        },
                         archived: self.archived,
                         drop_position: None,
                         compact: self.compact,
@@ -193,7 +198,7 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
                 };
                 let mut input = super::rows::SessionRowInput::standard(
                     false,
-                    (!self.archived).then(|| "Working".into()),
+                    (!self.archived).then_some(RunStatus::Working),
                 );
                 input.compact = self.compact;
                 input.shortcut = (!self.archived).then_some(1);

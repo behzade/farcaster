@@ -105,7 +105,7 @@ impl Supervisor {
             let _ = self.event_tx.send(RuntimeEvent::SessionStatus {
                 target,
                 session,
-                status: "Stopped".into(),
+                status: RunStatus::Stopped,
             });
         }
         for session in &mut self.catalog_sessions {
@@ -114,7 +114,7 @@ impl Supervisor {
                 let _ = self.event_tx.send(RuntimeEvent::SessionStatus {
                     target: format!("session:{}", session.path.display()),
                     session: Some(session.path.clone()),
-                    status: "Stopped".into(),
+                    status: RunStatus::Stopped,
                 });
             }
         }

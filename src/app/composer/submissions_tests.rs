@@ -67,10 +67,10 @@ fn existing_session_submit_keeps_working_until_the_prompt_result(cx: &mut gpui::
                     snapshot.harness = Some(Backend::Claude);
                     snapshot.selected_session = Some(path.clone());
                     snapshot.history_preview = true;
-                    snapshot.live_status = "Done".into();
-                    app.record_run_status(target.clone(), "Done".into(), true);
+                    snapshot.live_status = RunStatus::Done;
+                    app.record_run_status(target.clone(), RunStatus::Done, true);
                     app.submit("Continue".into(), PromptMode::Normal, window, cx);
-                    assert_eq!(app.activity.run_statuses[&target], "Working");
+                    assert_eq!(app.activity.run_statuses[&target], RunStatus::Working);
                     assert!(!app.activity.recent_completions.contains_key(&target));
                     assert_eq!(app.composer.pending_submissions.len(), 1);
                 });
@@ -87,12 +87,12 @@ fn existing_session_submit_keeps_working_until_the_prompt_result(cx: &mut gpui::
             runtime.send_event(RuntimeEvent::SessionStatus {
                 target: target.clone(),
                 session: Some(path.clone()),
-                status: "Done".into(),
+                status: RunStatus::Done,
             });
             cx.update(|_, cx| {
                 app.update(cx, |app, cx| {
                     app.drain_runtime(cx);
-                    assert_eq!(app.activity.run_statuses[&target], "Working");
+                    assert_eq!(app.activity.run_statuses[&target], RunStatus::Working);
                 });
             });
             runtime.send_event(RuntimeEvent::PromptResult {
@@ -104,12 +104,12 @@ fn existing_session_submit_keeps_working_until_the_prompt_result(cx: &mut gpui::
             runtime.send_event(RuntimeEvent::SessionStatus {
                 target: target.clone(),
                 session: Some(path),
-                status: "Done".into(),
+                status: RunStatus::Done,
             });
             cx.update(|_, cx| {
                 app.update(cx, |app, cx| {
                     app.drain_runtime(cx);
-                    assert_eq!(app.activity.run_statuses[&target], "Done");
+                    assert_eq!(app.activity.run_statuses[&target], RunStatus::Done);
                 });
             });
         },

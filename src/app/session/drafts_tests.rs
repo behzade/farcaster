@@ -148,14 +148,24 @@ fn startup_idle_preserves_only_the_unresolved_normal_submission() {
             result: None,
         },
     )]);
-    let mut statuses = HashMap::from([(target.clone(), "Working".into())]);
-    let preserves = |target: &str, status: &str, pending: &_, statuses: &_| {
+    let mut statuses = HashMap::from([(target.clone(), RunStatus::Working)]);
+    let preserves = |target: &str, status: &RunStatus, pending: &_, statuses: &_| {
         preserve_submission_working_status(target, Some(&path), status, pending, statuses)
     };
-    assert!(preserves(&target, "Done", &pending, &statuses));
-    assert!(!preserves("draft:other", "Done", &pending, &statuses));
-    assert!(!preserves(&session_key, "Done", &pending, &statuses));
-    for status in ["Failed", "Stopped", "Delivery unknown"] {
+    assert!(preserves(&target, &RunStatus::Done, &pending, &statuses));
+    assert!(!preserves(
+        "draft:other",
+        &RunStatus::Done,
+        &pending,
+        &statuses
+    ));
+    assert!(!preserves(
+        &session_key,
+        &RunStatus::Done,
+        &pending,
+        &statuses
+    ));
+    for status in [&RunStatus::Failed, &RunStatus::Stopped] {
         assert!(!preserves(&target, status, &pending, &statuses));
     }
 
@@ -164,25 +174,40 @@ fn startup_idle_preserves_only_the_unresolved_normal_submission() {
         .get_mut("submission")
         .expect("pending submission")
         .submitted_target = session_key.clone();
-    assert!(preserves(&target, "Done", &pending, &statuses));
-    assert!(preserves(&session_key, "Done", &pending, &statuses));
+    assert!(preserves(&target, &RunStatus::Done, &pending, &statuses));
+    assert!(preserves(
+        &session_key,
+        &RunStatus::Done,
+        &pending,
+        &statuses
+    ));
     for mode in [PromptMode::Steer, PromptMode::FollowUp] {
         pending
             .get_mut("submission")
             .expect("pending submission")
             .mode = mode;
-        assert!(!preserves(&session_key, "Done", &pending, &statuses));
+        assert!(!preserves(
+            &session_key,
+            &RunStatus::Done,
+            &pending,
+            &statuses
+        ));
     }
     pending
         .get_mut("submission")
         .expect("pending submission")
         .mode = PromptMode::Normal;
-    for terminal in ["Done", "Failed", "Stopped", "Delivery unknown"] {
-        statuses.insert(session_key.clone(), terminal.into());
-        assert!(!preserves(&target, "Done", &pending, &statuses));
-        assert!(!preserves(&session_key, "Done", &pending, &statuses));
+    for terminal in [&RunStatus::Done, &RunStatus::Failed, &RunStatus::Stopped] {
+        statuses.insert(session_key.clone(), *terminal);
+        assert!(!preserves(&target, &RunStatus::Done, &pending, &statuses));
+        assert!(!preserves(
+            &session_key,
+            &RunStatus::Done,
+            &pending,
+            &statuses
+        ));
     }
-    statuses.insert(session_key.clone(), "Working".into());
+    statuses.insert(session_key.clone(), RunStatus::Working);
     for outcome in [
         PromptOutcome::Accepted,
         PromptOutcome::RejectedBeforeAcceptance,
@@ -192,11 +217,16 @@ fn startup_idle_preserves_only_the_unresolved_normal_submission() {
             .get_mut("submission")
             .expect("pending submission")
             .result = Some((outcome, Some(path.clone())));
-        assert!(!preserves(&target, "Done", &pending, &statuses));
-        assert!(!preserves(&session_key, "Done", &pending, &statuses));
+        assert!(!preserves(&target, &RunStatus::Done, &pending, &statuses));
+        assert!(!preserves(
+            &session_key,
+            &RunStatus::Done,
+            &pending,
+            &statuses
+        ));
     }
     pending.clear();
-    assert!(!preserves(&target, "Done", &pending, &statuses));
+    assert!(!preserves(&target, &RunStatus::Done, &pending, &statuses));
 }
 
 #[test]
@@ -338,11 +368,11 @@ fn submitted_a_and_selected_empty_b_keep_distinct_identity() {
     assert_eq!(submitted.get("a"), Some(&Some(path)));
     assert_eq!(
         resolved_draft_status("a", &submitted, &HashMap::new()),
-        "Working"
+        RunStatus::Working
     );
     assert_eq!(
         resolved_draft_status("b", &submitted, &HashMap::new()),
-        "Draft"
+        RunStatus::Draft
     );
 }
 
@@ -368,19 +398,28 @@ fn submitted_draft_status_prefers_draft_then_associated_session_then_fallback() 
     let path = PathBuf::from("/sessions/a.jsonl");
     let submitted = HashMap::from([("a".into(), Some(path.clone()))]);
     let session_key = session_target(&path);
-    let mut statuses = HashMap::from([(session_key, "Needs input".into())]);
+    let mut statuses = HashMap::from([(session_key, RunStatus::NeedsInput)]);
 
     assert_eq!(
         resolved_draft_status("a", &submitted, &statuses),
-        "Needs input"
+        RunStatus::NeedsInput
     );
-    statuses.insert(draft_target("a"), "Failed".into());
-    assert_eq!(resolved_draft_status("a", &submitted, &statuses), "Failed");
+    statuses.insert(draft_target("a"), RunStatus::Failed);
+    assert_eq!(
+        resolved_draft_status("a", &submitted, &statuses),
+        RunStatus::Failed
+    );
     statuses.remove(&draft_target("a"));
-    statuses.insert(session_target(&path), "Done".into());
-    assert_eq!(resolved_draft_status("a", &submitted, &statuses), "Done");
-    statuses.insert(session_target(&path), "Working".into());
-    assert_eq!(resolved_draft_status("a", &submitted, &statuses), "Working");
+    statuses.insert(session_target(&path), RunStatus::Done);
+    assert_eq!(
+        resolved_draft_status("a", &submitted, &statuses),
+        RunStatus::Done
+    );
+    statuses.insert(session_target(&path), RunStatus::Working);
+    assert_eq!(
+        resolved_draft_status("a", &submitted, &statuses),
+        RunStatus::Working
+    );
 }
 
 #[test]
@@ -508,17 +547,14 @@ fn promotion_transfers_working_status_to_one_canonical_session_key() {
     let draft_key = draft_target("a");
     let session_key = session_target(&path);
     let mut statuses = HashMap::from([
-        (draft_key.clone(), "Working".into()),
-        (session_key.clone(), "Working".into()),
+        (draft_key.clone(), RunStatus::Working),
+        (session_key.clone(), RunStatus::Working),
     ]);
     let mut completions = HashMap::new();
 
     transfer_draft_status(&mut statuses, &mut completions, "a", &path);
 
-    assert_eq!(
-        statuses.get(&session_key).map(String::as_str),
-        Some("Working")
-    );
+    assert_eq!(statuses.get(&session_key), Some(&RunStatus::Working));
     assert!(!statuses.contains_key(&draft_key));
     assert_eq!(statuses.len(), 1);
 }

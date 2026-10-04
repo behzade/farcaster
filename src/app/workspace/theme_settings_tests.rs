@@ -3,6 +3,7 @@ use crate::app::ui::{
     file_icons,
     theme::{ColorKey, SyntaxKey, ThemeToken, builtin::BUILT_IN_THEMES},
 };
+use crate::runtime::RunStatus;
 
 fn saved_library() -> String {
     let mut library = ThemeLibrary::default();
@@ -136,7 +137,7 @@ fn restored_theme_opens_an_editor_and_quit_flushes_pending_changes(cx: &mut gpui
                     assert!(app.settings.themes.dirty);
                     app.activity
                         .run_statuses
-                        .insert("session:busy".into(), "Working".into());
+                        .insert("session:busy".into(), RunStatus::Working);
                     app.request_application_quit(window, cx);
                     assert!(app.lifecycle.pending_quit.is_some());
                     app.close_quit_confirmation(window, cx);

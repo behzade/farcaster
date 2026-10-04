@@ -1,6 +1,21 @@
 use super::*;
 use crate::agents::Backend;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RunStatus {
+    #[default]
+    Invalid,
+    Draft,
+    Done,
+    Working,
+    Compacting,
+    Retrying,
+    NeedsInput,
+    Waiting,
+    Stopped,
+    Failed,
+}
+
 #[derive(Clone, Debug)]
 pub struct TaskSettings {
     pub project: PathBuf,
@@ -231,7 +246,7 @@ pub enum RuntimeEvent {
     SessionStatus {
         target: String,
         session: Option<PathBuf>,
-        status: String,
+        status: RunStatus,
     },
     ImportPreview {
         generation: u64,
@@ -264,7 +279,7 @@ pub struct RuntimeSnapshot {
     pub profile_id: Option<String>,
     pub project: PathBuf,
     pub live_session: Option<PathBuf>,
-    pub live_status: String,
+    pub live_status: RunStatus,
     pub session: Option<SessionState>,
     pub prefill_model: Option<Model>,
     pub pending_initial_model: bool,

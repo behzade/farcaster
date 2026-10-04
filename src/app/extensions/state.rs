@@ -18,37 +18,6 @@ impl FarcasterApp {
         cx.notify();
     }
 
-    pub(in crate::app) fn record_run_status(
-        &mut self,
-        target: String,
-        status: String,
-        force_recent: bool,
-    ) -> bool {
-        if status == "Done" {
-            if starts_recent_completion(
-                self.activity.run_statuses.get(&target).map(String::as_str),
-                &status,
-                force_recent,
-            ) {
-                self.activity.run_statuses.insert(target.clone(), status);
-                self.activity
-                    .recent_completions
-                    .insert(target, Instant::now());
-                return true;
-            }
-            if self.activity.recent_completions.contains_key(&target) {
-                self.activity.run_statuses.insert(target, status);
-                return true;
-            }
-            self.activity.run_statuses.remove(&target);
-            self.activity.recent_completions.remove(&target);
-            return false;
-        }
-        self.activity.recent_completions.remove(&target);
-        self.activity.run_statuses.insert(target, status);
-        false
-    }
-
     pub(in crate::app) fn reset_session_ui(
         &mut self,
         generation: u64,

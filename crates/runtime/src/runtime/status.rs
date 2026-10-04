@@ -1,11 +1,11 @@
 use super::*;
 
-pub(super) fn semantic_status(snapshot: &RuntimeSnapshot) -> &'static str {
+pub(super) fn semantic_status(snapshot: &RuntimeSnapshot) -> RunStatus {
     if snapshot.history_preview {
         return if snapshot.selected_session.is_none() {
-            "Draft"
+            RunStatus::Draft
         } else {
-            "Done"
+            RunStatus::Done
         };
     }
     session_badge_status(&snapshot.conversation)
@@ -70,16 +70,16 @@ pub(super) fn notification_target(snapshot: &RuntimeSnapshot) -> Option<(PathBuf
         .map(|path| (path, snapshot.project.clone()))
 }
 
-pub(super) fn session_badge_status(conversation: &ConversationState) -> &'static str {
+pub(super) fn session_badge_status(conversation: &ConversationState) -> RunStatus {
     if conversation.compacting {
-        "Compacting"
+        RunStatus::Compacting
     } else if conversation.retrying {
-        "Retrying"
+        RunStatus::Retrying
     } else if conversation.running {
-        "Working"
+        RunStatus::Working
     } else if conversation.ended_in_error() {
-        "Failed"
+        RunStatus::Failed
     } else {
-        "Done"
+        RunStatus::Done
     }
 }

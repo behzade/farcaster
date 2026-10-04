@@ -753,7 +753,7 @@ impl RuntimeOwner {
             .active_session
             .clone()
             .or_else(|| active_snapshot.selected_session.clone());
-        snapshot.live_status = session_badge_status(&active_snapshot.conversation).into();
+        snapshot.live_status = session_badge_status(&active_snapshot.conversation);
         snapshot.transcript_changed_from = self.transcript_changed_from.take();
         self.review_projection.apply(&mut snapshot);
         let _ = self.event_tx.send(RuntimeEvent::Snapshot {

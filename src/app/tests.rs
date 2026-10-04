@@ -233,15 +233,6 @@ fn status_events_invalidate_only_visible_active_rows() {
 }
 
 #[test]
-fn done_is_recent_only_after_an_active_status_transition() {
-    assert!(!starts_recent_completion(None, "Done", false));
-    assert!(!starts_recent_completion(Some("Done"), "Done", false));
-    assert!(starts_recent_completion(Some("Working"), "Done", false));
-    assert!(starts_recent_completion(None, "Done", true));
-    assert!(!starts_recent_completion(Some("Working"), "Failed", false));
-}
-
-#[test]
 fn selecting_a_subagent_does_not_invalidate_the_session_rail() {
     let sessions = vec![
         session_summary("root", None, false),

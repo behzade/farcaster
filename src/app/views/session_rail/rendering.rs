@@ -21,6 +21,7 @@ use crate::{
             theme::theme,
         },
     },
+    runtime::RunStatus,
     sessions::SessionCatalog,
 };
 
@@ -122,23 +123,23 @@ pub(super) fn subagent_counts(sessions: &SessionCatalog) -> HashMap<PathBuf, usi
 pub(super) fn inactive_session_badge(
     kind: SessionRailKind,
     item: &SessionRailItem,
-    run_statuses: &HashMap<String, String>,
+    run_statuses: &HashMap<String, RunStatus>,
     live_root: Option<&Path>,
-    live_status: &str,
+    live_status: RunStatus,
     waiting_roots: &HashSet<PathBuf>,
-) -> Option<String> {
+) -> Option<RunStatus> {
     if kind != SessionRailKind::Archived {
         return None;
     }
     let target = format!("session:{}", item.session.path.display());
     let status = resolved_session_status(
         &item.session,
-        run_statuses.get(&target).map(String::as_str),
+        run_statuses.get(&target).copied(),
         live_root,
         live_status,
         waiting_roots.contains(&item.session.path),
     );
-    (status != "Done").then_some(status)
+    (status != RunStatus::Done).then_some(status)
 }
 
 pub(super) fn archived_panel_height(rows: usize) -> Pixels {

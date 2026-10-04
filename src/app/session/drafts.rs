@@ -1,4 +1,4 @@
-use crate::agents::Backend;
+use crate::{agents::Backend, runtime::RunStatus};
 use std::{collections::HashMap, path::PathBuf};
 
 use gpui::{Context, Window};
@@ -449,7 +449,7 @@ impl FarcasterApp {
             .or_default();
         self.activity
             .run_statuses
-            .insert(target.to_owned(), "Working".into());
+            .insert(target.to_owned(), RunStatus::Working);
         if !self.sessions.drafts.iter().any(|draft| draft.id == id) {
             let app_session_id = self
                 .sessions
@@ -506,19 +506,19 @@ impl FarcasterApp {
         &mut self,
         target: String,
         session: Option<PathBuf>,
-        mut status: String,
+        mut status: RunStatus,
     ) {
-        if status == "Done"
+        if status == RunStatus::Done
             && self
                 .activity
                 .run_statuses
                 .get(&target)
-                .is_some_and(|status| status == "Failed")
+                .is_some_and(|status| *status == RunStatus::Failed)
         {
             return;
         }
         let session = session.map(|path| normalize_session_path(&path));
-        if status == "Working"
+        if status == RunStatus::Working
             && has_pending_submission(&self.composer.pending_submissions, &target)
         {
             establish_submission(
@@ -540,7 +540,7 @@ impl FarcasterApp {
             &self.composer.pending_submissions,
             &self.activity.run_statuses,
         ) {
-            status = "Working".into();
+            status = RunStatus::Working;
         }
         if let Some(id) = draft_id(&target)
             && self.sessions.submitted_drafts.contains_key(id)
@@ -565,7 +565,7 @@ impl FarcasterApp {
             return;
         }
 
-        let recent = self.record_run_status(target, status.clone(), false);
+        let recent = self.record_run_status(target, status, false);
         if let Some(path) = session {
             self.record_run_status(session_target(&path), status, recent);
         }
@@ -669,18 +669,18 @@ fn clear_promoted_selection(selected_draft: &mut Option<String>, promoted_id: &s
 fn preserve_submission_working_status(
     target: &str,
     session: Option<&std::path::Path>,
-    status: &str,
+    status: &RunStatus,
     pending: &HashMap<String, PendingSubmission>,
-    statuses: &HashMap<String, String>,
+    statuses: &HashMap<String, RunStatus>,
 ) -> bool {
-    if status != "Done" {
+    if *status != RunStatus::Done {
         return false;
     }
     let session_key = session.map(session_target);
     statuses
         .get(target)
         .or_else(|| session_key.as_ref().and_then(|key| statuses.get(key)))
-        .is_some_and(|previous| previous == "Working")
+        .is_some_and(|previous| *previous == RunStatus::Working)
         && pending.values().any(|submission| {
             submission.result.is_none()
                 && submission.mode == crate::protocol::PromptMode::Normal
@@ -690,7 +690,7 @@ fn preserve_submission_working_status(
 }
 
 fn transfer_draft_status(
-    run_statuses: &mut HashMap<String, String>,
+    run_statuses: &mut HashMap<String, RunStatus>,
     recent_completions: &mut HashMap<String, std::time::Instant>,
     id: &str,
     path: &std::path::Path,
@@ -714,20 +714,20 @@ fn transfer_draft_status(
 pub(in crate::app) fn resolved_draft_status(
     id: &str,
     submitted_drafts: &HashMap<String, Option<PathBuf>>,
-    run_statuses: &HashMap<String, String>,
-) -> String {
+    run_statuses: &HashMap<String, RunStatus>,
+) -> RunStatus {
     if let Some(status) = run_statuses.get(&draft_target(id)) {
-        return status.clone();
+        return *status;
     }
     if let Some(Some(path)) = submitted_drafts.get(id)
         && let Some(status) = run_statuses.get(&session_target(path))
     {
-        return status.clone();
+        return *status;
     }
     if submitted_drafts.contains_key(id) {
-        "Working".into()
+        RunStatus::Working
     } else {
-        "Draft".into()
+        RunStatus::Draft
     }
 }
 

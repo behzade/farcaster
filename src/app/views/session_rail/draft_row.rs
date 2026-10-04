@@ -1,5 +1,6 @@
 use std::time::{Duration, UNIX_EPOCH};
 
+use crate::{app::session::status::run_status_label, runtime::RunStatus};
 use gpui::{
     AnyElement, App, AppContext as _, CursorStyle, FontWeight, InteractiveElement as _,
     IntoElement, ParentElement as _, RenderOnce, Role, StatefulInteractiveElement as _,
@@ -41,7 +42,7 @@ fn archive_draft_action(
 
 pub(super) struct DraftRowInput {
     pub(super) selected: bool,
-    pub(super) status: String,
+    pub(super) status: RunStatus,
     pub(super) archived: bool,
     pub(super) drop_position: Option<ReorderPosition>,
     pub(super) compact: bool,
@@ -84,8 +85,8 @@ impl RenderOnce for DraftRow {
                 },
             entity,
         } = self;
-        let status = status.as_str();
-        let is_draft = status == "Draft";
+        let is_draft = status == RunStatus::Draft;
+        let status = run_status_label(status);
         let age = relative_age(UNIX_EPOCH + Duration::from_millis(draft.created_ms));
         let id = draft.id.clone();
         let identity = format!("draft:{id}");

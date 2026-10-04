@@ -1,3 +1,4 @@
+use crate::runtime::RunStatus;
 use std::{path::PathBuf, time::SystemTime};
 
 use super::*;
@@ -43,7 +44,7 @@ fn active_work_includes_recursive_descendants() {
     sessions[2].is_running = false;
     let statuses = std::collections::HashMap::from([(
         session_target(&sessions[2].path),
-        "Needs input".to_owned(),
+        RunStatus::NeedsInput,
     )]);
     let snapshot = crate::runtime::RuntimeSnapshot::default();
     assert!(session_family_has_active_work(

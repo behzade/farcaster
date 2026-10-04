@@ -1,3 +1,5 @@
+use crate::runtime::RunStatus;
+
 use super::*;
 
 pub(in crate::app) fn transcript_follow_state_needs_update(
@@ -298,11 +300,11 @@ pub(in crate::app) fn restore_extension_surface(
 }
 
 pub(in crate::app) fn starts_recent_completion(
-    previous: Option<&str>,
-    next: &str,
+    previous: Option<&RunStatus>,
+    next: &RunStatus,
     force: bool,
 ) -> bool {
-    next == "Done" && (force || previous.is_some_and(|status| status != "Done"))
+    *next == RunStatus::Done && (force || previous.is_some_and(|status| *status != RunStatus::Done))
 }
 
 pub(in crate::app) fn session_identities_changed(

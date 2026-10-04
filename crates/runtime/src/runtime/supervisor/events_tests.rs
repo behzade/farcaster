@@ -571,14 +571,14 @@ fn history_preview_reconciles_the_parked_live_status() {
         .supervisor
         .catalog_sessions
         .push(catalog_session(&path, &project, true));
-    let preview = |live_status: &str| {
+    let preview = |live_status: RunStatus| {
         Arc::new(RuntimeSnapshot {
             harness: Some(Backend::Codex),
             project: project.clone(),
             live_session: Some(path.clone()),
             selected_session: Some(path.clone()),
             history_preview: true,
-            live_status: live_status.into(),
+            live_status,
             ..RuntimeSnapshot::default()
         })
     };
@@ -586,7 +586,7 @@ fn history_preview_reconciles_the_parked_live_status() {
         key.clone(),
         RuntimeEvent::Snapshot {
             generation: 0,
-            snapshot: preview("Done"),
+            snapshot: preview(RunStatus::Done),
         },
     );
     assert!(!fixture.supervisor.catalog_sessions[0].is_running);
@@ -602,12 +602,12 @@ fn history_preview_reconciles_the_parked_live_status() {
         key,
         RuntimeEvent::Snapshot {
             generation: 0,
-            snapshot: preview("Working"),
+            snapshot: preview(RunStatus::Working),
         },
     );
     assert!(fixture.supervisor.catalog_sessions[0].is_running);
     assert!(fixture.drain().iter().any(|event| {
-        matches!(event, RuntimeEvent::SessionStatus { status, .. } if status == "Working")
+        matches!(event, RuntimeEvent::SessionStatus { status, .. } if *status == RunStatus::Working)
     }));
 }
 
@@ -893,7 +893,7 @@ fn selected_dismissal_uses_supervisor_generation_and_clears_needs_input_last() {
     assert_eq!(fixture.supervisor.active_dialogs["selected"].len(), 1);
     assert_eq!(
         fixture.supervisor.published_statuses["selected"].1,
-        "Needs input"
+        RunStatus::NeedsInput
     );
     let first = fixture.drain();
     assert!(first.iter().any(|event| matches!(
@@ -912,7 +912,7 @@ fn selected_dismissal_uses_supervisor_generation_and_clears_needs_input_last() {
     assert!(!fixture.supervisor.active_dialogs.contains_key("selected"));
     assert_ne!(
         fixture.supervisor.published_statuses["selected"].1,
-        "Needs input"
+        RunStatus::NeedsInput
     );
     assert!(fixture.drain().iter().any(|event| matches!(
         event,

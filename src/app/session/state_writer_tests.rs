@@ -1,5 +1,6 @@
 use super::*;
 use crate::projects::ProjectList;
+use crate::runtime::RunStatus;
 use std::{sync::mpsc, time::Duration};
 
 #[gpui::test]
@@ -122,7 +123,7 @@ fn failed_save_blocks_normal_and_confirmed_quit(cx: &mut gpui::TestAppContext) {
                         if active {
                             app.activity
                                 .run_statuses
-                                .insert("test".into(), "Working".into());
+                                .insert("test".into(), RunStatus::Working);
                         }
                         app.request_application_quit(window, cx);
                         if active {

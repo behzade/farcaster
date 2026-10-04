@@ -303,13 +303,13 @@ impl Supervisor {
                         &self.selected,
                         session,
                         if self.needs_input.contains(&self.selected) {
-                            "Needs input"
+                            RunStatus::NeedsInput
                         } else if agents::is_child_input_id(id) {
                             self.latest
                                 .get(&self.selected)
-                                .map_or("Done", |snapshot| semantic_status(snapshot))
+                                .map_or(RunStatus::Done, |snapshot| semantic_status(snapshot))
                         } else {
-                            "Working"
+                            RunStatus::Working
                         },
                     );
                 }

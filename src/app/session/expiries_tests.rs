@@ -5,7 +5,7 @@ fn completion_expiry_removes_only_the_matching_completion() {
     let completed_at = Instant::now();
     let replacement = completed_at + Duration::from_secs(1);
     let mut completions = HashMap::from([("session:a".into(), replacement)]);
-    let mut statuses = HashMap::from([("session:a".into(), "Done".into())]);
+    let mut statuses = HashMap::from([("session:a".into(), RunStatus::Done)]);
 
     assert!(!expire_recent_completion(
         &mut completions,
@@ -13,7 +13,7 @@ fn completion_expiry_removes_only_the_matching_completion() {
         "session:a",
         completed_at,
     ));
-    assert_eq!(statuses.get("session:a").map(String::as_str), Some("Done"));
+    assert_eq!(statuses.get("session:a"), Some(&RunStatus::Done));
 
     assert!(expire_recent_completion(
         &mut completions,

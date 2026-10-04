@@ -5,8 +5,13 @@ use super::*;
 #[test]
 fn active_statuses_guard_archive_and_quit_without_catalog_activity() {
     let path = PathBuf::from("/sessions/codex");
-    for status in ["Working", "Compacting", "Retrying", "Needs input"] {
-        let statuses = HashMap::from([(session_target(&path), status.to_owned())]);
+    for status in [
+        RunStatus::Working,
+        RunStatus::Compacting,
+        RunStatus::Retrying,
+        RunStatus::NeedsInput,
+    ] {
+        let statuses = HashMap::from([(session_target(&path), status)]);
         assert!(session_has_live_work(
             &path,
             &statuses,
@@ -18,8 +23,15 @@ fn active_statuses_guard_archive_and_quit_without_catalog_activity() {
             &RuntimeSnapshot::default()
         ));
     }
-    for status in ["Done", "Failed", "Stopped", "Idle", "Ready", "Draft"] {
-        assert!(!status_has_active_work(status));
+    for status in [
+        RunStatus::Done,
+        RunStatus::Failed,
+        RunStatus::Stopped,
+        RunStatus::Invalid,
+        RunStatus::Draft,
+        RunStatus::Waiting,
+    ] {
+        assert!(!status_has_active_work(&status));
     }
 }
 
