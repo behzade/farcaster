@@ -1,4 +1,5 @@
 use super::*;
+use gpui::Action as _;
 use gpui_component::IndexPath;
 
 #[gpui::test]
@@ -141,6 +142,41 @@ fn action_picker_routes_themes_and_models_without_losing_parent_context(
                     assert_eq!(rows[0].id, "action:new-session");
                     assert!(rows.iter().all(|row| !row.section.is_empty()));
                     assert_eq!(
+                        rows.iter()
+                            .filter(|row| row.label == "New session…")
+                            .count(),
+                        1
+                    );
+                    for action in [
+                        crate::app::NewSession.name(),
+                        crate::app::RestoreSession.name(),
+                        crate::app::SetRuntime.name(),
+                        crate::app::SetHarness.name(),
+                        crate::app::SetSandbox.name(),
+                        crate::app::AddProject.name(),
+                        crate::app::ShowWorkGraph.name(),
+                    ] {
+                        assert!(
+                            !commands
+                                .values()
+                                .any(|command| *command == PickerCommand::Action(action)),
+                            "custom action listed twice: {action}"
+                        );
+                    }
+                    let increase_id =
+                        format!("action:{}", crate::app::IncreaseTranscriptFontSize.name());
+                    assert_eq!(
+                        commands.get(&increase_id),
+                        Some(&PickerCommand::Action(
+                            crate::app::IncreaseTranscriptFontSize.name()
+                        ))
+                    );
+                    let row = rows
+                        .iter()
+                        .find(|row| row.id == increase_id)
+                        .expect("font command row");
+                    assert_eq!(row.label, "Increase transcript font size");
+                    assert_eq!(
                         commands.get("action:themes"),
                         Some(&PickerCommand::OpenThemes)
                     );
@@ -189,6 +225,21 @@ fn action_picker_routes_themes_and_models_without_losing_parent_context(
             cx.update(|window, cx| window.draw(cx).clear(cx));
             cx.simulate_keystrokes("escape");
             cx.update(|_, cx| assert!(app.read(cx).navigation.picker.is_none()));
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.open_picker(PickerScope::Actions, window, cx);
+                    app.execute_picker_row(
+                        &format!("action:{}", crate::app::ShowKeybindings.name()),
+                        window,
+                        cx,
+                    );
+                });
+            });
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                assert!(app.read(cx).navigation.picker.is_none());
+                assert!(app.read(cx).overlays.view.keybindings);
+            });
         },
     );
 }

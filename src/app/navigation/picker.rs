@@ -491,12 +491,12 @@ impl FarcasterApp {
                 self.start_task_from_code(window, cx);
             }
             PickerCommand::Action(name) => {
-                if let Some(shortcut) = crate::app::ui::keybindings::registry()
+                if let Some(command) = crate::app::ui::keybindings::registry()
                     .into_iter()
-                    .find(|shortcut| shortcut.binding.action().name() == name)
+                    .find(|command| command.action.name() == name)
                 {
                     self.close_picker(window, cx);
-                    window.dispatch_action(shortcut.binding.action().boxed_clone(), cx);
+                    window.dispatch_action(command.action, cx);
                 }
             }
             PickerCommand::OpenScope(PickerScope::Sandbox) => {

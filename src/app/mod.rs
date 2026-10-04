@@ -33,7 +33,7 @@ use project::{registry as project_registry, repository};
 use session::{archive, status::roots_waiting_for_descendants};
 pub(crate) use views::OVERLAY_KEY_CONTEXT;
 pub(crate) use views::transcript::list::TRANSCRIPT_SELECTION_KEY_CONTEXT;
-pub(crate) use views::workgraph::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
+pub(crate) use views::workgraph::WORKGRAPH_KEY_CONTEXT;
 use views::workgraph::{WorkGraphBoardView, WorkGraphSidebarView};
 use views::{
     ComposerView, InactiveSessionRailView, RunPanelView, SessionRailKind, SessionRailView,
@@ -80,11 +80,9 @@ use crate::{app::views::transcript::transcript_splice, protocol::ExtensionUiRequ
 
 const SYSTEM_NOTIFICATION_TAG: &str = "farcaster-agent";
 pub(crate) const COMPOSER_KEY_CONTEXT: &str = "FarcasterComposer";
-pub(crate) const APP_SHORTCUT_CONTEXT: &str = "FarcasterApp && input == app";
 pub(crate) const APP_INPUT_CONTEXT: &str = "FarcasterApp input=app";
 pub(crate) const NATIVE_INPUT_CONTEXT: &str = "FarcasterApp input=native";
 pub(crate) const CHAT_INPUT_CONTEXT: &str = "FarcasterApp input=app surface=chat";
-pub(crate) const CHAT_SHORTCUT_CONTEXT: &str = "FarcasterApp && input == app && surface == chat";
 
 #[derive(Debug, Eq, PartialEq)]
 enum CurrentCloseTarget {

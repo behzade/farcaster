@@ -31,7 +31,6 @@ use gpui_component::{
 use workgraph::{link_session, load_selected_plan};
 
 pub(crate) const WORKGRAPH_KEY_CONTEXT: &str = "PiWorkGraph";
-pub(crate) const WORKGRAPH_NAV_KEY_CONTEXT: &str = "PiWorkGraph && !Input";
 
 pub(crate) struct WorkGraphBoardView {
     app: WeakEntity<FarcasterApp>,

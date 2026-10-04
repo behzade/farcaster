@@ -179,35 +179,39 @@ impl FarcasterApp {
             )
             .section("Application"),
         ];
-        let listed = rows
-            .iter()
-            .filter_map(|row| row.shortcut.clone())
-            .collect::<HashSet<_>>();
-        let mut actions = HashSet::new();
-        for shortcut in crate::app::ui::keybindings::registry()
+        let custom_actions = [
+            crate::app::NewSession.name(),
+            crate::app::RestoreSession.name(),
+            crate::app::SetRuntime.name(),
+            crate::app::SetHarness.name(),
+            crate::app::SetSandbox.name(),
+            crate::app::AddProject.name(),
+            crate::app::ShowWorkGraph.name(),
+        ];
+        for command in crate::app::ui::keybindings::registry()
             .into_iter()
-            .filter(|shortcut| shortcut.show_in_picker)
+            .filter(|command| command.show_in_picker)
         {
-            if listed.contains(&shortcut.keystroke) {
+            let action = command.action.name();
+            if custom_actions.contains(&action) {
                 continue;
             }
-            let action = shortcut.binding.action().name();
-            if !actions.insert(action) {
-                continue;
-            }
-            let (icon, section, detail) = shortcut_presentation(action, shortcut.section);
+            let (icon, section, detail) = shortcut_presentation(action, command.section);
             let close =
                 (action == crate::app::CloseCurrent.name()).then(|| self.picker_close_label());
             rows.push(
                 picker_row(
                     &mut commands,
-                    &format!("shortcut:{}", shortcut.keystroke),
+                    &format!("action:{action}"),
                     PickerCommand::Action(action),
                     icon,
-                    close.unwrap_or(shortcut.label),
+                    close.unwrap_or(command.label),
                     detail.map(str::to_owned),
-                    Some(shortcut.keystroke),
-                    shortcut.section,
+                    command
+                        .bindings
+                        .first()
+                        .map(|binding| binding.keystroke.clone()),
+                    command.section,
                 )
                 .section(section),
             );

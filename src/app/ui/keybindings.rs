@@ -1,7 +1,7 @@
+use crate::app::WORKGRAPH_KEY_CONTEXT;
 use crate::app::ui::keyboard::CopySelection;
 use crate::app::views::dialogs::send_to_chat::{NextCodeDestination, PreviousCodeDestination};
 use crate::app::workspace::{CycleWorkspaceBackward, CycleWorkspaceForward};
-use crate::app::{APP_SHORTCUT_CONTEXT, TRANSCRIPT_SELECTION_KEY_CONTEXT};
 use crate::app::{
     AbortRun, AddProject, CloseCurrent, ComposerCompletionNext, ComposerCompletionPrevious,
     ComposerEscape, ComposerHistoryNext, ComposerHistoryPrevious, DismissSurface, FocusComposer,
@@ -11,13 +11,36 @@ use crate::app::{
     SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9, WorkBack,
     WorkCreateIssue, WorkDismiss, WorkFocusSearch, WorkNextIssue, WorkPreviousIssue,
 };
-use crate::app::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
-use gpui::{Action as _, KeyBinding, Unbind};
+use crate::app::{COMPOSER_KEY_CONTEXT, TRANSCRIPT_SELECTION_KEY_CONTEXT};
+use gpui::{Action as _, KeyBinding, KeyBindingContextPredicate as Predicate, Unbind};
 use gpui_base::actions::{SelectDown, SelectUp};
 
-const COMPOSER_COMPLETION_CONTEXT: &str = "(FarcasterComposer && Completions) > Input";
-const PICKER_NAVIGATION_CONTEXT: &str =
-    "(Picker > Input) || (FarcasterSendToChat > List > Input)";
+fn binding(key: &str, action: Box<dyn gpui::Action>, condition: Predicate) -> KeyBinding {
+    KeyBinding::load(
+        key,
+        action,
+        Some(std::rc::Rc::new(condition)),
+        false,
+        None,
+        &gpui::DummyKeyboardMapper,
+    )
+    .expect("registered shortcut must have a valid keystroke")
+}
+
+fn named(name: &'static str) -> Predicate {
+    Predicate::Identifier(name.into())
+}
+
+fn input_in(parent: Predicate) -> Predicate {
+    Predicate::Descendant(Box::new(parent), Box::new(named("Input")))
+}
+
+pub(crate) fn app_condition() -> Predicate {
+    Predicate::And(
+        Box::new(named("FarcasterApp")),
+        Box::new(Predicate::Equal("input".into(), "app".into())),
+    )
+}
 
 pub(crate) fn application_key(suffix: &str) -> String {
     format!("{}-{suffix}", platform_key("cmd", "ctrl"))
@@ -32,524 +55,543 @@ const fn platform_key(macos: &'static str, non_macos: &'static str) -> &'static 
 }
 
 pub(crate) struct Shortcut {
-    pub section: &'static str,
-    pub label: &'static str,
     pub keystroke: String,
+    pub condition: Predicate,
     pub show_in_help: bool,
-    pub show_in_picker: bool,
-    pub binding: KeyBinding,
 }
 
 impl Shortcut {
-    fn in_picker(mut self, show: bool) -> Self {
-        self.show_in_picker = show;
+    fn new(key: impl Into<String>, condition: Predicate) -> Self {
+        Self {
+            keystroke: key.into(),
+            condition,
+            show_in_help: true,
+        }
+    }
+
+    fn hidden(mut self) -> Self {
+        self.show_in_help = false;
         self
     }
 }
 
-macro_rules! platform {
-    ($key:literal) => {
-        platform_key(concat!("cmd-", $key), concat!("ctrl-", $key))
-    };
+pub(crate) struct Command {
+    pub action: Box<dyn gpui::Action>,
+    pub section: &'static str,
+    pub label: &'static str,
+    pub show_in_help: bool,
+    pub show_in_picker: bool,
+    // The first binding is the shortcut shown in the action picker.
+    pub bindings: Vec<Shortcut>,
 }
 
-macro_rules! shortcut {
-    ($section:literal, $label:literal, $key:expr, $action:expr, $context:expr) => {
-        shortcut!($section, $label, $key, $action, $context, true)
-    };
-    ($section:literal, $label:literal, $key:expr, $action:expr, $context:expr, $show:expr) => {{
-        let key = $key.to_string();
-        Shortcut {
-            section: $section,
-            label: $label,
-            keystroke: key.clone(),
-            show_in_help: $show,
+impl Command {
+    fn new(
+        action: impl gpui::Action,
+        section: &'static str,
+        label: &'static str,
+        bindings: impl IntoIterator<Item = Shortcut>,
+    ) -> Self {
+        Self {
+            action: Box::new(action),
+            section,
+            label,
+            show_in_help: true,
             show_in_picker: false,
-            binding: KeyBinding::new(&key, $action, $context),
+            bindings: bindings.into_iter().collect(),
         }
-    }};
+    }
+
+    fn with_bindings(mut self, bindings: impl IntoIterator<Item = Shortcut>) -> Self {
+        self.bindings.extend(bindings);
+        self
+    }
+
+    fn in_picker(mut self) -> Self {
+        self.show_in_picker = true;
+        self
+    }
+
+    fn hide_from_help(mut self) -> Self {
+        self.show_in_help = false;
+        self
+    }
+
+    pub(crate) fn into_bindings(self) -> impl Iterator<Item = KeyBinding> {
+        self.bindings.into_iter().map(move |shortcut| {
+            binding(
+                &shortcut.keystroke,
+                self.action.boxed_clone(),
+                shortcut.condition,
+            )
+        })
+    }
+}
+
+fn app_keys(prefix: &str, suffix: &str) -> Vec<Shortcut> {
+    let mut keys = vec![Shortcut::new(format!("{prefix}-{suffix}"), app_condition())];
+    if cfg!(target_os = "linux") && prefix == "ctrl" {
+        keys.push(Shortcut::new(format!("super-{suffix}"), app_condition()).hidden());
+    }
+    keys
+}
+
+fn session_keys(prefix: &str, number: u8) -> [Shortcut; 2] {
+    let (alias, primary_condition, alias_condition) = if prefix == "cmd" {
+        ("ctrl", named("FarcasterApp"), app_condition())
+    } else {
+        ("super", app_condition(), named("FarcasterApp"))
+    };
+    [
+        Shortcut::new(format!("{prefix}-{number}"), primary_condition),
+        Shortcut::new(format!("{alias}-{number}"), alias_condition).hidden(),
+    ]
+}
+
+fn navigation_keys(prefix: &str, key: &str, chat: &Predicate) -> Vec<Shortcut> {
+    let mut modifiers = ["ctrl", "cmd", "super"];
+    modifiers.sort_by_key(|modifier| *modifier != prefix);
+    modifiers
+        .into_iter()
+        .map(|modifier| {
+            let condition = chat.clone();
+            Shortcut::new(format!("{modifier}-{key}"), condition)
+        })
+        .collect()
 }
 
 pub(crate) fn bindings() -> Vec<KeyBinding> {
     let mut bindings = registry()
         .into_iter()
-        .map(|shortcut| shortcut.binding)
+        .flat_map(Command::into_bindings)
         .collect::<Vec<_>>();
     bindings.extend([
-        KeyBinding::new("tab", Unbind("root::Tab".into()), Some("Root")),
-        KeyBinding::new("shift-tab", Unbind("root::TabPrev".into()), Some("Root")),
+        binding("tab", Box::new(Unbind("root::Tab".into())), named("Root")),
+        binding(
+            "shift-tab",
+            Box::new(Unbind("root::TabPrev".into())),
+            named("Root"),
+        ),
     ]);
     bindings
 }
 
-pub(crate) fn registry() -> Vec<Shortcut> {
+pub(crate) fn registry() -> Vec<Command> {
     registry_for_platform(platform_key("cmd", "ctrl"))
 }
 
-fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
-    let mut aliases = Vec::new();
-    macro_rules! application_shortcut {
-        ($section:literal, $label:literal, $key:literal, $action:expr) => {
-            application_shortcut!($section, $label, $key, $action, true)
-        };
-        ($section:literal, $label:literal, $key:literal, $action:expr, $show:expr) => {{
-            if cfg!(target_os = "linux") && prefix == "ctrl" {
-                aliases.push(shortcut!(
-                    $section,
-                    $label,
-                    concat!("super-", $key),
-                    $action,
-                    Some(APP_SHORTCUT_CONTEXT),
-                    false
-                ));
-            }
-            shortcut!(
-                $section,
-                $label,
-                format!("{prefix}-{}", $key),
-                $action,
-                Some(APP_SHORTCUT_CONTEXT),
-                $show
-            )
-            .in_picker($show)
-        }};
-    }
-    macro_rules! session_shortcut {
-        ($label:literal, $key:literal, $action:expr) => {{
-            aliases.push(shortcut!(
-                "Sessions",
-                $label,
-                format!(
-                    "{}-{}",
-                    if prefix == "cmd" { "ctrl" } else { "super" },
-                    $key
-                ),
-                $action,
-                Some(if prefix == "cmd" {
-                    APP_SHORTCUT_CONTEXT
-                } else {
-                    "FarcasterApp"
-                }),
-                false
-            ));
-            shortcut!(
-                "Sessions",
-                $label,
-                format!("{prefix}-{}", $key),
-                $action,
-                Some(if prefix == "cmd" {
-                    "FarcasterApp"
-                } else {
-                    APP_SHORTCUT_CONTEXT
-                })
-            )
-        }};
-    }
-    let mut shortcuts = vec![
-        application_shortcut!(
-            "Transcript",
-            "Increase transcript font size",
-            "=",
-            crate::app::IncreaseTranscriptFontSize
-        ),
-        application_shortcut!(
-            "Transcript",
-            "Increase transcript font size",
-            "+",
+fn registry_for_platform(prefix: &str) -> Vec<Command> {
+    let chat = Predicate::And(
+        Box::new(app_condition()),
+        Box::new(Predicate::Equal("surface".into(), "chat".into())),
+    );
+    let composer_input = input_in(named(COMPOSER_KEY_CONTEXT));
+    let composer_completions = input_in(Predicate::And(
+        Box::new(named(COMPOSER_KEY_CONTEXT)),
+        Box::new(named("Completions")),
+    ));
+    let composer_without_completions = input_in(Predicate::And(
+        Box::new(named(COMPOSER_KEY_CONTEXT)),
+        Box::new(Predicate::Not(Box::new(named("Completions")))),
+    ));
+    let picker_input = input_in(named(PICKER_KEY_CONTEXT));
+    let picker_navigation = Predicate::Or(
+        Box::new(picker_input.clone()),
+        Box::new(input_in(Predicate::Descendant(
+            Box::new(named("FarcasterSendToChat")),
+            Box::new(named("List")),
+        ))),
+    );
+    let workgraph_navigation = Predicate::And(
+        Box::new(named(WORKGRAPH_KEY_CONTEXT)),
+        Box::new(Predicate::Not(Box::new(named("Input")))),
+    );
+
+    vec![
+        Command::new(
             crate::app::IncreaseTranscriptFontSize,
-            false
-        ),
-        application_shortcut!(
+            "Transcript",
+            "Increase transcript font size",
+            app_keys(prefix, "="),
+        )
+        .with_bindings(app_keys(prefix, "+").into_iter().map(Shortcut::hidden))
+        .in_picker(),
+        Command::new(
+            crate::app::DecreaseTranscriptFontSize,
             "Transcript",
             "Decrease transcript font size",
-            "-",
-            crate::app::DecreaseTranscriptFontSize
+            app_keys(prefix, "-"),
+        )
+        .in_picker(),
+        Command::new(NewSession, "Sessions", "New session", app_keys(prefix, "n")).in_picker(),
+        Command::new(
+            SwitchSession0,
+            "Sessions",
+            "Open first draft",
+            session_keys(prefix, 0),
         ),
-        application_shortcut!("Sessions", "New session", "n", NewSession),
-        session_shortcut!("Open first draft", "0", SwitchSession0),
-        session_shortcut!("Open session 1", "1", SwitchSession1),
-        session_shortcut!("Open session 2", "2", SwitchSession2),
-        session_shortcut!("Open session 3", "3", SwitchSession3),
-        session_shortcut!("Open session 4", "4", SwitchSession4),
-        session_shortcut!("Open session 5", "5", SwitchSession5),
-        session_shortcut!("Open session 6", "6", SwitchSession6),
-        session_shortcut!("Open session 7", "7", SwitchSession7),
-        session_shortcut!("Open session 8", "8", SwitchSession8),
-        session_shortcut!("Open session 9", "9", SwitchSession9),
-        application_shortcut!("Sessions", "Add project", "shift-n", AddProject),
-        application_shortcut!(
+        Command::new(
+            SwitchSession1,
+            "Sessions",
+            "Open session 1",
+            session_keys(prefix, 1),
+        ),
+        Command::new(
+            SwitchSession2,
+            "Sessions",
+            "Open session 2",
+            session_keys(prefix, 2),
+        ),
+        Command::new(
+            SwitchSession3,
+            "Sessions",
+            "Open session 3",
+            session_keys(prefix, 3),
+        ),
+        Command::new(
+            SwitchSession4,
+            "Sessions",
+            "Open session 4",
+            session_keys(prefix, 4),
+        ),
+        Command::new(
+            SwitchSession5,
+            "Sessions",
+            "Open session 5",
+            session_keys(prefix, 5),
+        ),
+        Command::new(
+            SwitchSession6,
+            "Sessions",
+            "Open session 6",
+            session_keys(prefix, 6),
+        ),
+        Command::new(
+            SwitchSession7,
+            "Sessions",
+            "Open session 7",
+            session_keys(prefix, 7),
+        ),
+        Command::new(
+            SwitchSession8,
+            "Sessions",
+            "Open session 8",
+            session_keys(prefix, 8),
+        ),
+        Command::new(
+            SwitchSession9,
+            "Sessions",
+            "Open session 9",
+            session_keys(prefix, 9),
+        ),
+        Command::new(
+            AddProject,
+            "Sessions",
+            "Add project",
+            app_keys(prefix, "shift-n"),
+        )
+        .in_picker(),
+        Command::new(
+            crate::app::SetSandbox,
             "Configuration",
             "Set sandbox",
-            "shift-s",
-            crate::app::SetSandbox
-        ),
-        application_shortcut!(
+            app_keys(prefix, "shift-s"),
+        )
+        .in_picker(),
+        Command::new(
+            crate::app::SetRuntime,
             "Configuration",
             "Set provider/model/effort",
-            "shift-m",
-            crate::app::SetRuntime
-        ),
-        application_shortcut!(
+            app_keys(prefix, "shift-m"),
+        )
+        .in_picker(),
+        Command::new(
+            crate::app::SetHarness,
             "Configuration",
             "Set harness",
-            "shift-h",
-            crate::app::SetHarness
-        ),
-        application_shortcut!("Sessions", "Previous session", "[", PreviousSession),
-        application_shortcut!("Sessions", "Next session", "]", NextSession),
-        application_shortcut!(
+            app_keys(prefix, "shift-h"),
+        )
+        .in_picker(),
+        Command::new(
+            PreviousSession,
+            "Sessions",
+            "Previous session",
+            app_keys(prefix, "["),
+        )
+        .in_picker(),
+        Command::new(
+            NextSession,
+            "Sessions",
+            "Next session",
+            app_keys(prefix, "]"),
+        )
+        .in_picker(),
+        Command::new(
+            crate::app::RestoreSession,
             "Sessions",
             "Restore session",
-            "shift-a",
-            crate::app::RestoreSession
-        ),
-        application_shortcut!(
+            app_keys(prefix, "shift-a"),
+        )
+        .in_picker(),
+        Command::new(
+            CloseCurrent,
             "Sessions",
             "Dismiss dialog; close surface or draft; archive session",
-            "w",
-            CloseCurrent
+            app_keys(prefix, "w"),
+        )
+        .in_picker(),
+        Command::new(
+            ComposerHistoryPrevious,
+            "Composer",
+            "Previous prompt from first line (no suggestions)",
+            [Shortcut::new("up", composer_input.clone())],
         ),
-        Shortcut {
-            section: "Composer",
-            label: "Previous prompt from first line (no suggestions)",
-            keystroke: "up".into(),
-            show_in_help: true,
-            show_in_picker: false,
-            binding: KeyBinding::new(
-                "up",
-                ComposerHistoryPrevious,
-                Some("FarcasterComposer > Input"),
-            ),
-        },
-        Shortcut {
-            section: "Composer",
-            label: "Next prompt from last line while browsing history",
-            keystroke: "down".into(),
-            show_in_help: true,
-            show_in_picker: false,
-            binding: KeyBinding::new(
-                "down",
-                ComposerHistoryNext,
-                Some("FarcasterComposer > Input"),
-            ),
-        },
-        shortcut!(
+        Command::new(
+            ComposerHistoryNext,
+            "Composer",
+            "Next prompt from last line while browsing history",
+            [Shortcut::new("down", composer_input.clone())],
+        ),
+        Command::new(
+            ComposerCompletionPrevious,
             "Composer",
             "Previous completion",
-            "ctrl-p",
-            ComposerCompletionPrevious,
-            Some(COMPOSER_COMPLETION_CONTEXT)
+            [
+                Shortcut::new("ctrl-p", composer_completions.clone()),
+                Shortcut::new("shift-tab", composer_completions.clone()),
+            ],
         ),
-        shortcut!(
+        Command::new(
+            ComposerCompletionNext,
             "Composer",
             "Next completion",
-            "ctrl-n",
-            ComposerCompletionNext,
-            Some(COMPOSER_COMPLETION_CONTEXT)
+            [
+                Shortcut::new("ctrl-n", composer_completions.clone()),
+                Shortcut::new("tab", composer_completions),
+            ],
         ),
-        shortcut!(
+        Command::new(
+            FocusComposer,
             "Workspace",
             "Chat and composer",
-            "f1",
-            FocusComposer,
-            Some(APP_SHORTCUT_CONTEXT),
-            false
+            [Shortcut::new("f1", app_condition())],
         )
-        .in_picker(true),
-        shortcut!(
+        .hide_from_help()
+        .in_picker(),
+        Command::new(
+            crate::app::OpenTranscriptScratch,
             "Workspace",
             "Open transcript in Neovim",
-            "ctrl-g v",
-            crate::app::OpenTranscriptScratch,
-            Some(APP_SHORTCUT_CONTEXT)
+            [Shortcut::new("ctrl-g v", app_condition())],
         )
-        .in_picker(true),
-        shortcut!(
+        .in_picker(),
+        Command::new(
+            ShowEditor,
             "Workspace",
             "Open Neovim",
-            "f2",
-            ShowEditor,
-            Some(APP_SHORTCUT_CONTEXT)
+            [Shortcut::new("f2", app_condition())],
         )
-        .in_picker(true),
-        shortcut!(
+        .in_picker(),
+        Command::new(
+            ShowTerminal,
             "Workspace",
             "Open terminal",
-            "f3",
-            ShowTerminal,
-            Some(APP_SHORTCUT_CONTEXT)
+            [Shortcut::new("f3", app_condition())],
         )
-        .in_picker(true),
-        shortcut!(
+        .in_picker(),
+        Command::new(
+            CycleWorkspaceForward,
             "Workspace",
             "Next workspace surface",
-            "ctrl-tab",
-            CycleWorkspaceForward,
-            Some("FarcasterApp")
+            [Shortcut::new("ctrl-tab", named("FarcasterApp"))],
         )
-        .in_picker(true),
-        shortcut!(
+        .in_picker(),
+        Command::new(
+            CycleWorkspaceBackward,
             "Workspace",
             "Previous workspace surface",
-            "ctrl-shift-tab",
-            CycleWorkspaceBackward,
-            Some("FarcasterApp")
+            [Shortcut::new("ctrl-shift-tab", named("FarcasterApp"))],
         )
-        .in_picker(true),
-        Shortcut {
-            section: "Transcript",
-            label: "Copy transcript selection",
-            keystroke: platform!("c").into(),
-            show_in_help: false,
-            show_in_picker: false,
-            binding: KeyBinding::new(
-                platform!("c"),
-                CopySelection,
-                Some(TRANSCRIPT_SELECTION_KEY_CONTEXT),
-            ),
-        },
-        Shortcut {
-            section: "Composer",
-            label: "Copy selection",
-            keystroke: platform!("c").into(),
-            show_in_help: false,
-            show_in_picker: false,
-            binding: KeyBinding::new(
-                platform!("c"),
-                CopySelection,
-                Some("FarcasterComposer > Input"),
-            ),
-        },
-        shortcut!(
+        .in_picker(),
+        Command::new(
+            CopySelection,
+            "Selection",
+            "Copy selection",
+            [
+                Shortcut::new(
+                    format!("{prefix}-c"),
+                    named(TRANSCRIPT_SELECTION_KEY_CONTEXT),
+                ),
+                Shortcut::new(format!("{prefix}-c"), composer_input.clone()),
+            ],
+        )
+        .hide_from_help(),
+        Command::new(
+            SubmitFollowUp,
             "Composer",
             "Send prompt; queue follow-up during a run (no suggestions)",
-            "tab",
-            SubmitFollowUp,
-            Some("(FarcasterComposer && !Completions) > Input")
+            [Shortcut::new("tab", composer_without_completions)],
         ),
-        shortcut!(
+        Command::new(AbortRun, "Run", "Abort current run", app_keys(prefix, ".")).in_picker(),
+        Command::new(
+            Unbind(ComposerEscape.name().into()),
             "Composer",
-            "Next completion",
-            "tab",
-            ComposerCompletionNext,
-            Some(COMPOSER_COMPLETION_CONTEXT)
+            "Send pending input; double-Esc aborts",
+            [Shortcut::new("escape", composer_input)],
         ),
-        shortcut!(
-            "Composer",
-            "Previous completion",
-            "shift-tab",
-            ComposerCompletionPrevious,
-            Some(COMPOSER_COMPLETION_CONTEXT)
-        ),
-        application_shortcut!("Run", "Abort current run", ".", AbortRun),
-        Shortcut {
-            section: "Composer",
-            label: "Send pending input; double-Esc aborts",
-            keystroke: "escape".into(),
-            show_in_help: true,
-            show_in_picker: false,
-            binding: KeyBinding::new(
-                "escape",
-                Unbind(ComposerEscape.name().into()),
-                Some("FarcasterComposer > Input"),
-            ),
-        },
-        shortcut!(
+        Command::new(
+            WorkPreviousIssue,
             "Work",
             "Previous node",
-            "k",
-            WorkPreviousIssue,
-            Some(WORKGRAPH_NAV_KEY_CONTEXT)
+            [Shortcut::new("k", workgraph_navigation.clone())],
         ),
-        shortcut!(
+        Command::new(
+            WorkNextIssue,
             "Work",
             "Next node",
-            "j",
-            WorkNextIssue,
-            Some(WORKGRAPH_NAV_KEY_CONTEXT)
+            [Shortcut::new("j", workgraph_navigation.clone())],
         ),
-        shortcut!(
+        Command::new(
+            WorkFocusSearch,
             "Work",
             "Search plan",
-            "/",
-            WorkFocusSearch,
-            Some(WORKGRAPH_NAV_KEY_CONTEXT)
+            [Shortcut::new("/", workgraph_navigation.clone())],
         ),
-        shortcut!(
+        Command::new(
+            WorkCreateIssue,
             "Work",
             "Add plan node",
-            "c",
-            WorkCreateIssue,
-            Some(WORKGRAPH_NAV_KEY_CONTEXT)
+            [Shortcut::new("c", workgraph_navigation.clone())],
         ),
-        shortcut!(
+        Command::new(
+            WorkBack,
             "Work",
             "Back to all plans",
-            "backspace",
-            WorkBack,
-            Some(WORKGRAPH_NAV_KEY_CONTEXT)
+            [Shortcut::new("backspace", workgraph_navigation)],
         ),
-        shortcut!(
+        Command::new(
+            WorkDismiss,
             "Work",
             "Back or clear",
-            "escape",
-            WorkDismiss,
-            Some(WORKGRAPH_KEY_CONTEXT)
+            [Shortcut::new("escape", named(WORKGRAPH_KEY_CONTEXT))],
         ),
-        application_shortcut!(
+        Command::new(
+            ShowWorkGraph,
             "Application",
             "Open / close project work",
-            "shift-i",
-            ShowWorkGraph
-        ),
-        application_shortcut!(
-            "Application",
-            "Open action picker",
-            "shift-p",
-            ShowActionPicker
+            app_keys(prefix, "shift-i"),
         )
-        .in_picker(false),
-        shortcut!(
+        .in_picker(),
+        Command::new(
+            ShowActionPicker,
             "Application",
             "Open action picker",
-            "f4",
-            ShowActionPicker,
-            Some(APP_SHORTCUT_CONTEXT),
-            false
-        ),
-        application_shortcut!(
+            app_keys(prefix, "shift-p"),
+        )
+        .with_bindings([Shortcut::new("f4", app_condition()).hidden()]),
+        Command::new(
+            crate::app::FocusSessionSearch,
             "Sessions",
             "Focus session search",
-            "/",
-            crate::app::FocusSessionSearch
-        ),
-        application_shortcut!(
-            "Application",
-            "Keyboard shortcuts",
-            "shift-/",
-            ShowKeybindings
-        ),
-        application_shortcut!(
-            "Application",
-            "Keyboard shortcuts",
-            "?",
+            app_keys(prefix, "/"),
+        )
+        .in_picker(),
+        Command::new(
             ShowKeybindings,
-            false
-        ),
-        shortcut!(
+            "Application",
+            "Keyboard shortcuts",
+            app_keys(prefix, "shift-/"),
+        )
+        .with_bindings(app_keys(prefix, "?").into_iter().map(Shortcut::hidden))
+        .in_picker(),
+        Command::new(
+            PreviousCodeDestination,
             "Send to chat",
             "Previous destination",
-            "ctrl-p",
-            PreviousCodeDestination,
-            Some("FarcasterSendToChat")
+            [Shortcut::new("ctrl-p", named("FarcasterSendToChat"))],
         ),
-        shortcut!(
+        Command::new(
+            NextCodeDestination,
             "Send to chat",
             "Next destination",
-            "ctrl-n",
-            NextCodeDestination,
-            Some("FarcasterSendToChat")
+            [Shortcut::new("ctrl-n", named("FarcasterSendToChat"))],
         ),
-        shortcut!(
+        Command::new(
+            DismissSurface,
             "Application",
             "Close dialog",
-            "escape",
-            DismissSurface,
-            Some(OVERLAY_KEY_CONTEXT)
+            [
+                Shortcut::new("escape", named(OVERLAY_KEY_CONTEXT)),
+                Shortcut::new("escape", named(PICKER_KEY_CONTEXT)).hidden(),
+            ],
         ),
-        Shortcut {
-            section: "Application",
-            label: "Previous picker item",
-            keystroke: "ctrl-p".into(),
-            show_in_help: false,
-            show_in_picker: false,
-            binding: KeyBinding::new("ctrl-p", SelectUp, Some(PICKER_NAVIGATION_CONTEXT)),
-        },
-        Shortcut {
-            section: "Application",
-            label: "Next picker item",
-            keystroke: "ctrl-n".into(),
-            show_in_help: false,
-            show_in_picker: false,
-            binding: KeyBinding::new("ctrl-n", SelectDown, Some(PICKER_NAVIGATION_CONTEXT)),
-        },
-        shortcut!(
+        Command::new(
+            SelectUp,
             "Application",
             "Previous picker item",
-            "shift-tab",
-            SelectUp,
-            Some("Picker > Input"),
-            false
-        ),
-        shortcut!(
+            [
+                Shortcut::new("ctrl-p", picker_navigation.clone()),
+                Shortcut::new("shift-tab", picker_input.clone()),
+            ],
+        )
+        .hide_from_help(),
+        Command::new(
+            SelectDown,
             "Application",
             "Next picker item",
-            "tab",
-            SelectDown,
-            Some("Picker > Input"),
-            false
-        ),
-        shortcut!(
+            [
+                Shortcut::new("ctrl-n", picker_navigation),
+                Shortcut::new("tab", picker_input.clone()),
+            ],
+        )
+        .hide_from_help(),
+        Command::new(
+            crate::app::PickerNavigateBack,
             "Application",
             "Back in action picker",
-            "alt-left",
-            crate::app::PickerNavigateBack,
-            Some(PICKER_KEY_CONTEXT)
+            [Shortcut::new("alt-left", named(PICKER_KEY_CONTEXT))],
         ),
-        Shortcut {
-            section: "Application",
-            label: "Back in action picker when search is empty",
-            keystroke: "backspace".into(),
-            show_in_help: false,
-            show_in_picker: false,
-            binding: KeyBinding::new("backspace", PickerBack, Some("Picker > Input")),
-        },
-        Shortcut {
-            section: "Application",
-            label: "Close action picker",
-            keystroke: "escape".into(),
-            show_in_help: false,
-            show_in_picker: false,
-            binding: KeyBinding::new("escape", DismissSurface, Some(PICKER_KEY_CONTEXT)),
-        },
-        application_shortcut!("Application", "Quit", "q", QuitApplication),
-    ];
-    shortcuts.extend(aliases);
-    for modifier in ["ctrl", "cmd", "super"] {
-        shortcuts.extend([
-            shortcut!(
-                "Transcript",
-                "Next session (including archived)",
-                format!("{modifier}-j"),
-                crate::app::NextTranscriptSession,
-                Some(crate::app::CHAT_SHORTCUT_CONTEXT)
-            ),
-            shortcut!(
-                "Transcript",
-                "Previous session (including archived)",
-                format!("{modifier}-k"),
-                crate::app::PreviousTranscriptSession,
-                Some(crate::app::CHAT_SHORTCUT_CONTEXT)
-            ),
-            shortcut!(
-                "Workers",
-                "Next worker or parent chat",
-                format!("{modifier}-shift-j"),
-                crate::app::NextWorker,
-                Some(crate::app::CHAT_SHORTCUT_CONTEXT)
-            )
-            .in_picker(modifier == platform_key("cmd", "ctrl")),
-            shortcut!(
-                "Workers",
-                "Previous worker or parent chat",
-                format!("{modifier}-shift-k"),
-                crate::app::PreviousWorker,
-                Some(crate::app::CHAT_SHORTCUT_CONTEXT)
-            )
-            .in_picker(modifier == platform_key("cmd", "ctrl")),
-        ]);
-    }
-    shortcuts
+        Command::new(
+            PickerBack,
+            "Application",
+            "Back in action picker when search is empty",
+            [Shortcut::new("backspace", picker_input)],
+        )
+        .hide_from_help(),
+        Command::new(
+            QuitApplication,
+            "Application",
+            "Quit",
+            app_keys(prefix, "q"),
+        )
+        .in_picker(),
+        Command::new(
+            crate::app::NextTranscriptSession,
+            "Transcript",
+            "Next session (including archived)",
+            navigation_keys(prefix, "j", &chat),
+        ),
+        Command::new(
+            crate::app::PreviousTranscriptSession,
+            "Transcript",
+            "Previous session (including archived)",
+            navigation_keys(prefix, "k", &chat),
+        ),
+        Command::new(
+            crate::app::NextWorker,
+            "Workers",
+            "Next worker or parent chat",
+            navigation_keys(prefix, "shift-j", &chat),
+        )
+        .in_picker(),
+        Command::new(
+            crate::app::PreviousWorker,
+            "Workers",
+            "Previous worker or parent chat",
+            navigation_keys(prefix, "shift-k", &chat),
+        )
+        .in_picker(),
+    ]
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-use super::{bindings, platform_key, registry};
+use super::{bindings, registry};
 
 #[test]
 fn session_numbers_work_in_embedded_views_without_claiming_control_keys() {
@@ -8,7 +8,7 @@ fn session_numbers_work_in_embedded_views_without_claiming_control_keys() {
         let keymap = gpui::Keymap::new(
             super::registry_for_platform(prefix)
                 .into_iter()
-                .map(|shortcut| shortcut.binding)
+                .flat_map(super::Command::into_bindings)
                 .collect(),
         );
         for number in 0..=9 {
@@ -42,7 +42,7 @@ fn session_numbers_work_in_embedded_views_without_claiming_control_keys() {
 #[test]
 fn root_focus_traversal_is_unbound() {
     let bindings = bindings();
-    let root_context = gpui::KeyBindingContextPredicate::parse("Root").expect("root context");
+    let root_context = gpui::KeyBindingContextPredicate::Identifier("Root".into());
     for (keystroke, target) in [("tab", "root::Tab"), ("shift-tab", "root::TabPrev")] {
         assert!(bindings.iter().any(|binding| {
             binding
@@ -74,7 +74,7 @@ fn application_and_picker_shortcuts_route_only_in_their_owned_contexts() {
         let keymap = gpui::Keymap::new(
             registry_for_platform(platform)
                 .into_iter()
-                .map(|shortcut| shortcut.binding)
+                .flat_map(super::Command::into_bindings)
                 .collect(),
         );
         for (suffix, action) in [
@@ -197,7 +197,7 @@ fn composer_completion_keys_require_visible_suggestions() {
     let keymap = gpui::Keymap::new(
         registry_for_platform("ctrl")
             .into_iter()
-            .map(|shortcut| shortcut.binding)
+            .flat_map(super::Command::into_bindings)
             .collect(),
     );
     for open in [false, true] {
@@ -259,7 +259,7 @@ fn send_to_chat_keys_are_control_only_and_dialog_scoped() {
         let keymap = gpui::Keymap::new(
             super::registry_for_platform(platform)
                 .into_iter()
-                .map(|shortcut| shortcut.binding)
+                .flat_map(super::Command::into_bindings)
                 .collect(),
         );
         for (key, action) in [
@@ -294,7 +294,7 @@ fn application_shortcuts_stay_in_app_owned_contexts() {
     let keymap = gpui::Keymap::new(
         registry_for_platform("cmd")
             .into_iter()
-            .map(|shortcut| shortcut.binding)
+            .flat_map(super::Command::into_bindings)
             .collect(),
     );
     let app_contexts =
@@ -334,7 +334,7 @@ fn workspace_shortcuts_route_by_context_on_both_platforms() {
         let keymap = gpui::Keymap::new(
             super::registry_for_platform(platform)
                 .into_iter()
-                .map(|shortcut| shortcut.binding)
+                .flat_map(super::Command::into_bindings)
                 .collect(),
         );
         for context in [APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT, "Input"] {
@@ -460,12 +460,59 @@ fn workgraph_backspace_does_not_navigate_from_inputs() {
 }
 
 #[test]
-fn copy_shortcuts_route_through_the_application_command() {
-    let shortcuts = registry();
-    assert!(shortcuts.iter().any(|shortcut| {
-        shortcut.label == "Copy transcript selection" && shortcut.keystroke == platform!("c")
-    }));
-    assert!(shortcuts.iter().any(|shortcut| {
-        shortcut.label == "Copy selection" && shortcut.keystroke == platform!("c")
-    }));
+fn copy_shortcuts_route_through_one_command_in_both_contexts() {
+    use gpui::Action as _;
+    let mut commands = registry()
+        .into_iter()
+        .filter(|command| command.action.name() == super::CopySelection.name());
+    let command = commands.next().expect("copy command");
+    assert!(commands.next().is_none(), "copy is defined once");
+    let keymap = gpui::Keymap::new(command.into_bindings().collect());
+    let key = gpui::Keystroke::parse(&super::application_key("c")).expect("copy key");
+    for names in [
+        vec![crate::app::TRANSCRIPT_SELECTION_KEY_CONTEXT],
+        vec![crate::app::COMPOSER_KEY_CONTEXT, "Input"],
+    ] {
+        let contexts = names
+            .iter()
+            .map(|name| gpui::KeyContext::parse(name).expect("context"))
+            .collect::<Vec<_>>();
+        let (matched, _) = keymap.bindings_for_input(std::slice::from_ref(&key), &contexts);
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].action().name(), super::CopySelection.name());
+    }
+}
+
+#[test]
+fn commands_are_unique_and_picker_uses_the_platform_binding() {
+    use gpui::Action as _;
+    for platform in ["cmd", "ctrl"] {
+        let commands = super::registry_for_platform(platform);
+        let mut actions = std::collections::HashSet::new();
+        for command in &commands {
+            assert!(
+                actions.insert(command.action.name()),
+                "duplicate command {}",
+                command.action.name()
+            );
+            assert!(
+                !command.bindings.is_empty(),
+                "{} has no bindings",
+                command.label
+            );
+        }
+        for (action, key) in [
+            (crate::app::NextWorker.name(), "shift-j"),
+            (crate::app::PreviousWorker.name(), "shift-k"),
+            (crate::app::IncreaseTranscriptFontSize.name(), "="),
+            (crate::app::ShowKeybindings.name(), "shift-/"),
+        ] {
+            let command = commands
+                .iter()
+                .find(|command| command.action.name() == action)
+                .expect("command");
+            assert!(command.show_in_picker);
+            assert_eq!(command.bindings[0].keystroke, format!("{platform}-{key}"));
+        }
+    }
 }

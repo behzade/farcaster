@@ -1,11 +1,41 @@
+use gpui::prelude::FluentBuilder as _;
 use gpui::{IntoElement, ParentElement as _, Styled as _, div};
 use gpui_component::kbd::Kbd;
 
 use crate::app::ui::theme::theme;
 
+fn command_help_rows(
+    command: crate::app::ui::keybindings::Command,
+) -> Vec<(String, Vec<String>, &'static str)> {
+    if !command.show_in_help {
+        return Vec::new();
+    }
+    let app_context = crate::app::ui::keybindings::app_condition();
+    let mut rows: Vec<(String, Vec<String>, &'static str)> = Vec::new();
+    for shortcut in command
+        .bindings
+        .into_iter()
+        .filter(|shortcut| shortcut.show_in_help)
+    {
+        let section = if shortcut.condition == app_context {
+            format!("App views · {}", command.section)
+        } else {
+            match command.section {
+                "Application" => "Dialogs and pickers".to_owned(),
+                "Work" => "Project work".to_owned(),
+                section => section.to_owned(),
+            }
+        };
+        if let Some((_, keys, _)) = rows.iter_mut().find(|(name, _, _)| name == &section) {
+            keys.push(shortcut.keystroke);
+        } else {
+            rows.push((section, vec![shortcut.keystroke], command.label));
+        }
+    }
+    rows
+}
+
 pub(super) fn render_help() -> impl IntoElement {
-    let app_context = gpui::KeyBindingContextPredicate::parse(crate::app::APP_SHORTCUT_CONTEXT)
-        .expect("app shortcut context");
     let shortcuts = crate::app::ui::navigation::help_shortcuts()
         .into_iter()
         .chain([
@@ -26,26 +56,11 @@ pub(super) fn render_help() -> impl IntoElement {
                 "Next suggestion when suggestions are visible",
             ),
         ])
-        .map(|(section, key, label)| (section.to_owned(), key, label))
+        .map(|(section, key, label)| (section.to_owned(), vec![key], label))
         .chain(
             crate::app::ui::keybindings::registry()
                 .into_iter()
-                .filter(|shortcut| shortcut.show_in_help)
-                .map(|shortcut| {
-                    (
-                        if shortcut.binding.predicate().as_deref() == Some(&app_context) {
-                            format!("App views · {}", shortcut.section)
-                        } else {
-                            match shortcut.section {
-                                "Application" => "Dialogs and pickers".to_owned(),
-                                "Work" => "Project work".to_owned(),
-                                section => section.to_owned(),
-                            }
-                        },
-                        shortcut.keystroke,
-                        shortcut.label,
-                    )
-                }),
+                .flat_map(command_help_rows),
         );
     let content = div()
         .flex()
@@ -104,7 +119,7 @@ pub(super) fn render_help() -> impl IntoElement {
     content.children(sections.into_iter().map(|(_, section)| section))
 }
 
-fn shortcut_row(keystroke: &str, label: &str) -> impl IntoElement {
+fn shortcut_row(keystrokes: &[String], label: &str) -> impl IntoElement {
     use gpui::InteractiveElement as _;
     let keys = div()
         .debug_selector(|| "shortcut-keys".into())
@@ -114,8 +129,16 @@ fn shortcut_row(keystroke: &str, label: &str) -> impl IntoElement {
         .max_w_full()
         .items_center()
         .gap(theme().space.xs)
-        .children(keystroke.split_whitespace().map(|key| {
-            Kbd::new(gpui::Keystroke::parse(key).expect("registered shortcut must parse"))
+        .children(keystrokes.iter().enumerate().map(|(index, keystroke)| {
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(theme().space.xs)
+                .when(index > 0, |row| row.child("or"))
+                .children(keystroke.split_whitespace().map(|key| {
+                    Kbd::new(gpui::Keystroke::parse(key).expect("registered shortcut must parse"))
+                }))
         }));
     div()
         .debug_selector(|| "shortcut-row".into())

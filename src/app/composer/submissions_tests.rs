@@ -614,24 +614,29 @@ fn composer_escape_is_owned_by_raw_events_and_held_input_never_dispatches() {
     assert_eq!(composer_escape_key(&event("cmd-escape", true)), Ignore);
     assert_eq!(composer_escape_key(&event("enter", true)), Ignore);
 
-    let shortcuts = crate::app::ui::keybindings::registry();
-    let shortcut = shortcuts
+    let commands = crate::app::ui::keybindings::registry();
+    let command = commands
         .iter()
-        .find(|shortcut| shortcut.section == "Composer" && shortcut.keystroke == "escape")
+        .find(|command| {
+            command.section == "Composer"
+                && command
+                    .bindings
+                    .iter()
+                    .any(|shortcut| shortcut.keystroke == "escape")
+        })
         .expect("composer Escape help entry");
-    assert!(shortcut.show_in_help);
+    assert!(command.show_in_help);
     assert!(
-        shortcut
-            .binding
-            .action()
+        command
+            .action
             .as_any()
             .downcast_ref::<gpui::Unbind>()
             .is_some_and(|unbind| unbind.0.as_ref() == crate::app::ComposerEscape.name())
     );
     let keymap = gpui::Keymap::new(
-        shortcuts
+        commands
             .into_iter()
-            .map(|shortcut| shortcut.binding)
+            .flat_map(crate::app::ui::keybindings::Command::into_bindings)
             .collect(),
     );
     let contexts = ["FarcasterComposer", "Input"]
