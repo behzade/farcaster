@@ -733,6 +733,7 @@ pub(super) fn run_status_visual(status: RunStatus) -> Option<(AppIcon, Rgba)> {
         RunStatus::Working => Some((AppIcon::SpinnerGap, theme().colors.indicator)),
         RunStatus::Compacting => Some((AppIcon::ArrowsClockwise, theme().colors.indicator)),
         RunStatus::Retrying => Some((AppIcon::Repeat, theme().colors.indicator)),
+        RunStatus::Stopped => Some((AppIcon::Stop, theme().colors.indicator)),
         RunStatus::Draft | RunStatus::Stopped => Some((AppIcon::Question, theme().colors.subtle)),
     }
 }
