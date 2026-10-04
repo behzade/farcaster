@@ -362,7 +362,7 @@ fn session_states_use_semantic_icons() {
     );
     assert_eq!(
         run_status_visual(RunStatus::Retrying).map(|(icon, _)| icon),
-        Some(AppIcon::ArrowsClockwise)
+        Some(AppIcon::Repeat)
     );
     assert_eq!(
         run_status_visual(RunStatus::Waiting).map(|(icon, _)| icon),

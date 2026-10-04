@@ -5,7 +5,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 74] = [
+const ICON_PATHS: [&str; 75] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -50,6 +50,7 @@ const ICON_PATHS: [&str; 74] = [
     "icons/phosphor/pencil-simple.svg",
     "icons/phosphor/plus.svg",
     "icons/phosphor/question.svg",
+    "icons/phosphor/repeat.svg",
     "icons/phosphor/shield.svg",
     "icons/phosphor/sidebar-simple.svg",
     "icons/phosphor/sign-in.svg",
@@ -244,6 +245,9 @@ impl AssetSource for AppAssets {
             "icons/phosphor/question.svg" => Some(include_bytes!(
                 "../../../assets/phosphor-icons/question.svg"
             )),
+            "icons/phosphor/repeat.svg" => {
+                Some(include_bytes!("../../../assets/phosphor-icons/repeat.svg"))
+            }
             "icons/phosphor/folder.svg" => {
                 Some(include_bytes!("../../../assets/phosphor-icons/folder.svg"))
             }
@@ -444,6 +448,7 @@ pub(crate) enum AppIcon {
     Pi,
     Plus,
     Question,
+    Repeat,
     Shield,
     SidebarLeft,
     SignOut,
@@ -545,6 +550,7 @@ impl IconNamed for AppIcon {
             Self::Pi => return "icons/workbench/pi.svg".into(),
             Self::Plus => "plus",
             Self::Question => "question",
+            Self::Repeat => "repeat",
             Self::Shield => "shield",
             Self::SidebarLeft => "sidebar-simple",
             Self::SignOut => "sign-out",
