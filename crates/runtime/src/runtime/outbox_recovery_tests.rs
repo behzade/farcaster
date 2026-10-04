@@ -250,7 +250,7 @@ fn abort_cancels_only_local_queue_work() -> Result<(), String> {
     owner.apply_response(prompt_response("request-1", PromptMode::Normal, true));
     assert_eq!(sent_messages(&sent), ["active task"]);
 
-    owner.apply_command(RuntimeCommand::Abort);
+    owner.apply_signal(crate::runtime::RuntimeSignal::Abort);
     owner.apply_response(crate::agents::SessionResponse::prompt_delivery_unknown(
         "request-1".into(),
         PromptMode::Normal,
@@ -310,7 +310,7 @@ fn abort_cancels_a_not_yet_dispatched_prompt_durably() -> Result<(), String> {
         false,
     );
     assert!(owner.deferred_prompt().is_some());
-    owner.apply_command(RuntimeCommand::Abort);
+    owner.apply_signal(crate::runtime::RuntimeSignal::Abort);
 
     assert!(owner.pending_prompt.is_none());
     assert!(
@@ -325,7 +325,10 @@ fn abort_cancels_a_not_yet_dispatched_prompt_durably() -> Result<(), String> {
         outbox_rows(&database)?,
         [("cancel before ready".into(), "cancelled".into())]
     );
-    assert!(matches!(sent.borrow().as_slice(), [SessionCommand::Abort]));
+    assert!(
+        sent.borrow().is_empty(),
+        "no native turn was dispatched to abort"
+    );
     Ok(())
 }
 

@@ -129,7 +129,6 @@ pub(super) fn owner_without_process(
             },
             owns_session_catalog: true,
             session_generation: 0,
-            session_refresh_due: None,
             process_generation: 1,
             retired_prompts: HashMap::new(),
             pending_prompt: None,
@@ -1584,23 +1583,6 @@ fn background_catalog_refresh_preserves_search_until_user_clears_it()
 }
 
 #[test]
-fn refresh_commands_coalesce_into_one_cached_catalog_read() {
-    let (mut owner, _events) = owner_without_process(std::env::temp_dir());
-    let command = RuntimeCommand::ScheduleSessionRefresh;
-    assert!(command_targets_catalog(&command));
-    owner.apply_command(command.clone());
-    let due = owner.session_refresh_due.expect("filesystem refresh");
-    owner.apply_command(command);
-    assert_eq!(owner.session_refresh_due, Some(due));
-
-    owner.poll_deferred_session_refresh(due - Duration::from_millis(1));
-    assert_eq!(owner.session_generation, 0);
-    owner.poll_deferred_session_refresh(due);
-    assert_eq!(owner.session_generation, 1);
-    assert!(owner.session_refresh_due.is_none());
-}
-
-#[test]
 fn child_session_changes_publish_metadata_without_refreshing_the_catalog() {
     let (mut owner, events) = owner_without_process(PathBuf::from("/project"));
     Arc::make_mut(&mut owner.snapshot.conversation).running = true;
@@ -1611,7 +1593,6 @@ fn child_session_changes_publish_metadata_without_refreshing_the_catalog() {
         }})
         .into(),
     ));
-    assert!(owner.session_refresh_due.is_none());
     let published = events.try_iter().collect::<Vec<_>>();
     assert_eq!(
         published.len(),
@@ -2645,7 +2626,6 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
         },
         owns_session_catalog: false,
         session_generation: 0,
-        session_refresh_due: None,
         process_generation: 7,
         retired_prompts: HashMap::new(),
         pending_prompt: Some(PendingPrompt {
@@ -2654,6 +2634,7 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
             outbox_id: None,
             item: None,
             phase: PromptPhase::Dispatched {
+                mode: PromptMode::Normal,
                 request_id: "pending-prompt".into(),
                 delivery_tracked: false,
                 delivered: false,

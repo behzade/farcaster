@@ -68,6 +68,8 @@ fn test_supervisor(
             host: crate::test_support::host(),
             process_command,
             command_rx,
+            pending_command: None,
+            signal_rx: mpsc::channel().1,
             event_tx: UiEventSender { events, wake },
             supervisor_thread: thread::current(),
             catalog_key: "catalog".into(),

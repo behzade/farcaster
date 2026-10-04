@@ -287,6 +287,7 @@ fn cancelled_undelivered_prompt_returns_ownership_without_command_error() {
         outbox_id: None,
         item: None,
         phase: PromptPhase::Dispatched {
+            mode: PromptMode::Steer,
             request_id: "pending-steer".into(),
             delivery_tracked: false,
             delivered: false,

@@ -365,3 +365,77 @@ fn chat_background_clicks_return_to_composer_without_taking_input_focus(
         },
     );
 }
+
+#[gpui::test]
+fn escape_signals_steering_before_gpui_resolves_the_abort_sequence(cx: &mut gpui::TestAppContext) {
+    use crate::runtime::RuntimeSignal;
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::escape_signals_steering_before_gpui_resolves_the_abort_sequence"
+        ),
+        cx,
+        |cx, app, runtime, _| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| app.composer.focus.focus(window, cx));
+                window.draw(cx).clear(cx);
+            });
+            while runtime.try_recv_command().is_some() {}
+            let press = |cx: &mut gpui::VisualTestContext| {
+                cx.update(|window, cx| {
+                    window.dispatch_keystroke(gpui::Keystroke::parse("escape").unwrap(), cx);
+                    window.draw(cx).clear(cx);
+                });
+            };
+            let signals = || {
+                std::iter::from_fn(|| runtime.try_recv_signal())
+                    .map(|(_, signal)| signal)
+                    .collect::<Vec<_>>()
+            };
+            press(cx);
+            assert_eq!(signals(), [RuntimeSignal::ApplySteering]);
+            assert!(cx.update(|window, _| window.has_pending_keystrokes()));
+            press(cx);
+            assert_eq!(
+                signals(),
+                [RuntimeSignal::ApplySteering, RuntimeSignal::Abort]
+            );
+            assert!(!cx.update(|window, _| window.has_pending_keystrokes()));
+
+            // A single Escape expires through GPUI, without a second steer or abort.
+            press(cx);
+            assert_eq!(signals(), [RuntimeSignal::ApplySteering]);
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_millis(1001));
+            cx.run_until_parked();
+            assert!(!cx.update(|window, _| window.has_pending_keystrokes()));
+            assert!(signals().is_empty());
+            press(cx);
+            assert_eq!(signals(), [RuntimeSignal::ApplySteering]);
+
+            // Focus changes cancel GPUI's prefix; Escape also works outside the composer.
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.workspace.surface = crate::app::AppSurface::Work;
+                    app.navigation.chat.focus.focus(window, cx);
+                    cx.notify();
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                window.dispatch_keystroke(gpui::Keystroke::parse("cmd-escape").unwrap(), cx);
+            });
+            assert!(signals().is_empty());
+            press(cx);
+            assert_eq!(signals(), [RuntimeSignal::ApplySteering]);
+            assert!(cx.update(|window, _| window.has_pending_keystrokes()));
+            press(cx);
+            assert_eq!(
+                signals(),
+                [RuntimeSignal::ApplySteering, RuntimeSignal::Abort]
+            );
+        },
+    );
+}

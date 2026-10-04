@@ -15,7 +15,7 @@ use crate::{
     app::ui::assets::AppIcon,
     app::ui::primitives::{AppIconSize, ButtonTone, app_icon, prominent_icon_button},
     app::ui::theme::{MONO_FONT_FAMILY, theme},
-    runtime::RuntimeCommand,
+    runtime::RuntimeSignal,
 };
 
 impl FarcasterApp {
@@ -111,8 +111,11 @@ impl FarcasterApp {
                                 "Abort",
                                 ButtonTone::Quiet,
                                 move |_, cx| {
-                                    let _ = abort_entity.update(cx, |this, cx| {
-                                        this.send(RuntimeCommand::Abort, cx)
+                                    let _ = abort_entity.update(cx, |this, _| {
+                                        this.runtime.signal(
+                                            this.composer.sessions.current_target(),
+                                            RuntimeSignal::Abort,
+                                        )
                                     });
                                 },
                             )

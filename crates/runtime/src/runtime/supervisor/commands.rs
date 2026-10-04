@@ -246,8 +246,23 @@ impl Supervisor {
         });
     }
 
+    fn drain_signals(&self) {
+        for (target, signal) in self.signal_rx.try_iter() {
+            let key = target
+                .strip_prefix("session:")
+                .and_then(|path| self.actor_paths.get(std::path::Path::new(path)))
+                .unwrap_or(&target);
+            if let Some(actor) = self.actors.get(key) {
+                actor.signal(signal);
+            }
+        }
+    }
+
     pub(super) fn process_next_command(&mut self) -> bool {
-        match self.command_rx.try_recv() {
+        match super::super::command_queue::receive_command(
+            &self.command_rx,
+            &mut self.pending_command,
+        ) {
             Ok(RuntimeCommand::Shutdown) => false,
             Ok(command) => {
                 if matches!(command, RuntimeCommand::SystemWake) {
@@ -508,6 +523,7 @@ impl Supervisor {
                 true
             }
             Err(mpsc::TryRecvError::Empty) => {
+                self.drain_signals();
                 thread::park();
                 true
             }

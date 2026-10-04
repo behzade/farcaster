@@ -124,6 +124,14 @@ impl FarcasterApp {
                 }
                 let consumed = entity
                     .update(cx, |this, cx| {
+                        // Run before GPUI buffers Escape as a sequence prefix.
+                        if event.keystroke.key == "escape" && !event.keystroke.modifiers.modified()
+                        {
+                            this.runtime.signal(
+                                this.composer.sessions.current_target(),
+                                crate::runtime::RuntimeSignal::ApplySteering,
+                            );
+                        }
                         if this.navigation.chat.activation_focus != window.focused(cx) {
                             this.navigation.chat.activation.clear();
                         }

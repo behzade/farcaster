@@ -4,10 +4,10 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
-    time::{Duration, Instant},
+    time::Instant,
 };
 
-use gpui::{Context, KeyDownEvent, Window};
+use gpui::{Context, Window};
 
 use super::{
     ComposerImage, ComposerPaste, FarcasterApp, pastes as composer_pastes, prompt_fragments,
@@ -194,46 +194,6 @@ impl FarcasterApp {
     }
 
     pub(crate) fn can_submit(&self) -> bool {
-        true
-    }
-
-    pub(crate) fn handle_composer_escape(&mut self, cx: &mut Context<Self>) {
-        let target = self.composer.sessions.current_target();
-        let (action, arm) = composer_escape(
-            self.snapshot.conversation.running,
-            !self.snapshot.prompt_queue().steering.is_empty(),
-            !self.snapshot.prompt_queue().follow_up.is_empty(),
-            has_pending_submission(&self.composer.pending_submissions, target),
-            target,
-            self.composer.escape_armed.as_ref(),
-            Instant::now(),
-        );
-        self.composer.escape_armed = arm;
-        match action {
-            ComposerEscapeAction::ApplySteering => self.send(RuntimeCommand::ApplySteering, cx),
-            ComposerEscapeAction::Abort => self.send(RuntimeCommand::Abort, cx),
-            ComposerEscapeAction::None => {}
-        }
-    }
-
-    pub(in crate::app) fn handle_composer_escape_key(
-        &mut self,
-        event: &KeyDownEvent,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let key_action = composer_escape_key(event);
-        let owns_escape = self.workspace.surface == crate::app::AppSurface::Chat
-            && !self.native_workspace_covered_by_overlay()
-            && self.keyboard_overlay_focus(window, cx).is_none()
-            && self.composer.focus.contains_focused(window, cx)
-            && key_action != ComposerEscapeKeyAction::Ignore;
-        if !owns_escape {
-            return false;
-        }
-        if key_action == ComposerEscapeKeyAction::Dispatch {
-            self.handle_composer_escape(cx);
-        }
         true
     }
 
@@ -493,61 +453,6 @@ fn prompt_mode_for_follow_up(running: bool) -> PromptMode {
         PromptMode::FollowUp
     } else {
         PromptMode::Normal
-    }
-}
-
-const COMPOSER_ABORT_DOUBLE_TAP: Duration = Duration::from_millis(500);
-
-#[derive(Debug, PartialEq, Eq)]
-enum ComposerEscapeAction {
-    None,
-    ApplySteering,
-    Abort,
-}
-
-fn composer_escape(
-    running: bool,
-    has_queued_steer: bool,
-    has_queued_follow_up: bool,
-    has_pending_submission: bool,
-    current_target: &str,
-    armed: Option<&(String, Instant)>,
-    now: Instant,
-) -> (ComposerEscapeAction, Option<(String, Instant)>) {
-    let armed_here = armed.is_some_and(|(target, at)| {
-        target == current_target && now.saturating_duration_since(*at) <= COMPOSER_ABORT_DOUBLE_TAP
-    });
-    if armed_here {
-        (ComposerEscapeAction::Abort, None)
-    } else if has_queued_steer || has_queued_follow_up || has_pending_submission {
-        (
-            ComposerEscapeAction::ApplySteering,
-            Some((current_target.to_owned(), now)),
-        )
-    } else if running {
-        (
-            ComposerEscapeAction::None,
-            Some((current_target.to_owned(), now)),
-        )
-    } else {
-        (ComposerEscapeAction::None, None)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ComposerEscapeKeyAction {
-    Ignore,
-    Consume,
-    Dispatch,
-}
-
-fn composer_escape_key(event: &KeyDownEvent) -> ComposerEscapeKeyAction {
-    if event.keystroke.modifiers.modified() || !event.keystroke.key.eq_ignore_ascii_case("escape") {
-        ComposerEscapeKeyAction::Ignore
-    } else if event.is_held {
-        ComposerEscapeKeyAction::Consume
-    } else {
-        ComposerEscapeKeyAction::Dispatch
     }
 }
 

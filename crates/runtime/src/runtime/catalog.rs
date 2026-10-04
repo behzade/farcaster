@@ -109,19 +109,6 @@ impl RuntimeOwner {
         self.publish_cached_sessions();
     }
 
-    pub(super) fn schedule_session_refresh(&mut self) {
-        self.session_refresh_due
-            .get_or_insert_with(|| Instant::now() + COALESCED_SESSION_REFRESH_DELAY);
-    }
-
-    pub(super) fn poll_deferred_session_refresh(&mut self, now: Instant) {
-        if self.session_refresh_due.is_none_or(|due| now < due) {
-            return;
-        }
-        self.session_refresh_due = None;
-        self.refresh_sessions();
-    }
-
     pub(super) fn preview_import(
         &mut self,
         harness: Backend,

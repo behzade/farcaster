@@ -16,6 +16,7 @@ mod prompts;
 mod session_controls;
 mod session_identity;
 mod session_loop;
+mod signals;
 mod status;
 
 pub use crate::agents::HarnessAccessMode;
@@ -70,7 +71,6 @@ use session_controls::PendingSessionControls;
 use session_identity::HarnessConfigurationStore;
 pub use session_identity::SessionIdentity;
 
-const COALESCED_SESSION_REFRESH_DELAY: Duration = Duration::from_millis(100);
 const STREAM_PUBLISH_INTERVAL: Duration = Duration::from_millis(16);
 const MAX_FAILURE_DETAILS_CHARS: usize = 12_000;
 const MAX_FAILURE_SUMMARY_CHARS: usize = 240;
@@ -88,12 +88,13 @@ pub use supervisor::TestRuntime;
 use supervisor::{SessionEventSender, SessionRuntimeHandle};
 #[cfg(test)]
 use supervisor::{
-    SupervisorSessionAction, UiEventSender, actor_key_for_command, command_targets_catalog,
-    initial_draft_command, is_view_only_selection, publish_session_status_if_changed,
-    route_session_discovery, target_command_needs_actor_message,
+    SupervisorSessionAction, UiEventSender, actor_key_for_command, initial_draft_command,
+    is_view_only_selection, publish_session_status_if_changed, route_session_discovery,
+    target_command_needs_actor_message,
 };
 pub use types::{
-    ConfigurationStatus, RunStatus, RuntimeCommand, RuntimeEvent, RuntimeSnapshot, TaskSettings,
+    ConfigurationStatus, RunStatus, RuntimeCommand, RuntimeEvent, RuntimeSignal, RuntimeSnapshot,
+    TaskSettings,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -115,7 +116,6 @@ struct RuntimeOwner {
     snapshot: RuntimeSnapshot,
     owns_session_catalog: bool,
     session_generation: u64,
-    session_refresh_due: Option<Instant>,
     process_generation: u64,
     pending_prompt: Option<PendingPrompt>,
     pending_queued_prompts: HashMap<String, PendingQueuedPrompt>,

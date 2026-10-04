@@ -171,6 +171,14 @@ impl RuntimeOwner {
             return;
         }
         let operation = response.operation();
+        if matches!(
+            operation,
+            SessionOperation::Abort | SessionOperation::ApplySteering
+        ) && let Err(error) = &response.result
+        {
+            zlog::debug!("Signal was not applied: {}", error.message);
+            return;
+        }
         let success = response.result.is_ok();
         if matches!(operation, SessionOperation::Prompt(_))
             && response.result.as_ref().is_err_and(|error| {

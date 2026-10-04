@@ -8,10 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui::{
-    AnyWindowHandle, InputEvent as _, KeyDownEvent, Keystroke, Modifiers, TestAppContext,
-    VisualTestContext,
-};
+use gpui::{AnyWindowHandle, Keystroke, Modifiers, TestAppContext, VisualTestContext};
 
 use super::{FarcasterApp, ui::theme::install_component_theme};
 use crate::{
@@ -190,14 +187,6 @@ fn has_exact_queued_inputs(
     matches(&queue.steering, steering) && matches(&queue.follow_up, follow_up)
 }
 
-fn current_pending_submission_is(app: &FarcasterApp, text: &str) -> bool {
-    app.composer.pending_submissions.values().any(|pending| {
-        pending.submitted_target == app.composer.sessions.current_target()
-            && pending.result.is_none()
-            && pending.text.trim_end() == text
-    })
-}
-
 fn exact_pending_submission(
     app: &FarcasterApp,
     mode: PromptMode,
@@ -263,34 +252,6 @@ fn wait_for_exact_queue(
     };
     Err(format!(
         "timed out after {} seconds waiting for {description} to render exact queued inputs{slot}; last state: {last}",
-        QUEUE_VISIBILITY_TIMEOUT.as_secs()
-    ))
-}
-
-fn wait_for_pending_or_visible_steer(
-    cx: &mut VisualTestContext,
-    app: &gpui::Entity<FarcasterApp>,
-    text: &str,
-    marker: &str,
-) -> Result<(), String> {
-    phase("wait:held steer pending-or-visible");
-    let deadline = Instant::now() + QUEUE_VISIBILITY_TIMEOUT;
-    while Instant::now() < deadline {
-        let witnessed = cx.update(|window, cx| {
-            app.update(cx, |app, cx| app.drain_runtime(cx));
-            window.draw(cx).clear(cx);
-            let app = app.read(cx);
-            current_pending_submission_is(app, text)
-                || has_exact_queued_inputs(app, Some(marker), None)
-        });
-        if witnessed {
-            phase("observed:held steer pending-or-visible");
-            return Ok(());
-        }
-        thread::sleep(UI_POLL);
-    }
-    Err(format!(
-        "timed out after {} seconds waiting for the held-Escape steer to reach the current pending submission or visible queue",
         QUEUE_VISIBILITY_TIMEOUT.as_secs()
     ))
 }
@@ -570,21 +531,6 @@ fn distinct_escape(cx: &mut VisualTestContext) {
     dispatch_named_key(cx, "escape");
 }
 
-fn held_escape(cx: &mut VisualTestContext) {
-    cx.update(|window, cx| {
-        window.dispatch_event(
-            KeyDownEvent {
-                keystroke: Keystroke::parse("escape").expect("valid Escape key"),
-                is_held: true,
-                prefer_character_input: false,
-            }
-            .to_platform_input(),
-            cx,
-        );
-        window.draw(cx).clear(cx);
-    });
-}
-
 fn select_requested_model(
     cx: &mut VisualTestContext,
     app: &gpui::Entity<FarcasterApp>,
@@ -849,8 +795,8 @@ fn live_e2e_ui_first_escape_applies_steer_and_queue(cx: &mut TestAppContext) {
         phase("first:escape-dispatched");
         distinct_escape(cx);
         assert!(
-            cx.update(|_, cx| app.read(cx).composer.escape_armed.is_some()),
-            "first Escape did not arm Abort after ApplySteering"
+            cx.update(|window, _| window.has_pending_keystrokes()),
+            "first Escape did not start the GPUI sequence"
         );
         wait_for(
             cx,
@@ -881,61 +827,6 @@ fn live_e2e_ui_first_escape_applies_steer_and_queue(cx: &mut TestAppContext) {
         Ok(())
     })
     .expect("live first-Escape UI E2E");
-}
-
-#[gpui::test]
-#[ignore = "runs the selected installed harness and real model through the Farcaster GPUI app"]
-fn live_e2e_ui_held_escape_does_not_double_apply(cx: &mut TestAppContext) {
-    with_live_app(cx, |cx, app, project| {
-        let gate = new_turn_gate(project, "ui-held")?;
-        let _release_gate = ReleaseGate(gate.clone());
-        focus_composer(cx, app);
-        phase("held:gate-typed");
-        type_and_enter(cx, &gate.prompt());
-        submission_diagnostics(cx, app, "held:after-gate-submit", &[gate.file_name()]);
-        wait_for_gate_tool(cx, app, &gate)?;
-        wait_for(cx, app, "the active gate turn before held Escape", |app| {
-            app.snapshot.conversation.running
-        })?;
-        let steer = format!("FARCASTER_UI_HELD_{}", uuid::Uuid::new_v4().simple());
-        let steer_prompt = format!("Reply with this exact token: {steer}");
-        focus_composer(cx, app);
-        phase("held:steer-typed");
-        type_and_enter(cx, &steer_prompt);
-        submission_diagnostics(cx, app, "held:after-steer-submit", &[&steer]);
-        wait_for_pending_or_visible_steer(cx, app, &steer_prompt, &steer)?;
-        assert!(
-            cx.update(|_, cx| user_rows(app.read(cx), &steer).is_empty()),
-            "admitted held-test steer reached the transcript before native delivery"
-        );
-        gate.assert_process_alive()?;
-        let completed_runs_before_apply =
-            cx.update(|_, cx| app.read(cx).snapshot.conversation.completed_runs.len());
-        focus_composer(cx, app);
-        phase("held:first-escape-dispatched");
-        distinct_escape(cx);
-        let armed = cx.update(|_, cx| app.read(cx).composer.escape_armed.clone());
-        assert!(armed.is_some(), "first distinct Escape did not arm Abort");
-        phase("held:repeat-escape-dispatched");
-        held_escape(cx);
-        assert_eq!(
-            cx.update(|_, cx| app.read(cx).composer.escape_armed.clone()),
-            armed,
-            "held Escape changed the real app abort arm"
-        );
-        wait_for(
-            cx,
-            app,
-            "one first-Escape reaction before gate release",
-            |app| assistant_rows(app, &steer).len() == 1 && user_rows(app, &steer).len() == 1,
-        )?;
-        wait_for(cx, app, "the held-key runtime handoff boundary", |app| {
-            apply_handoff_reached_boundary(app, &gate, completed_runs_before_apply)
-        })?;
-        gate.assert_still_closed()?;
-        Ok(())
-    })
-    .expect("live held-Escape UI E2E");
 }
 
 #[gpui::test]
@@ -1009,8 +900,8 @@ fn live_e2e_ui_second_escape_aborts_steer_and_queue(cx: &mut TestAppContext) {
         phase("abort:second-escape-dispatched");
         distinct_escape(cx);
         assert!(
-            cx.update(|_, cx| app.read(cx).composer.escape_armed.is_none()),
-            "second distinct Escape did not consume the real app abort arm"
+            cx.update(|window, _| !window.has_pending_keystrokes()),
+            "second Escape did not complete the GPUI sequence"
         );
         wait_for(cx, app, "second-Escape abort before gate release", |app| {
             !app.snapshot.conversation.running

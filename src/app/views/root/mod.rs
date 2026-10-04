@@ -80,11 +80,6 @@ impl Render for FarcasterApp {
                 }),
             )
             .capture_key_down(cx.listener(|this, event, window, cx| {
-                if this.handle_composer_escape_key(event, window, cx) {
-                    window.prevent_default();
-                    cx.stop_propagation();
-                    return;
-                }
                 this.capture_chat_navigation(event, window, cx);
             }))
             .on_key_down(cx.listener(|this, event, window, cx| {

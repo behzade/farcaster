@@ -18,6 +18,8 @@ impl SupervisorFixture {
                 host: crate::test_support::host(),
                 process_command: AgentLaunchConfig::default(),
                 command_rx,
+                pending_command: None,
+                signal_rx: mpsc::channel().1,
                 event_tx: UiEventSender {
                     events: events_tx,
                     wake,
@@ -76,6 +78,7 @@ impl SupervisorFixture {
         });
         let actor = SessionRuntimeHandle {
             commands,
+            signals: mpsc::channel().0,
             events,
             thread: join.thread().clone(),
             join,
@@ -98,6 +101,7 @@ impl SupervisorFixture {
         });
         let actor = SessionRuntimeHandle {
             commands,
+            signals: mpsc::channel().0,
             events,
             thread: join.thread().clone(),
             join,
@@ -346,17 +350,27 @@ fn account_usage_follows_the_profile_and_newest_observation_across_sessions() {
 }
 
 #[test]
-fn system_wake_reaches_selected_and_background_actors() {
+fn system_wake_bursts_broadcast_once_to_selected_and_background_actors() {
     let mut fixture = SupervisorFixture::new("selected", PathBuf::from("/project"), None);
-    let selected = fixture.add_recording_actor("selected");
-    let background = fixture.add_recording_actor("background");
+    let actors = ["selected", "background"].map(|key| {
+        fixture.add_actor(key);
+        let (sender, receiver) = mpsc::channel();
+        fixture.supervisor.actors.get_mut(key).unwrap().commands = sender;
+        receiver
+    });
+    for _ in 0..3 {
+        fixture.commands.send(RuntimeCommand::SystemWake).unwrap();
+    }
+    assert!(fixture.supervisor.process_next_command());
+    for actor in &actors {
+        assert!(matches!(actor.try_recv(), Ok(RuntimeCommand::SystemWake)));
+        assert!(matches!(actor.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    }
     fixture.commands.send(RuntimeCommand::SystemWake).unwrap();
     assert!(fixture.supervisor.process_next_command());
-    for actor in [selected, background] {
-        assert!(matches!(
-            actor.recv_timeout(Duration::from_secs(1)),
-            Ok(RuntimeCommand::SystemWake)
-        ));
+    for actor in &actors {
+        assert!(matches!(actor.try_recv(), Ok(RuntimeCommand::SystemWake)));
+        assert!(matches!(actor.try_recv(), Err(mpsc::TryRecvError::Empty)));
     }
 }
 
@@ -959,4 +973,48 @@ fn background_dismissal_removes_cached_dialog_before_selection() -> Result<(), S
         RuntimeEvent::ExtensionUi { request, .. } if request.dialog_id() == Some("expired")
     )));
     Ok(())
+}
+
+#[test]
+fn signals_keep_their_target_across_selection_changes_and_use_the_signal_channel() {
+    let mut fixture = SupervisorFixture::new("draft:new", "/project".into(), None);
+    fixture.add_actor("draft:old");
+    fixture.add_actor("draft:new");
+    let (old_tx, old_rx) = mpsc::channel();
+    let (new_tx, new_rx) = mpsc::channel();
+    fixture
+        .supervisor
+        .actors
+        .get_mut("draft:old")
+        .unwrap()
+        .signals = old_tx;
+    fixture
+        .supervisor
+        .actors
+        .get_mut("draft:new")
+        .unwrap()
+        .signals = new_tx;
+    fixture
+        .supervisor
+        .actor_paths
+        .insert("/sessions/old".into(), "draft:old".into());
+    let (signals, receiver) = mpsc::channel();
+    fixture.supervisor.signal_rx = receiver;
+    signals
+        .send(("session:/sessions/old".into(), RuntimeSignal::ApplySteering))
+        .unwrap();
+    signals
+        .send(("draft:old".into(), RuntimeSignal::Abort))
+        .unwrap();
+    signals
+        .send(("draft:missing".into(), RuntimeSignal::Abort))
+        .unwrap();
+    thread::current().unpark();
+    assert!(fixture.supervisor.process_next_command());
+    assert_eq!(
+        old_rx.try_iter().collect::<Vec<_>>(),
+        [RuntimeSignal::ApplySteering, RuntimeSignal::Abort]
+    );
+    assert!(new_rx.try_recv().is_err());
+    assert!(!fixture.supervisor.actors.contains_key("draft:missing"));
 }

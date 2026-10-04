@@ -11,6 +11,7 @@ mod proxy_tests;
 pub struct RuntimeHandle {
     pub session_targets: HashMap<PathBuf, crate::sessions::SessionTarget>,
     commands: mpsc::Sender<RuntimeCommand>,
+    signals: mpsc::Sender<(String, RuntimeSignal)>,
     events: mpsc::Receiver<RuntimeEvent>,
     wake: async_channel::Receiver<()>,
     thread: thread::Thread,
@@ -20,6 +21,7 @@ pub struct RuntimeHandle {
 #[cfg(any(test, feature = "test-support"))]
 pub struct TestRuntime {
     commands: mpsc::Receiver<RuntimeCommand>,
+    signals: mpsc::Receiver<(String, RuntimeSignal)>,
     events: mpsc::Sender<RuntimeEvent>,
     wake: async_channel::Sender<()>,
 }
@@ -29,6 +31,10 @@ impl TestRuntime {
     pub fn send_event(&self, event: RuntimeEvent) {
         self.events.send(event).expect("offline app event receiver");
         let _ = self.wake.try_send(());
+    }
+
+    pub fn try_recv_signal(&self) -> Option<(String, RuntimeSignal)> {
+        self.signals.try_recv().ok()
     }
 
     pub fn try_recv_command(&self) -> Option<RuntimeCommand> {
@@ -54,12 +60,14 @@ impl RuntimeHandle {
     #[cfg(any(test, feature = "test-support"))]
     pub fn offline_for_test() -> (Self, TestRuntime) {
         let (commands, command_rx) = mpsc::channel();
+        let (signals, signal_rx) = mpsc::channel();
         let (events_tx, events) = mpsc::channel();
         let (wake_tx, wake) = async_channel::bounded(1);
         (
             Self {
                 session_targets: HashMap::new(),
                 commands,
+                signals,
                 events,
                 wake,
                 thread: thread::current(),
@@ -67,6 +75,7 @@ impl RuntimeHandle {
             },
             TestRuntime {
                 commands: command_rx,
+                signals: signal_rx,
                 events: events_tx,
                 wake: wake_tx,
             },
@@ -110,6 +119,7 @@ impl RuntimeHandle {
         refresh_configuration: bool,
     ) -> Self {
         let (commands, command_rx) = mpsc::channel();
+        let (signals, signal_rx) = mpsc::channel();
         let (events_tx, events) = mpsc::channel();
         let (wake_tx, wake) = async_channel::bounded(1);
         let event_tx = UiEventSender {
@@ -126,6 +136,7 @@ impl RuntimeHandle {
                     process_command,
                     host,
                     command_rx,
+                    signal_rx,
                     event_tx,
                     refresh_configuration,
                 );
@@ -134,6 +145,7 @@ impl RuntimeHandle {
         Self {
             session_targets: HashMap::new(),
             commands,
+            signals,
             events,
             wake,
             thread: handle.thread().clone(),
@@ -147,6 +159,11 @@ impl RuntimeHandle {
             .map_err(|_| "Session runtime has stopped".to_owned())?;
         self.thread.unpark();
         Ok(())
+    }
+
+    pub fn signal(&self, target: &str, signal: RuntimeSignal) {
+        let _ = self.signals.send((target.to_owned(), signal));
+        self.thread.unpark();
     }
 
     pub fn try_recv(&self) -> Result<RuntimeEvent, mpsc::TryRecvError> {
@@ -186,6 +203,7 @@ impl SessionEventSender {
 
 pub(super) struct SessionRuntimeHandle {
     commands: mpsc::Sender<RuntimeCommand>,
+    signals: mpsc::Sender<RuntimeSignal>,
     pub(super) events: mpsc::Receiver<RuntimeEvent>,
     thread: thread::Thread,
     join: thread::JoinHandle<Result<(), String>>,
@@ -201,6 +219,7 @@ impl SessionRuntimeHandle {
         host: Arc<dyn RuntimeHost>,
     ) -> Self {
         let (commands, command_rx) = mpsc::channel();
+        let (signals, signal_rx) = mpsc::channel();
         let (event_sender, events) = mpsc::channel();
         let event_tx = SessionEventSender {
             sender: event_sender,
@@ -213,6 +232,7 @@ impl SessionRuntimeHandle {
                     project,
                     process_command,
                     command_rx,
+                    signal_rx,
                     event_tx,
                     load_catalog,
                     harness,
@@ -222,6 +242,7 @@ impl SessionRuntimeHandle {
             .expect("start session runtime");
         Self {
             commands,
+            signals,
             events,
             thread: handle.thread().clone(),
             join: handle,
@@ -232,6 +253,11 @@ impl SessionRuntimeHandle {
         if self.commands.send(command).is_ok() {
             self.thread.unpark();
         }
+    }
+
+    fn signal(&self, signal: RuntimeSignal) {
+        let _ = self.signals.send(signal);
+        self.thread.unpark();
     }
 
     fn join(self) -> Result<(), String> {
@@ -405,6 +431,8 @@ struct Supervisor {
     host: Arc<dyn RuntimeHost>,
     process_command: AgentLaunchConfig,
     command_rx: mpsc::Receiver<RuntimeCommand>,
+    pending_command: Option<RuntimeCommand>,
+    signal_rx: mpsc::Receiver<(String, RuntimeSignal)>,
     event_tx: UiEventSender,
     supervisor_thread: thread::Thread,
     catalog_key: String,
@@ -443,6 +471,7 @@ fn run_supervisor(
     process_command: AgentLaunchConfig,
     host: Arc<dyn RuntimeHost>,
     command_rx: mpsc::Receiver<RuntimeCommand>,
+    signal_rx: mpsc::Receiver<(String, RuntimeSignal)>,
     event_tx: UiEventSender,
     refresh_configuration: bool,
 ) {
@@ -453,6 +482,7 @@ fn run_supervisor(
         process_command,
         host,
         command_rx,
+        signal_rx,
         event_tx,
         refresh_configuration,
     )
@@ -467,6 +497,7 @@ impl Supervisor {
         process_command: AgentLaunchConfig,
         host: Arc<dyn RuntimeHost>,
         command_rx: mpsc::Receiver<RuntimeCommand>,
+        signal_rx: mpsc::Receiver<(String, RuntimeSignal)>,
         event_tx: UiEventSender,
         refresh_configuration: bool,
     ) -> Self {
@@ -605,6 +636,8 @@ impl Supervisor {
             host,
             process_command,
             command_rx,
+            pending_command: None,
+            signal_rx,
             event_tx,
             supervisor_thread,
             catalog_key,
@@ -695,7 +728,6 @@ pub(super) fn command_targets_catalog(command: &RuntimeCommand) -> bool {
         RuntimeCommand::LoadSessions(_)
             | RuntimeCommand::RefreshSessions
             | RuntimeCommand::UpdateSessionMetadata(_)
-            | RuntimeCommand::ScheduleSessionRefresh
             | RuntimeCommand::SetSessionArchived { .. }
             | RuntimeCommand::RenameSession { .. }
             | RuntimeCommand::MoveSession { .. }

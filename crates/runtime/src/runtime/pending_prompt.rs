@@ -12,6 +12,7 @@ pub(super) struct PromptInput {
 pub(super) enum PromptPhase {
     Waiting(PromptInput),
     Dispatched {
+        mode: PromptMode,
         request_id: String,
         delivery_tracked: bool,
         delivered: bool,
@@ -62,7 +63,9 @@ impl PendingPrompt {
     }
 
     pub fn mark_dispatched(&mut self, request_id: String, delivery_tracked: bool) {
+        let mode = self.waiting().expect("waiting prompt").mode;
         self.phase = PromptPhase::Dispatched {
+            mode,
             request_id,
             delivery_tracked,
             delivered: false,

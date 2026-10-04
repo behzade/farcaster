@@ -52,6 +52,7 @@ fn startup_and_later_draft_selection_use_the_same_profile_defaults() -> Result<(
         AgentLaunchConfig::default(),
         host,
         command_rx,
+        mpsc::channel().1,
         UiEventSender { events, wake },
         false,
     );
@@ -169,6 +170,7 @@ fn recovered_draft_prompts_follow_their_own_actors_and_stay_saved() -> Result<()
         AgentLaunchConfig::default(),
         host,
         command_rx,
+        mpsc::channel().1,
         UiEventSender {
             events: events_tx,
             wake,

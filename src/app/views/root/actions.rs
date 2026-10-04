@@ -4,7 +4,7 @@ use super::super::{FarcasterApp, session_rail::RailPanel};
 use crate::app::ui::keyboard::{ClipboardCopyAlias, ClipboardPasteAlias, CopySelection};
 use crate::app::workspace::{CycleWorkspaceBackward, CycleWorkspaceForward};
 use crate::app::{
-    AbortRun, AddProject, CloseCurrent, ComposerEscape, DismissSurface, FocusComposer,
+    AbortRun, AddProject, CloseCurrent, DismissSurface, EscapePrefix, FocusComposer,
     FocusSessionSearch, NewSession, NextSession, PickerBack, PickerScope, PreviousSession,
     ProjectPickerIntent, RemoveProject, ShowActionPicker, ShowEditor, ShowKeybindings,
     ShowTerminal, ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession0, SwitchSession1,
@@ -141,14 +141,15 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
             this.submit(value, this.enter_mode(), window, cx);
         }
     }))
-    .on_action(cx.listener(|this, _: &AbortRun, _, cx| {
-        if this.snapshot.conversation.running {
-            this.send(crate::runtime::RuntimeCommand::Abort, cx);
-        }
+    .on_action(cx.listener(|this, _: &AbortRun, _, _| {
+        this.runtime.signal(
+            this.composer.sessions.current_target(),
+            crate::runtime::RuntimeSignal::Abort,
+        );
     }))
-    .on_action(cx.listener(|this, _: &ComposerEscape, _, cx| {
-        this.handle_composer_escape(cx);
-    }))
+    // Give GPUI a single-key fallback so the Escape sequence expires.
+    // Steering already ran in the keystroke interceptor.
+    .on_action(cx.listener(|_, _: &EscapePrefix, _, cx| cx.propagate()))
     .on_action(cx.listener(|this, _: &CloseCurrent, window, cx| {
         this.close_current_target(window, cx);
     }))

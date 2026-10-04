@@ -25,6 +25,13 @@ pub struct TaskSettings {
     pub access_mode: HarnessAccessMode,
 }
 
+/// Best-effort control of the current run. Safe to repeat as its state changes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RuntimeSignal {
+    Abort,
+    ApplySteering,
+}
+
 #[derive(Clone)]
 #[allow(dead_code)]
 pub enum RuntimeCommand {
@@ -43,7 +50,6 @@ pub enum RuntimeCommand {
         project: PathBuf,
         catalog: crate::agents::ConfigurationCatalog,
     },
-    Abort,
     CancelQueued {
         target: String,
         id: String,
@@ -53,7 +59,6 @@ pub enum RuntimeCommand {
         session: PathBuf,
         id: String,
     },
-    ApplySteering,
     StopSessionFamily {
         path: PathBuf,
     },
@@ -169,7 +174,6 @@ pub enum RuntimeCommand {
     LoadSessions(String),
     RefreshSessions,
     UpdateSessionMetadata(agents::SessionMetadata),
-    ScheduleSessionRefresh,
     PreviewImport {
         harness: Backend,
         profile_id: Option<String>,

@@ -21,13 +21,17 @@ fn queued_search_edits_only_load_the_latest_query() {
 }
 
 #[test]
-fn search_coalescing_preserves_other_commands_and_disconnect_order() {
+fn coalescing_preserves_wake_boundaries_other_commands_and_disconnect_order() {
     let (sender, receiver) = mpsc::channel();
     for command in [
         RuntimeCommand::LoadSessions("old".into()),
+        RuntimeCommand::SystemWake,
+        RuntimeCommand::SystemWake,
         RuntimeCommand::RefreshSessions,
         RuntimeCommand::LoadSessions("n".into()),
         RuntimeCommand::LoadSessions("new".into()),
+        RuntimeCommand::SystemWake,
+        RuntimeCommand::SystemWake,
         RuntimeCommand::Shutdown,
     ] {
         sender.send(command).expect("test operation should succeed");
@@ -40,11 +44,19 @@ fn search_coalescing_preserves_other_commands_and_disconnect_order() {
     ));
     assert!(matches!(
         receive_command(&receiver, &mut pending),
+        Ok(RuntimeCommand::SystemWake)
+    ));
+    assert!(matches!(
+        receive_command(&receiver, &mut pending),
         Ok(RuntimeCommand::RefreshSessions)
     ));
     assert!(matches!(
         receive_command(&receiver, &mut pending),
         Ok(RuntimeCommand::LoadSessions(query)) if query == "new"
+    ));
+    assert!(matches!(
+        receive_command(&receiver, &mut pending),
+        Ok(RuntimeCommand::SystemWake)
     ));
     assert!(matches!(
         receive_command(&receiver, &mut pending),

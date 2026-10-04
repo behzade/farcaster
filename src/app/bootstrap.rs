@@ -264,7 +264,6 @@ impl FarcasterApp {
                 project_files_loading: None,
                 sessions: persisted.composer_sessions,
                 history_marker: None,
-                escape_armed: None,
                 images: composer_images,
                 pastes: composer_pastes,
                 focus: inputs.composer_focus,

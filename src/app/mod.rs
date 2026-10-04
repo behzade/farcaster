@@ -130,7 +130,7 @@ actions!(
         ToggleArchivedSessions,
         SubmitPrompt,
         AbortRun,
-        ComposerEscape,
+        EscapePrefix,
         CloseCurrent,
         ComposerHistoryPrevious,
         ComposerHistoryNext,

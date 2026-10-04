@@ -19,6 +19,7 @@ struct HeldAcks {
     commands: Rc<RefCell<Vec<SessionCommand>>>,
     cancelled: Rc<RefCell<Vec<String>>>,
     next_id: usize,
+    signal_error: Option<&'static str>,
 }
 
 impl HeldAcks {
@@ -27,6 +28,7 @@ impl HeldAcks {
             commands: Rc::new(RefCell::new(Vec::new())),
             cancelled: Rc::new(RefCell::new(Vec::new())),
             next_id: 0,
+            signal_error: None,
         }
     }
 }
@@ -37,6 +39,13 @@ impl crate::agents::SessionTransport for HeldAcks {
         Ok(())
     }
     fn send(&mut self, command: SessionCommand) -> Result<String, String> {
+        if matches!(
+            command,
+            SessionCommand::Abort | SessionCommand::ApplySteering
+        ) && let Some(error) = self.signal_error
+        {
+            return Err(error.into());
+        }
         self.commands.borrow_mut().push(command);
         self.next_id += 1;
         Ok(format!("held-{}", self.next_id))
@@ -142,7 +151,7 @@ fn normal_receipt_after_steering_settles_releases_the_next_send() -> Result<(), 
         .next()
         .expect("steer was dispatched")
         .clone();
-    owner.apply_command(RuntimeCommand::ApplySteering);
+    owner.apply_signal(crate::runtime::RuntimeSignal::ApplySteering);
 
     owner.apply_process_item(SessionEvent::Activity(
         json!({
@@ -323,7 +332,7 @@ fn command_entry_sends_all_unacknowledged_inputs_before_first_escape() -> Result
             allow_while_running: false,
         });
     }
-    owner.apply_command(RuntimeCommand::ApplySteering);
+    owner.apply_signal(crate::runtime::RuntimeSignal::ApplySteering);
 
     assert!(owner.pending_request_id().is_some());
     assert_eq!(owner.pending_queued_prompts.len(), 2);
@@ -979,4 +988,68 @@ fn unselected_backend_rejects_prompt_before_enqueuing() {
             ..
         }
     )));
+}
+
+#[test]
+fn escape_signals_require_steering_and_tolerate_transport_rejection() -> Result<(), String> {
+    use crate::runtime::RuntimeSignal;
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let (mut owner, _, commands) = held_acks_runtime(temp.path())?;
+    // A running turn or follow-up alone must not make Escape interrupt it.
+    conversation_mut(&mut owner.snapshot)
+        .queue
+        .follow_up
+        .push("later".into());
+    owner.apply_signal(RuntimeSignal::ApplySteering);
+    assert!(commands.borrow().is_empty());
+    conversation_mut(&mut owner.snapshot)
+        .queue
+        .steering
+        .push("now".into());
+    owner.apply_signal(RuntimeSignal::ApplySteering);
+    owner.apply_signal(RuntimeSignal::Abort);
+    owner.process = Some(Box::new(HeldAcks {
+        commands: commands.clone(),
+        signal_error: Some("Abort cleanup is still pending"),
+        ..HeldAcks::new()
+    }));
+    for _ in 0..3 {
+        owner.apply_signal(RuntimeSignal::ApplySteering);
+        owner.apply_signal(RuntimeSignal::Abort);
+    }
+    assert!(matches!(
+        commands.borrow().as_slice(),
+        [SessionCommand::ApplySteering, SessionCommand::Abort]
+    ));
+    for operation in [
+        crate::agents::SessionOperation::Abort,
+        crate::agents::SessionOperation::ApplySteering,
+    ] {
+        owner.apply_process_item(SessionEvent::Response(SessionResponse::failure(
+            Some("late-signal".into()),
+            operation,
+            "No active turn".into(),
+        )));
+    }
+    assert!(owner.process.is_some());
+    assert!(owner.snapshot.conversation.items.is_empty());
+    Ok(())
+}
+
+#[test]
+fn escape_signals_on_a_disconnected_session_do_not_report_errors() {
+    use crate::runtime::RuntimeSignal;
+    let (mut owner, events) = owner_without_process("/tmp/escape-signals".into());
+    let before = owner.snapshot.status.clone();
+    conversation_mut(&mut owner.snapshot)
+        .queue
+        .steering
+        .push("stale".into());
+    for _ in 0..3 {
+        owner.apply_signal(RuntimeSignal::ApplySteering);
+        owner.apply_signal(RuntimeSignal::Abort);
+    }
+    assert_eq!(owner.snapshot.status, before);
+    assert!(owner.snapshot.conversation.items.is_empty());
+    assert_eq!(events.try_iter().count(), 0);
 }

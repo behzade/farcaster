@@ -4,7 +4,7 @@ use crate::app::views::dialogs::send_to_chat::{NextCodeDestination, PreviousCode
 use crate::app::workspace::{CycleWorkspaceBackward, CycleWorkspaceForward};
 use crate::app::{
     AbortRun, AddProject, CloseCurrent, ComposerCompletionNext, ComposerCompletionPrevious,
-    ComposerEscape, ComposerHistoryNext, ComposerHistoryPrevious, DismissSurface, FocusComposer,
+    ComposerHistoryNext, ComposerHistoryPrevious, DismissSurface, EscapePrefix, FocusComposer,
     NewSession, NextSession, OVERLAY_KEY_CONTEXT, PICKER_KEY_CONTEXT, PickerBack, PreviousSession,
     QuitApplication, ShowActionPicker, ShowEditor, ShowKeybindings, ShowTerminal, ShowWorkGraph,
     SubmitFollowUp, SwitchSession0, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4,
@@ -12,7 +12,7 @@ use crate::app::{
     WorkCreateIssue, WorkDismiss, WorkFocusSearch, WorkNextIssue, WorkPreviousIssue,
 };
 use crate::app::{COMPOSER_KEY_CONTEXT, TRANSCRIPT_SELECTION_KEY_CONTEXT};
-use gpui::{Action as _, KeyBinding, KeyBindingContextPredicate as Predicate, Unbind};
+use gpui::{KeyBinding, KeyBindingContextPredicate as Predicate, Unbind};
 use gpui_base::actions::{SelectDown, SelectUp};
 
 fn binding(key: &str, action: Box<dyn gpui::Action>, condition: Predicate) -> KeyBinding {
@@ -432,12 +432,11 @@ fn registry_for_platform(prefix: &str) -> Vec<Command> {
             "Send prompt; queue follow-up during a run (no suggestions)",
             [Shortcut::new("tab", composer_without_completions)],
         ),
-        Command::new(AbortRun, "Run", "Abort current run", app_keys(prefix, ".")).in_picker(),
         Command::new(
-            Unbind(ComposerEscape.name().into()),
+            EscapePrefix,
             "Composer",
-            "Send pending input; double-Esc aborts",
-            [Shortcut::new("escape", composer_input)],
+            "Apply queued steering immediately",
+            [Shortcut::new("escape", named("FarcasterApp"))],
         ),
         Command::new(
             WorkPreviousIssue,
@@ -591,6 +590,11 @@ fn registry_for_platform(prefix: &str) -> Vec<Command> {
             navigation_keys(prefix, "shift-k", &chat),
         )
         .in_picker(),
+        // GPUI ignores a sequence if a newer binding matches its first key.
+        // Keep this after the single-Escape bindings, including dialog dismissal.
+        Command::new(AbortRun, "Run", "Abort current run", app_keys(prefix, "."))
+            .with_bindings([Shortcut::new("escape escape", named("FarcasterApp"))])
+            .in_picker(),
     ]
 }
 

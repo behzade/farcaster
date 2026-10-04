@@ -5,6 +5,7 @@ pub(super) fn run(
     project: PathBuf,
     process_command: AgentLaunchConfig,
     command_rx: mpsc::Receiver<RuntimeCommand>,
+    signal_rx: mpsc::Receiver<RuntimeSignal>,
     event_tx: SessionEventSender,
     load_catalog: bool,
     harness: Option<Backend>,
@@ -33,7 +34,6 @@ pub(super) fn run(
         },
         owns_session_catalog: load_catalog,
         session_generation: 0,
-        session_refresh_due: None,
         process_generation: 0,
         retired_prompts: HashMap::new(),
         pending_prompt: None,
@@ -83,7 +83,6 @@ pub(super) fn run(
         while let Ok(result) = owner.title_generation.receiver.try_recv() {
             owner.apply_generated_session_title(result);
         }
-        owner.poll_deferred_session_refresh(Instant::now());
         let mut immediate_snapshot_change = false;
         while let Some(item) = owner.process.as_mut().and_then(|process| process.poll()) {
             match owner.apply_process_item(item) {
@@ -113,21 +112,22 @@ pub(super) fn run(
             .then(|| owner.access_mode_changes.next_deadline())
             .flatten();
         owner.poll_idle_retirement(now, false);
-        let next_deadline = [
-            stream_publish_due,
-            owner.session_refresh_due,
-            access_mode_change_due,
-        ]
-        .into_iter()
-        .flatten()
-        .min();
+        let next_deadline = [stream_publish_due, access_mode_change_due]
+            .into_iter()
+            .flatten()
+            .min();
         match super::command_queue::receive_command(&command_rx, &mut pending_command) {
             Ok(RuntimeCommand::Shutdown) => running = false,
             Ok(command) => owner.apply_command(command),
-            Err(mpsc::TryRecvError::Empty) => match next_deadline {
-                Some(deadline) => thread::park_timeout(deadline.saturating_duration_since(now)),
-                None => thread::park(),
-            },
+            Err(mpsc::TryRecvError::Empty) => {
+                for signal in signal_rx.try_iter() {
+                    owner.apply_signal(signal);
+                }
+                match next_deadline {
+                    Some(deadline) => thread::park_timeout(deadline.saturating_duration_since(now)),
+                    None => thread::park(),
+                }
+            }
             Err(mpsc::TryRecvError::Disconnected) => running = false,
         }
     }

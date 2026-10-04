@@ -88,7 +88,7 @@ impl RuntimeOwner {
         self.deliver_queued(prompt);
     }
 
-    fn cancel_recovered_prompts(&mut self) {
+    pub(super) fn cancel_recovered_prompts(&mut self) {
         if self.queued_prompts.is_empty() {
             return;
         }
@@ -245,12 +245,6 @@ impl RuntimeOwner {
                     }
                 }
             }
-            RuntimeCommand::Abort => {
-                self.cancel_recovered_prompts();
-                self.cancel_deferred_prompt();
-                self.send(SessionCommand::Abort);
-            }
-            RuntimeCommand::ApplySteering => self.send(SessionCommand::ApplySteering),
             RuntimeCommand::Reload => self.reload(),
             RuntimeCommand::Compact {
                 custom_instructions,
@@ -423,7 +417,6 @@ impl RuntimeOwner {
             RuntimeCommand::UpdateSessionMetadata(metadata) => {
                 self.update_session_metadata(metadata)
             }
-            RuntimeCommand::ScheduleSessionRefresh => self.schedule_session_refresh(),
             RuntimeCommand::PreviewImport {
                 harness,
                 profile_id,

@@ -6,24 +6,30 @@ pub(super) fn receive_command(
     receiver: &Receiver<RuntimeCommand>,
     pending: &mut Option<RuntimeCommand>,
 ) -> Result<RuntimeCommand, TryRecvError> {
-    let command = match pending.take() {
+    let mut command = match pending.take() {
         Some(command) => command,
         None => receiver.try_recv()?,
     };
-    let RuntimeCommand::LoadSessions(mut query) = command else {
+    if !matches!(
+        command,
+        RuntimeCommand::LoadSessions(_) | RuntimeCommand::SystemWake
+    ) {
         return Ok(command);
-    };
+    }
     loop {
-        match receiver.try_recv() {
-            Ok(RuntimeCommand::LoadSessions(next)) => query = next,
-            Ok(command) => {
-                *pending = Some(command);
+        match (&mut command, receiver.try_recv()) {
+            (RuntimeCommand::LoadSessions(query), Ok(RuntimeCommand::LoadSessions(next))) => {
+                *query = next
+            }
+            (RuntimeCommand::SystemWake, Ok(RuntimeCommand::SystemWake)) => {}
+            (_, Ok(next)) => {
+                *pending = Some(next);
                 break;
             }
-            Err(_) => break,
+            (_, Err(_)) => break,
         }
     }
-    Ok(RuntimeCommand::LoadSessions(query))
+    Ok(command)
 }
 
 #[cfg(test)]

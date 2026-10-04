@@ -300,7 +300,7 @@ fn live_e2e_runtime_accepted_prompt_survives_restart_without_duplicate_or_replay
                     .is_some_and(|snapshot| snapshot.conversation.running)
                 {
                     after_restart.phase("abort resumed active turn")?;
-                    resumed.send(RuntimeCommand::Abort)?;
+                    resumed.signal(&bound_target(&first), crate::runtime::RuntimeSignal::Abort);
                     wait_for(&resumed, &mut after_restart, TURN_TIMEOUT, |trace| {
                         trace
                             .snapshot

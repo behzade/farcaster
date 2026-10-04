@@ -102,6 +102,7 @@ fn busy_or_unresumable_sessions_survive_timeout_and_system_wake() {
                 outbox_id: Some(1),
                 item: None,
                 phase: PromptPhase::Dispatched {
+                    mode: PromptMode::Normal,
                     request_id: "unconfirmed".into(),
                     delivery_tracked: false,
                     delivered: false,

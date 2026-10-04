@@ -187,6 +187,8 @@ fn supervisor_for_family(
             host: crate::test_support::host(),
             process_command: AgentLaunchConfig::default(),
             command_rx,
+            pending_command: None,
+            signal_rx: mpsc::channel().1,
             event_tx: UiEventSender {
                 events: events_tx,
                 wake,
@@ -362,6 +364,7 @@ fn failed_move_restores_selected_actor_and_command_route() -> Result<(), String>
         key.clone(),
         SessionRuntimeHandle {
             commands: actor_commands,
+            signals: mpsc::channel().0,
             events: actor_events,
             thread: join.thread().clone(),
             join,
@@ -701,6 +704,7 @@ fn supervisor_does_not_archive_or_report_stopped_when_actor_close_fails() -> Res
         key,
         SessionRuntimeHandle {
             commands,
+            signals: mpsc::channel().0,
             events: actor_events,
             thread: join.thread().clone(),
             join,
