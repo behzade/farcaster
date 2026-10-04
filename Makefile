@@ -1,5 +1,4 @@
 PROJECT ?= $(CURDIR)
-export CARGO_TARGET_DIR ?= $(CURDIR)/target
 GPUI_GHOSTTY_DIR ?= $(abspath ../gpui-ghostty)
 LOG_LINES ?= 50
 DEFAULT_FARCASTER_DATA_DIR := $(if $(XDG_DATA_HOME),$(XDG_DATA_HOME),$(HOME)/.local/share)/farcaster
