@@ -26,6 +26,7 @@ use self::{
     rendering::{archived_panel_rows, rail_panel_slot},
 };
 use super::super::FarcasterApp;
+use super::SessionReveal;
 use crate::{
     app::ui::primitives::{
         PanelSlot, ReorderPosition, ResizeBounds, ResizeState, panel_bounds, panel_resized,
@@ -459,6 +460,11 @@ impl FarcasterApp {
         match panel {
             RailPanel::Archived => {
                 self.sessions.archived_expanded = !self.sessions.archived_expanded;
+                if self.sessions.archived_expanded {
+                    self.views.archived_session_rail.update(cx, |view, _| {
+                        view.reveal = Some(SessionReveal::Index(0));
+                    });
+                }
             }
             RailPanel::Notifications => {
                 let collapsed = self.views.notification_panel.is_collapsed();

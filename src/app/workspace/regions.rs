@@ -3,6 +3,7 @@ use std::sync::Arc;
 use gpui::{Context, Entity};
 
 use super::FarcasterApp;
+use crate::app::views::SessionReveal;
 use crate::runtime::RuntimeCommand;
 
 impl FarcasterApp {
@@ -25,7 +26,7 @@ impl FarcasterApp {
     ) {
         self.sessions.archived_expanded = false;
         self.views.session_rail.update(cx, |view, cx| {
-            view.reveal = Some(key);
+            view.reveal = Some(SessionReveal::SessionID(key));
             cx.notify();
         });
     }

@@ -15,8 +15,8 @@ mod workspace;
 
 pub(in crate::app) use app_state::{AppOverlays, AppViews};
 pub(super) use regions::{
-    ComposerView, InactiveSessionRailView, RunPanelView, SessionRailView, TranscriptView,
-    WorkGraphDetailView,
+    ComposerView, InactiveSessionRailView, RunPanelView, SessionRailView, SessionReveal,
+    TranscriptView, WorkGraphDetailView,
 };
 pub(in crate::app) use session_rail::{GroupTarget, SessionRailKind};
 

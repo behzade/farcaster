@@ -15,7 +15,7 @@ pub(crate) struct SessionRailView {
     app: WeakEntity<FarcasterApp>,
     list: ListState,
     rows: RefCell<Vec<String>>,
-    pub(crate) reveal: Option<String>,
+    pub(crate) reveal: Option<SessionReveal>,
     width: Pixels,
     resize_start: Option<(Pixels, Pixels)>,
     grouped: bool,
@@ -23,12 +23,26 @@ pub(crate) struct SessionRailView {
     render_count: usize,
 }
 
+pub(crate) enum SessionReveal {
+    SessionID(String),
+    Index(usize),
+}
+
+impl SessionReveal {
+    fn into_index(self, rows: &[String]) -> Option<usize> {
+        match self {
+            Self::SessionID(key) => rows.iter().position(|row| row == &key),
+            Self::Index(index) => (index < rows.len()).then_some(index),
+        }
+    }
+}
+
 pub(crate) struct InactiveSessionRailView {
     app: WeakEntity<FarcasterApp>,
     kind: SessionRailKind,
     list: UniformListScrollHandle,
     rows: RefCell<Vec<String>>,
-    pub(crate) reveal: Option<String>,
+    pub(crate) reveal: Option<SessionReveal>,
 }
 
 fn session_list() -> ListState {
@@ -123,13 +137,16 @@ impl Render for SessionRailView {
 fn reveal_archived_session_row(
     list: &UniformListScrollHandle,
     rows: &RefCell<Vec<String>>,
-    reveal: &mut Option<String>,
+    reveal: &mut Option<SessionReveal>,
 ) {
-    if let Some(key) = reveal.take()
-        && let Some(index) = rows.borrow().iter().position(|row| row == &key)
-    {
-        list.scroll_to_item(index, ScrollStrategy::Nearest);
-    }
+    let Some(index) = reveal
+        .take()
+        .and_then(|target| target.into_index(&rows.borrow()))
+    else {
+        return;
+    };
+
+    list.scroll_to_item(index, ScrollStrategy::Nearest);
 }
 
 impl Render for InactiveSessionRailView {
@@ -149,17 +166,23 @@ impl Render for InactiveSessionRailView {
     }
 }
 
-fn reveal_session_row(list: &ListState, rows: &RefCell<Vec<String>>, reveal: &mut Option<String>) {
-    if let Some(key) = reveal.take()
-        && let Some(index) = rows.borrow().iter().position(|row| row == &key)
-    {
-        list.scroll_to_reveal_item(index);
-        if list.logical_scroll_top().item_ix >= index {
-            list.scroll_to(gpui::ListOffset {
-                item_ix: index,
-                offset_in_item: gpui::px(0.0),
-            });
-        }
+fn reveal_session_row(
+    list: &ListState,
+    rows: &RefCell<Vec<String>>,
+    reveal: &mut Option<SessionReveal>,
+) {
+    let Some(index) = reveal
+        .take()
+        .and_then(|target| target.into_index(&rows.borrow()))
+    else {
+        return;
+    };
+    list.scroll_to_reveal_item(index);
+    if list.logical_scroll_top().item_ix >= index {
+        list.scroll_to(gpui::ListOffset {
+            item_ix: index,
+            offset_in_item: gpui::px(0.0),
+        });
     }
 }
 

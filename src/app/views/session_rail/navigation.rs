@@ -9,6 +9,7 @@ use super::{
 use crate::{
     app::{
         AppSurface,
+        views::SessionReveal,
         views::run_panel::{RECENT_WORKERS, worker_navigation_rows},
     },
     sessions::{SessionCatalog, SessionSummary},
@@ -188,7 +189,7 @@ impl FarcasterApp {
         if let Some(index) = archived_index {
             self.sessions.archived_expanded |= index >= self.archived_visible_rows();
             self.views.archived_session_rail.update(cx, |view, cx| {
-                view.reveal = Some(key);
+                view.reveal = Some(SessionReveal::SessionID(key));
                 cx.notify();
             });
         } else {

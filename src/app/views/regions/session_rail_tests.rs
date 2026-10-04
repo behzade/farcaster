@@ -79,7 +79,7 @@ fn first_archive_expansion_does_not_scroll_past_the_selected_row(cx: &mut gpui::
     let rows = RefCell::new((0..12).map(|index| format!("session:{index}")).collect());
     let height = session_row_height(true);
     for selected in [5, 4] {
-        let mut reveal = Some(format!("session:{selected}"));
+        let mut reveal = Some(SessionReveal::SessionID(format!("session:{selected}")));
         reveal_archived_session_row(&list, &rows, &mut reveal);
         cx.draw(
             point(px(0.), px(0.)),
@@ -128,6 +128,95 @@ fn archive_content_size_tracks_insertions_and_viewport_resizes(cx: &mut gpui::Te
             height * (count - 5) as f32
         );
     }
+}
+
+#[gpui::test]
+fn expanding_archive_reveals_newest_once_after_rows_change(cx: &mut gpui::TestAppContext) {
+    use super::super::super::session_rail::RailPanel;
+    use gpui::{point, px, size};
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::expanding_archive_reveals_newest_once_after_rows_change"
+        ),
+        cx,
+        |cx, app, _, project| {
+            let archived = |index| {
+                let mut draft = crate::sessions::DraftSession::with_id(
+                    Some(crate::agents::Backend::Pi),
+                    format!("archive-{index}"),
+                    project.to_path_buf(),
+                );
+                draft.app_session_id = index;
+                draft.created_ms = index as u64;
+                draft.submitted = true;
+                assert!(draft.set_archived(true));
+                draft
+            };
+            let rail = cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions.drafts = (1..=12).map(archived).collect();
+                    app.sessions.archived_expanded = false;
+                    app.toggle_rail_panel(RailPanel::Archived, cx);
+                    app.views.archived_session_rail.clone()
+                })
+            });
+            let height = session_row_height(true);
+            for newest in [12, 13] {
+                cx.draw(
+                    point(px(0.), px(0.)),
+                    size(px(280.), height * 2.),
+                    |_, _| rail.clone().into_any_element(),
+                );
+                cx.update(|_, cx| {
+                    let view = rail.read(cx);
+                    assert_eq!(view.rows.borrow()[0], format!("draft:archive-{newest}"));
+                    assert_eq!(view.list.0.borrow().base_handle.offset().y, px(0.));
+                    assert!(view.reveal.is_none());
+                    assert!(view.list.0.borrow().deferred_scroll_to_item.is_none());
+                });
+
+                let offset = -(height * 3. + px(5.));
+                cx.update(|_, cx| {
+                    rail.update(cx, |view, cx| {
+                        view.list
+                            .0
+                            .borrow()
+                            .base_handle
+                            .set_offset(point(px(0.), offset));
+                        cx.notify();
+                    });
+                });
+                cx.draw(
+                    point(px(0.), px(0.)),
+                    size(px(280.), height * 2.),
+                    |_, _| rail.clone().into_any_element(),
+                );
+                cx.update(|_, cx| {
+                    assert_eq!(rail.read(cx).list.0.borrow().base_handle.offset().y, offset);
+                    if newest == 12 {
+                        app.update(cx, |app, cx| {
+                            app.toggle_rail_panel(RailPanel::Archived, cx);
+                            assert!(rail.read(cx).reveal.is_none());
+                            app.sessions.drafts.push(archived(13));
+                            app.toggle_rail_panel(RailPanel::Archived, cx);
+                        });
+                    }
+                });
+            }
+        },
+    );
+}
+
+#[test]
+fn empty_archive_consumes_top_reveal_without_scheduling_a_scroll() {
+    let list = UniformListScrollHandle::new();
+    let rows = RefCell::new(Vec::new());
+    let mut reveal = Some(SessionReveal::Index(0));
+    reveal_archived_session_row(&list, &rows, &mut reveal);
+    assert!(reveal.is_none());
+    assert!(list.0.borrow().deferred_scroll_to_item.is_none());
 }
 
 #[gpui::test]
@@ -219,7 +308,9 @@ fn revealing_profile_copies_uses_the_requested_active_or_archived_row() {
             .with_uniform_item_height(session_row_height(false));
         let archived_list = UniformListScrollHandle::new();
         for index in [1, 0, 1] {
-            let mut reveal = Some(session_row_identity(&sessions[index]));
+            let mut reveal = Some(SessionReveal::SessionID(session_row_identity(
+                &sessions[index],
+            )));
             if archived {
                 reveal_archived_session_row(&archived_list, &rows, &mut reveal);
                 assert_eq!(
