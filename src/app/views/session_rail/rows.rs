@@ -297,7 +297,7 @@ impl RenderOnce for SessionRow {
                     .into_any_element(),
                 session_row_trailing(
                     session.harness,
-                    session_status_icon(&identity, status_text),
+                    session_status_icon(&identity, status),
                     age,
                     shortcut,
                     Some(archive_action),
@@ -707,33 +707,34 @@ fn session_metadata_slot(
         .into_any_element()
 }
 
-pub(super) fn session_status_icon(identity: &str, status: &str) -> Option<AnyElement> {
-    let (icon, color) = status_visual(status)?;
-    let tooltip = status.to_owned();
+pub(super) fn session_status_icon(identity: &str, status: Option<RunStatus>) -> Option<AnyElement> {
+    let status = status?;
+    let (icon, color) = run_status_visual(status)?;
+    let tooltip = run_status_label(status);
     let icon = app_icon(icon, AppIconSize::Inline).into_any_element();
     Some(
         div()
             .id(format!("session-status-{identity}"))
             .flex_none()
             .text_color(color)
-            .app_tooltip(tooltip.clone())
+            .app_tooltip(tooltip)
             .child(icon)
             .into_any_element(),
     )
 }
 
-pub(in crate::app) fn status_visual(status: &str) -> Option<(AppIcon, Rgba)> {
+pub(super) fn run_status_visual(status: RunStatus) -> Option<(AppIcon, Rgba)> {
     match status {
-        "" => None,
-        "Done" | "Complete" => Some((AppIcon::CheckCircle, theme().colors.success)),
-        "Needs input" | "Delivery unknown" | "Incomplete" => {
-            Some((AppIcon::WarningCircle, theme().colors.warning))
+        RunStatus::Invalid => None,
+        RunStatus::Done => Some((AppIcon::CheckCircle, theme().colors.success)),
+        RunStatus::NeedsInput => Some((AppIcon::WarningCircle, theme().colors.warning)),
+        RunStatus::Waiting => Some((AppIcon::Hourglass, theme().colors.indicator)),
+        RunStatus::Failed => Some((AppIcon::XCircle, theme().colors.error)),
+        RunStatus::Working => Some((AppIcon::SpinnerGap, theme().colors.indicator)),
+        RunStatus::Compacting | RunStatus::Retrying => {
+            Some((AppIcon::ArrowsClockwise, theme().colors.indicator))
         }
-        "Waiting" => Some((AppIcon::Hourglass, theme().colors.indicator)),
-        "Failed" => Some((AppIcon::XCircle, theme().colors.error)),
-        "Working" => Some((AppIcon::SpinnerGap, theme().colors.indicator)),
-        "Compacting" => Some((AppIcon::ArrowsClockwise, theme().colors.indicator)),
-        _ => Some((AppIcon::Question, theme().colors.subtle)),
+        RunStatus::Draft | RunStatus::Stopped => Some((AppIcon::Question, theme().colors.subtle)),
     }
 }
 

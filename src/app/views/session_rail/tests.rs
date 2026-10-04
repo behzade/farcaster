@@ -7,7 +7,8 @@ use super::{
     ActiveSessionItem, RailPanel, SessionRailItem, SessionRailKind, archived_panel_rows,
     clamped_session_rail_width, first_unsubmitted_draft, hover::session_tooltip_lines,
     minimal_row_splice, numbered_session_items, rendering::rail_panel_slot,
-    replacement_index_after_close, session_accessible_label, status_visual, subagent_counts,
+    replacement_index_after_close, rows::run_status_visual, session_accessible_label,
+    subagent_counts,
 };
 use crate::{
     app::session_folders::{SessionFolder, SessionFolders},
@@ -348,30 +349,29 @@ fn session_rail_resize_stays_within_design_bounds() {
 #[test]
 fn session_states_use_semantic_icons() {
     assert_eq!(
-        status_visual("Done").map(|(icon, _)| icon),
+        run_status_visual(RunStatus::Done).map(|(icon, _)| icon),
         Some(AppIcon::CheckCircle)
     );
     assert_eq!(
-        status_visual("Complete").map(|(icon, _)| icon),
-        Some(AppIcon::CheckCircle)
-    );
-    assert_eq!(
-        status_visual("Working").map(|(icon, _)| icon),
+        run_status_visual(RunStatus::Working).map(|(icon, _)| icon),
         Some(AppIcon::SpinnerGap)
     );
     assert_eq!(
-        status_visual("Needs input").map(|(icon, _)| icon),
+        run_status_visual(RunStatus::NeedsInput).map(|(icon, _)| icon),
         Some(AppIcon::WarningCircle)
     );
     assert_eq!(
-        status_visual("Incomplete").map(|(icon, _)| icon),
-        Some(AppIcon::WarningCircle)
+        run_status_visual(RunStatus::Retrying).map(|(icon, _)| icon),
+        Some(AppIcon::ArrowsClockwise)
     );
     assert_eq!(
-        status_visual("Waiting").map(|(icon, _)| icon),
+        run_status_visual(RunStatus::Waiting).map(|(icon, _)| icon),
         Some(AppIcon::Hourglass)
     );
-    assert_eq!(status_visual("").map(|(icon, _)| icon), None);
+    assert_eq!(
+        run_status_visual(RunStatus::Invalid).map(|(icon, _)| icon),
+        None
+    );
 }
 
 #[test]

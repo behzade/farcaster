@@ -5,7 +5,7 @@ use gpui::{
 };
 
 use super::super::super::FarcasterApp;
-use super::super::session_rail::{session_hover_details, session_tooltip_content, status_visual};
+use super::super::session_rail::{session_hover_details, session_tooltip_content};
 use super::WorkerProfileNames;
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, AgentOutcome},
@@ -77,6 +77,7 @@ impl FarcasterApp {
         let key_project = project.clone();
         let key_entity = entity.clone();
         let state = lifecycle_label(activity.lifecycle);
+        let (icon, color) = agent_lifecycle_visual(activity.lifecycle);
         let role = activity.role.clone();
         let registry = crate::agents::CallerRegistry::shared();
         let key = session.key();
@@ -153,14 +154,12 @@ impl FarcasterApp {
                     .gap(theme().space.xs)
                     .text_size(theme().type_scale.caption)
                     .text_color(theme().colors.muted)
-                    .when_some(status_visual(state), |row, (icon, color)| {
-                        row.child(
-                            div()
-                                .flex_none()
-                                .text_color(color)
-                                .child(app_icon(icon, AppIconSize::Inline)),
-                        )
-                    })
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(color)
+                            .child(app_icon(icon, AppIconSize::Inline)),
+                    )
                     .child(app_icon(
                         AppIcon::for_harness(session.harness),
                         AppIconSize::Inline,
@@ -271,6 +270,20 @@ pub(in crate::app) fn agent_section(
         AgentLifecycle::NeedsInput | AgentLifecycle::Working | AgentLifecycle::Unknown => {
             AgentSection::Hidden
         }
+    }
+}
+
+pub(super) fn agent_lifecycle_visual(lifecycle: AgentLifecycle) -> (AppIcon, gpui::Rgba) {
+    match lifecycle {
+        AgentLifecycle::NeedsInput | AgentLifecycle::Completed(AgentOutcome::Incomplete) => {
+            (AppIcon::WarningCircle, theme().colors.warning)
+        }
+        AgentLifecycle::Working => (AppIcon::SpinnerGap, theme().colors.indicator),
+        AgentLifecycle::Unknown => (AppIcon::Question, theme().colors.subtle),
+        AgentLifecycle::Completed(AgentOutcome::Complete) => {
+            (AppIcon::CheckCircle, theme().colors.success)
+        }
+        AgentLifecycle::Completed(AgentOutcome::Failed) => (AppIcon::XCircle, theme().colors.error),
     }
 }
 

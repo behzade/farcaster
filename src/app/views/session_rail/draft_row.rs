@@ -86,7 +86,7 @@ impl RenderOnce for DraftRow {
             entity,
         } = self;
         let is_draft = status == RunStatus::Draft;
-        let status = run_status_label(status);
+        let status_text = run_status_label(status);
         let age = relative_age(UNIX_EPOCH + Duration::from_millis(draft.created_ms));
         let id = draft.id.clone();
         let identity = format!("draft:{id}");
@@ -111,7 +111,7 @@ impl RenderOnce for DraftRow {
         let drop_entity = entity.clone();
         let drag_entity = entity.clone();
         let action_group = format!("draft-actions-{id}");
-        let hover_details = draft_hover_details(&draft, status);
+        let hover_details = draft_hover_details(&draft, status_text);
         div()
             .h(session_row_height(compact))
             .w_full()
@@ -120,7 +120,10 @@ impl RenderOnce for DraftRow {
                     .id(format!("session-{id}"))
                     .app_tooltip_element(move |_, _| session_tooltip_content(&hover_details))
                     .role(Role::Button)
-                    .aria_label(format!("Open {status} session in {}", project.display()))
+                    .aria_label(format!(
+                        "Open {status_text} session in {}",
+                        project.display()
+                    ))
                     .aria_selected(selected)
                     .tab_index(0)
                     .on_mouse_down(
@@ -218,7 +221,7 @@ impl RenderOnce for DraftRow {
                             .into_any_element(),
                         session_row_trailing(
                             draft.harness,
-                            session_status_icon(&identity, if is_draft { "" } else { status }),
+                            session_status_icon(&identity, (!is_draft).then_some(status)),
                             age,
                             shortcut,
                             (draft.submitted || archived).then(|| {

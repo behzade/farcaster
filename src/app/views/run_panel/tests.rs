@@ -1,5 +1,5 @@
 use super::{
-    agents::{AgentSection, agent_section, lifecycle_label},
+    agents::{AgentSection, agent_lifecycle_visual, agent_section, lifecycle_label},
     ordered_worker_rows,
     resize::clamped_run_panel_width,
     run_panel_agent_rows, worker_navigation_rows,
@@ -7,7 +7,7 @@ use super::{
 use crate::agents::Backend;
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, AgentOutcome},
-    app::ui::theme::theme,
+    app::ui::{assets::AppIcon, theme::theme},
 };
 use std::{
     path::{Path, PathBuf},
@@ -22,12 +22,24 @@ fn run_panel_resize_stays_within_design_bounds() {
 }
 
 #[test]
-fn lifecycle_labels_are_truthful() {
+fn lifecycle_labels_and_icons_preserve_outcomes() {
     assert_eq!(
         lifecycle_label(AgentLifecycle::Completed(AgentOutcome::Failed)),
         "Failed"
     );
     assert_eq!(lifecycle_label(AgentLifecycle::Unknown), "Unknown");
+    assert_eq!(
+        agent_lifecycle_visual(AgentLifecycle::Completed(AgentOutcome::Complete)).0,
+        AppIcon::CheckCircle
+    );
+    assert_eq!(
+        agent_lifecycle_visual(AgentLifecycle::Completed(AgentOutcome::Incomplete)).0,
+        AppIcon::WarningCircle
+    );
+    assert_eq!(
+        agent_lifecycle_visual(AgentLifecycle::Completed(AgentOutcome::Failed)).0,
+        AppIcon::XCircle
+    );
 }
 
 #[test]

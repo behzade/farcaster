@@ -40,8 +40,8 @@ use crate::{
 pub(in crate::app) use group_drag::GroupTarget;
 pub(in crate::app) use groups::SessionRailKind;
 pub(in crate::app) use hover::{session_hover_details, session_tooltip_content};
+pub(in crate::app) use rows::project_label;
 pub(super) use rows::session_row_height;
-pub(in crate::app) use rows::{project_label, status_visual};
 
 #[cfg(test)]
 use self::{rendering::subagent_counts, rows::session_accessible_label};
