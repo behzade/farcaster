@@ -325,3 +325,85 @@ fn worker_model_fields_use_rows_and_fit_the_settings_viewport(cx: &mut gpui::Tes
         },
     );
 }
+
+#[gpui::test]
+fn voice_shortcut_records_cancels_rejects_conflicts_and_resets(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::voice_shortcut_records_cancels_rejects_conflicts_and_resets"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.update(|window, cx| app.update(cx, |app, cx| app.open_settings(window, cx)));
+            cx.run_until_parked();
+            draw(cx);
+            let content = cx.debug_bounds("settings-content").unwrap();
+            cx.simulate_event(gpui::ScrollWheelEvent {
+                position: content.center(),
+                delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(-100_000.0))),
+                ..Default::default()
+            });
+            draw(cx);
+            let press = |cx: &mut VisualTestContext, key: &str| {
+                cx.simulate_keystrokes(key);
+                cx.simulate_event(gpui::KeyUpEvent {
+                    keystroke: gpui::Keystroke::parse(key).unwrap(),
+                });
+                draw(cx);
+            };
+            click(cx, "voice-shortcut");
+            press(cx, "ctrl-g");
+            cx.update(|_, cx| {
+                assert!(app.read(cx).workspace.voice.capturing_shortcut);
+                assert!(app.read(cx).workspace.voice.settings_error.is_some());
+                assert!(app.read(cx).settings.voice_shortcut.is_none());
+                assert!(app.read(cx).navigation.chat.activation.hint().is_none());
+            });
+            press(cx, &crate::app::ui::keybindings::application_key("n"));
+            cx.update(|_, cx| {
+                assert!(app.read(cx).workspace.voice.capturing_shortcut);
+                assert!(
+                    app.read(cx)
+                        .workspace
+                        .voice
+                        .settings_error
+                        .as_ref()
+                        .unwrap()
+                        .contains("Already used")
+                );
+            });
+            press(cx, "escape");
+            cx.update(|_, cx| {
+                assert!(!app.read(cx).workspace.voice.capturing_shortcut);
+                assert!(app.read(cx).overlays.view.settings);
+            });
+            click(cx, "voice-shortcut");
+            press(cx, "ctrl-alt-v");
+            cx.update(|_, cx| {
+                assert!(!app.read(cx).workspace.voice.capturing_shortcut);
+                assert_eq!(
+                    app.read(cx).settings.voice_shortcut.as_deref(),
+                    Some("ctrl-alt-v")
+                );
+            });
+            assert_eq!(
+                crate::app::persistence::open()
+                    .unwrap()
+                    .load_voice_shortcut()
+                    .unwrap()
+                    .as_deref(),
+                Some("ctrl-alt-v")
+            );
+            click(cx, "voice-shortcut-reset");
+            cx.update(|_, cx| assert!(app.read(cx).settings.voice_shortcut.is_none()));
+            assert!(
+                crate::app::persistence::open()
+                    .unwrap()
+                    .load_voice_shortcut()
+                    .unwrap()
+                    .is_none()
+            );
+        },
+    );
+}

@@ -96,6 +96,7 @@ pub(in crate::app::views) fn render(
                                 .child(page.label())
                                 .on_click(move |_, window, cx| {
                                     let _ = select.update(cx, |this, cx| {
+                                        this.workspace.voice.capturing_shortcut = false;
                                         this.settings.tab = page;
                                         this.settings.tab_focus[page as usize].focus(window, cx);
                                         cx.notify();
@@ -253,28 +254,85 @@ fn voice_setting(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEle
     } else if !available {
         "Install and open Hex to enable voice."
     } else {
-        "Hold Ctrl+G to speak. Release G to send. Replies are read aloud outside chat."
+        "Hold to speak; release to send. Double-tap to lock; press again to send. Replies are read aloud outside chat."
     };
+    let capture = entity.clone();
+    let reset = entity.clone();
+    let recording = app.workspace.voice.capturing_shortcut;
     div()
-        .debug_selector(|| "settings-voice".into())
         .flex()
-        .items_center()
-        .justify_between()
-        .gap(theme().space.md)
-        .child(setting_label("Voice", description))
+        .flex_col()
+        .gap(theme().space.sm)
         .child(
-            Button::new("voice-toggle")
-                .debug_selector(|| "voice-toggle".into())
-                .accessibility_label("Voice")
-                .label(if enabled { "On" } else { "Off" })
-                .with_size(Size::Small)
-                .toggled(enabled)
-                .disabled(!available)
-                .when(enabled, |button| button.primary())
-                .when(!enabled, |button| button.secondary())
-                .on_click(move |_, _, cx| {
-                    let _ = entity.update(cx, FarcasterApp::toggle_settings_voice);
-                }),
+            div()
+                .debug_selector(|| "settings-voice".into())
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(theme().space.md)
+                .child(setting_label("Voice", description))
+                .child(
+                    Button::new("voice-toggle")
+                        .debug_selector(|| "voice-toggle".into())
+                        .accessibility_label("Voice")
+                        .label(if enabled { "On" } else { "Off" })
+                        .with_size(Size::Small)
+                        .toggled(enabled)
+                        .disabled(!available)
+                        .when(enabled, |button| button.primary())
+                        .when(!enabled, |button| button.secondary())
+                        .on_click(move |_, _, cx| {
+                            let _ = entity.update(cx, FarcasterApp::toggle_settings_voice);
+                        }),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(theme().space.md)
+                .child(setting_label(
+                    "Voice shortcut",
+                    if recording {
+                        "Press a shortcut. Escape cancels."
+                    } else {
+                        "Click to record a new shortcut."
+                    },
+                ))
+                .child(
+                    div()
+                        .flex()
+                        .gap(theme().space.sm)
+                        .child(
+                            Button::new("voice-shortcut")
+                                .debug_selector(|| "voice-shortcut".into())
+                                .label(if recording {
+                                    "Press shortcut…".to_owned()
+                                } else {
+                                    app.voice_shortcut_label()
+                                })
+                                .with_size(Size::Small)
+                                .secondary()
+                                .on_click(move |_, _, cx| {
+                                    let _ = capture
+                                        .update(cx, FarcasterApp::begin_voice_shortcut_capture);
+                                }),
+                        )
+                        .when(app.settings.voice_shortcut.is_some(), |row| {
+                            row.child(
+                                Button::new("voice-shortcut-reset")
+                                    .debug_selector(|| "voice-shortcut-reset".into())
+                                    .label("Reset")
+                                    .with_size(Size::Small)
+                                    .secondary()
+                                    .on_click(move |_, _, cx| {
+                                        let _ =
+                                            reset.update(cx, FarcasterApp::reset_voice_shortcut);
+                                    }),
+                            )
+                        }),
+                ),
         )
         .into_any_element()
 }

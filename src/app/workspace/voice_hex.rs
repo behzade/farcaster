@@ -37,6 +37,14 @@ impl Dictation {
         Self(mpsc::channel().0)
     }
 
+    #[cfg(test)]
+    pub(super) fn stub_with_finish() -> (Self, impl Fn() -> bool) {
+        let (send, receive) = mpsc::channel();
+        (Self(send), move || {
+            matches!(receive.try_recv(), Ok(Control::Finish))
+        })
+    }
+
     pub(super) fn start() -> Result<(Self, async_channel::Receiver<Event>), String> {
         let (control, commands) = mpsc::channel();
         let (updates, receiver) = async_channel::unbounded();

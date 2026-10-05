@@ -1,4 +1,5 @@
 use super::*;
+use gpui::KeyUpEvent;
 
 fn input(project: &Path, target: &str) -> Input {
     Input {
@@ -103,12 +104,15 @@ fn chat_voice_arms_and_sends_without_editor_context(cx: &mut gpui::TestAppContex
                     assert!(app.workspace.editor.view.is_none());
                 });
                 window.draw(cx).clear(cx);
-                window.dispatch_keystroke(gpui::Keystroke::parse("ctrl-g").unwrap(), cx);
-                assert!(app.read(cx).workspace.voice.held);
+                app.update(cx, |app, cx| {
+                    app.voice_right_shift_changed(true, false, window, cx);
+                });
+                assert!(matches!(
+                    app.read(cx).workspace.voice.gesture,
+                    Gesture::Pressed { .. }
+                ));
             });
-            cx.simulate_event(KeyUpEvent {
-                keystroke: gpui::Keystroke::parse("g").unwrap(),
-            });
+            right_shift(cx, app, false);
             while runtime.try_recv_command().is_some() {}
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
@@ -172,10 +176,16 @@ fn unavailable_or_disabled_voice_preserves_the_navigation_prefix(cx: &mut gpui::
                         app.settings.voice_enabled = enabled;
                         app.navigation.chat.activation.clear();
                         app.chat_composer_focus(cx).focus(window, cx);
+                        app.voice_right_shift_changed(true, false, window, cx);
+                        assert!(app.workspace.voice.key_down.is_none());
+                        app.voice_right_shift_changed(false, false, window, cx);
                     });
                     window.draw(cx).clear(cx);
                     window.dispatch_keystroke(gpui::Keystroke::parse("ctrl-g").unwrap(), cx);
-                    assert!(!app.read(cx).workspace.voice.held);
+                    assert!(!matches!(
+                        app.read(cx).workspace.voice.gesture,
+                        Gesture::Pressed { .. }
+                    ));
                     assert!(app.read(cx).navigation.chat.activation.hint().is_none());
                 });
                 cx.simulate_event(KeyUpEvent {
@@ -265,71 +275,92 @@ fn failed_or_stopped_submissions_do_not_speak_a_later_reply() {
     assert_eq!(voice.pending.len(), 1);
 }
 
-#[cfg(target_os = "macos")]
+fn prepare_voice_editor(cx: &mut gpui::VisualTestContext, app: &gpui::Entity<FarcasterApp>) {
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        app.update(cx, |app, cx| {
+            app.workspace.surface = AppSurface::Editor;
+            app.workspace.voice.available = true;
+            app.navigation.chat.focus.focus(window, cx);
+            // No editor process, so the timer cannot start a real microphone.
+            assert!(app.workspace.editor.view.is_none());
+        });
+    });
+}
+
+fn right_shift(cx: &mut gpui::VisualTestContext, app: &gpui::Entity<FarcasterApp>, down: bool) {
+    // Match GPUI's modifier-only keystroke before the native release callback.
+    if !down {
+        chord(cx, "shift", true);
+    }
+    cx.update(|window, cx| {
+        app.update(cx, |app, cx| {
+            app.voice_right_shift_changed(down, false, window, cx)
+        });
+    });
+}
+
+fn chord(cx: &mut gpui::VisualTestContext, key: &str, down: bool) {
+    if down {
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            window.dispatch_keystroke(gpui::Keystroke::parse(key).unwrap(), cx);
+        });
+    } else {
+        cx.simulate_event(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse(key).unwrap(),
+        });
+    }
+}
+
 #[gpui::test]
-fn holding_control_g_hides_hints_and_shows_only_confirmed_recording(cx: &mut gpui::TestAppContext) {
+fn holding_shortcut_shows_confirmed_recording_in_every_navbar(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
         concat!(
             module_path!(),
-            "::holding_control_g_hides_hints_and_shows_only_confirmed_recording"
+            "::holding_shortcut_shows_confirmed_recording_in_every_navbar"
         ),
         cx,
         |cx, app, _, project| {
-            cx.run_until_parked();
-            cx.update(|window, cx| {
-                app.update(cx, |app, cx| {
-                    app.workspace.surface = AppSurface::Editor;
-                    app.workspace.voice.available = true;
-                    app.navigation.chat.focus.focus(window, cx);
-                    // No editor process: exercise the hold timer without starting a real microphone.
-                    assert!(app.workspace.editor.view.is_none());
-                });
-                window.draw(cx).clear(cx);
-                window.dispatch_keystroke(gpui::Keystroke::parse("ctrl-g").unwrap(), cx);
-                assert!(app.read(cx).navigation.chat.activation.hint().is_none());
-            });
+            prepare_voice_editor(cx, app);
+            right_shift(cx, app, true);
             cx.run_until_parked();
             cx.executor()
                 .advance_clock(HOLD_DELAY + Duration::from_millis(1));
             cx.run_until_parked();
             cx.update(|window, cx| {
-                assert!(app.read(cx).navigation.chat.activation.hint().is_none());
                 app.update(cx, |app, cx| {
+                    assert!(matches!(app.workspace.voice.gesture, Gesture::Holding));
+                    assert!(app.navigation.chat.activation.hint().is_none());
                     app.workspace.voice.input = Some(input(&project, "current"));
                     cx.notify();
                 });
                 window.draw(cx).clear(cx);
             });
             assert!(cx.debug_bounds("voice-recording").is_none());
-            cx.update(|window, cx| {
-                app.update(cx, |app, cx| {
-                    app.workspace.voice.input.as_mut().unwrap().recording = true;
-                    cx.notify();
-                });
-                window.draw(cx).clear(cx);
-            });
-            let icon = cx.debug_bounds("voice-recording").expect("recording icon");
-            assert!(icon.size.width <= gpui::px(40.0) && icon.size.height <= gpui::px(32.0));
             for surface in [AppSurface::Chat, AppSurface::Editor, AppSurface::Terminal] {
                 cx.update(|window, cx| {
                     app.update(cx, |app, cx| {
+                        app.workspace.voice.input.as_mut().unwrap().recording = true;
                         app.workspace.surface = surface;
                         cx.notify();
                     });
                     window.draw(cx).clear(cx);
                 });
-                let icon = cx
-                    .debug_bounds("voice-recording")
-                    .expect("recording icon on every surface");
+                let icon = cx.debug_bounds("voice-recording").expect("recording icon");
                 let bar = cx.debug_bounds("workspace-bar").expect("navbar");
                 assert!(icon.top() >= bar.top() && icon.bottom() <= bar.bottom());
                 assert!((icon.center().x - bar.center().x).abs() <= gpui::px(1.0));
             }
-            cx.simulate_event(KeyUpEvent {
-                keystroke: gpui::Keystroke::parse("g").unwrap(),
+            let (recorder, finished) = hex::Dictation::stub_with_finish();
+            cx.update(|_, cx| {
+                app.update(cx, |app, _| {
+                    app.workspace.voice.input.as_mut().unwrap().recorder = recorder;
+                })
             });
+            right_shift(cx, app, false);
+            assert!(finished(), "release finishes the recording");
             cx.update(|window, cx| {
-                assert!(app.read(cx).navigation.chat.activation.hint().is_none());
                 assert!(!app.read(cx).workspace.voice.recording());
                 window.draw(cx).clear(cx);
             });
@@ -338,85 +369,282 @@ fn holding_control_g_hides_hints_and_shows_only_confirmed_recording(cx: &mut gpu
     );
 }
 
-#[cfg(target_os = "macos")]
 #[gpui::test]
-fn tapping_control_g_preserves_navigation_and_key_up_disarms_voice(cx: &mut gpui::TestAppContext) {
+fn double_tap_locks_until_the_next_shortcut_press(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
         concat!(
             module_path!(),
-            "::tapping_control_g_preserves_navigation_and_key_up_disarms_voice"
+            "::double_tap_locks_until_the_next_shortcut_press"
         ),
         cx,
-        |cx, app, _, _| {
+        |cx, app, _, project| {
+            prepare_voice_editor(cx, app);
+            cx.update(|_, cx| {
+                app.update(cx, |app, _| {
+                    app.workspace.voice.gesture =
+                        Gesture::Tapped(Instant::now() - DOUBLE_TAP - Duration::from_millis(1));
+                })
+            });
+            right_shift(cx, app, true);
+            right_shift(cx, app, false);
+            cx.update(|_, cx| {
+                app.update(cx, |app, _| {
+                    assert!(matches!(app.workspace.voice.gesture, Gesture::Tapped(_)));
+                    app.workspace.voice.gesture = Gesture::Idle;
+                })
+            });
+            for _ in 0..2 {
+                right_shift(cx, app, true);
+                right_shift(cx, app, false);
+            }
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
-                    app.workspace.surface = AppSurface::Editor;
-                    app.workspace.voice.available = true;
-                    app.navigation.chat.focus.focus(window, cx);
-                });
-                window.draw(cx).clear(cx);
-                window.dispatch_keystroke(gpui::Keystroke::parse("ctrl-g").unwrap(), cx);
-                assert!(app.read(cx).workspace.voice.held);
-                assert!(app.read(cx).navigation.chat.activation.hint().is_none());
+                    assert!(matches!(app.workspace.voice.gesture, Gesture::Locked));
+                    assert!(app.workspace.voice.key_down.is_none());
+                    app.workspace.voice.input = Some(Input {
+                        recording: true,
+                        ..input(&project, "current")
+                    });
+                    assert!(app.workspace.voice.recording());
+                    assert!(!app.voice_key_down(&gpui::Keystroke::parse("a").unwrap(), window, cx));
+                    assert!(app.workspace.voice.recording());
+                })
             });
-            cx.simulate_event(gpui::KeyUpEvent {
-                keystroke: gpui::Keystroke::parse("ctrl-g").unwrap(),
-            });
+            let (recorder, finished) = hex::Dictation::stub_with_finish();
             cx.update(|_, cx| {
-                assert!(!app.read(cx).workspace.voice.held);
-                assert!(app.read(cx).navigation.chat.activation.hint().is_some());
+                app.update(cx, |app, _| {
+                    app.workspace.voice.input.as_mut().unwrap().recorder = recorder;
+                })
             });
+            right_shift(cx, app, false);
+            assert!(!finished(), "locked recording continues after release");
+            right_shift(cx, app, true);
+            assert!(finished(), "the next press finishes locked recording");
+            cx.update(|_, cx| {
+                assert!(!app.read(cx).workspace.voice.recording());
+                assert!(
+                    app.read(cx).workspace.voice.input.is_some(),
+                    "keep input while Hex transcribes"
+                );
+            });
+            right_shift(cx, app, false);
             cx.run_until_parked();
             cx.executor()
                 .advance_clock(HOLD_DELAY + Duration::from_millis(1));
             cx.run_until_parked();
-            cx.update(|window, cx| {
-                assert!(app.read(cx).workspace.voice.input.is_none());
-                window.dispatch_keystroke(gpui::Keystroke::parse("ctrl-g").unwrap(), cx);
-                assert_eq!(app.read(cx).workspace.surface, AppSurface::Chat);
+            cx.update(|_, cx| {
+                assert!(matches!(
+                    app.read(cx).workspace.voice.gesture,
+                    Gesture::Idle
+                ))
             });
         },
     );
 }
 
-#[cfg(target_os = "macos")]
 #[gpui::test]
-fn escape_cancels_while_control_g_is_still_held(cx: &mut gpui::TestAppContext) {
+fn unrelated_keys_and_escape_cancel_without_consuming_typing(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
         concat!(
             module_path!(),
-            "::escape_cancels_while_control_g_is_still_held"
+            "::unrelated_keys_and_escape_cancel_without_consuming_typing"
         ),
         cx,
         |cx, app, runtime, project| {
+            prepare_voice_editor(cx, app);
+            right_shift(cx, app, true);
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
-                    app.workspace.surface = AppSurface::Editor;
-                    app.navigation.chat.focus.focus(window, cx);
-                    app.workspace.voice.held = true;
-                    app.workspace.voice.available = true;
-                    app.workspace.voice.input = Some(Input {
-                        recording: true,
-                        ..input(&project, "original")
+                    assert!(!app.voice_key_down(
+                        &gpui::Keystroke::parse("shift-a").unwrap(),
+                        window,
+                        cx
+                    ))
+                })
+            });
+            right_shift(cx, app, false);
+            cx.run_until_parked();
+            cx.executor()
+                .advance_clock(HOLD_DELAY + Duration::from_millis(1));
+            cx.run_until_parked();
+            cx.update(|_, cx| assert!(app.read(cx).workspace.voice.input.is_none()));
+            for key in ["A", "escape"] {
+                right_shift(cx, app, true);
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| {
+                        app.workspace.voice.gesture = Gesture::Holding;
+                        app.workspace.voice.input = Some(Input {
+                            recording: true,
+                            ..input(&project, "current")
+                        });
+                        assert_eq!(
+                            app.voice_key_down(&gpui::Keystroke::parse(key).unwrap(), window, cx),
+                            key == "escape"
+                        );
+                        assert!(app.workspace.voice.input.is_none());
+                        assert!(!app.workspace.voice.recording());
+                        assert!(matches!(app.workspace.voice.gesture, Gesture::Used));
                     });
+                    window.draw(cx).clear(cx);
                 });
-                window.draw(cx).clear(cx);
-                window.dispatch_keystroke(gpui::Keystroke::parse("ctrl-escape").unwrap(), cx);
-                assert!(app.read(cx).workspace.voice.input.is_none());
-                assert!(!app.read(cx).workspace.voice.recording());
-                assert!(app.read(cx).workspace.voice.held);
+                right_shift(cx, app, false);
+            }
+            assert!(runtime.try_recv_signal().is_none());
+            cx.update(|window, cx| {
                 window.dispatch_keystroke(gpui::Keystroke::parse("ctrl-g").unwrap(), cx);
-                assert!(app.read(cx).workspace.voice.input.is_none());
-                assert!(app.read(cx).navigation.chat.activation.hint().is_none());
+                assert!(!matches!(
+                    app.read(cx).workspace.voice.gesture,
+                    Gesture::Pressed { .. }
+                ));
+            });
+            cx.simulate_event(KeyUpEvent {
+                keystroke: gpui::Keystroke::parse("g").unwrap(),
+            });
+            cx.update(|_, cx| assert!(app.read(cx).navigation.chat.activation.hint().is_some()));
+        },
+    );
+}
+
+#[gpui::test]
+fn voice_custom_shortcut_ignores_repeat_and_releases_without_modifiers(
+    cx: &mut gpui::TestAppContext,
+) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::voice_custom_shortcut_ignores_repeat_and_releases_without_modifiers"
+        ),
+        cx,
+        |cx, app, runtime, _| {
+            prepare_voice_editor(cx, app);
+            cx.update(|_, cx| {
+                app.update(cx, |app, _| {
+                    app.settings.voice_shortcut = Some("ctrl-alt-v".into());
+                });
+            });
+            chord(cx, "ctrl-.", true);
+            chord(cx, ".", false);
+            right_shift(cx, app, true);
+            right_shift(cx, app, false);
+            cx.update(|_, cx| {
+                assert!(matches!(
+                    app.read(cx).workspace.voice.gesture,
+                    Gesture::Idle
+                ))
+            });
+            chord(cx, "ctrl-alt-v", true);
+            let generation = cx.update(|_, cx| app.read(cx).workspace.voice.press);
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    // A custom chord still holds when one of its modifiers changes.
+                    app.voice_right_shift_changed(false, true, window, cx);
+                });
+            });
+            chord(cx, "ctrl-alt-v", true);
+            cx.update(|_, cx| {
+                assert_eq!(app.read(cx).workspace.voice.press, generation);
+                assert!(matches!(
+                    app.read(cx).workspace.voice.gesture,
+                    Gesture::Pressed { second_tap: false }
+                ));
+            });
+            chord(cx, "v", false);
+            cx.update(|_, cx| {
+                assert!(matches!(
+                    app.read(cx).workspace.voice.gesture,
+                    Gesture::Tapped(_)
+                ))
             });
             assert!(
                 runtime.try_recv_signal().is_none(),
-                "cancelling dictation must not steer or abort the agent"
+                "old default must not abort"
             );
-            cx.simulate_event(gpui::KeyUpEvent {
-                keystroke: gpui::Keystroke::parse("g").unwrap(),
+        },
+    );
+}
+
+#[gpui::test]
+fn voice_right_shift_ignores_left_shift_and_modifier_combinations(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::voice_right_shift_ignores_left_shift_and_modifier_combinations"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.workspace.surface = AppSurface::Editor;
+                    app.workspace.voice.available = true;
+                    for (down, other) in [
+                        (false, true),
+                        (false, false),
+                        (true, true),
+                        (true, false),
+                        (false, false),
+                    ] {
+                        app.voice_right_shift_changed(down, other, window, cx);
+                        assert!(app.workspace.voice.key_down.is_none());
+                    }
+                    app.voice_right_shift_changed(true, false, window, cx);
+                    assert!(matches!(
+                        app.workspace.voice.gesture,
+                        Gesture::Pressed { .. }
+                    ));
+                    app.voice_right_shift_changed(true, true, window, cx);
+                    assert!(matches!(app.workspace.voice.gesture, Gesture::Used));
+                    app.voice_right_shift_changed(false, false, window, cx);
+                    assert!(matches!(app.workspace.voice.gesture, Gesture::Idle));
+                });
             });
-            cx.update(|_, cx| assert!(!app.read(cx).workspace.voice.held));
+        },
+    );
+}
+
+#[gpui::test]
+fn voice_shortcut_capture_accepts_right_shift_but_not_shift_used_for_typing(
+    cx: &mut gpui::TestAppContext,
+) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::voice_shortcut_capture_accepts_right_shift_but_not_shift_used_for_typing"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.open_settings(window, cx);
+                    app.settings.voice_shortcut = Some("ctrl-alt-v".into());
+                    app.begin_voice_shortcut_capture(cx);
+                    app.voice_right_shift_changed(true, false, window, cx);
+                    assert!(app.voice_key_down(
+                        &gpui::Keystroke::parse("shift-a").unwrap(),
+                        window,
+                        cx
+                    ));
+                    app.voice_right_shift_changed(false, false, window, cx);
+                    assert!(app.workspace.voice.capturing_shortcut);
+                    assert_eq!(app.settings.voice_shortcut.as_deref(), Some("ctrl-alt-v"));
+                });
+            });
+            right_shift(cx, app, true);
+            right_shift(cx, app, false);
+            cx.update(|_, cx| {
+                assert!(!app.read(cx).workspace.voice.capturing_shortcut);
+                assert!(app.read(cx).workspace.voice.settings_error.is_none());
+                assert!(app.read(cx).settings.voice_shortcut.is_none());
+                assert_eq!(app.read(cx).voice_shortcut_label(), "Right Shift");
+            });
+            assert!(
+                crate::app::persistence::open()
+                    .unwrap()
+                    .load_voice_shortcut()
+                    .unwrap()
+                    .is_none()
+            );
         },
     );
 }

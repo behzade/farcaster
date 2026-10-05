@@ -35,15 +35,10 @@ fn command_help_rows(
     rows
 }
 
-pub(super) fn render_help() -> impl IntoElement {
+pub(super) fn render_help(voice_shortcut: &str) -> impl IntoElement {
     let shortcuts = crate::app::ui::navigation::help_shortcuts()
         .into_iter()
         .chain([
-            (
-                "App",
-                "ctrl-g".into(),
-                "Hold to talk; release G to send (macOS, Hex)",
-            ),
             (
                 "Composer",
                 "enter".into(),
@@ -62,6 +57,11 @@ pub(super) fn render_help() -> impl IntoElement {
             ),
         ])
         .map(|(section, key, label)| (section.to_owned(), vec![key], label))
+        .chain(std::iter::once((
+            "App".into(),
+            vec![voice_shortcut.to_owned()],
+            "Hold to talk; double-tap to lock; press again to send (Hex)",
+        )))
         .chain(
             crate::app::ui::keybindings::registry()
                 .into_iter()
@@ -142,7 +142,11 @@ fn shortcut_row(keystrokes: &[String], label: &str) -> impl IntoElement {
                 .gap(theme().space.xs)
                 .when(index > 0, |row| row.child("or"))
                 .children(keystroke.split_whitespace().map(|key| {
+                    if key == "right-shift" {
+                        return div().child("Right Shift").into_any_element();
+                    }
                     Kbd::new(gpui::Keystroke::parse(key).expect("registered shortcut must parse"))
+                        .into_any_element()
                 }))
         }));
     div()

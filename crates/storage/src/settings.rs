@@ -74,6 +74,32 @@ fn stored_family_identity(
 }
 
 impl StateStore {
+    pub fn load_voice_shortcut(&self) -> Result<Option<String>, String> {
+        self.connection
+            .query_row(
+                "SELECT value FROM meta WHERE key='voice_shortcut'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| format!("load voice shortcut: {error}"))
+    }
+
+    pub fn save_voice_shortcut(&self, shortcut: Option<&str>) -> Result<(), String> {
+        let result = match shortcut {
+            Some(shortcut) => self.connection.execute(
+                "INSERT INTO meta(key, value) VALUES('voice_shortcut', ?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [shortcut],
+            ),
+            None => self
+                .connection
+                .execute("DELETE FROM meta WHERE key='voice_shortcut'", []),
+        };
+        result
+            .map(|_| ())
+            .map_err(|error| format!("save voice shortcut: {error}"))
+    }
+
     pub fn load_voice_enabled(&self) -> Result<bool, String> {
         self.connection
             .query_row(

@@ -167,12 +167,7 @@ impl FarcasterApp {
                 }
                 let consumed = entity
                     .update(cx, |this, cx| {
-                        if this.voice_key_down(
-                            &event.keystroke.key,
-                            event.keystroke.modifiers,
-                            window,
-                            cx,
-                        ) {
+                        if this.voice_key_down(&event.keystroke, window, cx) {
                             return true;
                         }
                         // Run before GPUI buffers Escape as a sequence prefix.
@@ -234,6 +229,7 @@ impl FarcasterApp {
                 this.refresh_voice_availability(cx);
             } else {
                 this.cancel_voice(cx);
+                this.workspace.voice.release_keys();
                 this.navigation.chat.activation.clear();
                 this.notify_composer(cx);
             }

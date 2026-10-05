@@ -1,27 +1,47 @@
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
-use gpui::{Context, KeyUpEvent, Window};
+use gpui::{Context, Window};
 
 use super::{neovim::CodeContext, send_to_chat::CodeDestination};
-use crate::app::{AppSurface, FarcasterApp, ui::navigation::is_prefix_chord};
+use crate::app::{AppSurface, FarcasterApp};
 
 #[path = "voice_hex.rs"]
 mod hex;
+#[path = "voice_shortcut.rs"]
+mod shortcut;
 #[path = "voice_speech.rs"]
 mod speech;
 
 const HOLD_DELAY: Duration = Duration::from_millis(300);
+const DOUBLE_TAP: Duration = Duration::from_millis(350);
+
+#[derive(Default)]
+enum Gesture {
+    #[default]
+    Idle,
+    Tapped(Instant),
+    Pressed {
+        second_tap: bool,
+    },
+    Holding,
+    Locked,
+    Used,
+}
 
 #[derive(Default)]
 pub(in crate::app) struct VoiceState {
     pub(in crate::app) available: bool,
     pub(in crate::app) settings_error: Option<String>,
     availability_check: Option<gpui::Task<()>>,
-    held: bool,
+    key_down: Option<String>,
+    right_shift_down: bool,
+    capture_right_shift: bool,
+    pub(in crate::app) capturing_shortcut: bool,
+    gesture: Gesture,
     press: u64,
     input: Option<Input>,
     pending: HashMap<String, String>,
@@ -42,8 +62,16 @@ struct Input {
 }
 
 impl VoiceState {
+    pub(in crate::app) fn release_keys(&mut self) {
+        self.key_down = None;
+        self.right_shift_down = false;
+        self.capture_right_shift = false;
+        self.capturing_shortcut = false;
+    }
+
     pub(in crate::app) fn recording(&self) -> bool {
-        self.held && self.input.as_ref().is_some_and(|input| input.recording)
+        matches!(self.gesture, Gesture::Holding | Gesture::Locked)
+            && self.input.as_ref().is_some_and(|input| input.recording)
     }
 
     pub(in crate::app) fn submission_result(
@@ -106,33 +134,51 @@ impl FarcasterApp {
         cx.notify();
     }
 
-    /// Observe the same key as app navigation. A tap remains a navigation prefix.
     pub(in crate::app) fn voice_key_down(
         &mut self,
-        key: &str,
-        modifiers: gpui::Modifiers,
+        stroke: &gpui::Keystroke,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if key == "escape"
-            && (self.workspace.voice.input.is_some() || self.workspace.voice.speech.is_some())
-        {
-            let held = self.workspace.voice.held;
-            self.cancel_voice(cx);
-            // G may still be physically down: suppress its repeats until key-up.
-            self.workspace.voice.held = held;
+        // GPUI synthesizes a modifier-only keystroke just before its release event.
+        // The modifier handler owns Right Shift's press and release.
+        if stroke.key == "shift" {
+            return false;
+        }
+        self.workspace.voice.capture_right_shift = false;
+        if self.workspace.voice.key_down.as_deref() == Some(&stroke.key) {
+            return true; // Ignore autorepeat, including after recording a new shortcut.
+        }
+        if self.capture_voice_shortcut(stroke, cx) {
+            self.workspace.voice.key_down = Some(stroke.key.clone());
             return true;
         }
-        if !cfg!(target_os = "macos") || !self.voice_enabled() {
+        if stroke.key == "escape"
+            && (self.workspace.voice.input.is_some() || self.workspace.voice.speech.is_some())
+        {
+            self.cancel_voice(cx);
+            return true;
+        }
+        if !self.matches_voice_shortcut(stroke) {
+            self.interrupt_voice_gesture(cx);
             return false;
         }
-        if !is_prefix_chord(key, modifiers) {
-            if self.workspace.voice.input.is_none() {
-                self.workspace.voice.held = false;
-            }
+        self.press_voice_shortcut(&stroke.key, window, cx)
+    }
+
+    fn press_voice_shortcut(
+        &mut self,
+        key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.voice_enabled() {
             return false;
         }
-        if self.workspace.voice.held {
+        if matches!(self.workspace.voice.gesture, Gesture::Locked) {
+            self.workspace.voice.key_down = Some(key.into());
+            self.workspace.voice.gesture = Gesture::Used;
+            self.finish_voice(cx);
             return true;
         }
         if !matches!(
@@ -142,46 +188,80 @@ impl FarcasterApp {
         {
             return false;
         }
-        if self.workspace.voice.speech.take().is_some() {
-            cx.notify();
-        }
-        self.workspace.voice.held = true;
+        self.workspace.voice.key_down = Some(key.into());
+        let second_tap = matches!(self.workspace.voice.gesture, Gesture::Tapped(at) if at.elapsed() <= DOUBLE_TAP);
+        self.workspace.voice.gesture = Gesture::Pressed { second_tap };
         self.workspace.voice.press = self.workspace.voice.press.wrapping_add(1);
         let press = self.workspace.voice.press;
         cx.spawn_in(window, async move |weak, cx| {
             cx.background_executor().timer(HOLD_DELAY).await;
             let _ = weak.update_in(cx, |this, window, cx| {
-                if this.workspace.voice.held && this.workspace.voice.press == press {
-                    this.navigation.chat.activation.clear();
-                    this.notify_composer(cx);
+                if this.workspace.voice.press == press
+                    && matches!(this.workspace.voice.gesture, Gesture::Pressed { .. })
+                {
+                    this.workspace.voice.gesture = Gesture::Holding;
                     this.start_voice(window, cx);
                 }
             });
         })
         .detach();
-        false
+        true
+    }
+
+    pub(in crate::app) fn interrupt_voice_gesture(&mut self, cx: &mut Context<Self>) {
+        self.workspace.voice.capture_right_shift = false;
+        match self.workspace.voice.gesture {
+            Gesture::Holding => {
+                self.workspace.voice.input.take();
+                self.workspace.voice.gesture = Gesture::Used;
+                cx.notify();
+            }
+            Gesture::Pressed { .. } | Gesture::Tapped(_) => {
+                self.workspace.voice.gesture = Gesture::Used
+            }
+            _ => {}
+        }
     }
 
     pub(in crate::app) fn voice_key_up(
         &mut self,
-        event: &KeyUpEvent,
+        event: &gpui::KeyUpEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if event.keystroke.key != "g" || !self.workspace.voice.held {
+        if self.workspace.voice.key_down.as_deref() != Some(&event.keystroke.key) {
             return;
         }
-        self.workspace.voice.held = false;
-        if let Some(input) = self.workspace.voice.input.as_mut() {
-            input.recorder.finish();
-            window.prevent_default();
-            cx.stop_propagation();
-            cx.notify();
+        window.prevent_default();
+        cx.stop_propagation();
+        self.release_voice_shortcut(window, cx);
+    }
+
+    fn release_voice_shortcut(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.workspace.voice.key_down = None;
+        match std::mem::take(&mut self.workspace.voice.gesture) {
+            Gesture::Pressed { second_tap: true } => {
+                self.workspace.voice.gesture = Gesture::Locked;
+                self.start_voice(window, cx);
+            }
+            Gesture::Pressed { second_tap: false } => {
+                self.workspace.voice.gesture = Gesture::Tapped(Instant::now())
+            }
+            Gesture::Holding => self.finish_voice(cx),
+            Gesture::Locked => self.workspace.voice.gesture = Gesture::Locked,
+            _ => {}
         }
     }
 
+    fn finish_voice(&mut self, cx: &mut Context<Self>) {
+        if let Some(input) = &self.workspace.voice.input {
+            input.recorder.finish();
+        }
+        cx.notify();
+    }
+
     pub(in crate::app) fn cancel_voice(&mut self, cx: &mut Context<Self>) {
-        self.workspace.voice.held = false;
+        self.workspace.voice.gesture = Gesture::Used;
         self.workspace.voice.input.take();
         self.workspace.voice.speech.take();
         cx.notify();
@@ -309,6 +389,7 @@ impl FarcasterApp {
     }
 
     fn voice_failed(&mut self, error: String, cx: &mut Context<Self>) {
+        self.workspace.voice.gesture = Gesture::Used;
         self.workspace.voice.input.take();
         self.notify_workspace_error("Voice", error, cx);
     }

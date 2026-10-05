@@ -128,7 +128,7 @@ impl FarcasterApp {
                         surface
                             .w(theme().size(520.0))
                             .max_w_full()
-                            .child(keybindings::render_help())
+                            .child(keybindings::render_help(self.voice_shortcut()))
                     },
                 ))
             })

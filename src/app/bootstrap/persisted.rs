@@ -16,6 +16,7 @@ pub(super) struct PersistedState {
     pub(super) saved_proxy: Option<String>,
     pub(super) expand_transcript_folders: bool,
     pub(super) voice_enabled: bool,
+    pub(super) voice_shortcut: Option<String>,
     pub(super) group_sessions_by_project: bool,
     pub(super) editor_command: String,
     pub(super) editor_choice: crate::storage::EditorChoice,
@@ -141,6 +142,12 @@ pub(super) fn load(
             error.get_or_insert(load_error);
             false
         });
+    let voice_shortcut = crate::app::persistence::open()
+        .and_then(|store| store.load_voice_shortcut())
+        .unwrap_or_else(|load_error| {
+            error.get_or_insert(load_error);
+            None
+        });
     let editor_choice = crate::app::persistence::open()
         .and_then(|store| store.load_editor_choice())
         .unwrap_or_else(|load_error| {
@@ -194,6 +201,7 @@ pub(super) fn load(
         saved_proxy,
         expand_transcript_folders,
         voice_enabled,
+        voice_shortcut,
         group_sessions_by_project,
         editor_choice,
         editor_command,

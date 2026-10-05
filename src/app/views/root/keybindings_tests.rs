@@ -69,3 +69,16 @@ fn long_labels_and_multi_chord_keys_fit_narrow_help(cx: &mut gpui::TestAppContex
         }
     }
 }
+
+#[gpui::test]
+fn voice_shortcut_help_renders_right_shift_and_custom_binding(cx: &mut gpui::TestAppContext) {
+    cx.update(gpui_component::init);
+    let cx = cx.add_empty_window();
+    for key in ["right-shift", "ctrl-alt-v"] {
+        cx.draw(
+            point(px(0.0), px(0.0)),
+            size(px(520.0), px(800.0)),
+            |_, _| render_help(key).into_any_element(),
+        );
+    }
+}

@@ -876,6 +876,7 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.workspace.voice.capturing_shortcut = false;
         self.refresh_voice_availability(cx);
         self.refresh_theme_editor(window, cx);
         if self.settings.proxy_save.is_some() {
