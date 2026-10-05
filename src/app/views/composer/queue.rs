@@ -1,131 +1,25 @@
-use std::hash::{Hash as _, Hasher as _};
-
 use gpui::{
     AnyElement, App, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
-    RenderOnce, Role, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
-    prelude::FluentBuilder as _,
+    RenderOnce, Role, SharedString, StatefulInteractiveElement as _, Styled as _, StyledText,
+    Window, div, prelude::FluentBuilder as _,
 };
 
 use crate::app::{
-    FarcasterApp,
-    runtime::RuntimeCommand,
+    composer::queue::{QueueAction, QueueActionHandler, QueuePresentation, QueueRow},
     ui::{
         assets::AppIcon,
         primitives::{
             AppIconSize, AppTooltip as _, ButtonTone, activates_button, app_icon, button,
-            icon_button, icon_control, preserve_pointer_focus,
+            icon_control, preserve_pointer_focus,
         },
+        theme::theme,
     },
 };
-use crate::{
-    agents::PeerMessage,
-    app::ui::theme::theme,
-    conversation::{PendingReceiptRef, QueueState},
-    protocol::PromptMode,
-};
-use gpui::WeakEntity;
 
-#[derive(Clone)]
-pub(super) struct QueuedMessage<'a> {
-    pub text: &'a String,
-    pub id: Option<&'a String>,
-    pub cancellable: bool,
-    pub dismiss: bool,
-    pub unknown: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum QueuedMessageKind {
-    Steer,
-    FollowUp,
-}
-
-impl QueuedMessageKind {
-    fn heading(self) -> &'static str {
-        match self {
-            Self::Steer => "Steer",
-            Self::FollowUp => "Follow-up",
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Steer => "For the current turn",
-            Self::FollowUp => "For the next turn",
-        }
-    }
-}
-
-pub(super) fn queued_message_groups(
-    queue: &QueueState,
-) -> Vec<(QueuedMessageKind, Vec<QueuedMessage<'_>>)> {
-    [
-        (
-            QueuedMessageKind::Steer,
-            &queue.steering,
-            &queue.steering_ids,
-        ),
-        (
-            QueuedMessageKind::FollowUp,
-            &queue.follow_up,
-            &queue.follow_up_ids,
-        ),
-    ]
-    .into_iter()
-    .filter(|(_, texts, _)| !texts.is_empty())
-    .map(|(kind, texts, ids)| {
-        let messages = texts
-            .iter()
-            .enumerate()
-            .map(|(index, text)| {
-                let id = ids.get(index);
-                QueuedMessage {
-                    text,
-                    id,
-                    cancellable: id.is_some_and(|id| queue.can_cancel(id)),
-                    dismiss: false,
-                    unknown: false,
-                }
-            })
-            .collect();
-        (kind, messages)
-    })
-    .collect()
-}
-
-pub(super) fn queued_message_preview(message: &str) -> String {
-    let (from, message) = PeerMessage::prompt_parts(message)
-        .map_or((None, message.trim()), |(from, message)| {
-            (Some(from), message.trim_end())
-        });
-    if from.is_none() && message.is_empty() {
-        return "Message".to_owned();
-    }
-    let (first, multiline) = message
-        .split_once(['\r', '\n'])
-        .map_or((message, false), |(first, _)| (first.trim_end(), true));
-    let mut preview = String::with_capacity(
-        first.len()
-            + from.map_or(0, |from| from.len() + 1 + usize::from(!first.is_empty()))
-            + if multiline { '…'.len_utf8() } else { 0 },
-    );
-    if let Some(from) = from {
-        preview.push_str(from);
-        preview.push(':');
-        if !first.is_empty() {
-            preview.push(' ');
-        }
-    }
-    preview.push_str(first);
-    if multiline {
-        preview.push('…');
-    }
-    preview
-}
-
-pub(super) fn saved_prompt_body(id: i64, text: &str) -> gpui::Stateful<gpui::Div> {
+pub(super) fn message_body(id: String, text: &str) -> gpui::Stateful<gpui::Div> {
     div()
-        .id(format!("saved-prompt-body-{id}"))
+        .id(SharedString::from(id))
+        .debug_selector(|| "queue-message-body".into())
         .w_full()
         .min_w_0()
         .max_h(theme().layout.tool_max_height)
@@ -134,26 +28,49 @@ pub(super) fn saved_prompt_body(id: i64, text: &str) -> gpui::Stateful<gpui::Div
         .child(text.to_owned())
 }
 
+#[derive(Default)]
+struct Expansion {
+    preview: String,
+    body: String,
+    clipped: bool,
+    expanded: bool,
+}
+
 #[derive(IntoElement)]
 struct QueueMessageRow {
-    id: SharedString,
-    text: String,
-    unknown: bool,
-    action: Option<AnyElement>,
-    expanded_content: Option<AnyElement>,
+    row: QueueRow,
+    on_action: QueueActionHandler,
 }
 
 impl RenderOnce for QueueMessageRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let state = window.use_keyed_state(self.id.clone(), cx, |_, _| false);
-        let expanded = *state.read(cx);
+        let row = self.row;
+        let state = window.use_keyed_state(SharedString::from(row.id.clone()), cx, |_, _| {
+            Expansion::default()
+        });
+        state.update(cx, |state, _| {
+            if state.preview != row.preview || state.body != row.body {
+                *state = Expansion {
+                    preview: row.preview.clone(),
+                    body: row.body.clone(),
+                    ..Default::default()
+                };
+            }
+        });
+        let has_details = row.preview != row.body || row.details.is_some();
+        let expandable = has_details || state.read(cx).clipped;
+        let expanded = expandable && state.read(cx).expanded;
         let click = state.clone();
-        let preview = queued_message_preview(&self.text);
-        let label = format!("Inspect message: {preview}");
-        let selector = self.id.clone();
+        let keyboard = state.clone();
+        let preview = StyledText::new(row.preview.clone());
+        let layout = preview.layout().clone();
+        let preview_text = row.preview.clone();
+        let label = format!("Inspect message: {}", row.preview);
+        let notice_id = SharedString::from(format!("{}-notice", row.id));
+        let selector = row.id.clone();
         div()
-            .id(self.id.clone())
-            .debug_selector(move || selector.to_string())
+            .id(SharedString::from(row.id.clone()))
+            .debug_selector(move || selector.clone())
             .w_full()
             .min_w_0()
             .flex()
@@ -168,266 +85,143 @@ impl RenderOnce for QueueMessageRow {
                     .gap(theme().space.xs)
                     .child(
                         div()
-                            .id(SharedString::from(format!("{}-preview", self.id)))
+                            .id(SharedString::from(format!("{}-preview", row.id)))
                             .debug_selector({
-                                let id = self.id.clone();
+                                let id = row.id.clone();
                                 move || format!("{id}-preview")
                             })
-                            .role(Role::Button)
-                            .aria_label(label)
-                            .aria_expanded(expanded)
-                            .tab_index(0)
                             .flex_1()
                             .min_w_0()
                             .min_h(theme().layout.status_row_height)
                             .flex()
                             .items_center()
-                            .cursor_pointer()
-                            .hover(|row| row.text_color(theme().colors.text))
-                            .focus_visible(|row| row.bg(theme().colors.highlight))
-                            .on_mouse_down(MouseButton::Left, preserve_pointer_focus)
-                            .on_click(move |_, _, cx| {
-                                cx.stop_propagation();
-                                click.update(cx, |expanded, cx| {
-                                    *expanded = !*expanded;
-                                    cx.notify();
-                                });
+                            .when(expandable, |preview| {
+                                preview
+                                    .role(Role::Button)
+                                    .aria_label(label)
+                                    .aria_expanded(expanded)
+                                    .tab_index(0)
+                                    .cursor_pointer()
+                                    .hover(|row| row.text_color(theme().colors.text))
+                                    .focus_visible(|row| row.bg(theme().colors.highlight))
+                                    .on_mouse_down(MouseButton::Left, preserve_pointer_focus)
+                                    .on_click(move |_, _, cx| {
+                                        cx.stop_propagation();
+                                        click.update(cx, |state, cx| {
+                                            state.expanded = !state.expanded;
+                                            cx.notify();
+                                        });
+                                    })
+                                    .on_key_down(move |event, _, cx| {
+                                        if activates_button(event) {
+                                            cx.stop_propagation();
+                                            keyboard.update(cx, |state, cx| {
+                                                state.expanded = !state.expanded;
+                                                cx.notify();
+                                            });
+                                        }
+                                    })
                             })
-                            .on_key_down(move |event, _, cx| {
-                                if activates_button(event) {
-                                    cx.stop_propagation();
-                                    state.update(cx, |expanded, cx| {
-                                        *expanded = !*expanded;
-                                        cx.notify();
-                                    });
-                                }
-                            })
-                            .child(div().flex_1().min_w_0().text_ellipsis().child(preview)),
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_ellipsis()
+                                    .on_children_prepainted(move |_, _, cx| {
+                                        // Use the actual truncated layout, including the current font and width.
+                                        let clipped = layout.text() != preview_text;
+                                        state.update(cx, |state, cx| {
+                                            if state.clipped != clipped {
+                                                state.clipped = clipped;
+                                                if !has_details && !clipped {
+                                                    state.expanded = false;
+                                                }
+                                                cx.notify();
+                                            }
+                                        });
+                                    })
+                                    .child(preview),
+                            ),
                     )
-                    .when(self.unknown, |row| {
+                    .when_some(row.notice, |row, notice| {
                         row.child(
                             div()
-                                .id(SharedString::from(format!("{}-warning", self.id)))
-                                .debug_selector(|| "queue-delivery-warning".into())
+                                .id(notice_id)
+                                .debug_selector(|| "queue-row-notice".into())
                                 .flex_none()
                                 .text_color(theme().colors.warning)
-                                .app_tooltip("Delivery not confirmed")
+                                .app_tooltip(notice)
                                 .child(app_icon(AppIcon::WarningCircle, AppIconSize::Inline)),
                         )
                     })
-                    .children(self.action),
+                    .children(
+                        row.action
+                            .map(|action| action_icon(action, AppIcon::X, self.on_action.clone())),
+                    ),
             )
-            .when(expanded, |row| {
-                row.child(self.expanded_content.unwrap_or_else(|| {
+            .when(expanded, |element| {
+                let details = row.details;
+                let notice = details.as_ref().map(|details| details.notice);
+                let caption = details.as_ref().and_then(|details| details.caption.clone());
+                element.child(
                     div()
-                        .when(self.unknown, |body| {
-                            body.child(
-                                div()
-                                    .text_color(theme().colors.warning)
-                                    .child("Delivery not confirmed"),
-                            )
+                        .when_some(notice, |body, notice| {
+                            body.child(div().text_color(theme().colors.warning).child(notice))
                         })
-                        .child(
-                            div()
-                                .id(SharedString::from(format!("{}-body", self.id)))
-                                .debug_selector(|| "queue-message-body".into())
-                                .max_h(theme().layout.tool_max_height)
-                                .overflow_scroll()
-                                .text_color(theme().colors.text)
-                                .child(
-                                    PeerMessage::from_prompt(&self.text)
-                                        .map_or(self.text, |peer| peer.message),
-                                ),
-                        )
-                        .into_any_element()
-                }))
+                        .child(message_body(format!("{}-body", row.id), &row.body))
+                        .children(caption)
+                        .when_some(details, |body, details| {
+                            body.child(div().flex().gap(theme().space.xs).children(
+                                details.actions.into_iter().map(|action| {
+                                    let on_action = self.on_action.clone();
+                                    let selector = action.id.clone();
+                                    button(
+                                        SharedString::from(action.id.clone()),
+                                        action.label,
+                                        ButtonTone::Quiet,
+                                        action.enabled,
+                                        move |_, cx| on_action(&action, cx),
+                                    )
+                                    .debug_selector(move || selector.clone())
+                                }),
+                            ))
+                        }),
+                )
             })
     }
 }
 
-fn queued_message_row(
-    message: &QueuedMessage<'_>,
-    kind: QueuedMessageKind,
-    index: usize,
-    target: &str,
-    session: Option<&std::path::Path>,
-    entity: WeakEntity<FarcasterApp>,
-    individual: bool,
-) -> AnyElement {
-    let identity = message.id.filter(|id| !id.is_empty()).map_or_else(
-        || {
-            let mut hash = std::collections::hash_map::DefaultHasher::new();
-            message.text.hash(&mut hash);
-            format!("{index}:{:x}", hash.finish())
-        },
-        |id| id.to_owned(),
-    );
-    let action = message
-        .id
-        .filter(|_| individual && message.cancellable && (!message.dismiss || session.is_some()))
-        .map(|id| {
-            let id = id.clone();
-            let target = target.to_owned();
-            let dismiss = message.dismiss;
-            let session = session.map(std::path::Path::to_path_buf);
-            let action_id = SharedString::from(format!(
-                "{}-{id}",
-                if dismiss {
-                    "dismiss-pending"
-                } else {
-                    "cancel-queue"
-                }
-            ));
-            let remove = std::rc::Rc::new(move |cx: &mut App| {
-                let _ = entity.update(cx, |app, cx| {
-                    let command = if dismiss {
-                        session
-                            .clone()
-                            .map(|session| RuntimeCommand::DismissReceipt {
-                                session,
-                                id: id.clone(),
-                            })
-                    } else {
-                        Some(RuntimeCommand::CancelQueued {
-                            target: target.clone(),
-                            id: id.clone(),
-                        })
-                    };
-                    if let Some(command) = command {
-                        app.send(command, cx);
-                    }
-                });
-            });
-            let click = remove.clone();
-            icon_control(
-                action_id.clone(),
-                if dismiss {
-                    "Dismiss delivery notice"
-                } else {
-                    "Cancel queued message"
-                },
-            )
-            .h(theme().layout.status_row_height)
-            .debug_selector(move || action_id.to_string())
-            .child(app_icon(AppIcon::X, AppIconSize::Inline))
-            .on_click(move |_, _, cx| {
+fn action_icon(action: QueueAction, icon: AppIcon, on_action: QueueActionHandler) -> AnyElement {
+    let click = on_action.clone();
+    let click_action = action.clone();
+    let selector = action.id.clone();
+    icon_control(SharedString::from(action.id.clone()), action.label)
+        .h(theme().layout.status_row_height)
+        .debug_selector(move || selector.clone())
+        .child(app_icon(icon, AppIconSize::Inline))
+        .on_click(move |_, _, cx| {
+            cx.stop_propagation();
+            click(&click_action, cx);
+        })
+        .on_key_down(move |event, _, cx| {
+            if activates_button(event) {
                 cx.stop_propagation();
-                click(cx);
-            })
-            .on_key_down(move |event, _, cx| {
-                if activates_button(event) {
-                    cx.stop_propagation();
-                    remove(cx);
-                }
-            })
-            .into_any_element()
-        });
-    QueueMessageRow {
-        id: format!("queue-row:{target}:{kind:?}:{identity}").into(),
-        text: message.text.clone(),
-        unknown: message.unknown,
-        action,
-        expanded_content: None,
-    }
-    .into_any_element()
+                on_action(&action, cx);
+            }
+        })
+        .into_any_element()
 }
 
 pub(super) fn render(
-    queue: &QueueState,
-    receipts: &[PendingReceiptRef<'_>],
-    target: &str,
-    session: Option<&std::path::Path>,
-    entity: WeakEntity<FarcasterApp>,
-    individual: bool,
-    history_preview: bool,
+    presentation: QueuePresentation,
+    on_action: QueueActionHandler,
 ) -> Option<AnyElement> {
-    let groups = pending_message_groups(queue, receipts, history_preview);
-    if groups.is_empty() && queue.saved.is_empty() {
+    if presentation.groups.is_empty() {
         return None;
     }
-    let mut clear = (!individual && !groups.is_empty()).then(|| {
-        let entity = entity.clone();
-        icon_button(
-            "clear-prompt-queue",
-            AppIcon::Trash,
-            "Clear all queued messages",
-            ButtonTone::Quiet,
-            move |_, cx| {
-                let _ = entity.update(cx, |app, cx| app.send(RuntimeCommand::ClearQueue, cx));
-            },
-        )
-        .into_any_element()
-    });
-    let recovered = queue
-        .saved
-        .iter()
-        .map(|saved| {
-            let send_entity = entity.clone();
-            let remove_entity = entity.clone();
-            let send_target = saved.target.clone();
-            let remove_target = saved.target.clone();
-            let id = saved.id;
-            let content = div()
-                .py(theme().space.xs)
-                .child(
-                    div()
-                        .text_color(theme().colors.warning)
-                        .child("Delivery unconfirmed. Sending again may duplicate this message."),
-                )
-                .child(saved_prompt_body(saved.id, &saved.text))
-                .when(saved.image_count > 0, |row| {
-                    row.child(format!("{} image(s) attached", saved.image_count))
-                })
-                .child(
-                    div()
-                        .flex()
-                        .gap(theme().space.xs)
-                        .child(button(
-                            format!("send-saved-{}", saved.id),
-                            "Send again",
-                            ButtonTone::Quiet,
-                            saved.sendable,
-                            move |_, cx| {
-                                let _ = send_entity.update(cx, |app, cx| {
-                                    app.send(
-                                        RuntimeCommand::SendSaved {
-                                            target: send_target.clone(),
-                                            id,
-                                        },
-                                        cx,
-                                    );
-                                });
-                            },
-                        ))
-                        .child(button(
-                            format!("remove-saved-{}", saved.id),
-                            "Remove",
-                            ButtonTone::Quiet,
-                            true,
-                            move |_, cx| {
-                                let _ = remove_entity.update(cx, |app, cx| {
-                                    app.send(
-                                        RuntimeCommand::RemoveSaved {
-                                            target: remove_target.clone(),
-                                            id,
-                                        },
-                                        cx,
-                                    );
-                                });
-                            },
-                        )),
-                )
-                .into_any_element();
-            QueueMessageRow {
-                id: format!("queue-recovered:{target}:{}", saved.id).into(),
-                text: saved.text.clone(),
-                unknown: true,
-                action: None,
-                expanded_content: Some(content),
-            }
-            .into_any_element()
-        })
-        .collect::<Vec<_>>();
+    let mut clear = presentation
+        .clear
+        .map(|action| action_icon(action, AppIcon::Trash, on_action.clone()));
     Some(
         div()
             .id("composer-queue-tray")
@@ -438,85 +232,31 @@ pub(super) fn render(
             .px(theme().space.sm)
             .max_h(theme().layout.tool_max_height)
             .overflow_y_scroll()
-            .children(recovered)
-            .children(groups.into_iter().map(|(kind, messages)| {
+            .children(presentation.groups.into_iter().map(|group| {
                 div()
-                    .child(
-                        div()
-                            .id(format!("queue-group-{kind:?}"))
-                            .debug_selector(move || format!("queue-group-{kind:?}"))
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .py(theme().space.xs)
-                            .text_size(theme().type_scale.caption)
-                            .text_color(theme().colors.subtle)
-                            .app_tooltip(kind.label())
-                            .child(kind.heading())
-                            .children(clear.take()),
-                    )
-                    .children(messages.iter().enumerate().map(|(index, message)| {
-                        queued_message_row(
-                            message,
-                            kind,
-                            index,
-                            target,
-                            session,
-                            entity.clone(),
-                            individual,
+                    .when_some(group.heading, |element, (heading, tooltip)| {
+                        element.child(
+                            div()
+                                .id(SharedString::from(group.id.clone()))
+                                .debug_selector(move || group.id.clone())
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .py(theme().space.xs)
+                                .text_size(theme().type_scale.caption)
+                                .text_color(theme().colors.subtle)
+                                .app_tooltip(tooltip)
+                                .child(heading)
+                                .children(clear.take()),
                         )
+                    })
+                    .children(group.rows.into_iter().map(|row| QueueMessageRow {
+                        row,
+                        on_action: on_action.clone(),
                     }))
             }))
             .into_any_element(),
     )
-}
-
-pub(super) fn pending_message_groups<'a>(
-    queue: &'a QueueState,
-    receipts: &[PendingReceiptRef<'a>],
-    history_preview: bool,
-) -> Vec<(QueuedMessageKind, Vec<QueuedMessage<'a>>)> {
-    let mut groups = queued_message_groups(queue);
-    for (_, messages) in &mut groups {
-        for message in messages {
-            message.unknown = receipts
-                .iter()
-                .any(|receipt| message.id == Some(receipt.id) && receipt.unknown);
-        }
-    }
-    if !history_preview {
-        return groups;
-    }
-    for receipt in receipts {
-        if groups.iter().any(|(_, messages)| {
-            messages
-                .iter()
-                .any(|message| message.id == Some(receipt.id))
-        }) {
-            continue;
-        }
-        let kind = if receipt.mode == Some(PromptMode::Steer) {
-            QueuedMessageKind::Steer
-        } else {
-            QueuedMessageKind::FollowUp
-        };
-        let index = groups
-            .iter()
-            .position(|(candidate, _)| *candidate == kind)
-            .unwrap_or_else(|| {
-                groups.push((kind, Vec::new()));
-                groups.len() - 1
-            });
-        let messages = &mut groups[index].1;
-        messages.push(QueuedMessage {
-            text: receipt.text,
-            id: Some(receipt.id),
-            cancellable: true,
-            dismiss: true,
-            unknown: receipt.unknown,
-        });
-    }
-    groups
 }
 
 #[cfg(test)]

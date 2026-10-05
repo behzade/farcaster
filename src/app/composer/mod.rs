@@ -11,6 +11,7 @@ pub(in crate::app) mod highlighting;
 pub(in crate::app) mod images;
 pub(in crate::app) mod pastes;
 pub(crate) mod prompt_fragments;
+pub(in crate::app) mod queue;
 pub(crate) mod sessions;
 pub(in crate::app) mod slash_commands;
 mod state;

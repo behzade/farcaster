@@ -1,8 +1,8 @@
 use super::{
-    QueuedMessageKind, choice_copy, composer_primary_action, dialog_copy, dialog_number_selection,
-    numbered_dialog_choice, plain_text_html, queued_message_groups, queued_message_preview,
+    choice_copy, composer_primary_action, dialog_copy, dialog_number_selection,
+    numbered_dialog_choice, plain_text_html,
 };
-use crate::{conversation::QueueState, protocol::ExtensionUiRequest};
+use crate::protocol::ExtensionUiRequest;
 
 #[gpui::test]
 fn saved_prompt_body_keeps_actions_in_view_for_large_text(cx: &mut gpui::TestAppContext) {
@@ -32,13 +32,16 @@ fn saved_prompt_body_keeps_actions_in_view_for_large_text(cx: &mut gpui::TestApp
                         .child("Delivery unconfirmed"),
                 )
                 .child(
-                    super::queue::saved_prompt_body(self.id, &self.text)
-                        .debug_selector(|| "saved-prompt-body".into())
-                        .child(
-                            div()
-                                .debug_selector(|| "saved-prompt-tail".into())
-                                .child("end of saved text"),
-                        ),
+                    super::queue::message_body(
+                        format!("saved-prompt-body-{}", self.id),
+                        &self.text,
+                    )
+                    .debug_selector(|| "saved-prompt-body".into())
+                    .child(
+                        div()
+                            .debug_selector(|| "saved-prompt-tail".into())
+                            .child("end of saved text"),
+                    ),
                 )
                 .child(
                     div()
@@ -115,137 +118,6 @@ fn primary_action_only_appears_for_submit_ready_content() {
         composer_primary_action(true, true, true, false),
         Some("Run")
     );
-}
-
-#[test]
-fn queued_messages_are_grouped_by_delivery_behavior() {
-    let queue = QueueState {
-        steering: vec!["redirect now".into(), "check this first".into()],
-        follow_up: vec!["then summarize".into()],
-        ..Default::default()
-    };
-
-    let groups = queued_message_groups(&queue);
-    assert_eq!(groups.len(), 2);
-    assert_eq!(groups[0].0, QueuedMessageKind::Steer);
-    assert_eq!(
-        groups[0]
-            .1
-            .iter()
-            .map(|message| message.text)
-            .collect::<Vec<_>>(),
-        queue.steering.iter().collect::<Vec<_>>()
-    );
-    assert_eq!(groups[1].0, QueuedMessageKind::FollowUp);
-    assert_eq!(
-        groups[1]
-            .1
-            .iter()
-            .map(|message| message.text)
-            .collect::<Vec<_>>(),
-        queue.follow_up.iter().collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn queue_close_button_requires_owner_evidence_for_that_exact_row() {
-    let queue = QueueState {
-        steering: vec!["same".into(), "same".into()],
-        steering_ids: vec!["owned".into(), "inflight".into()],
-        follow_up: vec!["later".into()],
-        follow_up_ids: vec!["recovered".into()],
-        cancellable_ids: vec!["owned".into(), "recovered".into()],
-        ..Default::default()
-    };
-    let groups = queued_message_groups(&queue);
-    assert_eq!(groups[0].1[0].id.map(String::as_str), Some("owned"));
-    assert!(!groups[0].1[1].cancellable);
-    assert_eq!(groups[1].1[0].id.map(String::as_str), Some("recovered"));
-}
-
-#[test]
-fn queued_message_preview_hides_multiline_payloads() {
-    for (message, expected) in [
-        (
-            "inspect this\n\nPasted text files:\n- file.txt",
-            "inspect this…",
-        ),
-        (" \r\n\t ", "Message"),
-        ("  سلام  \r\nmore\n", "سلام…"),
-        (" single line \n\t", "single line"),
-        (
-            "Message from Farcaster worker review:\n\n done \r\nmore",
-            "review:  done…",
-        ),
-        (
-            "Message from Farcaster peer worker-7:\n\nlegacy\n",
-            "worker-7: legacy",
-        ),
-        ("Message from Farcaster worker review:\n\n \t", "review:"),
-        (
-            "Message from Farcaster worker review:\n\n\nnext",
-            "review:…",
-        ),
-        (
-            "Message from Farcaster worker bad id:\n\nbody",
-            "Message from Farcaster worker bad id:…",
-        ),
-    ] {
-        assert_eq!(queued_message_preview(message), expected, "{message:?}");
-    }
-}
-
-#[test]
-fn receipt_overlay_preserves_duplicate_occurrences_and_live_cancel_actions() {
-    let queue = QueueState {
-        steering: vec!["2".into(), "2".into()],
-        steering_ids: vec!["first".into(), "second".into()],
-        cancellable_ids: vec!["first".into()],
-        ..Default::default()
-    };
-    let receipts = ["first", "second"].map(|id| crate::conversation::PendingReceipt {
-        id: id.into(),
-        text: "2".into(),
-        mode: Some(crate::protocol::PromptMode::Steer),
-        images: Default::default(),
-        unknown: false,
-    });
-    let receipts = receipts
-        .each_ref()
-        .map(crate::conversation::PendingReceipt::as_ref);
-    let groups = super::queue::pending_message_groups(&queue, &receipts, false);
-    assert_eq!(groups[0].1.len(), 2);
-    assert_eq!(groups[0].1[0].id.map(String::as_str), Some("first"));
-    assert!(!groups[0].1[1].cancellable);
-    assert!(groups[0].1.iter().all(|row| !row.dismiss));
-    let empty = QueueState::default();
-    let restored = super::queue::pending_message_groups(&empty, &receipts, true);
-    assert_eq!(restored[0].1.len(), 2);
-    assert!(
-        restored[0]
-            .1
-            .iter()
-            .all(|row| row.dismiss && row.id.is_some())
-    );
-}
-
-#[test]
-fn peer_messages_keep_their_delivery_group_and_sender_preview() {
-    let peer = "Message from Farcaster peer worker-7:\n\nreview complete\nwith details".to_owned();
-    let queue = QueueState {
-        steering: vec![peer.clone(), "redirect now".into()],
-        follow_up: vec![peer.clone()],
-        ..Default::default()
-    };
-
-    let groups = queued_message_groups(&queue);
-    assert_eq!(groups.len(), 2);
-    assert_eq!(groups[0].0, QueuedMessageKind::Steer);
-    assert_eq!(groups[0].1[0].text, &peer);
-    assert_eq!(groups[0].1.len(), 2);
-    assert_eq!(groups[1].0, QueuedMessageKind::FollowUp);
-    assert_eq!(groups[1].1[0].text, &peer);
-    assert_eq!(queued_message_preview(&peer), "worker-7: review complete…");
 }
 
 #[test]
