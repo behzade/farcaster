@@ -81,7 +81,7 @@ impl FarcasterApp {
         message: String,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<String> {
         let target = destination.target.clone();
         if destination
             .harness
@@ -93,7 +93,7 @@ impl FarcasterApp {
                     project,
                     message,
                 });
-            return;
+            return None;
         }
         let chat = TaskChat {
             submission_id: uuid::Uuid::new_v4().to_string(),
@@ -113,7 +113,7 @@ impl FarcasterApp {
             message: message.clone(),
         }) {
             self.send_to_chat_error(error, cx);
-            return;
+            return None;
         }
         self.capture_composer_session(cx);
         if let Some(path) = crate::app::composer::submissions::inactive_session_for_target(
@@ -123,9 +123,11 @@ impl FarcasterApp {
         ) {
             self.set_session_active(path, cx);
         }
+        let submission_id = chat.submission_id.clone();
         self.track_code_submission(chat, message, cx);
         self.close_send_to_chat(window, cx);
         self.notify_session_rail(cx);
+        Some(submission_id)
     }
 
     pub(in crate::app) fn submit_code_task(

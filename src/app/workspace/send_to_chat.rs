@@ -35,21 +35,10 @@ impl CodeContext {
             .max()
             .unwrap_or(0);
         let fence = "`".repeat(longest.max(2) + 1);
-        let kind = match self.mode.as_str() {
-            "n" => "Current line",
-            "V" => "Selected lines",
-            "\u{16}" => "Block selection",
-            _ => "Selected text",
-        };
         format!(
-            "{}\n\nCode context: {}\n{kind}{} (captured from the editor):\n{fence}\n{}\n{fence}",
+            "{}\n\n{}\n{fence}\n{}\n{fence}",
             instruction.trim(),
             self.location(),
-            if self.modified {
-                "; buffer has unsaved edits"
-            } else {
-                ""
-            },
             self.text
         )
     }
@@ -241,7 +230,7 @@ impl FarcasterApp {
         let prompt = dialog.context.prompt(&instruction);
         if let Some(destination) = dialog.destination().cloned() {
             let project = dialog.settings.project.clone();
-            self.submit_to_chat(destination, project, prompt, window, cx);
+            let _ = self.submit_to_chat(destination, project, prompt, window, cx);
         } else {
             let settings = dialog.settings.clone();
             self.submit_code_task(settings, prompt, window, cx);
@@ -252,6 +241,8 @@ impl FarcasterApp {
         if let Some(dialog) = self.workspace.send_to_chat.as_mut() {
             dialog.error = Some(message);
             cx.notify();
+        } else {
+            self.notify_workspace_error("Send to chat", message, cx);
         }
     }
 }

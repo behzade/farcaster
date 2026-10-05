@@ -17,6 +17,7 @@ pub(in crate::app) struct WorkspaceState {
     pub(in crate::app) send_to_chat: Option<workspace::send_to_chat::SendToChat>,
     pub(in crate::app) send_to_chat_capture: Option<Task<()>>,
     pub(in crate::app) code_tasks: workspace::code_tasks::CodeTasks,
+    pub(in crate::app) voice: workspace::voice::VoiceState,
 }
 
 pub(in crate::app) struct EditorState {
@@ -83,6 +84,7 @@ pub(in crate::app) struct SettingsState {
     pub(in crate::app) proxy_save: Option<Task<()>>,
     pub(in crate::app) mcp_error: Option<String>,
     pub(in crate::app) expand_transcript_folders: bool,
+    pub(in crate::app) voice_enabled: bool,
     pub(in crate::app) group_sessions_by_project: bool,
     pub(in crate::app) session_grouping_error: Option<String>,
     pub(in crate::app) editor_choice: crate::storage::EditorChoice,

@@ -1,6 +1,10 @@
 use super::*;
 use crate::agents::Backend;
 
+#[cfg(test)]
+#[path = "settings_tests.rs"]
+mod tests;
+
 fn family_session_id(
     transaction: &rusqlite::Transaction<'_>,
     key: Option<&crate::sessions::SessionKey>,
@@ -70,6 +74,29 @@ fn stored_family_identity(
 }
 
 impl StateStore {
+    pub fn load_voice_enabled(&self) -> Result<bool, String> {
+        self.connection
+            .query_row(
+                "SELECT value FROM meta WHERE key='voice_enabled'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map(|value| value.as_deref() != Some("false"))
+            .map_err(|error| format!("load voice setting: {error}"))
+    }
+
+    pub fn save_voice_enabled(&self, enabled: bool) -> Result<(), String> {
+        self.connection
+            .execute(
+                "INSERT INTO meta(key, value) VALUES('voice_enabled', ?1)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [if enabled { "true" } else { "false" }],
+            )
+            .map(|_| ())
+            .map_err(|error| format!("save voice setting: {error}"))
+    }
+
     pub fn harness_profile_in_use(&self, id: &str) -> Result<bool, String> {
         self.connection
             .query_row(

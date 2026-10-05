@@ -55,6 +55,8 @@ impl FarcasterApp {
         let rail_toggle = entity.clone();
         div()
             .id("workspace-bar")
+            .debug_selector(|| "workspace-bar".into())
+            .relative()
             .h(theme().size(38.0))
             .flex_none()
             .flex()
@@ -150,6 +152,34 @@ impl FarcasterApp {
                     .bg(theme().colors.surface),
             )
             .child(self.render_surface_switcher(entity, harness_icon))
+            .when(self.workspace.voice.recording(), |bar| {
+                bar.child(
+                    div()
+                        .id("voice-recording")
+                        .debug_selector(|| "voice-recording".into())
+                        .role(gpui::Role::Status)
+                        .aria_label("Recording")
+                        .absolute()
+                        .top(theme().size(5.0))
+                        .left(gpui::relative(0.5))
+                        .ml(theme().size(-18.0))
+                        .w(theme().size(36.0))
+                        .h(theme().size(28.0))
+                        .rounded(theme().radius)
+                        .bg(theme().colors.canvas)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .gap(theme().size(2.0))
+                        .children([6.0, 12.0, 18.0, 10.0, 6.0].map(|height| {
+                            div()
+                                .w(theme().size(2.0))
+                                .h(theme().size(height))
+                                .rounded(theme().size(1.0))
+                                .bg(theme().colors.error)
+                        })),
+                )
+            })
     }
 
     pub(in crate::app::views) fn render_surface_switcher(

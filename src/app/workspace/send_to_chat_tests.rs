@@ -16,9 +16,10 @@ fn message_preserves_unsaved_code_and_nested_fences() {
         modified: true,
     };
     let prompt = context.prompt("  Explain this  ");
-    assert!(prompt.starts_with("Explain this\n\nCode context: /project/it's code.md:2:1–4:3"));
-    assert!(prompt.contains("buffer has unsaved edits"));
-    assert!(prompt.contains("\n````\n```rust\nسلام\n```\n````"));
+    assert_eq!(
+        prompt,
+        "Explain this\n\n/project/it's code.md:2:1–4:3\n````\n```rust\nسلام\n```\n````"
+    );
 }
 
 #[test]

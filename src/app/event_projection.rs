@@ -647,6 +647,11 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         let accepted = outcome == crate::agents::PromptOutcome::Accepted;
+        self.workspace.voice.submission_result(
+            submission_id.as_deref(),
+            accepted,
+            session.as_deref(),
+        );
         self.code_task_result(
             submission_id.as_deref(),
             &target,
@@ -860,6 +865,7 @@ impl FarcasterApp {
                 self.show_attention_notification(&title, &body, target, cx);
             }
             RuntimeEvent::TurnCompletedNotification { body, target } => {
+                self.speak_voice_reply(&body, target.as_ref(), cx);
                 let active = cx.active_window().is_some();
                 if !completion_notification_is_redundant(active, target.as_ref(), &self.snapshot) {
                     if active {
@@ -889,6 +895,9 @@ impl FarcasterApp {
                 session,
                 status,
             } => {
+                if matches!(status, RunStatus::Stopped | RunStatus::Failed) {
+                    self.workspace.voice.stopped(&target, session.as_deref());
+                }
                 if status == RunStatus::Stopped {
                     let session_key = session.as_deref().map(session_target);
                     for pending in self.composer.pending_submissions.values_mut() {

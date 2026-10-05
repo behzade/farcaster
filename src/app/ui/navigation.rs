@@ -21,6 +21,7 @@ const ACTIVATION_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) struct Activation {
     deadline: Option<Instant>,
     prefix: Option<Prefix>,
+    hint_visible: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -36,7 +37,7 @@ enum ActivatedKey {
 impl Activation {
     pub(in crate::app) fn hint(&self) -> Option<&'static str> {
         self.deadline
-            .filter(|deadline| Instant::now() < *deadline)
+            .filter(|deadline| self.hint_visible && Instant::now() < *deadline)
             .map(|_| {
                 self.prefix.map(Prefix::hint).unwrap_or(
                     "APP · e editor · t terminal · 0–9 sessions · Ctrl+G composer · Esc cancel",
@@ -47,6 +48,16 @@ impl Activation {
     pub(in crate::app) fn clear(&mut self) {
         self.deadline = None;
         self.prefix = None;
+        self.hint_visible = false;
+    }
+
+    fn release_prefix(&mut self, now: Instant) -> bool {
+        if self.deadline.is_none() || self.hint_visible {
+            return false;
+        }
+        self.hint_visible = true;
+        self.deadline = Some(now + ACTIVATION_TIMEOUT);
+        true
     }
 
     fn key(&mut self, key: &str, modifiers: gpui::Modifiers, now: Instant) -> ActivatedKey {
@@ -96,7 +107,7 @@ impl Activation {
     }
 }
 
-fn is_prefix_chord(key: &str, modifiers: gpui::Modifiers) -> bool {
+pub(in crate::app) fn is_prefix_chord(key: &str, modifiers: gpui::Modifiers) -> bool {
     key == "g"
         && modifiers.control
         && !modifiers.platform
@@ -106,6 +117,37 @@ fn is_prefix_chord(key: &str, modifiers: gpui::Modifiers) -> bool {
 }
 
 impl FarcasterApp {
+    pub(in crate::app) fn navigation_key_up(
+        &mut self,
+        event: &gpui::KeyUpEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if event.keystroke.key == "g"
+            && self
+                .navigation
+                .chat
+                .activation
+                .release_prefix(Instant::now())
+        {
+            self.schedule_activation_timeout(cx);
+            self.notify_composer(cx);
+        }
+    }
+
+    fn schedule_activation_timeout(&mut self, cx: &mut Context<Self>) {
+        let deadline = self.navigation.chat.activation.deadline;
+        cx.spawn(async move |weak, cx| {
+            cx.background_executor().timer(ACTIVATION_TIMEOUT).await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.navigation.chat.activation.deadline == deadline {
+                    this.navigation.chat.activation.clear();
+                    this.notify_composer(cx);
+                }
+            });
+        })
+        .detach();
+    }
+
     pub(in crate::app) fn chat_composer_focus(&self, cx: &gpui::App) -> FocusHandle {
         self.composer_region_focus(cx)
     }
@@ -125,6 +167,14 @@ impl FarcasterApp {
                 }
                 let consumed = entity
                     .update(cx, |this, cx| {
+                        if this.voice_key_down(
+                            &event.keystroke.key,
+                            event.keystroke.modifiers,
+                            window,
+                            cx,
+                        ) {
+                            return true;
+                        }
                         // Run before GPUI buffers Escape as a sequence prefix.
                         if event.keystroke.key == "escape"
                             && !event.keystroke.modifiers.modified()
@@ -159,17 +209,7 @@ impl FarcasterApp {
                                             this.notify_composer(cx);
                                         })
                                     });
-                                let deadline = this.navigation.chat.activation.deadline;
-                                cx.spawn(async move |weak, cx| {
-                                    cx.background_executor().timer(ACTIVATION_TIMEOUT).await;
-                                    let _ = weak.update(cx, |this, cx| {
-                                        if this.navigation.chat.activation.deadline == deadline {
-                                            this.navigation.chat.activation.clear();
-                                            this.notify_composer(cx);
-                                        }
-                                    });
-                                })
-                                .detach();
+                                this.schedule_activation_timeout(cx);
                             }
                             ActivatedKey::Return => this.return_to_chat_composer(window, cx),
                             ActivatedKey::Command(command) => {
@@ -190,7 +230,10 @@ impl FarcasterApp {
                 }
             }));
         cx.observe_window_activation(window, |this, window, cx| {
-            if !window.is_window_active() {
+            if window.is_window_active() {
+                this.refresh_voice_availability(cx);
+            } else {
+                this.cancel_voice(cx);
                 this.navigation.chat.activation.clear();
                 this.notify_composer(cx);
             }

@@ -118,7 +118,7 @@ impl FarcasterApp {
                 project,
                 message,
             } => {
-                self.submit_to_chat(destination, project, message, window, cx);
+                let _ = self.submit_to_chat(destination, project, message, window, cx);
             }
             PendingTrustAction::StartCodeTask { settings, message } => {
                 self.submit_code_task(settings, message, window, cx);

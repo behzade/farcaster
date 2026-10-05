@@ -40,6 +40,11 @@ pub(super) fn render_help() -> impl IntoElement {
         .into_iter()
         .chain([
             (
+                "App",
+                "ctrl-g".into(),
+                "Hold to talk; release G to send (macOS, Hex)",
+            ),
+            (
                 "Composer",
                 "enter".into(),
                 "Accept suggestion; otherwise send prompt or steer during a run",

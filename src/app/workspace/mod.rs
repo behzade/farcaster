@@ -25,6 +25,7 @@ mod surfaces;
 mod terminal;
 pub(in crate::app) mod terminal_editor;
 pub(in crate::app) mod theme_settings;
+pub(in crate::app) mod voice;
 mod vscode;
 mod zed;
 pub(in crate::app) use terminal::Terminal;

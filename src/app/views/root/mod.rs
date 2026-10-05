@@ -82,6 +82,10 @@ impl Render for FarcasterApp {
             .capture_key_down(cx.listener(|this, event, window, cx| {
                 this.capture_chat_navigation(event, window, cx);
             }))
+            .capture_key_up(cx.listener(|this, event, window, cx| {
+                this.voice_key_up(event, window, cx);
+                this.navigation_key_up(event, cx);
+            }))
             .on_key_down(cx.listener(|this, event, window, cx| {
                 if this.extensions.active.dialog.is_some()
                     && this.extensions.dialog_focus.contains_focused(window, cx)

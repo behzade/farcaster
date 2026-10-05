@@ -235,6 +235,47 @@ fn general(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>, cx: &gpui::App)
                 FeedbackTone::Error,
             ))
         })
+        .child(voice_setting(app, entity))
+        .when_some(
+            app.workspace.voice.settings_error.clone(),
+            |content, error| {
+                content.child(feedback("settings-voice-error", error, FeedbackTone::Error))
+            },
+        )
+        .into_any_element()
+}
+
+fn voice_setting(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
+    let available = app.workspace.voice.available;
+    let enabled = app.voice_enabled();
+    let description = if !cfg!(target_os = "macos") {
+        "Voice requires Hex on macOS."
+    } else if !available {
+        "Install and open Hex to enable voice."
+    } else {
+        "Hold Ctrl+G to speak. Release G to send. Replies are read aloud outside chat."
+    };
+    div()
+        .debug_selector(|| "settings-voice".into())
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(theme().space.md)
+        .child(setting_label("Voice", description))
+        .child(
+            Button::new("voice-toggle")
+                .debug_selector(|| "voice-toggle".into())
+                .accessibility_label("Voice")
+                .label(if enabled { "On" } else { "Off" })
+                .with_size(Size::Small)
+                .toggled(enabled)
+                .disabled(!available)
+                .when(enabled, |button| button.primary())
+                .when(!enabled, |button| button.secondary())
+                .on_click(move |_, _, cx| {
+                    let _ = entity.update(cx, FarcasterApp::toggle_settings_voice);
+                }),
+        )
         .into_any_element()
 }
 

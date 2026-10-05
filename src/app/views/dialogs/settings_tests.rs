@@ -21,6 +21,66 @@ fn press_enter(cx: &mut VisualTestContext) {
 }
 
 #[gpui::test]
+fn voice_setting_requires_hex_and_remembers_the_toggle(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::voice_setting_requires_hex_and_remembers_the_toggle"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.update(|window, cx| app.update(cx, |app, cx| app.open_settings(window, cx)));
+            cx.run_until_parked();
+            draw(cx);
+            let content = cx.debug_bounds("settings-content").unwrap();
+            cx.simulate_event(gpui::ScrollWheelEvent {
+                position: content.center(),
+                delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(-100_000.0))),
+                ..Default::default()
+            });
+            draw(cx);
+            assert!(cx.debug_bounds("settings-voice").is_some());
+            click(cx, "voice-toggle");
+            cx.update(|_, cx| {
+                assert!(!app.read(cx).workspace.voice.available);
+                assert!(!app.read(cx).voice_enabled());
+                assert!(
+                    app.read(cx).settings.voice_enabled,
+                    "disabled button must not change preference"
+                );
+                app.update(cx, |app, cx| {
+                    app.workspace.voice.available = true;
+                    cx.notify();
+                });
+            });
+            draw(cx);
+            cx.update(|_, cx| {
+                assert!(
+                    app.read(cx).voice_enabled(),
+                    "default on once Hex is available"
+                )
+            });
+            click(cx, "voice-toggle");
+            cx.update(|_, cx| assert!(!app.read(cx).settings.voice_enabled));
+            assert!(
+                !crate::app::persistence::open()
+                    .unwrap()
+                    .load_voice_enabled()
+                    .unwrap()
+            );
+            click(cx, "voice-toggle");
+            cx.update(|_, cx| assert!(app.read(cx).voice_enabled()));
+            assert!(
+                crate::app::persistence::open()
+                    .unwrap()
+                    .load_voice_enabled()
+                    .unwrap()
+            );
+        },
+    );
+}
+
+#[gpui::test]
 fn tabs_keep_worker_drafts_and_move_focus_to_visible_controls(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
         concat!(

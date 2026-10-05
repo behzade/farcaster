@@ -116,6 +116,7 @@ impl FarcasterApp {
             submitted_drafts: HashMap::new(),
             saved_proxy: None,
             expand_transcript_folders: false,
+            voice_enabled: true,
             group_sessions_by_project: false,
             editor_choice: Default::default(),
             editor_command: String::new(),
@@ -317,6 +318,7 @@ impl FarcasterApp {
                 send_to_chat: None,
                 send_to_chat_capture: None,
                 code_tasks: Default::default(),
+                voice: Default::default(),
             },
             settings: workspace::SettingsState {
                 tab: Default::default(),
@@ -343,6 +345,7 @@ impl FarcasterApp {
                 proxy_save: None,
                 mcp_error: None,
                 expand_transcript_folders: persisted.expand_transcript_folders,
+                voice_enabled: persisted.voice_enabled,
                 group_sessions_by_project: persisted.group_sessions_by_project,
                 session_grouping_error: None,
                 editor_choice: persisted.editor_choice,
@@ -419,6 +422,7 @@ impl FarcasterApp {
         );
         this.activate_theme(cx);
         this.initialize_chat_navigation(window, cx);
+        this.refresh_voice_availability(cx);
         this.request_repository_refresh(cx);
         this
     }

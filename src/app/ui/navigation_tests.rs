@@ -6,6 +6,21 @@ fn activated(state: &mut Activation, key: &str, now: Instant) -> ActivatedKey {
 }
 
 #[test]
+fn prefix_hint_waits_for_release_and_cannot_return_after_cancellation() {
+    let now = Instant::now();
+    let mut state = Activation::default();
+    activated(&mut state, "ctrl-g", now);
+    assert!(state.hint().is_none());
+    let release = now + Duration::from_millis(100);
+    assert!(state.release_prefix(release));
+    assert!(state.hint().is_some());
+    assert_eq!(state.deadline, Some(release + ACTIVATION_TIMEOUT));
+    state.clear();
+    assert!(!state.release_prefix(release));
+    assert!(state.hint().is_none());
+}
+
+#[test]
 fn control_editing_keys_pass_through_without_leader() {
     let now = Instant::now();
     for key in ["ctrl-f", "ctrl-b", "ctrl-u", "ctrl-d"] {
