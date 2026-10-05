@@ -436,6 +436,48 @@ fn escape_signals_steering_before_gpui_resolves_the_abort_sequence(cx: &mut gpui
                 signals(),
                 [RuntimeSignal::ApplySteering, RuntimeSignal::Abort]
             );
+            // Embedded editor/terminal input must receive each Escape immediately.
+            let native = cx.update(|window, cx| {
+                let focus = app.read(cx).navigation.chat.focus.clone();
+                let native =
+                    window.replace_root(cx, |_, _| NativeEscapeInput { focus, presses: 0 });
+                native.read(cx).focus.clone().focus(window, cx);
+                window.draw(cx).clear(cx);
+                native
+            });
+            for expected in 1..=2 {
+                press(cx);
+                assert!(
+                    signals().is_empty(),
+                    "native Escape must not steer or abort"
+                );
+                cx.update(|window, cx| {
+                    assert!(!window.has_pending_keystrokes());
+                    assert_eq!(native.read(cx).presses, expected);
+                });
+            }
         },
     );
+}
+
+struct NativeEscapeInput {
+    focus: gpui::FocusHandle,
+    presses: usize,
+}
+
+impl gpui::Render for NativeEscapeInput {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+        use gpui::{InteractiveElement as _, ParentElement as _, div};
+
+        div().key_context(crate::app::NATIVE_INPUT_CONTEXT).child(
+            div()
+                .key_context("Terminal")
+                .track_focus(&self.focus)
+                .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, _| {
+                    if event.keystroke.key == "escape" {
+                        this.presses += 1;
+                    }
+                })),
+        )
+    }
 }

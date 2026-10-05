@@ -436,7 +436,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Command> {
             EscapePrefix,
             "Composer",
             "Apply queued steering immediately",
-            [Shortcut::new("escape", named("FarcasterApp"))],
+            [Shortcut::new("escape", app_condition())],
         ),
         Command::new(
             WorkPreviousIssue,
@@ -593,7 +593,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Command> {
         // GPUI ignores a sequence if a newer binding matches its first key.
         // Keep this after the single-Escape bindings, including dialog dismissal.
         Command::new(AbortRun, "Run", "Abort current run", app_keys(prefix, "."))
-            .with_bindings([Shortcut::new("escape escape", named("FarcasterApp"))])
+            .with_bindings([Shortcut::new("escape escape", app_condition())])
             .in_picker(),
     ]
 }
