@@ -31,7 +31,7 @@ fn prepare_launches_from_ghostty_without_login_scripts_or_environment_in_command
         directory.path(),
     )?;
     assert!(!command.contains("private value"));
-    let output = Command::new("/bin/bash")
+    let output = Command::new("bash")
         .args(["--noprofile", "--norc", "-c", &format!("exec -l {command}")])
         .env("HOME", directory.path())
         .output()?;
@@ -202,5 +202,50 @@ fn failed_editor_launch_consumes_private_script() -> TestResult {
     let output = run_launch(&command)?;
     assert!(!output.status.success());
     assert!(!path.exists());
+    Ok(())
+}
+
+#[test]
+fn launch_uses_host_path_for_cleanup_before_restoring_project_environment() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let host_bin = directory.path().join("host 'tools");
+    let project_bin = directory.path().join("project-tools");
+    std::fs::create_dir(&host_bin)?;
+    std::fs::create_dir(&project_bin)?;
+    let cleanup = Command::new("/bin/sh")
+        .args(["-c", "command -v rm"])
+        .output()?;
+    assert!(cleanup.status.success());
+    let cleanup = OsString::from_vec(cleanup.stdout.strip_suffix(b"\n").unwrap().to_vec());
+    std::os::unix::fs::symlink(Path::new(&cleanup), host_bin.join("rm"))?;
+    // Project tools are not available until after the private script is removed.
+    let project_rm = project_bin.join("rm");
+    std::fs::write(&project_rm, "#!/bin/sh\nexit 99\n")?;
+    std::fs::set_permissions(&project_rm, std::fs::Permissions::from_mode(0o700))?;
+    let path = directory.path().join("launch.sh");
+    let command = write_launch(
+        &path,
+        Path::new("/usr/bin/env"),
+        &["-0".into()],
+        directory.path(),
+        &[("PATH".into(), project_bin.as_os_str().into())],
+    )?;
+    let output = Command::new("/bin/sh")
+        .args(["-c", &command])
+        .env_clear()
+        .env("PATH", &host_bin)
+        .env("FARCASTER_UNCAPTURED", "must not leak")
+        .output()?;
+    assert!(output.status.success(), "{:?}", output.stderr);
+    assert!(!path.exists());
+    let actual: Vec<_> = output.stdout.split(|byte| *byte == 0).collect();
+    let mut expected_path = b"PATH=".to_vec();
+    expected_path.extend_from_slice(project_bin.as_os_str().as_bytes());
+    assert!(actual.contains(&expected_path.as_slice()));
+    assert!(
+        !actual
+            .iter()
+            .any(|entry| entry.starts_with(b"FARCASTER_UNCAPTURED="))
+    );
     Ok(())
 }

@@ -26,14 +26,16 @@ fn write_launch(
     if path.as_os_str().as_bytes().contains(&0) {
         return Err("editor launch path contains a NUL byte".to_owned());
     }
-    let mut command = b"/usr/bin/env -i /bin/sh ".to_vec();
+    // Keep the host PATH until cleanup has consumed the private script.
+    // The script restores only the captured environment before the editor.
+    let mut command = b"/usr/bin/env /bin/sh ".to_vec();
     quote(&mut command, path.as_os_str());
     let command =
         String::from_utf8(command).map_err(|_| "editor launch path is not UTF-8".to_owned())?;
     if program.as_os_str().is_empty() {
         return Err("editor program is empty".to_owned());
     }
-    let mut script = b"/bin/rm -- \"$0\" || exit\ncd -- ".to_vec();
+    let mut script = b"rm -- \"$0\" || exit\ncd -- ".to_vec();
     quote(&mut script, project.as_os_str());
     script.extend_from_slice(b" || exit\nexec /usr/bin/env -i --");
     for (key, value) in environment {
