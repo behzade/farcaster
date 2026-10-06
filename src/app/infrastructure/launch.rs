@@ -1,7 +1,7 @@
 use std::{cell::RefCell, path::PathBuf, rc::Rc, time::Duration};
 
 #[cfg(target_os = "linux")]
-use std::{fs, sync::Arc};
+use std::{fs, path::Path, sync::Arc};
 
 use super::{isolation, performance::StartupTiming};
 
@@ -273,12 +273,32 @@ fn quit_after_start(cx: &mut App) {
 
 #[cfg(target_os = "linux")]
 fn install_linux_desktop_identity() {
-    const APP_ID: &str = "io.github.behzade.farcaster";
-    const ICON: &[u8] = include_bytes!("../../../assets/icons/app/icon_256x256.png");
-
     let Ok(data_home) = crate::app::infrastructure::paths::user_data_home() else {
         return;
     };
+    let appimage = std::env::var_os("APPIMAGE").map(PathBuf::from);
+    let data_dirs = std::env::var_os("XDG_DATA_DIRS")
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+    let data_dirs = std::env::split_paths(&data_dirs).collect::<Vec<_>>();
+    install_linux_desktop_identity_at(&data_home, appimage, &data_dirs);
+}
+
+#[cfg(target_os = "linux")]
+fn install_linux_desktop_identity_at(
+    data_home: &Path,
+    appimage: Option<PathBuf>,
+    data_dirs: &[PathBuf],
+) {
+    // Native packages install their own launcher, which may use a runtime
+    // wrapper. Only AppImages need to register the running executable.
+    let Some(executable) = appimage else {
+        remove_legacy_native_desktop_entry(data_home, data_dirs);
+        return;
+    };
+    const APP_ID: &str = "io.github.behzade.farcaster";
+    const ICON: &[u8] = include_bytes!("../../../assets/icons/app/icon_256x256.png");
+
     let icon_dir = data_home.join("icons/hicolor/256x256/apps");
     let applications_dir = data_home.join("applications");
     if fs::create_dir_all(&icon_dir).is_err() || fs::create_dir_all(&applications_dir).is_err() {
@@ -289,29 +309,76 @@ fn install_linux_desktop_identity() {
         return;
     }
 
-    let executable = std::env::var_os("APPIMAGE")
-        .map(PathBuf::from)
-        .or_else(|| std::env::current_exe().ok());
-    let Some(executable) = executable else {
+    let executable = desktop_exec_path(&executable.to_string_lossy());
+    let _ = fs::write(
+        applications_dir.join(format!("{APP_ID}.desktop")),
+        linux_desktop_entry(&executable, &icon),
+    );
+}
+
+#[cfg(target_os = "linux")]
+fn remove_legacy_native_desktop_entry(data_home: &Path, data_dirs: &[PathBuf]) {
+    const ENTRY: &str = "applications/io.github.behzade.farcaster.desktop";
+    let entry = data_home.join(ENTRY);
+    let Ok(metadata) = fs::symlink_metadata(&entry) else {
         return;
     };
-    let executable = desktop_exec_path(&executable.to_string_lossy());
+    // Managed symlinks belong to the package manager, not to this migration.
+    if !metadata.file_type().is_file() {
+        return;
+    }
+    let Ok(contents) = fs::read_to_string(&entry) else {
+        return;
+    };
+    let Some(executable) = contents.lines().find_map(|line| {
+        line.strip_prefix("Exec=\"")
+            .and_then(|value| value.strip_suffix('"'))
+    }) else {
+        return;
+    };
+    // Only recognize native package locations. An AppImage or a custom
+    // launcher may use the same generated template and must stay intact.
+    let Some(prefix) = executable
+        .strip_suffix("/lib/farcaster/farcaster")
+        .or_else(|| executable.strip_suffix("/bin/farcaster"))
+        .or_else(|| executable.strip_suffix("/bin/.farcaster-wrapped"))
+    else {
+        return;
+    };
+    let native_package = (prefix == "/usr" || prefix == "/usr/local")
+        && !executable.ends_with("/bin/.farcaster-wrapped")
+        || prefix
+            .strip_prefix("/nix/store/")
+            .is_some_and(|package| !package.contains('/') && package.contains("-farcaster"));
+    let icon = data_home.join("icons/hicolor/256x256/apps/io.github.behzade.farcaster.png");
+    if !native_package || contents != linux_desktop_entry(executable, &icon) {
+        return;
+    }
+    // Leave the entry alone until a distinct packaged launcher can replace it.
+    let user_entry = fs::canonicalize(&entry).ok();
+    if !data_dirs.iter().any(|directory| {
+        let packaged = directory.join(ENTRY);
+        packaged.is_file() && fs::canonicalize(&packaged).is_ok_and(|path| Some(path) != user_entry)
+    }) {
+        return;
+    }
+    let _ = fs::remove_file(&entry);
+}
+
+#[cfg(target_os = "linux")]
+fn linux_desktop_entry(executable: &str, icon: &Path) -> String {
     let icon = icon.to_string_lossy();
-    let desktop_entry = format!(
+    format!(
         "[Desktop Entry]\n\
          Categories=Development;\n\
          Comment=Native desktop client for coding agents\n\
          Exec=\"{executable}\"\n\
          Icon={icon}\n\
          Name=Farcaster\n\
-         StartupWMClass={APP_ID}\n\
+         StartupWMClass=io.github.behzade.farcaster\n\
          Terminal=false\n\
          Type=Application\n"
-    );
-    let _ = fs::write(
-        applications_dir.join(format!("{APP_ID}.desktop")),
-        desktop_entry,
-    );
+    )
 }
 
 #[cfg(target_os = "linux")]
