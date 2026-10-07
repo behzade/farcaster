@@ -80,6 +80,7 @@ impl WorkerSessionTransport {
             .find(|model| model["provider"] == provider && model["id"] == id)
             .and_then(|model| serde_json::from_value(model.clone()).ok())
             .unwrap_or_else(|| Model {
+                adapter_data: None,
                 id: id.into(),
                 name: id.into(),
                 provider: provider.into(),

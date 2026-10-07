@@ -74,6 +74,8 @@ struct Dispatch {
     responded: bool,
     delivered: bool,
     starts_run: bool,
+    native_steer: bool,
+    aborted: bool,
 }
 
 struct HeldBatch {
@@ -198,6 +200,8 @@ impl QueuedSession {
                         responded: false,
                         delivered: false,
                         starts_run,
+                        native_steer: false,
+                        aborted: false,
                     },
                 );
             }
@@ -298,6 +302,29 @@ impl QueuedSession {
                     && let Some(mut dispatch) = self.dispatched.remove(&id)
                 {
                     dispatch.responded = true;
+                    if dispatch.native_steer
+                        && !dispatch.delivered
+                        && let Err(error) = &response.result
+                        && error.kind == crate::SessionResponseErrorKind::RejectedBeforeAcceptance
+                    {
+                        let recovery = self.inner.steer_error_recovery(&error.message);
+                        if !dispatch.aborted && recovery != SteerErrorRecovery::Fail {
+                            // Only an explicit non-delivery acknowledgement permits retry.
+                            if recovery == SteerErrorRecovery::RetryNow {
+                                self.running = false;
+                            }
+                            for input in dispatch.inputs {
+                                self.queue.push(input);
+                            }
+                            self.queue_changed();
+                            return None;
+                        }
+                        for input in &dispatch.inputs {
+                            self.pending.push_back(SessionEvent::Activity(
+                                input.receipt(DeliveryStatus::Rejected).into(),
+                            ));
+                        }
+                    }
                     for input in &dispatch.inputs {
                         self.admission_resolved(input.id());
                         let mut reply = response.clone();
@@ -349,6 +376,11 @@ impl QueuedSession {
                     }
                     if let Some(dispatch) = self.dispatched.get_mut(id) {
                         let status = receipt.status;
+                        // Wait for the paired response to decide whether to return this
+                        // native steer to our queue or expose the rejection.
+                        if dispatch.native_steer && status == DeliveryStatus::Rejected {
+                            return None;
+                        }
                         dispatch.delivered |= status == DeliveryStatus::Delivered;
                         if status == DeliveryStatus::Delivered {
                             self.bookkeeping.record_reached_model(id.clone());
@@ -398,7 +430,8 @@ impl QueuedSession {
                                         .enumerate()
                                         .filter_map(|(index, id)| {
                                             self.dispatched
-                                                .contains_key(id.as_str()?)
+                                                .get(id.as_str()?)
+                                                .is_some_and(|dispatch| !dispatch.native_steer)
                                                 .then_some(index)
                                         })
                                         .collect::<Vec<_>>()
@@ -431,6 +464,9 @@ impl QueuedSession {
     }
 
     fn cancel_local(&mut self) {
+        for dispatch in self.dispatched.values_mut() {
+            dispatch.aborted = true;
+        }
         let inputs = self.queue.take_all();
         self.cancel_inputs(inputs);
         self.queue_changed();
@@ -512,7 +548,28 @@ impl SessionTransport for QueuedSession {
                         message: message.clone(),
                         images: images.clone(),
                     }) {
-                        Ok(native_id) => return Ok(native_id),
+                        Ok(native_id) => {
+                            let id = native_id.clone();
+                            self.dispatched.insert(
+                                native_id,
+                                Dispatch {
+                                    inputs: vec![Input::new(
+                                        id.clone(),
+                                        mode,
+                                        requested_mode,
+                                        message,
+                                        images,
+                                    )],
+                                    tracks_delivery: self.inner.tracks_prompt_delivery(mode),
+                                    responded: false,
+                                    delivered: false,
+                                    starts_run: false,
+                                    native_steer: true,
+                                    aborted: false,
+                                },
+                            );
+                            return Ok(id);
+                        }
                         Err(error) => {
                             let recovery = self.inner.steer_error_recovery(&error);
                             if recovery == SteerErrorRecovery::Fail {

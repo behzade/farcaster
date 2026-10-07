@@ -79,6 +79,7 @@ pub(in crate::app) struct SettingsState {
     pub(in crate::app) harness_profile_data_directory: Entity<InputState>,
     pub(in crate::app) harness_profile_backend: crate::agents::Backend,
     pub(in crate::app) harness_profile_error: Option<String>,
+    pub(in crate::app) sign_in: workspace::harness_sign_in::HarnessSignInState,
     pub(in crate::app) network_proxy_input: Entity<InputState>,
     pub(in crate::app) network_proxy_error: Option<String>,
     pub(in crate::app) proxy_save: Option<Task<()>>,

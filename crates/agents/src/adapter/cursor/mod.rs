@@ -1,17 +1,28 @@
 mod backend;
 pub(super) use backend::CursorAdapter;
-mod catalog;
 
-use std::{path::Path, time::Instant};
+// Retain the legacy catalog for the existing ACP rename hook. SDK sessions use history.rs.
+#[allow(dead_code)]
+mod catalog;
+pub(super) use catalog::rename as rename_session;
+
+mod auth;
+mod bridge;
+mod client;
+mod configuration;
+mod events;
+mod history;
+mod timing;
+mod worker;
 
 use super::super::contract::{
     AgentBackendDescriptor, AgentCapabilities, Backend, CapabilitySupport,
     ConfigurationCapabilities, InteractionCapabilities, ObservationCapabilities,
     SessionCapabilities, TurnCapabilities,
 };
-use super::acp::{AcpProfile, AcpWorkerFactory};
+use std::path::PathBuf;
 
-pub(super) const PROFILE: AcpProfile = AcpProfile {
+pub(super) const PROFILE: super::acp::AcpProfile = super::acp::AcpProfile {
     backend: Backend::Cursor,
     name: "Cursor",
     command: "agent",
@@ -23,20 +34,38 @@ pub(super) const PROFILE: AcpProfile = AcpProfile {
     permission_modes: None,
 };
 
+pub(super) fn program() -> PathBuf {
+    if let Some(path) = std::env::var_os("FARCASTER_CURSOR_PATH").filter(|p| !p.is_empty()) {
+        return path.into();
+    }
+    if let Some(root) = installation_dir() {
+        let installed = root.join("bin/cursor-sdk-bridge");
+        if installed.is_file() {
+            return installed;
+        }
+    }
+    "cursor-sdk-bridge".into()
+}
+
+fn installation_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join(".local/share/farcaster/cursor-sdk/1.0.35"))
+}
+
 pub fn descriptor() -> AgentBackendDescriptor {
     use crate::HarnessAccessMode::{Auto, Full, Sandboxed};
     use CapabilitySupport::{Available, Unsupported};
 
     AgentBackendDescriptor {
-        id: PROFILE.backend,
-        name: PROFILE.name.into(),
+        id: Backend::Cursor,
+        name: "Cursor".into(),
         capabilities: AgentCapabilities {
             sessions: SessionCapabilities {
                 list: Available,
                 history: Available,
                 resume: Available,
                 fork: Unsupported,
-                rename: Available,
+                rename: Unsupported,
                 move_project: Unsupported,
                 close: Available,
                 delete: Available,
@@ -45,7 +74,7 @@ pub fn descriptor() -> AgentBackendDescriptor {
                 prompt: Available,
                 images: Available,
                 interrupt: Available,
-                steer: Unsupported,
+                steer: Available,
                 follow_up: Available,
                 compact: Unsupported,
                 queue: Available,
@@ -60,97 +89,24 @@ pub fn descriptor() -> AgentBackendDescriptor {
                 effort_label: "Effort",
                 reset_reasoning_effort: CapabilitySupport::Unsupported,
                 modes: Available,
-                commands: Available,
+                commands: Unsupported,
                 mcp_servers: Available,
             },
             interactions: InteractionCapabilities {
-                approvals: Available,
-                questions: Available,
-                notifications: Available,
+                approvals: Unsupported,
+                questions: Unsupported,
+                notifications: Unsupported,
             },
             observation: ObservationCapabilities {
                 streamed_text: Available,
                 reasoning: Available,
                 tool_activity: Available,
-                usage: Unsupported,
-                child_agents: Available,
+                usage: Available,
+                child_agents: Unsupported,
                 file_changes: Available,
             },
         },
     }
-}
-
-pub(super) fn worker_factory(mut command: crate::AgentLaunchConfig) -> AcpWorkerFactory {
-    command.program = PROFILE.program();
-    AcpWorkerFactory::new(command, PROFILE)
-}
-
-pub(super) fn spawn_main(
-    command: &crate::AgentLaunchConfig,
-    launch: &crate::SessionLaunch,
-) -> Result<super::acp::MainSession, String> {
-    if let crate::SessionStart::Resume(_) = &launch.start {
-        let id = super::main_session::launch_session_locator(launch)
-            .ok_or_else(|| "Cursor resume requires a session id".to_owned())?;
-        if catalog::inspect(&id)?.1 {
-            let fresh = crate::SessionLaunch {
-                harness: launch.harness,
-                session_id: None,
-                project: launch.project.clone(),
-                start: crate::SessionStart::New,
-                wake: launch.wake.clone(),
-                service_tier: launch.service_tier.clone(),
-            };
-            return super::acp::spawn_main(command, &PROFILE, &fresh);
-        }
-    }
-    super::acp::spawn_main(command, &PROFILE, launch)
-}
-
-pub(super) use catalog::{delete as delete_session, rename as rename_session};
-
-pub(super) fn load_configuration(
-    config: &crate::AgentLaunchConfig,
-    project: &Path,
-) -> Result<super::main_session::MainSessionMetadata, String> {
-    let (metadata, _) =
-        super::acp::load_configuration_with_cleanup(&PROFILE, config, project, |id| {
-            if let Err(error) = catalog::delete(id) {
-                zlog::warn!("Could not remove temporary Cursor catalog session: {error}");
-            }
-        })?;
-    Ok(metadata)
-}
-
-pub(super) fn discover(
-    locator_root: &Path,
-    query: &str,
-) -> Result<Vec<crate::DiscoveredSession>, String> {
-    catalog::discover(locator_root, query)
-}
-
-pub(super) fn load_history(
-    config: &crate::AgentLaunchConfig,
-    path: &Path,
-) -> Result<crate::DiscoveredHistory, String> {
-    let started = Instant::now();
-    let id = super::main_session::external_session_locator(PROFILE.backend, path)
-        .ok_or_else(|| format!("invalid Cursor session locator: {}", path.display()))?;
-    let (stored_project, unpersisted) = catalog::inspect(&id)?;
-    if unpersisted {
-        return Ok(crate::DiscoveredHistory {
-            messages: Default::default(),
-            model: None,
-            thinking_level: None,
-            prompt_deliveries: None,
-        });
-    }
-    let history = super::acp::load_history(&PROFILE, config, path, &stored_project);
-    zlog::info!(
-        "PERF operation=history.cursor.load elapsed_ms={:.2}",
-        started.elapsed().as_secs_f64() * 1_000.0
-    );
-    history
 }
 
 #[cfg(test)]

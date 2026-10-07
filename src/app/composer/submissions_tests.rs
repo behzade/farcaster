@@ -35,6 +35,67 @@ fn pending() -> PendingSubmission {
     }
 }
 
+#[gpui::test]
+fn submission_queue_matches_backend_steering_support(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::submission_queue_matches_backend_steering_support"
+        ),
+        cx,
+        |cx, app, _runtime, _project| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    for (backend, expected_mode) in [
+                        (crate::agents::Backend::Antigravity, PromptMode::FollowUp),
+                        (crate::agents::Backend::Cursor, PromptMode::Steer),
+                    ] {
+                        app.composer.pending_submissions.clear();
+                        let snapshot = Arc::make_mut(&mut app.snapshot);
+                        snapshot.harness = Some(backend);
+                        Arc::make_mut(&mut snapshot.conversation).running = true;
+                        let mut native = crate::conversation::QueueState::default();
+                        match expected_mode {
+                            PromptMode::Steer => {
+                                native.steering = vec!["same text".into()];
+                                native.steering_ids = vec!["backend-input".into()];
+                            }
+                            _ => {
+                                native.follow_up = vec!["same text".into()];
+                                native.follow_up_ids = vec!["backend-input".into()];
+                            }
+                        }
+                        for count in 1..=2 {
+                            app.composer
+                                .input
+                                .update(cx, |input, cx| input.set_value("same text", window, cx));
+                            app.submit("same text".into(), PromptMode::Steer, window, cx);
+                            let pending = &app.composer.pending_submissions;
+                            assert_eq!(pending.len(), count);
+                            assert!(pending.values().all(|input| input.mode == expected_mode));
+                            let visible = visible_prompt_queue(
+                                &native,
+                                pending,
+                                app.composer.sessions.current_target(),
+                            );
+                            let (messages, other) = if expected_mode == PromptMode::Steer {
+                                (&visible.steering, &visible.follow_up)
+                            } else {
+                                (&visible.follow_up, &visible.steering)
+                            };
+                            assert!(
+                                other.is_empty(),
+                                "one request appeared in both queues: {visible:?}"
+                            );
+                            assert_eq!(messages, &vec!["same text"; count]);
+                        }
+                    }
+                });
+            });
+        },
+    );
+}
+
 fn image(data: &str) -> ComposerImage {
     ComposerImage {
         prompt: PromptImage::new(data.into(), "image/png".into()),

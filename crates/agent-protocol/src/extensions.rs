@@ -47,6 +47,13 @@ pub struct SessionState {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Model {
+    /// Backend-owned request metadata. The catalog preserves it without interpreting it.
+    #[serde(
+        default,
+        rename = "adapterData",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub adapter_data: Option<serde_json::Value>,
     pub id: String,
     pub name: String,
     pub provider: String,

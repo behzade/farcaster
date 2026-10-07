@@ -100,6 +100,7 @@ fn startup_usage_keeps_saved_metrics_until_a_fresh_report_arrives() {
 fn failed_catalog_responses_preserve_last_valid_values_and_report_error() {
     let (mut owner, _events) = owner_without_process(std::env::temp_dir());
     let models = vec![Model {
+        adapter_data: None,
         id: "model".into(),
         name: "Model".into(),
         provider: "provider".into(),

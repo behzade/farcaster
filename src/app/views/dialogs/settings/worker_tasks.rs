@@ -416,6 +416,7 @@ fn route(
     let enabled = editor.edit.is_none();
     let harnesses = crate::agents::backend_statuses()
         .into_iter()
+        .filter(|backend| !backend.sign_in_required)
         .map(|backend| {
             (
                 if backend.available {

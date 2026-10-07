@@ -530,6 +530,7 @@ fn history_model_identity_survives_an_unavailable_catalog_entry() {
     assert_eq!(
         HarnessConfigurationStore::history_model(&[], Some(&identity)),
         Some(Model {
+            adapter_data: None,
             id: "kimi-k3".into(),
             name: "kimi-k3".into(),
             provider: "opencode-go".into(),
@@ -724,6 +725,7 @@ fn history_uses_latest_assistant_usage_for_context() {
         "stopReason": "stop"
     })];
     let models = vec![Model {
+        adapter_data: None,
         id: "model".into(),
         name: "Model".into(),
         provider: "test".into(),
@@ -1465,6 +1467,7 @@ fn cold_draft_model_selection_is_deferred_without_starting_the_harness() {
     let project = std::env::temp_dir().join("cold-model-project");
     let (mut owner, _events) = owner_without_process(project.clone());
     let model = Model {
+        adapter_data: None,
         id: "model".into(),
         name: "Model".into(),
         provider: "provider".into(),
@@ -1495,6 +1498,7 @@ fn cold_model_selection_replaces_an_unsupported_effort() {
     owner.snapshot.prefill_thinking_level = Some("high".into());
 
     owner.apply_command(RuntimeCommand::SetModel(Model {
+        adapter_data: None,
         id: "limited".into(),
         name: "Limited".into(),
         provider: "provider".into(),
@@ -1748,6 +1752,7 @@ fn get_state_canonicalizes_a_symlinked_session_path() -> Result<(), Box<dyn std:
 #[test]
 fn starting_session_prefills_controls_from_the_last_ready_session() {
     let model = Model {
+        adapter_data: None,
         id: "model-1".into(),
         name: "Model One".into(),
         provider: "provider-1".into(),
@@ -1800,6 +1805,7 @@ fn starting_session_prefills_controls_from_the_last_ready_session() {
 #[test]
 fn history_identity_overrides_draft_defaults_without_changing_them() {
     let sol = Model {
+        adapter_data: None,
         id: "gpt-5.6-sol".into(),
         name: "Sol".into(),
         provider: "openai-codex".into(),
@@ -1811,6 +1817,7 @@ fn history_identity_overrides_draft_defaults_without_changing_them() {
         efforts: None,
     };
     let luna = Model {
+        adapter_data: None,
         id: "gpt-5.6-luna".into(),
         name: "Luna".into(),
         provider: "openai-codex".into(),
@@ -1869,6 +1876,7 @@ fn history_identity_overrides_draft_defaults_without_changing_them() {
 #[test]
 fn viewing_a_subagent_does_not_change_new_session_defaults() {
     let sol = Model {
+        adapter_data: None,
         id: "gpt-5.6-sol".into(),
         name: "Sol".into(),
         provider: "openai-codex".into(),
@@ -1880,6 +1888,7 @@ fn viewing_a_subagent_does_not_change_new_session_defaults() {
         efforts: None,
     };
     let luna = Model {
+        adapter_data: None,
         id: "gpt-5.6-luna".into(),
         name: "Luna".into(),
         provider: "openai-codex".into(),
@@ -1937,6 +1946,7 @@ fn viewing_a_subagent_does_not_change_new_session_defaults() {
 #[test]
 fn cold_drafts_reuse_only_their_own_harness_catalog() {
     let pi_model = Model {
+        adapter_data: None,
         id: "pi-model".into(),
         name: "Pi Model".into(),
         provider: "pi-provider".into(),
@@ -2016,6 +2026,7 @@ fn process_replacement_clears_all_session_owned_snapshot_state() {
         .ok(),
         selected_session: Some(PathBuf::from("/old")),
         models: vec![Model {
+            adapter_data: None,
             id: "old".into(),
             name: "Old".into(),
             provider: "test".into(),
@@ -2083,6 +2094,7 @@ fn followup_applies_selected_model_without_hiding_history() -> Result<(), String
     preview_history(&mut owner, session.clone(), "preserved history");
 
     owner.apply_command(RuntimeCommand::SetModel(Model {
+        adapter_data: None,
         id: "new-model".into(),
         name: "New Model".into(),
         provider: "new-provider".into(),
@@ -2165,6 +2177,7 @@ fn failed_followup_resume_keeps_the_loaded_history() -> Result<(), String> {
     preview_history(&mut owner, session.clone(), "keep this history");
 
     owner.apply_command(RuntimeCommand::SetModel(Model {
+        adapter_data: None,
         id: "model".into(),
         name: "Model".into(),
         provider: "provider".into(),
@@ -2206,6 +2219,7 @@ fn failed_resume_publishes_no_state_from_the_previous_process() {
     snapshot.status = "old".into();
     snapshot.selected_session = Some(PathBuf::from("/old"));
     snapshot.models = vec![Model {
+        adapter_data: None,
         id: "old".into(),
         name: "Old".into(),
         provider: "test".into(),

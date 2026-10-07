@@ -1,6 +1,7 @@
 use crate::app::ui::primitives::AppTooltip as _;
 mod appearance;
 mod harness_profiles;
+mod harness_sign_in;
 mod worker_tasks;
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _,
@@ -344,6 +345,7 @@ fn connections(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEleme
         .flex_col()
         .gap(theme().size(24.0))
         .child(harness_profiles::render(app, entity.clone()))
+        .child(harness_sign_in::render(app, entity.clone()))
         .child(toggle_setting(
             "builtin-mcp-toggle",
             "Built-in MCP",

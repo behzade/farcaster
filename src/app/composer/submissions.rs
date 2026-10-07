@@ -66,6 +66,11 @@ impl FarcasterApp {
         let editor_text = self.composer.input.read(cx).value().to_string();
         let (mode, allow_while_running) =
             submission_delivery(&value, mode, &self.snapshot.commands);
+        let mode = if mode == PromptMode::Steer && !crate::agents::supports_steering(backend) {
+            PromptMode::FollowUp
+        } else {
+            mode
+        };
         let show_in_transcript = !self.snapshot.conversation.running;
         let images = self
             .composer

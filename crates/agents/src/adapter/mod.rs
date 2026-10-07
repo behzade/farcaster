@@ -3,6 +3,8 @@ mod acp;
 mod antigravity;
 mod auxiliary;
 mod backend;
+mod catalog_cache;
+pub use catalog_cache::{refresh_configuration_catalog, seed_configuration_catalog};
 mod child_stderr;
 mod claude;
 #[allow(dead_code)]
@@ -30,8 +32,10 @@ mod prompt_queue;
 mod queued_session;
 mod session_storage;
 mod shell_environment;
+mod sign_in;
 mod stream_text;
 use backend::for_backend;
+pub use sign_in::{SignIn, SignInEvent, sign_in, sign_in_required, supports_sign_in};
 pub fn profile_data_environment_key(backend: Backend) -> Option<&'static str> {
     for_backend(backend).profile_data_environment_key()
 }
@@ -201,7 +205,9 @@ pub fn load_configuration_catalog(
     harness: Backend,
     project: &std::path::Path,
 ) -> Result<crate::ConfigurationCatalog, String> {
-    for_backend(harness).configuration_catalog(config, project)
+    catalog_cache::load(config, harness, project, || {
+        for_backend(harness).configuration_catalog(config, project)
+    })
 }
 
 fn configuration_launch(
@@ -370,10 +376,13 @@ pub fn backend_statuses() -> Vec<super::contract::AgentBackendStatus> {
             let program = for_backend(descriptor.id)
                 .launch_configuration(&crate::AgentLaunchConfig::default())
                 .program;
+            let sign_in_required =
+                sign_in_required(descriptor.id, &crate::AgentLaunchConfig::default());
             super::contract::AgentBackendStatus {
                 id: descriptor.id,
                 name: descriptor.name,
-                available: program_available(&program),
+                available: program_available(&program) && !sign_in_required,
+                sign_in_required,
                 program,
                 capabilities: descriptor.capabilities,
             }

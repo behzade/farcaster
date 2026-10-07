@@ -1109,3 +1109,97 @@ fn cancelling_one_steer_before_idle_omits_only_that_member_from_the_batch() {
         [first.as_str(), last.as_str()]
     );
 }
+
+#[test]
+fn asynchronous_native_steer_fallback_retries_each_submission_once_after_settlement() {
+    let (mut session, wire) = session(SteeringBoundary::Native, true);
+    wire.lock().unwrap().steer_recovery = SteerErrorRecovery::RetryWhenIdle;
+    let ids = [
+        enqueue(&mut session, PromptMode::Steer),
+        enqueue(&mut session, PromptMode::Steer),
+    ];
+    for id in &ids {
+        let mut wire = wire.lock().unwrap();
+        wire.events.push_back(activity(
+            json!({"type":"prompt_delivery","submissionId":id,"status":"rejected","message":{}}),
+        ));
+        wire.events
+            .push_back(SessionEvent::Response(SessionResponse::prompt_rejected(
+                id.clone(),
+                PromptMode::Steer,
+                "not delivered".into(),
+            )));
+    }
+    let events = drain(&mut session);
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::Response(_)))
+    );
+    assert_eq!(session.queue.len(), 2);
+    assert_eq!(wire.lock().unwrap().commands.len(), 2);
+    wire.lock()
+        .unwrap()
+        .events
+        .push_back(activity(json!({"type":"agent_settled"})));
+    drain(&mut session);
+    assert!(session.queue.is_empty());
+    assert_eq!(wire.lock().unwrap().commands.len(), 3);
+    assert!(
+        matches!(&wire.lock().unwrap().commands[2], SessionCommand::Prompt { mode: PromptMode::Normal, message, .. } if message == "same text\n\nsame text")
+    );
+    {
+        let mut wire = wire.lock().unwrap();
+        wire.events.push_back(activity(json!({"type":"prompt_delivery","submissionId":"native-3","status":"delivered","message":{}})));
+        wire.events
+            .push_back(SessionEvent::Response(SessionResponse::success(
+                Some("native-3".into()),
+                Payload::Prompt(PromptMode::Normal),
+            )));
+    }
+    let events = drain(&mut session);
+    for id in &ids {
+        assert_eq!(events.iter().filter(|event| matches!(event, SessionEvent::Activity(activity) if activity.prompt_delivery().is_some_and(|receipt| &receipt.submission_id == id && receipt.status == DeliveryStatus::Delivered))).count(), 1);
+    }
+    drain(&mut session);
+    assert_eq!(wire.lock().unwrap().commands.len(), 3);
+}
+
+#[test]
+fn aborted_native_steer_is_not_requeued_on_late_rejection() {
+    let (mut session, wire) = session(SteeringBoundary::Native, true);
+    wire.lock().unwrap().steer_recovery = SteerErrorRecovery::RetryWhenIdle;
+    let id = enqueue(&mut session, PromptMode::Steer);
+    session.send(SessionCommand::Abort).unwrap();
+    wire.lock()
+        .unwrap()
+        .events
+        .push_back(SessionEvent::Response(SessionResponse::prompt_rejected(
+            id,
+            PromptMode::Steer,
+            "not delivered".into(),
+        )));
+    drain(&mut session);
+    assert!(session.queue.is_empty());
+    assert_eq!(wire.lock().unwrap().commands.len(), 2);
+}
+
+#[test]
+fn native_steer_delivery_unknown_does_not_retry_even_with_recovery_policy() {
+    let (mut session, wire) = session(SteeringBoundary::Native, true);
+    wire.lock().unwrap().steer_recovery = SteerErrorRecovery::RetryWhenIdle;
+    let id = enqueue(&mut session, PromptMode::Steer);
+    let mut response = SessionResponse::failure(
+        Some(id),
+        SessionOperation::Prompt(PromptMode::Steer),
+        "connection lost".into(),
+    );
+    response.result.as_mut().unwrap_err().kind = crate::SessionResponseErrorKind::DeliveryUnknown;
+    wire.lock()
+        .unwrap()
+        .events
+        .push_back(SessionEvent::Response(response));
+    drain(&mut session);
+    assert!(session.queue.is_empty());
+    assert_eq!(wire.lock().unwrap().commands.len(), 1);
+}

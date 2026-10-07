@@ -626,6 +626,7 @@ impl HarnessConfigurationStore {
                 .find(|model| model.provider == *provider && model.id == *model_id)
                 .cloned()
                 .unwrap_or_else(|| Model {
+                    adapter_data: None,
                     id: model_id.clone(),
                     name: model_id.clone(),
                     provider: provider.clone(),

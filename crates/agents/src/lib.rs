@@ -15,14 +15,16 @@ pub use adapter::profile_data_environment_key;
 pub use adapter::project_shell_environment;
 #[cfg(feature = "test-support")]
 pub use adapter::set_test_project_environment;
+pub use adapter::{SignIn, SignInEvent, sign_in, sign_in_required, supports_sign_in};
 pub use adapter::{
     annotate_history_message, app_shell_environment, apply_project_trust, available_access_modes,
     backend_display_name, backend_statuses, default_login_shell, delete_session_family,
     delete_session_family_with_config, discover_sessions_for, discover_sessions_for_profile,
     effort_label, external_session_identity, generate_session_title, load_configuration_catalog,
     load_session_history, load_session_history_for_profile, move_session_family,
-    move_session_family_with_config, project_trust, project_trust_description, rename_session,
-    saved_project_trust, service_tier_policy, spawn_session, supports_auto_title_generation,
+    move_session_family_with_config, project_trust, project_trust_description,
+    refresh_configuration_catalog, rename_session, saved_project_trust, seed_configuration_catalog,
+    service_tier_policy, spawn_session, supports_auto_title_generation,
     supports_individual_queue_cancellation, supports_reasoning_effort, supports_reasoning_reset,
     supports_sandbox_discovery, supports_session_fork, supports_session_move,
     supports_session_resume, supports_startup_command, supports_steering, validate_launch,

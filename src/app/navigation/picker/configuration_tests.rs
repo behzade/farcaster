@@ -4,6 +4,7 @@ use crate::agents::Backend;
 #[test]
 fn runtime_selection_matches_model_identity_and_effort() {
     let model = Model {
+        adapter_data: None,
         id: "id".into(),
         name: "Model".into(),
         provider: "provider".into(),
@@ -46,6 +47,7 @@ fn runtime_selection_matches_model_identity_and_effort() {
 fn effort_choices_respect_each_models_limits() {
     let catalog = vec!["low".into(), "high".into()];
     let mut model = Model {
+        adapter_data: None,
         id: "test".into(),
         name: "Test".into(),
         provider: "test".into(),

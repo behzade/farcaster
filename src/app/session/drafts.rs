@@ -213,6 +213,13 @@ impl FarcasterApp {
         if self.editable_draft_harness().is_none() {
             return;
         }
+        if Self::harness_sign_in_required(harness, profile_id.as_deref()) {
+            self.sessions.error =
+                Some("Sign in in Settings → Connections before selecting this harness".into());
+            self.notify_session_rail(cx);
+            cx.notify();
+            return;
+        }
         if let Err(error) = crate::app::persistence::open().and_then(|store| {
             store.save_preferred_harness(harness)?;
             store.save_preferred_profile_id(profile_id.as_deref())

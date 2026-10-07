@@ -3,6 +3,7 @@ use crate::agents::Backend;
 
 fn model(id: &str, reasoning: bool, efforts: Option<&[&str]>) -> Model {
     Model {
+        adapter_data: None,
         id: id.into(),
         name: id.into(),
         provider: "provider".into(),

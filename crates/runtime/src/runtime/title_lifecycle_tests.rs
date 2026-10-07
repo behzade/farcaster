@@ -180,7 +180,11 @@ fn serve(
         title_native_tests::serve_opencode(peer, state, stop, project);
         return;
     }
-    if matches!(peer.backend.as_str(), "cursor-cli" | "antigravity-acp") {
+    if peer.backend == Backend::Cursor {
+        title_native_tests::serve_cursor_sdk(peer, state, stop);
+        return;
+    }
+    if peer.backend == Backend::Antigravity {
         title_native_tests::serve_acp(peer, state, stop);
         return;
     }

@@ -15,6 +15,7 @@ pub(in crate::app) mod code_tasks;
 pub(in crate::app) mod editor;
 mod external_editor;
 mod harness_profiles;
+pub(in crate::app) mod harness_sign_in;
 pub(in crate::app) mod neovim;
 mod neovim_adapter;
 mod regions;

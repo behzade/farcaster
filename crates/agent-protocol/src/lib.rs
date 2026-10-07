@@ -560,6 +560,7 @@ pub struct AgentBackendStatus {
     pub name: String,
     pub program: std::path::PathBuf,
     pub available: bool,
+    pub sign_in_required: bool,
     pub capabilities: AgentCapabilities,
 }
 

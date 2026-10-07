@@ -853,3 +853,53 @@ fn failed_first_engagement_save_keeps_the_draft_and_retries_before_quit(
         },
     );
 }
+
+#[gpui::test]
+fn cursor_selection_requires_sign_in_for_the_selected_account(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::cursor_selection_requires_sign_in_for_the_selected_account"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+                    let executable = home.join(".local/share/farcaster/cursor-sdk/1.0.35/bin/cursor-sdk-bridge");
+                    std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+                    std::fs::write(&executable, "fixture").unwrap();
+                    let status = || crate::agents::backend_statuses().into_iter().find(|backend| backend.id == Backend::Cursor).unwrap();
+                    assert!(status().sign_in_required);
+                    assert!(!status().available);
+                    assert!(app.editable_draft_harness().is_some());
+                    let previous = app.sessions.preferred_harness;
+                    app.change_draft_harness(Backend::Cursor, window, cx);
+                    assert_eq!(app.sessions.preferred_harness, previous);
+                    assert!(app.sessions.error.as_ref().unwrap().contains("Sign in"));
+                    let credential = serde_json::json!({"version":1,"backendUrl":"https://api2.cursor.sh","apiKey":"fixture","createdAtMs":1}).to_string();
+                    let save = |path: PathBuf| {
+                        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                        std::fs::write(path, &credential).unwrap();
+                    };
+                    save(home.join(".cursor/sdk/auth.json"));
+                    assert!(!status().sign_in_required);
+                    assert!(status().available);
+                    app.change_draft_harness(Backend::Cursor, window, cx);
+                    assert_eq!(app.sessions.preferred_harness, Some(Backend::Cursor));
+                    let id = "00000000-0000-4000-8000-000000000002";
+                    app.settings.harness_profiles.replace(vec![crate::agents::HarnessProfile {
+                        id:id.into(), name:"Other account".into(), backend:Backend::Cursor, executable, data_directory:None
+                    }]).unwrap();
+                    assert!(FarcasterApp::harness_sign_in_required(Backend::Cursor, Some(id)));
+                    app.change_draft_harness_profile(Backend::Cursor, id.into(), window, cx);
+                    assert_ne!(app.sessions.preferred_profile_id.as_deref(), Some(id));
+                    save(crate::app::paths::data_dir().unwrap().join("session-locators/profiles").join(id).join("cursor-sdk-auth/auth.json"));
+                    assert!(!FarcasterApp::harness_sign_in_required(Backend::Cursor, Some(id)));
+                    app.change_draft_harness_profile(Backend::Cursor, id.into(), window, cx);
+                    assert_eq!(app.sessions.preferred_profile_id.as_deref(), Some(id));
+                });
+            });
+        },
+    );
+}

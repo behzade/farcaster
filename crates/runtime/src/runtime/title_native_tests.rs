@@ -199,16 +199,21 @@ fn acp_and_cursor_title_events_reach_runtime_and_cache() {
         || {
             for harness in [Backend::Antigravity, Backend::Cursor] {
                 let mut s = Scenario::new(harness, None, false);
-                write(
-                    s.backend
-                        .state
-                        .lock()
-                        .expect("test lock should not be poisoned")
-                        .main
-                        .as_mut()
-                        .expect("main peer"),
-                    json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"main-thread","update":{"sessionUpdate":"session_info_update","title":"Native ACP title"}}}),
-                );
+                if harness == Backend::Cursor {
+                    s.backend.state.lock().expect("state").name = Some("Native ACP title".into());
+                    s.prompt();
+                } else {
+                    write(
+                        s.backend
+                            .state
+                            .lock()
+                            .expect("test lock should not be poisoned")
+                            .main
+                            .as_mut()
+                            .expect("main peer"),
+                        json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"main-thread","update":{"sessionUpdate":"session_info_update","title":"Native ACP title"}}}),
+                    );
+                }
                 s.until(|s| s.name() == Some("Native ACP title"));
                 assert_native_title_cached(&mut s, "Native ACP title");
             }
@@ -226,4 +231,40 @@ fn assert_native_title_cached(s: &mut Scenario, expected: &str) {
             .title_requests,
         0
     );
+}
+
+pub(super) fn serve_cursor_sdk(
+    mut peer: Peer,
+    state: Arc<Mutex<BackendState>>,
+    stop: Arc<AtomicBool>,
+) {
+    peer.reader
+        .get_mut()
+        .set_read_timeout(Some(Duration::from_millis(50)))
+        .expect("peer timeout");
+    while let Some(request) = read_request(&mut peer, &stop) {
+        state.lock().expect("state").requests.push(request.clone());
+        let result = match request["method"].as_str().expect("SDK method") {
+            "ListModels" => json!({"items":[{"id":"fixture-model","displayName":"Fixture"}]}),
+            "CreateAgent" | "ResumeAgent" => json!({"agentId":"main-thread"}),
+            "ListRuns" => json!({"items":[]}),
+            "ListAgentMessages" => json!({"messages":[]}),
+            "GetAgent" => {
+                json!({"agent":{"agentId":"main-thread","name":state.lock().expect("state").name}})
+            }
+            "Send" => {
+                for event in [
+                    json!({"sdkMessage":{"type":"system","message":{"run_id":"run-1"}}}),
+                    json!({"sdkMessage":{"type":"assistant","message":{"message":{"content":[{"type":"text","text":"Done"}]}}}}),
+                    json!({"result":{"runId":"run-1","status":"RUN_LIFECYCLE_STATUS_FINISHED","result":{"result":"Done"}}}),
+                    json!({"done":{"runId":"run-1"}}),
+                ] {
+                    peer.write(event);
+                }
+                json!({})
+            }
+            _ => panic!("unexpected SDK request: {request}"),
+        };
+        peer.write(result);
+    }
 }

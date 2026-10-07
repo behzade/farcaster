@@ -22,6 +22,7 @@ Other differences:
 
 Usage notes:
 
+- Cursor requires Node.js 22.13+ and the Cursor SDK; sign in through Settings → Connections.
 - Pi's sandbox controls require an adapter for the Pi extension. Currently only one exists for `pi-nono`.
 - Claude uses `claude -p`. Anthropic's guidance has been mixed on whether this usage counts toward subscription limits or separate limits.
 - Antigravity's terms of service are unclear about using its harness in third-party apps. Use it at your own risk.

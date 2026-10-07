@@ -8,6 +8,7 @@ fn model(id: &str, reasoning: bool) -> Model {
 
 fn model_from(provider: &str, id: &str, reasoning: bool) -> Model {
     Model {
+        adapter_data: None,
         id: id.into(),
         name: id.into(),
         provider: provider.into(),

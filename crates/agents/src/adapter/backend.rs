@@ -25,11 +25,32 @@ pub(super) static STANDARD_SERVICE_TIER: LazyLock<[String; 1]> =
 mod tests;
 
 pub(super) trait BackendAdapter: Sync {
+    fn sign_in_required(&self, _config: &AgentLaunchConfig) -> bool {
+        false
+    }
+    fn supports_sign_in(&self) -> bool {
+        false
+    }
+    fn sign_in(
+        &self,
+        _config: &AgentLaunchConfig,
+        _project: &Path,
+        _cancelled: &std::sync::atomic::AtomicBool,
+        _on_url: &dyn Fn(String),
+    ) -> Result<(), String> {
+        Err(format!(
+            "{} does not provide browser sign-in",
+            self.descriptor().name
+        ))
+    }
     fn descriptor(&self) -> AgentBackendDescriptor;
     fn launch_configuration(&self, config: &AgentLaunchConfig) -> AgentLaunchConfig;
     fn worker_factory(&self, config: AgentLaunchConfig) -> Arc<dyn WorkerSessionFactory>;
     fn profile_data_environment_key(&self) -> Option<&'static str> {
         None
+    }
+    fn catalog_is_complete(&self, catalog: &ConfigurationCatalog) -> bool {
+        !catalog.models.is_empty()
     }
     fn configuration_catalog(
         &self,

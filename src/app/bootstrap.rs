@@ -333,6 +333,7 @@ impl FarcasterApp {
                 harness_profile_data_directory: inputs.harness_profile_data_directory,
                 harness_profile_backend: crate::agents::Backend::Claude,
                 harness_profile_error: None,
+                sign_in: Default::default(),
                 themes: if let Some(error) = persisted.theme_error {
                     workspace::theme_settings::ThemeSettings::load_failed(error)
                 } else {

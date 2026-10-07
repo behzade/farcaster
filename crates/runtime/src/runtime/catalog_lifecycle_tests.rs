@@ -101,6 +101,15 @@ fn isolated_with_env(name: &str, backends: &[&str], env: &[(&str, &str)], run: i
         fs::copy(fixture_binary().join("agent"), dir.path().join(backend))
             .expect("test operation should succeed");
     }
+    if backends.contains(&"cursor-cli") {
+        fs::copy(fixture_binary().join("agent"), dir.path().join("node"))
+            .expect("install SDK helper fixture");
+        let sdk = dir
+            .path()
+            .join(".local/share/farcaster/cursor-sdk/1.0.35/node_modules/@cursor/sdk/dist/esm");
+        fs::create_dir_all(&sdk).expect("SDK fixture directory");
+        fs::write(sdk.join("index.js"), "").expect("SDK fixture module marker");
+    }
     fs::copy(
         fixture_binary().join("agent"),
         dir.path().join("localharness_external"),
@@ -113,6 +122,7 @@ fn isolated_with_env(name: &str, backends: &[&str], env: &[(&str, &str)], run: i
         .env_clear()
         .env(CHILD_MARKER, &test_name)
         .env("HOME", dir.path())
+        .env("CURSOR_API_KEY", "fixture-key")
         .env("PATH", dir.path())
         .env("FARCASTER_DATA_DIR", dir.path().join("data"))
         .env("SHELL", "/bin/sh")
@@ -321,6 +331,15 @@ impl Peer {
     }
 
     fn complete_catalog(&mut self, fail: bool) {
+        if self.backend == Backend::Cursor {
+            self.request("ListModels");
+            self.write(if fail {
+                json!({"items":[]})
+            } else {
+                json!({"items":[{"id":"fixture-model","displayName":"Fixture model"}]})
+            });
+            return;
+        }
         let request = self.request("initialize");
         if fail {
             self.write(if self.backend == Backend::Claude {
@@ -347,10 +366,6 @@ impl Peer {
         self.reply(&request, json!({"sessionId":"fixture-session", "models":{
             "currentModelId":"fixture-model", "availableModels":[{"modelId":"fixture-model", "name":"Fixture model"}]
         }}));
-        if self.backend == Backend::Cursor {
-            let request = self.request("cursor/list_available_models");
-            self.reply(&request, json!({"models":[]}));
-        }
         let request = self.request("session/close");
         self.reply(&request, json!({}));
     }
@@ -571,5 +586,14 @@ fn stalled_acp_catalog_does_not_block_another_backend() {
             });
             drop(stalled);
         },
+    );
+}
+
+#[test]
+fn cursor_sdk_catalog_reaches_runtime_snapshot() {
+    isolated(
+        "cursor_sdk_catalog_reaches_runtime_snapshot",
+        &["cursor-cli"],
+        || round_trip(Backend::Cursor),
     );
 }

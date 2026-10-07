@@ -27,7 +27,9 @@ pub(super) fn harness_selector(
                 .iter()
                 .find(|backend| Some(backend.id) == harness)
                 .map(|backend| {
-                    if backend.available {
+                    if backend.sign_in_required {
+                        format!("{} (sign in required)", backend.name)
+                    } else if backend.available {
                         backend.name.clone()
                     } else {
                         format!("{} (not installed)", backend.name)
@@ -48,7 +50,9 @@ pub(super) fn harness_selector(
             for backend in &backends {
                 let target = backend.id;
                 let entity = entity.clone();
-                let label = if backend.available {
+                let label = if backend.sign_in_required {
+                    format!("{} — Sign in in Settings → Connections", backend.name)
+                } else if backend.available {
                     backend.name.clone()
                 } else {
                     format!(
@@ -72,8 +76,12 @@ pub(super) fn harness_selector(
                 let target = profile.backend;
                 let profile_id = profile.id.clone();
                 let entity = entity.clone();
-                let available = profile.is_selectable();
-                let label = if available {
+                let sign_in_required =
+                    FarcasterApp::harness_sign_in_required(target, Some(&profile.id));
+                let available = profile.is_selectable() && !sign_in_required;
+                let label = if sign_in_required {
+                    format!("{} — Sign in in Settings → Connections", profile.name)
+                } else if available {
                     profile.name.clone()
                 } else {
                     format!(

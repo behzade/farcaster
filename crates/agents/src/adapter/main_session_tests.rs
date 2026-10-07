@@ -1426,7 +1426,7 @@ fn applying_steering_preserves_the_running_worker_and_pending_delivery() {
     for (harness, mode) in [
         ("codex-cli", WorkerSendMode::Steer),
         ("opencode", WorkerSendMode::Steer),
-        ("cursor-cli", WorkerSendMode::Queue),
+        ("cursor-cli", WorkerSendMode::Steer),
         ("claude", WorkerSendMode::Steer),
         ("antigravity-acp", WorkerSendMode::Queue),
     ] {

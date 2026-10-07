@@ -40,7 +40,9 @@ impl FarcasterApp {
                 let mut rows = crate::agents::backend_statuses()
                     .into_iter()
                     .map(|backend| {
-                        let detail = if !backend.available {
+                        let detail = if backend.sign_in_required {
+                            Some("Sign in in Settings → Connections".into())
+                        } else if !backend.available {
                             Some(format!(
                                 "Not installed (expected: {})",
                                 backend.program.display()
@@ -65,7 +67,9 @@ impl FarcasterApp {
                     .collect::<Vec<_>>();
                 for profile in self.settings.harness_profiles.list().unwrap_or_default() {
                     let current = self.active_profile_id().as_deref() == Some(profile.id.as_str());
-                    let available = profile.is_selectable();
+                    let sign_in_required =
+                        Self::harness_sign_in_required(profile.backend, Some(&profile.id));
+                    let available = profile.is_selectable() && !sign_in_required;
                     rows.push(
                         picker_row(
                             commands,
@@ -73,7 +77,9 @@ impl FarcasterApp {
                             PickerCommand::SetHarnessProfile(profile.backend, profile.id.clone()),
                             AppIcon::for_harness(profile.backend),
                             &profile.name,
-                            Some(if current {
+                            Some(if sign_in_required {
+                                "Sign in in Settings → Connections".into()
+                            } else if current {
                                 "Current".into()
                             } else if available {
                                 format!(

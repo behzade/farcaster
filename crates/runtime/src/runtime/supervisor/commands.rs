@@ -175,7 +175,7 @@ impl Supervisor {
         if let Err(error) = thread::Builder::new()
             .name(format!("farcaster-{harness}-catalog"))
             .spawn(move || {
-                let result = agents::load_configuration_catalog(
+                let result = agents::refresh_configuration_catalog(
                     &process_command,
                     request_harness,
                     &request_project,

@@ -566,6 +566,14 @@ impl Supervisor {
             .and_then(|state| state.with(|store| store.load_configuration_catalogs()).ok())
             .unwrap_or_default();
         for entry in &configuration_catalogs {
+            let mut config = process_command.clone();
+            config.profile_id = entry.profile_id.clone();
+            crate::agents::seed_configuration_catalog(
+                &config,
+                entry.harness,
+                &entry.project,
+                &entry.catalog,
+            );
             configurations.set_catalog_for_profile(
                 entry.harness,
                 entry.profile_id.clone(),
