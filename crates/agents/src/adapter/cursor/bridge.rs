@@ -16,6 +16,7 @@ pub(super) struct Bridge {
     child: Child,
     pub(super) client: Client,
     api_key: Option<String>,
+    temporary_store: Option<tempfile::TempDir>,
 }
 
 #[derive(Deserialize)]
@@ -30,20 +31,22 @@ struct Ready {
 
 impl Bridge {
     pub(super) fn start(config: &crate::AgentLaunchConfig, project: &Path) -> Result<Self, String> {
-        Self::launch(config, project, false)
+        Self::launch(config, project, false, false)
     }
 
     pub(super) fn start_live(
         config: &crate::AgentLaunchConfig,
         project: &Path,
+        ephemeral: bool,
     ) -> Result<Self, String> {
-        Self::launch(config, project, true)
+        Self::launch(config, project, true, ephemeral)
     }
 
     fn launch(
         config: &crate::AgentLaunchConfig,
         project: &Path,
         live: bool,
+        ephemeral: bool,
     ) -> Result<Self, String> {
         let mut command = config.command(project)?;
         let api_key = super::auth::api_key(config, &command)?;
@@ -59,13 +62,26 @@ impl Bridge {
                 .arg("--state-root")
                 .arg(root.join("cursor-sdk-store"));
         }
+        let temporary_store = ephemeral
+            .then(|| {
+                tempfile::Builder::new()
+                    .prefix("farcaster-cursor-title-")
+                    .tempdir()
+            })
+            .transpose()
+            .map_err(|error| format!("Create Cursor temporary store: {error}"))?;
+        if let Some(store) = &temporary_store {
+            command.arg("--temporary-store").arg(store.path());
+        }
         if live {
             let mut helper =
                 super::auth::sdk_command(&command, project, include_str!("runtime.mjs"))?;
             helper.args(command.get_args());
             command = helper;
         }
-        Self::from_command(command, api_key)
+        let mut bridge = Self::from_command(command, api_key)?;
+        bridge.temporary_store = temporary_store;
+        Ok(bridge)
     }
 
     fn from_command(
@@ -135,6 +151,7 @@ impl Bridge {
                 child,
                 client,
                 api_key,
+                temporary_store: None,
             }),
             Err(error) => {
                 let _ = child.kill();
@@ -146,6 +163,10 @@ impl Bridge {
 
     pub(super) fn api_key(&self) -> Option<&str> {
         self.api_key.as_deref()
+    }
+
+    pub(super) fn is_ephemeral(&self) -> bool {
+        self.temporary_store.is_some()
     }
 
     pub(super) fn agent(&self, method: &str, body: Value) -> Result<Value, String> {
@@ -172,6 +193,16 @@ impl Bridge {
     }
 
     pub(super) fn close(&mut self) -> Result<(), String> {
+        self.stop()?;
+        if let Some(store) = self.temporary_store.take() {
+            store
+                .close()
+                .map_err(|error| format!("Remove Cursor temporary store: {error}"))?;
+        }
+        Ok(())
+    }
+
+    fn stop(&mut self) -> Result<(), String> {
         if self.has_exited() {
             return Ok(());
         }
@@ -208,6 +239,7 @@ impl Bridge {
                 .expect("fixture process"),
             client,
             api_key,
+            temporary_store: None,
         }
     }
 }

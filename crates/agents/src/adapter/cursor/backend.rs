@@ -58,6 +58,52 @@ impl BackendAdapter for CursorAdapter {
     fn steering_boundary(&self) -> SteeringBoundary {
         SteeringBoundary::Native
     }
+    fn supports_auto_title_generation(&self) -> bool {
+        true
+    }
+    fn title_model(
+        &self,
+        catalog: &ConfigurationCatalog,
+        active_model: Option<&crate::extensions::Model>,
+    ) -> Option<crate::extensions::Model> {
+        super::super::auxiliary::select_title_model(
+            catalog,
+            active_model,
+            "FARCASTER_CURSOR_TITLE_MODEL",
+            &["flash", "haiku", "mini", "nano"],
+            false,
+        )
+    }
+    fn generate_title(
+        &self,
+        config: &AgentLaunchConfig,
+        project: &Path,
+        first_prompt: &str,
+        selection: Option<&crate::extensions::Model>,
+        effort: Option<String>,
+    ) -> Result<String, String> {
+        super::super::auxiliary::generate_worker_title(
+            config,
+            crate::Backend::Cursor,
+            project,
+            first_prompt,
+            selection,
+            effort,
+        )
+    }
+    fn rename_session(
+        &self,
+        config: &AgentLaunchConfig,
+        project: &Path,
+        _session: &Path,
+        id: &str,
+        name: &str,
+    ) -> Result<(), String> {
+        let bridge = Bridge::start_live(&self.launch_configuration(config), project, false)?;
+        bridge
+            .agent("RenameAgent", serde_json::json!({"agentId":id,"name":name}))
+            .map(|_| ())
+    }
     fn spawn(
         &self,
         config: &AgentLaunchConfig,

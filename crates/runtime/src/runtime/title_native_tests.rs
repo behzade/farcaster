@@ -200,6 +200,8 @@ fn acp_and_cursor_title_events_reach_runtime_and_cache() {
             for harness in [Backend::Antigravity, Backend::Cursor] {
                 let mut s = Scenario::new(harness, None, false);
                 if harness == Backend::Cursor {
+                    // Exercise metadata propagation on an existing session.
+                    s.owner.title_generation.new_session = false;
                     s.backend.state.lock().expect("state").name = Some("Native ACP title".into());
                     s.prompt();
                 } else {
@@ -250,13 +252,29 @@ pub(super) fn serve_cursor_sdk(
             "ListRuns" => json!({"items":[]}),
             "ListAgentMessages" => json!({"messages":[]}),
             "GetAgent" => {
-                json!({"agent":{"agentId":"main-thread","name":state.lock().expect("state").name}})
+                json!({"agent":{"agentId":"main-thread","name":state.lock().expect("state").name.as_deref().unwrap_or("New Agent")}})
+            }
+            "RenameAgent" => {
+                state.lock().expect("state").name =
+                    request["params"]["name"].as_str().map(str::to_owned);
+                json!({})
             }
             "Send" => {
+                let output = if request["params"]["message"]["text"]
+                    .as_str()
+                    .is_some_and(|text| text.starts_with("Write a concise title"))
+                {
+                    let Some(title) = title_output(&state, &stop) else {
+                        return;
+                    };
+                    title
+                } else {
+                    "Done".into()
+                };
                 for event in [
                     json!({"sdkMessage":{"type":"system","message":{"run_id":"run-1"}}}),
-                    json!({"sdkMessage":{"type":"assistant","message":{"message":{"content":[{"type":"text","text":"Done"}]}}}}),
-                    json!({"result":{"runId":"run-1","status":"RUN_LIFECYCLE_STATUS_FINISHED","result":{"result":"Done"}}}),
+                    json!({"sdkMessage":{"type":"assistant","message":{"message":{"content":[{"type":"text","text":output}]}}}}),
+                    json!({"result":{"runId":"run-1","status":"RUN_LIFECYCLE_STATUS_FINISHED","result":{"result":output}}}),
                     json!({"done":{"runId":"run-1"}}),
                 ] {
                     peer.write(event);

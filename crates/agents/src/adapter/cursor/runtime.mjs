@@ -10,7 +10,8 @@ const [sdkPath, ...args] = process.argv.slice(1);
 const { Agent, Cursor } = await timed("SDK.import", () => import(pathToFileURL(sdkPath).href));
 const { SqliteLocalAgentStore } = await timed("SqliteLocalAgentStore.import", () => import(new URL("./sqlite.js", pathToFileURL(sdkPath)).href));
 const workspace = args[args.indexOf("--workspace") + 1];
-const store = await timed("SqliteLocalAgentStore.open", () => SqliteLocalAgentStore.open({ workspaceRef: workspace }));
+const temporaryStore = args.includes("--temporary-store") ? args[args.indexOf("--temporary-store") + 1] : undefined;
+const store = await timed("SqliteLocalAgentStore.open", () => SqliteLocalAgentStore.open({ workspaceRef: workspace, stateRoot: temporaryStore }));
 timedSync("Cursor.configure", () => Cursor.configure({ local: { store } }));
 const directory = await mkdtemp(join(tmpdir(), "farcaster-cursor-"));
 const authTokenFile = join(directory, "token");
@@ -33,15 +34,16 @@ function agentOptions(wire) {
   return {
     apiKey: wire.apiKey,
     model: wire.model,
+    tools: temporaryStore ? [] : undefined,
     local: {
       cwd: local.cwd?.[0] ?? workspace,
       dirs: local.cwd?.slice(1),
-      settingSources: (local.settingSources ?? []).map((source) => source.replace("SETTING_SOURCE_", "").toLowerCase()),
+      settingSources: temporaryStore ? [] : (local.settingSources ?? []).map((source) => source.replace("SETTING_SOURCE_", "").toLowerCase()),
       sandboxOptions: local.sandboxOptions,
       autoReview: local.autoReview,
       store,
     },
-    mcpServers,
+    mcpServers: temporaryStore ? {} : mcpServers,
   };
 }
 function frame(value, flags = 0) {
@@ -178,6 +180,12 @@ const server = http.createServer(async (request, response) => {
         result = { agentId: agent.agentId }; break;
       }
       case "GetAgent": result = { agent: agentInfo(await timed("Agent.get", () => Agent.get(wire.agentId, localOptions(wire.options)))) }; break;
+      case "RenameAgent": {
+        const agent = await timed("LocalAgentStore.agents.get", () => store.agents.get({ agentId: wire.agentId }));
+        if (!agent) throw new Error("Cursor agent not found");
+        await timed("LocalAgentStore.agents.update", () => store.agents.update({ agent: { ...agent, name: wire.name, updatedAt: Date.now() } }));
+        result = {}; break;
+      }
       case "ListRuns": {
         const page = await timed("Agent.listRuns", () => Agent.listRuns(wire.agentId, localOptions(wire.options)));
         result = { ...page, items: page.items.map(run => ({ runId: run.id, model: run.model })) }; break;

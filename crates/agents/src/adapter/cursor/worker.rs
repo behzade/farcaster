@@ -26,8 +26,8 @@ pub(super) struct Factory(pub(super) AgentLaunchConfig);
 
 impl WorkerSessionFactory for Factory {
     fn create(&self, launch: WorkerLaunch) -> Result<Box<dyn WorkerSession>, String> {
-        if launch.ephemeral {
-            return Err("Cursor SDK ephemeral workers are not supported".into());
+        if launch.ephemeral && !matches!(launch.context, crate::WorkerContext::Fresh) {
+            return Err("Cursor temporary workers require fresh context".into());
         }
         if launch.provider.is_some() != launch.model.is_some()
             || launch
@@ -38,23 +38,28 @@ impl WorkerSessionFactory for Factory {
             return Err("Cursor SDK worker requires a Cursor provider/model pair".into());
         }
         let config = self.0.for_worker(Backend::Cursor, &launch)?;
-        let identity = crate::core::CallerRegistry::shared()
-            .issue_as_with_access(
-                &launch.project,
-                crate::core::CallerProfile {
-                    backend: Backend::Cursor,
-                    provider: launch.provider.clone(),
-                    model: launch.model.clone(),
-                    effort: launch.effort.clone(),
-                },
-                None,
-                launch.worker_id,
-                launch.worker_name,
-                launch.parent_worker_id,
-                launch.access_mode,
-            )?
-            .with_slot(launch.slot);
-        identity.set_harness_profile_id(config.profile_id.clone());
+        let identity = if launch.ephemeral {
+            None
+        } else {
+            let identity = crate::core::CallerRegistry::shared()
+                .issue_as_with_access(
+                    &launch.project,
+                    crate::core::CallerProfile {
+                        backend: Backend::Cursor,
+                        provider: launch.provider.clone(),
+                        model: launch.model.clone(),
+                        effort: launch.effort.clone(),
+                    },
+                    None,
+                    launch.worker_id,
+                    launch.worker_name,
+                    launch.parent_worker_id,
+                    launch.access_mode,
+                )?
+                .with_slot(launch.slot);
+            identity.set_harness_profile_id(config.profile_id.clone());
+            Some(identity)
+        };
         let resume = match &launch.context {
             crate::WorkerContext::Fresh => None,
             crate::WorkerContext::Resume { session_locator } => Some(session_locator.as_str()),
@@ -62,7 +67,9 @@ impl WorkerSessionFactory for Factory {
                 return Err("Cursor SDK session fork is not supported".into());
             }
         };
-        let (mut worker, _) = Worker::start(&config, &launch.project, resume, None, None)?;
+        let bridge = Bridge::start_live(&config, &launch.project, launch.ephemeral)?;
+        let (mut worker, _) =
+            Worker::from_bridge(bridge, &config, &launch.project, resume, None, None)?;
         if let Some(model) = launch.model {
             worker.select_model(Backend::Cursor.as_str(), &model)?;
         }
@@ -72,11 +79,13 @@ impl WorkerSessionFactory for Factory {
         if let Some(tier) = launch.service_tier {
             worker.select_service_tier(&tier)?;
         }
-        identity.bind(worker.id.clone());
-        worker.events.push_back(WorkerEvent::SessionChanged {
-            locator: worker.id.clone(),
-        });
-        worker.identity = Some(identity);
+        if let Some(identity) = &identity {
+            identity.bind(worker.id.clone());
+            worker.events.push_back(WorkerEvent::SessionChanged {
+                locator: worker.id.clone(),
+            });
+        }
+        worker.identity = identity;
         Ok(Box::new(worker))
     }
 }
@@ -113,7 +122,9 @@ pub(super) fn spawn_main(
             return Err("Cursor SDK session fork is not supported".into());
         }
     };
-    let (mut worker, metadata) = Worker::start(
+    let bridge = Bridge::start_live(config, &launch.project, false)?;
+    let (mut worker, metadata) = Worker::from_bridge(
+        bridge,
         config,
         &launch.project,
         resume.as_deref(),
@@ -167,17 +178,6 @@ pub(super) struct Worker {
 }
 
 impl Worker {
-    fn start(
-        config: &AgentLaunchConfig,
-        project: &Path,
-        resume: Option<&str>,
-        caller: Option<&str>,
-        wake: Option<thread::Thread>,
-    ) -> Result<(Self, main_session::MainSessionMetadata), String> {
-        let bridge = Bridge::start_live(config, project)?;
-        Self::from_bridge(bridge, config, project, resume, caller, wake)
-    }
-
     pub(super) fn from_bridge(
         bridge: Bridge,
         config: &AgentLaunchConfig,
@@ -232,6 +232,7 @@ impl Worker {
             .ok_or("Cursor SDK omitted agentId")?
             .to_owned();
         let metadata = configuration::metadata(&models, &model);
+        let metadata_dirty = !bridge.is_ephemeral();
         let mut worker = Self {
             bridge,
             id,
@@ -248,7 +249,7 @@ impl Worker {
             prompt_acks: VecDeque::new(),
             pending_finish: None,
             metadata_request: None,
-            metadata_dirty: true,
+            metadata_dirty,
             events: VecDeque::new(),
             run_id: None,
             terminal: None,
@@ -287,7 +288,7 @@ impl Worker {
                         && let Some(name) = info
                             .pointer("/agent/name")
                             .and_then(Value::as_str)
-                            .filter(|name| !name.trim().is_empty())
+                            .filter(|name| !name.trim().is_empty() && name.trim() != "New Agent")
                     {
                         self.events
                             .push_back(WorkerEvent::Activity(WorkerActivity::TitleChanged(
@@ -555,7 +556,7 @@ impl Worker {
                 .filter(|s| !s.is_empty())
                 .unwrap_or(&self.translated.output)
                 .to_owned();
-            self.metadata_dirty = true;
+            self.metadata_dirty = !self.bridge.is_ephemeral();
             self.events.push_back(WorkerEvent::Settled { output });
         } else {
             let error = transport_error
@@ -622,6 +623,20 @@ impl Worker {
 }
 
 impl WorkerSession for Worker {
+    fn rename(&mut self, name: &str) -> Result<(), String> {
+        self.bridge
+            .agent("RenameAgent", json!({"agentId":self.id,"name":name}))?;
+        // Discard a lookup started before the rename; its old name is now stale.
+        self.metadata_request = None;
+        self.metadata_dirty = false;
+        self.events.retain(|event| {
+            !matches!(
+                event,
+                WorkerEvent::Activity(WorkerActivity::TitleChanged(_))
+            )
+        });
+        Ok(())
+    }
     fn has_exited(&mut self) -> bool {
         self.bridge.has_exited()
     }

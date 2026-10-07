@@ -99,6 +99,7 @@ impl ProtocolPeer {
                 match request["method"].as_str().or(request["type"].as_str()) {
                     Some("thread/name/set") => request["params"]["name"].as_str(),
                     Some("set_session_name") => request["name"].as_str(),
+                    Some("RenameAgent") => request["params"]["name"].as_str(),
                     _ => None,
                 }
                 .map(str::to_owned)
@@ -541,7 +542,7 @@ impl Drop for Scenario {
 #[test]
 fn fresh_sessions_generate_and_persist_one_title() {
     isolated_title("fresh_sessions_generate_and_persist_one_title", || {
-        for harness in [Backend::Pi, Backend::Codex] {
+        for harness in [Backend::Pi, Backend::Codex, Backend::Cursor] {
             let mut s = Scenario::new(harness, None, false);
             s.generate();
             s.finish_title();
@@ -578,7 +579,7 @@ fn fresh_sessions_generate_and_persist_one_title() {
 #[test]
 fn waking_existing_sessions_does_not_generate_titles() {
     isolated_title("waking_existing_sessions_does_not_generate_titles", || {
-        for harness in [Backend::Pi, Backend::Codex] {
+        for harness in [Backend::Pi, Backend::Codex, Backend::Cursor] {
             for name in [None, Some("Keep existing title")] {
                 let mut s = Scenario::new(harness, name, true);
                 s.prompt();
@@ -696,7 +697,7 @@ fn codex_failed_rename_does_not_publish_generated_title() {
 #[test]
 fn manual_rename_wins_over_pending_generation() {
     isolated_title("manual_rename_wins_over_pending_generation", || {
-        for harness in [Backend::Pi, Backend::Codex] {
+        for harness in [Backend::Pi, Backend::Codex, Backend::Cursor] {
             let mut s = Scenario::new(harness, None, false);
             s.generate();
             s.owner

@@ -65,7 +65,7 @@ pub fn descriptor() -> AgentBackendDescriptor {
                 history: Available,
                 resume: Available,
                 fork: Unsupported,
-                rename: Unsupported,
+                rename: Available,
                 move_project: Unsupported,
                 close: Available,
                 delete: Available,

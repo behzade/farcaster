@@ -41,7 +41,7 @@ fn live_cursor_sdk_history() -> Result<(), String> {
     };
     let bridge = Bridge::start(&config, project)?;
     let history = load(&bridge, &id, project)?;
-    let live = Bridge::start_live(&config, project)?;
+    let live = Bridge::start_live(&config, project, false)?;
     assert_eq!(load(&live, &id, project)?.messages, history.messages);
     assert!(history.messages.iter().any(|message| {
         message["role"] == "user"

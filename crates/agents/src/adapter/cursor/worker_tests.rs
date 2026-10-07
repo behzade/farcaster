@@ -186,7 +186,7 @@ fn serve(
             cancelled.store(true, Ordering::Relaxed);
             json!({})
         }
-        "Shutdown" => json!({}),
+        "Shutdown" | "RenameAgent" => json!({}),
         "SteerRun" => {
             json!({"outcome": if value["text"] == "fallback" { "revert_to_followup" } else { "complete_delivered" }})
         }
@@ -226,6 +226,28 @@ fn until(worker: &mut Worker, predicate: impl Fn(&WorkerEvent) -> bool) -> Vec<W
 }
 
 #[test]
+fn rename_discards_metadata_from_before_the_rename() {
+    let fixture = Fixture::new(false, false);
+    let mut worker = fixture.worker(None);
+    let (sender, receiver) = mpsc::channel();
+    worker.metadata_request = Some(receiver);
+    worker
+        .events
+        .push_back(WorkerEvent::Activity(WorkerActivity::TitleChanged(
+            "Old title".into(),
+        )));
+    worker.rename("Chosen title").unwrap();
+    // A lookup that started before rename can complete after its acknowledgement.
+    let _ = sender.send(Ok(json!({"agent":{"name":"Old title"}})));
+    while let Some(event) = worker.poll() {
+        assert!(!matches!(
+            event,
+            WorkerEvent::Activity(WorkerActivity::TitleChanged(_))
+        ));
+    }
+}
+
+#[test]
 #[ignore = "uses the installed Cursor SDK and signed-in account for one short sandboxed turn"]
 fn live_cursor_sdk_sandboxed_turn() -> Result<(), String> {
     let project = tempfile::tempdir().map_err(|error| error.to_string())?;
@@ -235,8 +257,15 @@ fn live_cursor_sdk_sandboxed_turn() -> Result<(), String> {
         session_locator_root: Some(project.path().join("state")),
         ..Default::default()
     };
-    let (mut worker, _) =
-        Worker::start(&config, project.path(), None, None, Some(thread::current()))?;
+    let bridge = Bridge::start_live(&config, project.path(), false)?;
+    let (mut worker, _) = Worker::from_bridge(
+        bridge,
+        &config,
+        project.path(),
+        None,
+        None,
+        Some(thread::current()),
+    )?;
     worker
         .submit_prompt(
             "live-hi".into(),
@@ -589,8 +618,15 @@ fn live_cursor_sdk_native_steering() -> Result<(), String> {
         session_locator_root: Some(project.path().join("state")),
         ..Default::default()
     };
-    let (mut worker, _) =
-        Worker::start(&config, project.path(), None, None, Some(thread::current()))?;
+    let bridge = Bridge::start_live(&config, project.path(), false)?;
+    let (mut worker, _) = Worker::from_bridge(
+        bridge,
+        &config,
+        project.path(),
+        None,
+        None,
+        Some(thread::current()),
+    )?;
     worker
         .submit_prompt(
             "work".into(),
