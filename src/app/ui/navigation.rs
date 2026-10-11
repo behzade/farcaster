@@ -159,7 +159,7 @@ impl FarcasterApp {
     ) {
         let entity = cx.entity().downgrade();
         let window_id = window.window_handle().window_id();
-        let escape_context = crate::app::ui::keybindings::app_condition();
+        let escape_context = crate::app::ui::keybindings::session_escape_condition();
         self.navigation.chat.return_shortcut =
             Some(cx.intercept_keystrokes(move |event, window, cx| {
                 if window.window_handle().window_id() != window_id {
@@ -173,10 +173,7 @@ impl FarcasterApp {
                         // Run before GPUI buffers Escape as a sequence prefix.
                         if event.keystroke.key == "escape"
                             && !event.keystroke.modifiers.modified()
-                            && event
-                                .context_stack
-                                .iter()
-                                .any(|context| escape_context.eval(std::slice::from_ref(context)))
+                            && escape_context.depth_of(&event.context_stack).is_some()
                         {
                             this.runtime.signal(
                                 this.composer.sessions.current_target(),

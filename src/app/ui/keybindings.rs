@@ -42,6 +42,32 @@ pub(crate) fn app_condition() -> Predicate {
     )
 }
 
+fn chat_condition() -> Predicate {
+    Predicate::And(
+        Box::new(app_condition()),
+        Box::new(Predicate::Equal("surface".into(), "chat".into())),
+    )
+}
+
+pub(crate) fn session_escape_condition() -> Predicate {
+    [
+        OVERLAY_KEY_CONTEXT,
+        PICKER_KEY_CONTEXT,
+        "PopupMenu",
+        "Popover",
+    ]
+    .into_iter()
+    .fold(
+        Predicate::Descendant(Box::new(chat_condition()), Box::new(named("FarcasterChat"))),
+        |chat, overlay| {
+            Predicate::And(
+                Box::new(chat),
+                Box::new(Predicate::Not(Box::new(named(overlay)))),
+            )
+        },
+    )
+}
+
 pub(crate) fn application_key(suffix: &str) -> String {
     format!("{}-{suffix}", platform_key("cmd", "ctrl"))
 }
@@ -192,10 +218,7 @@ pub(crate) fn registry() -> Vec<Command> {
 }
 
 fn registry_for_platform(prefix: &str) -> Vec<Command> {
-    let chat = Predicate::And(
-        Box::new(app_condition()),
-        Box::new(Predicate::Equal("surface".into(), "chat".into())),
-    );
+    let chat = chat_condition();
     let composer_input = input_in(named(COMPOSER_KEY_CONTEXT));
     let composer_completions = input_in(Predicate::And(
         Box::new(named(COMPOSER_KEY_CONTEXT)),
@@ -447,7 +470,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Command> {
             EscapePrefix,
             "Composer",
             "Apply queued steering immediately",
-            [Shortcut::new("escape", app_condition())],
+            [Shortcut::new("escape", session_escape_condition())],
         ),
         Command::new(
             WorkPreviousIssue,
@@ -607,7 +630,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Command> {
             AbortRun,
             "Run",
             "Abort current run",
-            [Shortcut::new("escape escape", app_condition())],
+            [Shortcut::new("escape escape", session_escape_condition())],
         )
         .in_picker(),
     ]

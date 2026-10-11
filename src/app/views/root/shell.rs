@@ -25,6 +25,7 @@ impl FarcasterApp {
             .flatten();
 
         div()
+            .key_context("FarcasterChat")
             .relative()
             .flex_1()
             .min_w_0()

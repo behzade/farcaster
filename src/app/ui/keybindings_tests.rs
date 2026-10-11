@@ -1,6 +1,37 @@
 use super::{bindings, registry};
 
 #[test]
+fn nested_overlays_do_not_start_escape_session_controls() {
+    use crate::app::{
+        AbortRun, CHAT_INPUT_CONTEXT, EscapePrefix, OVERLAY_KEY_CONTEXT, PICKER_KEY_CONTEXT,
+    };
+
+    let keymap = gpui::Keymap::new(bindings());
+    let escape = gpui::Keystroke::parse("escape").unwrap();
+    for overlay in [
+        OVERLAY_KEY_CONTEXT,
+        PICKER_KEY_CONTEXT,
+        "PopupMenu",
+        "Popover",
+    ] {
+        let contexts = [CHAT_INPUT_CONTEXT, "FarcasterChat", overlay, "Input"]
+            .map(|name| gpui::KeyContext::parse(name).unwrap());
+        for count in 1..=2 {
+            let (matched, pending) =
+                keymap.bindings_for_input(&vec![escape.clone(); count], &contexts);
+            assert!(!pending, "Escape must not wait for a sequence in {overlay}");
+            assert!(
+                matched.iter().all(|binding| {
+                    let action = binding.action().as_any();
+                    !action.is::<AbortRun>() && !action.is::<EscapePrefix>()
+                }),
+                "Escape must not control the session in {overlay}"
+            );
+        }
+    }
+}
+
+#[test]
 fn session_numbers_work_in_embedded_views_without_claiming_control_keys() {
     use crate::app::{APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT};
 

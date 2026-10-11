@@ -382,6 +382,90 @@ fn chat_background_clicks_return_to_composer_without_taking_input_focus(
 }
 
 #[gpui::test]
+fn escape_dismisses_overlays_without_session_signals(cx: &mut gpui::TestAppContext) {
+    #[derive(Clone, Copy, Debug)]
+    enum Surface {
+        ActionPicker,
+        Shortcuts,
+        WorkerModel,
+        ModelPopover,
+    }
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::escape_dismisses_overlays_without_session_signals"
+        ),
+        cx,
+        |cx, app, runtime, _| {
+            for surface in [
+                Surface::ActionPicker,
+                Surface::Shortcuts,
+                Surface::WorkerModel,
+                Surface::ModelPopover,
+            ] {
+                let is_open = |app: &FarcasterApp| match surface {
+                    Surface::ActionPicker => app.navigation.picker.is_some(),
+                    Surface::Shortcuts => app.overlays.view.keybindings,
+                    Surface::WorkerModel => app.extensions.active.dialog.is_some(),
+                    Surface::ModelPopover => app.workspace.runtime_picker.open,
+                };
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| {
+                        app.composer.focus.focus(window, cx);
+                        match surface {
+                            Surface::ActionPicker => {
+                                app.open_picker(PickerScope::Actions, window, cx)
+                            }
+                            Surface::Shortcuts => app.open_keybindings_help(window, cx),
+                            Surface::WorkerModel => app.apply_extension_request(
+                                crate::protocol::ExtensionUiRequest::WorkerModel {
+                                    id: "worker-model".into(),
+                                    profile: "Worker".into(),
+                                    choices: Vec::new(),
+                                },
+                                app.runtime_generation,
+                                cx,
+                            ),
+                            Surface::ModelPopover => {}
+                        }
+                    });
+                    window.draw(cx).clear(cx);
+                });
+                if matches!(surface, Surface::ModelPopover) {
+                    let trigger = cx
+                        .debug_bounds("composer-runtime-content")
+                        .expect("model picker trigger");
+                    cx.simulate_click(trigger.center(), Default::default());
+                }
+                cx.run_until_parked();
+                cx.update(|window, cx| {
+                    window.draw(cx).clear(cx);
+                    let app = app.read(cx);
+                    assert!(is_open(app), "{surface:?} must be open before Escape");
+                    if matches!(surface, Surface::WorkerModel) {
+                        assert!(app.extensions.dialog_focus.contains_focused(window, cx));
+                        assert!(!app.workspace.runtime_picker.open);
+                    }
+                });
+                cx.simulate_keystrokes("escape");
+                cx.update(|window, cx| {
+                    assert!(!is_open(app.read(cx)), "Escape must close {surface:?}");
+                    assert!(
+                        !window.has_pending_keystrokes(),
+                        "{surface:?} dismissal must be immediate"
+                    );
+                });
+                assert!(
+                    runtime.try_recv_signal().is_none(),
+                    "{surface:?} dismissal must not steer or abort"
+                );
+            }
+        },
+    );
+}
+
+#[gpui::test]
 fn escape_signals_steering_before_gpui_resolves_the_abort_sequence(cx: &mut gpui::TestAppContext) {
     use crate::runtime::RuntimeSignal;
     crate::app::test_support::with_offline_app(
@@ -428,11 +512,30 @@ fn escape_signals_steering_before_gpui_resolves_the_abort_sequence(cx: &mut gpui
             press(cx);
             assert_eq!(signals(), [RuntimeSignal::ApplySteering]);
 
-            // Focus changes cancel GPUI's prefix; Escape also works outside the composer.
+            // Sidebar focus cancels the pending chat sequence and owns later keys.
+            cx.update(|window, cx| {
+                let focus = app.read(cx).navigation.search_focus.clone();
+                focus.focus(window, cx);
+                window.draw(cx).clear(cx);
+            });
+            for _ in 0..2 {
+                press(cx);
+                assert!(
+                    signals().is_empty(),
+                    "sidebar Escape must not steer or abort"
+                );
+                assert!(!cx.update(|window, _| window.has_pending_keystrokes()));
+            }
+
+            // Focus changes cancel GPUI's prefix; project work owns its Escape.
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
                     app.workspace.surface = crate::app::AppSurface::Work;
-                    app.navigation.chat.focus.focus(window, cx);
+                    app.views
+                        .workgraph
+                        .read(cx)
+                        .focus_handle()
+                        .focus(window, cx);
                     cx.notify();
                 });
                 window.draw(cx).clear(cx);
@@ -444,13 +547,9 @@ fn escape_signals_steering_before_gpui_resolves_the_abort_sequence(cx: &mut gpui
             });
             assert!(signals().is_empty());
             press(cx);
-            assert_eq!(signals(), [RuntimeSignal::ApplySteering]);
-            assert!(cx.update(|window, _| window.has_pending_keystrokes()));
-            press(cx);
-            assert_eq!(
-                signals(),
-                [RuntimeSignal::ApplySteering, RuntimeSignal::Abort]
-            );
+            assert!(signals().is_empty(), "project work must not steer or abort");
+            assert!(!cx.update(|window, _| window.has_pending_keystrokes()));
+            cx.update(|_, cx| assert_eq!(app.read(cx).workspace.surface, AppSurface::Chat));
             // Embedded editor/terminal input must receive each Escape immediately.
             let native = cx.update(|window, cx| {
                 let focus = app.read(cx).navigation.chat.focus.clone();
