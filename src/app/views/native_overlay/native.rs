@@ -259,6 +259,15 @@ mod macos {
                     popup.window.makeKeyAndOrderFront(None);
                 }
             }
+            // Changing the style mask clears AppKit's first responder. GPUI's
+            // focus handle alone cannot route text back to its native view.
+            // This also lets passive panels handle input when clicked, without
+            // making them key while presenting them.
+            if input != super::OverlayInput::Tooltip
+                && !popup.window.makeFirstResponder(Some(&popup.view))
+            {
+                return Err("could not restore the native panel input responder".into());
+            }
             Ok(())
         }
 
