@@ -1,5 +1,6 @@
 use super::*;
 use crate::agents::Backend;
+use crate::app::AppSurface;
 use crate::app::views::session_rail::groups::session_rail_lists;
 
 fn archived_session(item: &ActiveSessionItem) -> &SessionSummary {
@@ -7,6 +8,52 @@ fn archived_session(item: &ActiveSessionItem) -> &SessionSummary {
         ActiveSessionItem::Session(item) => &item.session,
         ActiveSessionItem::Draft(_) => panic!("expected an archived chat, found a draft"),
     }
+}
+
+#[gpui::test]
+fn native_session_navigation_preserves_surface_and_dialog_focus(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::native_session_navigation_preserves_surface_and_dialog_focus"
+        ),
+        cx,
+        |cx, app, _, project| {
+            crate::app::project::trust::apply(project, crate::projects::TrustChoice::TrustProject)
+                .expect("trust the test project");
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions.drafts = [1, 2]
+                        .map(|id| {
+                            let mut draft = crate::sessions::DraftSession::with_id(
+                                Some(Backend::Pi),
+                                id.to_string(),
+                                project.into(),
+                            );
+                            draft.app_session_id = id;
+                            draft
+                        })
+                        .to_vec();
+                    app.sessions.order = vec![1, 2];
+                    for surface in [AppSurface::Editor, AppSurface::Terminal] {
+                        app.workspace.surface = surface;
+                        app.navigation.chat.focus.focus(window, cx);
+                        app.sessions.selected_draft = Some("1".into());
+                        app.switch_transcript_session(1, window, cx);
+                        assert_eq!(app.sessions.selected_draft.as_deref(), Some("2"));
+                        assert_eq!(app.workspace.surface, surface);
+                        assert!(!app.composer.focus.is_focused(window));
+                        app.open_keybindings_help(window, cx);
+                        app.overlays.sheet_focus.focus(window, cx);
+                        app.switch_transcript_session(-1, window, cx);
+                        assert_eq!(app.sessions.selected_draft.as_deref(), Some("2"));
+                        assert!(app.overlays.sheet_focus.is_focused(window));
+                        app.close_sheet(window, cx);
+                    }
+                });
+            });
+        },
+    );
 }
 
 #[test]

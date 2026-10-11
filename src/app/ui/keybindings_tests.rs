@@ -65,12 +65,7 @@ fn application_and_picker_shortcuts_route_only_in_their_owned_contexts() {
         APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT, RestoreSession, SetRuntime, SetSandbox,
     };
 
-    for (platform, prefix) in [
-        ("cmd", "cmd"),
-        ("ctrl", "ctrl"),
-        #[cfg(target_os = "linux")]
-        ("ctrl", "super"),
-    ] {
+    for (platform, prefix) in [("cmd", "cmd"), ("ctrl", "ctrl"), ("ctrl", "super")] {
         let keymap = gpui::Keymap::new(
             registry_for_platform(platform)
                 .into_iter()
@@ -98,6 +93,9 @@ fn application_and_picker_shortcuts_route_only_in_their_owned_contexts() {
                 "shift-p",
                 Box::new(crate::app::ShowActionPicker) as Box<dyn gpui::Action>,
             ),
+            ("-", Box::new(crate::app::DecreaseTranscriptFontSize)),
+            ("=", Box::new(crate::app::IncreaseTranscriptFontSize)),
+            ("+", Box::new(crate::app::IncreaseTranscriptFontSize)),
         ] {
             let stroke = gpui::Keystroke::parse(&format!("{prefix}-{suffix}"))
                 .expect("test operation should succeed");
@@ -119,7 +117,11 @@ fn application_and_picker_shortcuts_route_only_in_their_owned_contexts() {
                 &[gpui::KeyContext::parse(NATIVE_INPUT_CONTEXT)
                     .expect("test operation should succeed")],
             );
-            assert!(bindings.is_empty());
+            assert_eq!(
+                bindings.first().map(|binding| binding.action().name()),
+                (prefix != "ctrl").then(|| action.name()),
+                "{prefix}-{suffix} in native input"
+            );
         }
         for suffix in ["m", "l"] {
             let key = format!("{prefix}-{suffix}");
@@ -287,45 +289,6 @@ fn send_to_chat_keys_are_control_only_and_dialog_scoped() {
 }
 
 #[test]
-fn application_shortcuts_stay_in_app_owned_contexts() {
-    use super::registry_for_platform;
-    use crate::app::{APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT};
-
-    let keymap = gpui::Keymap::new(
-        registry_for_platform("cmd")
-            .into_iter()
-            .flat_map(super::Command::into_bindings)
-            .collect(),
-    );
-    let app_contexts =
-        [gpui::KeyContext::parse(APP_INPUT_CONTEXT).expect("test operation should succeed")];
-    let native_contexts =
-        [gpui::KeyContext::parse(NATIVE_INPUT_CONTEXT).expect("test operation should succeed")];
-    for key in ["cmd-n", "cmd-shift-p", "cmd--", "cmd-=", "cmd-+"] {
-        let stroke = gpui::Keystroke::parse(key).expect("test operation should succeed");
-        let (app_bindings, _) =
-            keymap.bindings_for_input(std::slice::from_ref(&stroke), &app_contexts);
-        assert!(!app_bindings.is_empty(), "{key} missing in app context");
-        let (native_bindings, _) = keymap.bindings_for_input(&[stroke], &native_contexts);
-        assert!(
-            native_bindings.is_empty(),
-            "{key} must not reach embedded views"
-        );
-    }
-    for key in ["f1", "f2", "f3", "f4"] {
-        let stroke = gpui::Keystroke::parse(key).expect("test operation should succeed");
-        let (native_bindings, _) =
-            keymap.bindings_for_input(std::slice::from_ref(&stroke), &native_contexts);
-        assert!(
-            native_bindings.is_empty(),
-            "{key} must not reach embedded views"
-        );
-        let (app_bindings, _) = keymap.bindings_for_input(&[stroke], &app_contexts);
-        assert!(!app_bindings.is_empty(), "{key} missing in app context");
-    }
-}
-
-#[test]
 fn workspace_shortcuts_route_by_context_on_both_platforms() {
     use crate::app::{APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT};
     use gpui::Action;
@@ -344,6 +307,7 @@ fn workspace_shortcuts_route_by_context_on_both_platforms() {
                 ("f1", app.then_some(super::FocusComposer.name())),
                 ("f2", app.then_some(super::ShowEditor.name())),
                 ("f3", app.then_some(super::ShowTerminal.name())),
+                ("f4", app.then_some(super::ShowActionPicker.name())),
                 (
                     "ctrl-tab",
                     workspace.then_some(super::CycleWorkspaceForward.name()),
@@ -380,7 +344,7 @@ fn workspace_shortcuts_route_by_context_on_both_platforms() {
 }
 
 #[test]
-fn modified_jk_navigates_chat_sessions_and_workers_with_composer_focus() {
+fn modified_jk_respects_chat_and_native_input() {
     use crate::app::{APP_INPUT_CONTEXT, CHAT_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT};
     let keymap = gpui::Keymap::new(bindings());
     let contexts = |names: &[&str]| {
@@ -410,30 +374,20 @@ fn modified_jk_navigates_chat_sessions_and_workers_with_composer_focus() {
         ] {
             let stroke =
                 gpui::Keystroke::parse(&format!("{modifier}-{key}")).expect("fixture keystroke");
-            for names in [
-                vec![CHAT_INPUT_CONTEXT],
-                vec![CHAT_INPUT_CONTEXT, "FarcasterComposer", "Input"],
+            for (names, enabled) in [
+                (vec![CHAT_INPUT_CONTEXT], true),
+                (vec![CHAT_INPUT_CONTEXT, "FarcasterComposer", "Input"], true),
+                (vec![APP_INPUT_CONTEXT], false),
+                (vec![APP_INPUT_CONTEXT, "FarcasterComposer", "Input"], false),
+                (vec![APP_INPUT_CONTEXT, "Picker", "Input"], false),
+                (vec![NATIVE_INPUT_CONTEXT], modifier != "ctrl"),
             ] {
                 let (matched, _) =
                     keymap.bindings_for_input(std::slice::from_ref(&stroke), &contexts(&names));
-                assert!(
-                    matched
-                        .iter()
-                        .any(|binding| binding.action().partial_eq(action.as_ref())),
-                    "{modifier}-{key} missing in {names:?}"
-                );
-            }
-            for names in [
-                vec![APP_INPUT_CONTEXT],
-                vec![APP_INPUT_CONTEXT, "FarcasterComposer", "Input"],
-                vec![APP_INPUT_CONTEXT, "Picker", "Input"],
-                vec![NATIVE_INPUT_CONTEXT],
-            ] {
-                let (matched, _) =
-                    keymap.bindings_for_input(std::slice::from_ref(&stroke), &contexts(&names));
-                assert!(
-                    matched.is_empty(),
-                    "{modifier}-{key} intercepted in {names:?}"
+                assert_eq!(
+                    matched.first().map(|binding| binding.action().name()),
+                    enabled.then(|| action.name()),
+                    "{modifier}-{key} in {names:?}"
                 );
             }
         }

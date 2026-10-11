@@ -8,7 +8,6 @@ use super::{
 };
 use crate::{
     app::{
-        AppSurface,
         views::SessionReveal,
         views::run_panel::{RECENT_WORKERS, worker_navigation_rows},
     },
@@ -76,7 +75,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.workspace.surface != AppSurface::Chat
+        if self.native_workspace_covered_by_overlay()
             || self.keyboard_overlay_focus(window, cx).is_some()
         {
             return;
@@ -128,7 +127,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.workspace.surface != AppSurface::Chat
+        if self.native_workspace_covered_by_overlay()
             || self.keyboard_overlay_focus(window, cx).is_some()
         {
             return;

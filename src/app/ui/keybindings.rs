@@ -129,23 +129,24 @@ impl Command {
 }
 
 fn app_keys(prefix: &str, suffix: &str) -> Vec<Shortcut> {
-    let mut keys = vec![Shortcut::new(format!("{prefix}-{suffix}"), app_condition())];
-    if cfg!(target_os = "linux") && prefix == "ctrl" {
-        keys.push(Shortcut::new(format!("super-{suffix}"), app_condition()).hidden());
+    let condition = if prefix == "ctrl" {
+        app_condition()
+    } else {
+        named("FarcasterApp")
+    };
+    let mut keys = vec![Shortcut::new(format!("{prefix}-{suffix}"), condition)];
+    if prefix == "ctrl" {
+        keys.push(Shortcut::new(format!("super-{suffix}"), named("FarcasterApp")).hidden());
     }
     keys
 }
 
-fn session_keys(prefix: &str, number: u8) -> [Shortcut; 2] {
-    let (alias, primary_condition, alias_condition) = if prefix == "cmd" {
-        ("ctrl", named("FarcasterApp"), app_condition())
-    } else {
-        ("super", app_condition(), named("FarcasterApp"))
-    };
-    [
-        Shortcut::new(format!("{prefix}-{number}"), primary_condition),
-        Shortcut::new(format!("{alias}-{number}"), alias_condition).hidden(),
-    ]
+fn session_keys(prefix: &str, number: u8) -> Vec<Shortcut> {
+    let mut keys = app_keys(prefix, &number.to_string());
+    if prefix == "cmd" {
+        keys.push(Shortcut::new(format!("ctrl-{number}"), app_condition()).hidden());
+    }
+    keys
 }
 
 fn navigation_keys(prefix: &str, key: &str, chat: &Predicate) -> Vec<Shortcut> {
@@ -154,7 +155,17 @@ fn navigation_keys(prefix: &str, key: &str, chat: &Predicate) -> Vec<Shortcut> {
     modifiers
         .into_iter()
         .map(|modifier| {
-            let condition = chat.clone();
+            let condition = if modifier == "ctrl" {
+                chat.clone()
+            } else {
+                Predicate::Or(
+                    Box::new(chat.clone()),
+                    Box::new(Predicate::And(
+                        Box::new(named("FarcasterApp")),
+                        Box::new(Predicate::Equal("input".into(), "native".into())),
+                    )),
+                )
+            };
             Shortcut::new(format!("{modifier}-{key}"), condition)
         })
         .collect()
