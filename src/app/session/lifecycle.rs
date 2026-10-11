@@ -648,7 +648,7 @@ impl FarcasterApp {
                 target_project,
                 return_focus: window.focused(cx),
             };
-            pending.focus.focus(window, cx);
+            self.focus_overlay(&pending.focus, window, cx);
             self.sessions.pending_move = Some(pending);
             cx.notify();
             return;

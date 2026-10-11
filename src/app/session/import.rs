@@ -50,7 +50,7 @@ impl FarcasterApp {
             loading: false,
             error: None,
         };
-        dialog.focus.focus(window, cx);
+        self.focus_overlay(&dialog.focus, window, cx);
         self.sessions.import = Some(dialog);
         self.preview_session_import(cx);
         cx.notify();

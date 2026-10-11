@@ -123,7 +123,7 @@ impl FarcasterApp {
             message,
             return_focus: window.focused(cx),
         };
-        pending.focus.focus(window, cx);
+        self.focus_overlay(&pending.focus, window, cx);
         self.sessions.pending_delete = Some(pending);
         cx.notify();
     }

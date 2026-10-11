@@ -132,9 +132,9 @@ impl FarcasterApp {
         let return_focus = window.focused(cx);
         self.cover_native_workspace_surface(cx);
         if action == RepositoryEdit::Commit {
-            input.read(cx).focus_handle(cx).focus(window, cx);
+            self.focus_overlay(&input.read(cx).focus_handle(cx), window, cx);
         } else {
-            focus.focus(window, cx);
+            self.focus_overlay(&focus, window, cx);
         }
         self.project.repository.edits.pending = Some(PendingRepositoryEdit {
             focus,

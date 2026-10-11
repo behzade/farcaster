@@ -4,6 +4,61 @@ use gpui::Focusable as _;
 
 #[cfg(target_os = "macos")]
 #[gpui::test]
+fn terminal_picker_keeps_search_focus_in_its_panel(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::terminal_picker_keeps_search_focus_in_its_panel"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.update(|window, cx| {
+                window.activate_window();
+                app.update(cx, |app, cx| {
+                    app.set_surface(AppSurface::Terminal, cx);
+                    app.navigation.chat.focus.focus(window, cx);
+                    cx.notify();
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.run_until_parked();
+            cx.simulate_keystrokes("ctrl-g space");
+            cx.run_until_parked();
+            let panel = cx.update(|window, cx| {
+                let app = app.read(cx);
+                let search = app.picker_focus(cx).expect("picker search");
+                assert!(
+                    !search.is_focused(window),
+                    "the owner must not focus an input hosted in the panel"
+                );
+                app.overlays.modal.window.expect("picker panel")
+            });
+            let panel_cx = gpui::VisualTestContext::from_window(panel.into(), cx).into_mut();
+            panel_cx.update(|window, cx| {
+                window.activate_window();
+                window.draw(cx).clear(cx);
+            });
+            cx.update(|window, cx| {
+                window.blur(cx);
+                window.draw(cx).clear(cx);
+                assert!(!app.read(cx).picker_focus(cx).unwrap().is_focused(window));
+            });
+            panel_cx.simulate_input("Settings");
+            panel_cx.simulate_keystrokes("enter");
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                assert!(
+                    app.read(cx).overlays.view.settings,
+                    "typing must filter and select Settings"
+                );
+                assert_eq!(app.read(cx).workspace.surface, AppSurface::Terminal);
+            });
+        },
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[gpui::test]
 fn native_modal_accepts_text_and_restores_owner_focus(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
         concat!(
@@ -258,6 +313,9 @@ fn sheets_and_picker_share_the_live_modal_layer(cx: &mut gpui::TestAppContext) {
                         window.draw(cx).clear(cx);
                     });
                     cx.run_until_parked();
+                    cx.update(|window, cx| {
+                        assert!(!app.read(cx).keyboard_overlay_focus(window, cx).unwrap().is_focused(window), "overlay focus belongs to the panel, not its owner: {surface:?} sheet {sheet}");
+                    });
                     let panel =
                         cx.update(|_, cx| {
                             app.read(cx).overlays.modal.window.unwrap_or_else(|| {

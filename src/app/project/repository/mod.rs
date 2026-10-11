@@ -331,7 +331,7 @@ impl FarcasterApp {
                         return_focus: window.focused(cx),
                     };
                     self.cover_native_workspace_surface(cx);
-                    pending.focus.focus(window, cx);
+                    self.focus_overlay(&pending.focus, window, cx);
                     self.project.repository.pending_jj_init = Some(pending);
                     cx.notify();
                     return;

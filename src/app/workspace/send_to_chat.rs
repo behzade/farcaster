@@ -181,7 +181,7 @@ impl FarcasterApp {
                     _subscription: subscription,
                 });
                 this.cover_native_workspace_surface(cx);
-                input_focus.focus(window, cx);
+                this.focus_overlay(&input_focus, window, cx);
                 cx.notify();
             });
         }));

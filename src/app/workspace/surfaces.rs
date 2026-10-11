@@ -58,11 +58,38 @@ const fn should_capture_return_focus(flags: SheetFlags) -> bool {
 }
 
 impl FarcasterApp {
+    pub(in crate::app) fn focus_overlay(
+        &self,
+        focus: &FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.native_overlays_available()
+            && matches!(
+                self.workspace.surface,
+                AppSurface::Editor | AppSurface::Terminal
+            )
+            && self.modal_owner_window(window, cx).is_none()
+        {
+            // A new panel sets its initial focus when it renders. An existing
+            // panel can receive the request without focusing its owner's window.
+            if let Some(panel) = self.overlays.modal.window {
+                let focus = focus.clone();
+                let _ = panel.update(cx, |_, window, cx| focus.focus(window, cx));
+            }
+        } else {
+            focus.focus(window, cx);
+        }
+    }
+
     pub(in crate::app) fn recover_keyboard_focus(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.modal_uses_native_host() && self.modal_owner_window(window, cx).is_none() {
+            return;
+        }
         if let Some(focus) = self.keyboard_overlay_focus(window, cx) {
             focus.focus(window, cx);
         } else {

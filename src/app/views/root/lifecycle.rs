@@ -63,7 +63,7 @@ impl FarcasterApp {
             let focus = self.overlays.sheet_focus.clone();
             cx.defer_in(window, move |this, window, cx| {
                 if this.keyboard_overlay_focus(window, cx).as_ref() == Some(&focus) {
-                    focus.focus(window, cx);
+                    this.focus_overlay(&focus, window, cx);
                 }
             });
         }
@@ -133,7 +133,7 @@ impl FarcasterApp {
                     });
                 }
                 if composer_slot_owns && this.keyboard_overlay_focus(window, cx).is_none() {
-                    focus.focus(window, cx);
+                    this.focus_overlay(&focus, window, cx);
                 }
             });
         }

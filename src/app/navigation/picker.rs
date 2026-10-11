@@ -188,6 +188,12 @@ impl FarcasterApp {
             .map(|picker| picker.list.read(cx).focus_handle(cx))
     }
 
+    fn focus_picker(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(focus) = self.picker_focus(cx) {
+            self.focus_overlay(&focus, window, cx);
+        }
+    }
+
     pub(in crate::app) fn open_picker(
         &mut self,
         scope: PickerScope,
@@ -216,8 +222,8 @@ impl FarcasterApp {
             while page.scope != scope {
                 page = page.pop_previous().expect("requested ancestor exists");
             }
-            page.list.update(cx, |list, cx| list.focus(window, cx));
             self.navigation.picker = Some(page);
+            self.focus_picker(window, cx);
             cx.notify();
             return;
         }
@@ -289,7 +295,6 @@ impl FarcasterApp {
             if let Some(selected) = selected {
                 list.scroll_to_item(selected, gpui::ScrollStrategy::Center, window, cx);
             }
-            list.focus(window, cx);
         });
         let previous = self
             .navigation
@@ -312,6 +317,7 @@ impl FarcasterApp {
             _subscription: subscription,
             previous,
         });
+        self.focus_picker(window, cx);
         cx.notify();
     }
 
@@ -352,8 +358,8 @@ impl FarcasterApp {
             .as_mut()
             .and_then(PickerState::pop_previous)
         {
-            previous.list.update(cx, |list, cx| list.focus(window, cx));
             self.navigation.picker = Some(previous);
+            self.focus_picker(window, cx);
             cx.notify();
         } else if matches!(
             self.navigation.picker.as_ref().map(|picker| &picker.scope),

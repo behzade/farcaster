@@ -60,7 +60,7 @@ impl FarcasterApp {
             return_focus: window.focused(cx),
             next_app_session_id: None,
         };
-        pending.focus.focus(window, cx);
+        self.focus_overlay(&pending.focus, window, cx);
         self.sessions.pending_archive = Some(pending);
         cx.notify();
     }
