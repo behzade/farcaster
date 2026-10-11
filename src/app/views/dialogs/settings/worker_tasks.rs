@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::ui::primitives::DropdownMenu as _;
 use crate::app::{
     ui::primitives::dropdown_content_button,
     workspace::worker_tasks::{
@@ -6,9 +7,7 @@ use crate::app::{
     },
 };
 use gpui_component::{
-    Disableable as _, Selectable as _,
-    button::ButtonCustomVariant,
-    menu::{DropdownMenu as _, PopupMenuItem},
+    Disableable as _, Selectable as _, button::ButtonCustomVariant, menu::PopupMenuItem,
 };
 
 pub(super) fn render(

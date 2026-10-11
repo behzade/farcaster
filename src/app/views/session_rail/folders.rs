@@ -1,4 +1,5 @@
-use gpui_component::menu::ContextMenuExt as _;
+use crate::app::ui::primitives::ContextMenuExt as _;
+use crate::app::ui::primitives::DropdownMenu as _;
 use std::path::PathBuf;
 
 use super::{
@@ -26,7 +27,7 @@ use gpui::{
 };
 use gpui_component::{
     input::{Input, InputState},
-    menu::{DropdownMenu as _, PopupMenu, PopupMenuItem},
+    menu::{PopupMenu, PopupMenuItem},
 };
 
 #[derive(Clone)]

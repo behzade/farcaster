@@ -87,6 +87,11 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.route_overlay_action(window, cx, move |app, window, cx| {
+            app.capture_code_prompt(start_task, window, cx)
+        }) {
+            return;
+        }
         if self.workspace.surface != AppSurface::Editor
             || self.native_workspace_covered_by_overlay()
             || self.workspace.send_to_chat_capture.is_some()

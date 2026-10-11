@@ -1,9 +1,10 @@
-pub(in crate::app::views) mod native;
+pub(in crate::app) mod native;
+pub(in crate::app) mod popup;
 
 use gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, Context, FocusHandle, InteractiveElement as _,
     IntoElement, ParentElement as _, Pixels, Render, Styled as _, Subscription, WeakEntity, Window,
-    WindowBounds, WindowHandle, WindowOptions, div, point, px,
+    WindowHandle, div, point, px,
 };
 
 use super::FarcasterApp;
@@ -19,39 +20,90 @@ use native::{NativeHost, OverlayInput};
 #[derive(Default)]
 pub(in crate::app) struct ModalWindowState {
     pub(in crate::app) window: Option<WindowHandle<ModalWindow>>,
-    owner_window: Option<AnyWindowHandle>,
+    pub(in crate::app::views) owner_window: Option<AnyWindowHandle>,
     pending: bool,
     failed: bool,
+    passive_height: Option<Pixels>,
     observers: Vec<Subscription>,
 }
 
 pub(in crate::app) struct ModalWindow {
     owner: WeakEntity<FarcasterApp>,
     host: NativeHost,
+    input: OverlayInput,
     focus: Option<FocusHandle>,
     scope: FocusHandle,
+    pub(in crate::app) tooltips: gpui::Entity<crate::app::ui::primitives::AppTooltips>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl FarcasterApp {
+    pub(in crate::app) fn native_overlays_available(&self) -> bool {
+        cfg!(target_os = "macos") && !self.overlays.modal.failed
+    }
+
+    pub(in crate::app::views) fn native_request_is_passive(&self) -> bool {
+        !self.native_workspace_modal_active()
+            && matches!(
+                self.extensions.active.dialog,
+                Some(crate::protocol::ExtensionUiRequest::WorkerModel { .. })
+            )
+            && !self.workspace.runtime_picker.open
+    }
+
+    fn modal_placement(
+        &self,
+        window: &Window,
+        cx: &App,
+    ) -> (Bounds<Pixels>, gpui::Point<Pixels>, OverlayInput) {
+        let viewport = window.viewport_size();
+        if !self.native_request_is_passive() {
+            return (
+                Bounds::new(window.bounds().origin, viewport),
+                point(px(0.0), px(0.0)),
+                OverlayInput::Modal,
+            );
+        }
+        let (left, width) = self.native_workspace_width(viewport.width, cx);
+        let height = self
+            .overlays
+            .modal
+            .passive_height
+            .unwrap_or(theme().size(160.0))
+            .min((viewport.height - theme().size(38.0)).max(px(1.0)));
+        let offset = point(left, viewport.height - height);
+        (
+            Bounds::new(window.bounds().origin + offset, gpui::size(width, height)),
+            offset,
+            OverlayInput::Passive,
+        )
+    }
+
+    fn native_workspace_width(&self, width: Pixels, cx: &App) -> (Pixels, Pixels) {
+        use crate::app::ui::layout::{layout_mode, shows_left_inline, shows_right_inline};
+        let mode = layout_mode(width);
+        let left = if shows_left_inline(mode) && !self.workspace.session_rail_hidden {
+            self.views.session_rail.read(cx).width()
+        } else {
+            px(0.0)
+        };
+        let right = if shows_right_inline(mode) && !self.workspace.run_panel_hidden {
+            self.views.run_panel.read(cx).width()
+        } else {
+            px(0.0)
+        };
+        (left, (width - left - right).max(px(1.0)))
+    }
+
     pub(in crate::app) fn modal_uses_native_host(&self) -> bool {
         // An ungrabbed Wayland popup cannot guarantee keyboard focus for an async request.
         // Keep the existing path there until GPUI can host a modal without a new tile.
-        cfg!(target_os = "macos")
-            && !self.overlays.modal.failed
+        self.native_overlays_available()
             && matches!(
                 self.workspace.surface,
                 AppSurface::Editor | AppSurface::Terminal
             )
-            && !self.native_workspace_other_modal_active()
-            && match (&self.workspace.send_to_chat, &self.extensions.active.dialog) {
-                (Some(_), None) => true,
-                (None, Some(dialog)) => !matches!(
-                    dialog,
-                    crate::protocol::ExtensionUiRequest::WorkerModel { .. }
-                ),
-                _ => false,
-            }
+            && (self.native_workspace_modal_active() || self.extensions.active.dialog.is_some())
     }
 
     pub(in crate::app) fn modal_rendered_in_native_window(&self) -> bool {
@@ -59,12 +111,35 @@ impl FarcasterApp {
             && (self.overlays.modal.window.is_some() || self.overlays.modal.pending)
     }
 
-    pub(in crate::app) fn modal_owner_window(&self, window: &Window) -> Option<AnyWindowHandle> {
+    pub(in crate::app) fn modal_owner_window(
+        &self,
+        window: &Window,
+        cx: &App,
+    ) -> Option<AnyWindowHandle> {
         self.overlays
             .modal
             .window
             .filter(|popup| AnyWindowHandle::from(*popup) == window.window_handle())
             .and(self.overlays.modal.owner_window)
+            .or_else(|| {
+                window
+                    .root::<popup::PopupWindow>()
+                    .flatten()
+                    .map(|view| view.read(cx).owner_window)
+            })
+    }
+
+    pub(in crate::app) fn route_overlay_action(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        action: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) -> bool {
+        let Some(owner) = self.modal_owner_window(window, cx) else {
+            return false;
+        };
+        in_owner_window(cx.entity().downgrade(), Some(owner), window, cx, action);
+        true
     }
 
     pub(in crate::app) fn prepare_modal_window(
@@ -73,18 +148,26 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         if self.overlays.modal.observers.is_empty() {
+            let id = window.window_handle().window_id();
+            popup::register_owner(window, cx.entity().downgrade(), cx);
             self.overlays.modal.observers = vec![
                 cx.observe_window_bounds(window, |_, _, cx| cx.notify()),
                 cx.observe_window_activation(window, |_, _, cx| cx.notify()),
                 cx.observe_window_visibility(window, |_, _, _, cx| cx.notify()),
-                cx.on_release(|this, cx| {
+                cx.on_release(move |this, cx| {
+                    popup::release_owner(id, cx);
                     if let Some(popup) = this.overlays.modal.window.take() {
                         let _ = popup.update(cx, |_, window, _| window.remove_window());
                     }
                 }),
             ];
         }
-        if !self.native_workspace_covered_by_overlay() {
+        if !self.native_workspace_covered_by_overlay()
+            && self.extensions.active.dialog.is_none()
+            && !gpui_base::GlobalState::is_in_deferred_context(cx)
+            && !crate::app::ui::primitives::tooltip_overlay(window, cx)
+                .is_some_and(|tooltips| tooltips.read(cx).is_visible())
+        {
             self.overlays.modal.failed = false;
         }
         if self.overlays.modal.pending
@@ -96,25 +179,6 @@ impl FarcasterApp {
         self.overlays.modal.owner_window = Some(window.window_handle());
         let owner = cx.entity().downgrade();
         window.defer(cx, move |window, cx| synchronize(owner, window, cx));
-    }
-
-    fn render_native_modal(&self, scope: &FocusHandle, cx: &Context<Self>) -> gpui::AnyElement {
-        let owner = cx.entity().downgrade();
-        if self.workspace.send_to_chat.is_some() {
-            return super::dialogs::send_to_chat::render(self, owner, cx);
-        }
-        let dismiss = owner.clone();
-        modal(
-            "native-extension-dialog",
-            "Agent request",
-            scope,
-            OVERLAY_KEY_CONTEXT,
-            move |window, cx| {
-                let _ = dismiss.update(cx, |app, cx| app.cancel_dialog(window, cx));
-            },
-            |surface| surface.child(self.render_composer_request(owner, true)),
-        )
-        .into_any_element()
     }
 }
 
@@ -130,26 +194,26 @@ fn synchronize(owner: WeakEntity<FarcasterApp>, window: &mut Window, cx: &mut Ap
         // Retain an existing panel through focus handoffs and app deactivation.
         // AppKit hides it with the app; removing it while the owner resigns key
         // can race the panel's activation callback and discard a focused input.
-        && (window.is_window_active() || existing.is_some())
+        && (popup::owner_active(window, cx) || existing.is_some())
         && window.visibility() == gpui::WindowVisibility::Visible;
-    let bounds = Bounds::new(window.bounds().origin, window.viewport_size());
+    let (bounds, offset, input) = app.read(cx).modal_placement(window, cx);
+    let was_modal = existing.is_some_and(|popup| {
+        popup
+            .read(cx)
+            .is_ok_and(|view| view.input == OverlayInput::Modal)
+    });
     let owner_active = window.is_window_active();
     let result = if wanted {
         if let Some(popup) = existing {
             popup
                 .update(cx, |view, window, cx| {
-                    if window.viewport_size() != bounds.size {
+                    if window.bounds().size != bounds.size {
                         window.resize(bounds.size);
                     }
-                    view.host
-                        .position(window, bounds, point(px(0.0), px(0.0)))?;
-                    if !window.is_window_active() && owner_active {
-                        view.host.present(
-                            window,
-                            bounds,
-                            point(px(0.0), px(0.0)),
-                            OverlayInput::Modal,
-                        )?;
+                    view.host.position(window, bounds, offset)?;
+                    if view.input != input || (!window.is_window_active() && owner_active) {
+                        view.host.present(window, bounds, offset, input)?;
+                        view.input = input;
                     }
                     cx.notify();
                     Ok(popup)
@@ -157,7 +221,7 @@ fn synchronize(owner: WeakEntity<FarcasterApp>, window: &mut Window, cx: &mut Ap
                 .map_err(|error| error.to_string())
                 .and_then(|result| result)
         } else {
-            open(owner, window, bounds, cx)
+            open(owner, window, bounds, offset, input, cx)
         }
         .map(Some)
     } else {
@@ -170,6 +234,10 @@ fn synchronize(owner: WeakEntity<FarcasterApp>, window: &mut Window, cx: &mut Ap
         }
         Ok(None)
     };
+    if wanted && was_modal && input == OverlayInput::Passive {
+        window.activate_window();
+        app.update(cx, |app, _| app.request_active_surface_focus(None));
+    }
     app.update(cx, |app, cx| {
         app.overlays.modal.pending = false;
         match result {
@@ -196,23 +264,16 @@ fn open(
     owner: WeakEntity<FarcasterApp>,
     window: &Window,
     bounds: Bounds<Pixels>,
+    offset: gpui::Point<Pixels>,
+    input: OverlayInput,
     cx: &mut App,
 ) -> Result<WindowHandle<ModalWindow>, String> {
-    let host = NativeHost::capture(window)?;
-    let options = WindowOptions {
-        kind: gpui::WindowKind::PopUp,
-        focus: false,
-        show: false,
-        titlebar: None,
-        is_movable: false,
-        is_resizable: false,
-        is_minimizable: false,
-        window_bounds: Some(WindowBounds::Windowed(bounds)),
-        window_background: gpui::WindowBackgroundAppearance::Transparent,
-        ..Default::default()
-    };
-    let popup = cx
-        .open_window(options, move |window, cx| {
+    NativeHost::open_panel(
+        window,
+        bounds,
+        input,
+        offset,
+        move |host, window, cx| {
             cx.new(|cx| {
                 let mut subscriptions = Vec::new();
                 if let Some(app) = owner.upgrade() {
@@ -231,28 +292,21 @@ fn open(
                         cx.stop_propagation();
                     }
                 }));
+                let tooltips = cx.new(|_| crate::app::ui::primitives::AppTooltips::default());
+                subscriptions.push(cx.observe(&tooltips, |_, _, cx| cx.notify()));
                 ModalWindow {
+                    tooltips,
                     owner,
                     host,
+                    input,
                     focus: None,
                     scope: cx.focus_handle(),
                     _subscriptions: subscriptions,
                 }
             })
-        })
-        .map_err(|error| error.to_string())?;
-    let result = popup
-        .update(cx, |view, window, _| {
-            view.host
-                .present(window, bounds, point(px(0.0), px(0.0)), OverlayInput::Modal)
-        })
-        .map_err(|error| error.to_string())
-        .and_then(|result| result);
-    if let Err(error) = result {
-        let _ = popup.update(cx, |_, window, _| window.remove_window());
-        return Err(error);
-    }
-    Ok(popup)
+        },
+        cx,
+    )
 }
 
 impl Render for ModalWindow {
@@ -264,13 +318,32 @@ impl Render for ModalWindow {
             if !app.modal_uses_native_host() {
                 return div().into_any_element();
             }
+            if app.native_request_is_passive() {
+                self.focus = None;
+                let measure = cx.entity().downgrade();
+                use gpui_base::ElementExt as _;
+                return div()
+                    .font(ui_font())
+                    .text_color(theme().colors.text)
+                    .text_size(theme().type_scale.body)
+                    .child(app.render_composer_request(cx.entity().downgrade(), false))
+                    .on_prepaint(move |bounds, _, cx| {
+                        let _ = measure.update(cx, |app, cx| {
+                            let height = bounds.size.height;
+                            if app.overlays.modal.passive_height != Some(height) {
+                                app.overlays.modal.passive_height = Some(height);
+                                cx.notify();
+                            }
+                        });
+                    })
+                    .child(self.tooltips.clone())
+                    .into_any_element();
+            }
             let focus = app
                 .keyboard_overlay_focus(window, cx)
                 .unwrap_or_else(|| app.composer_region_focus(cx));
-            if self.focus.as_ref() != Some(&focus) {
-                focus.focus(window, cx);
-                self.focus = Some(focus);
-            }
+            let initial_focus = (self.focus.as_ref() != Some(&focus)).then_some(focus.clone());
+            self.focus = Some(focus);
             let root = div()
                 .relative()
                 .size_full()
@@ -278,14 +351,54 @@ impl Render for ModalWindow {
                 .text_color(theme().colors.text)
                 .text_size(theme().type_scale.body)
                 .key_context(APP_INPUT_CONTEXT);
-            super::root::bind_overlay_actions(root, cx)
-                .child(app.render_native_modal(&self.scope, cx))
-                .children(app.has_floating_notices().then(|| {
-                    app.render_floating_notices(
-                        cx.entity().downgrade(),
-                        app.overlays.modal.owner_window,
-                    )
-                }))
+            let owner = cx.entity().downgrade();
+            let picker = app.render_picker(owner.clone(), cx);
+            let root = super::root::bind_overlay_actions(root, cx);
+            let root = if matches!(
+                app.extensions.active.dialog,
+                Some(crate::protocol::ExtensionUiRequest::WorkerModel { .. })
+            ) {
+                let (left, width) = app.native_workspace_width(window.viewport_size().width, cx);
+                let dismiss = owner.clone();
+                root.on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
+                    let _ = dismiss
+                        .update(cx, |app, cx| app.set_runtime_picker_open(false, window, cx));
+                    cx.stop_propagation();
+                })
+                .child(
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .left(left)
+                        .w(width)
+                        .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
+                        .child(app.render_composer_request(owner.clone(), true)),
+                )
+            } else if app.extensions.active.dialog.is_some() {
+                let dismiss = owner.clone();
+                root.child(modal(
+                    "native-extension-dialog",
+                    "Agent request",
+                    &self.scope,
+                    OVERLAY_KEY_CONTEXT,
+                    move |window, cx| {
+                        let _ = dismiss.update(cx, |app, cx| {
+                            app.cancel_dialog(window, cx);
+                        });
+                    },
+                    |surface| surface.child(app.render_composer_request(owner.clone(), true)),
+                ))
+            } else {
+                root
+            };
+            use gpui_base::ElementExt as _;
+            app.render_overlay_contents(root, owner, picker, false, cx)
+                .child(self.tooltips.clone())
+                .on_prepaint(move |_, window, cx| {
+                    if let Some(focus) = &initial_focus {
+                        focus.focus(window, cx);
+                    }
+                })
                 .into_any_element()
         })
     }

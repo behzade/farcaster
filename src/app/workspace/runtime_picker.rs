@@ -1,5 +1,6 @@
 use super::*;
 use crate::app::ui::primitives::AppTooltip as _;
+use crate::app::ui::primitives::DropdownMenu as _;
 mod layout;
 mod mechanics;
 use mechanics::{model_matches, option_button, option_row, picker_panel, result_list};
@@ -12,10 +13,7 @@ use gpui::{
     InteractiveElement as _, IntoElement as _, ParentElement as _, StatefulInteractiveElement as _,
     Styled as _, div, prelude::FluentBuilder as _, px,
 };
-use gpui_component::{
-    input::Input,
-    menu::{DropdownMenu as _, PopupMenuItem},
-};
+use gpui_component::{input::Input, menu::PopupMenuItem};
 
 pub(in crate::app) struct WorkerModelPicker {
     id: String,
@@ -62,6 +60,20 @@ fn model_result_button(
 }
 
 impl FarcasterApp {
+    pub(in crate::app) fn worker_model_picker_focus(
+        &self,
+        cx: &gpui::App,
+    ) -> Option<gpui::FocusHandle> {
+        if !self.workspace.runtime_picker.open || self.workspace.runtime_picker.worker.is_none() {
+            return None;
+        }
+        self.workspace
+            .runtime_picker
+            .search
+            .as_ref()
+            .map(|search| search.read(cx).focus_handle(cx))
+    }
+
     pub(in crate::app) fn close_worker_picker_for_surface_switch(
         &mut self,
         window: &mut Window,

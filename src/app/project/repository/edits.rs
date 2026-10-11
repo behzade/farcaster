@@ -94,6 +94,12 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let owner_path = path.clone();
+        if self.route_overlay_action(window, cx, move |app, window, cx| {
+            app.review_repository_edit(action, owner_path, window, cx)
+        }) {
+            return;
+        }
         if !self.project.repository.execution_allowed
             || self.project.repository.sync.action.is_some()
             || self.project.repository.edits.pending.is_some()
@@ -233,6 +239,9 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.route_overlay_action(window, cx, Self::confirm_repository_edit) {
+            return;
+        }
         if !self.project.repository.execution_allowed
             || self.project.repository.sync.action.is_some()
         {

@@ -23,6 +23,7 @@ fn back_restores_search_selection_scroll_and_parent_history(cx: &mut gpui::TestA
         let list = cx.new(|cx| ComponentListState::new(delegate, window, cx).searchable(true));
         let subscription = cx.subscribe(&list, |_, _: &ListEvent, _| {});
         PickerState {
+            focus: cx.focus_handle(),
             scope,
             list,
             commands: HashMap::new(),

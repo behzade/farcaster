@@ -127,6 +127,7 @@ enum PickerCommand {
 }
 
 pub(in crate::app) struct PickerState {
+    focus: gpui::FocusHandle,
     pub(in crate::app) scope: PickerScope,
     list: Entity<ComponentListState<PickerDelegate>>,
     commands: HashMap<String, PickerCommand>,
@@ -193,6 +194,12 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let owner_scope = scope.clone();
+        if self.route_overlay_action(window, cx, move |app, window, cx| {
+            app.open_picker(owner_scope, window, cx)
+        }) {
+            return;
+        }
         if self.workspace.runtime_picker.open && self.workspace.runtime_picker.worker.is_some() {
             self.set_runtime_picker_open(false, window, cx);
         }
@@ -297,6 +304,7 @@ impl FarcasterApp {
                 }
             });
         self.navigation.picker = Some(PickerState {
+            focus: cx.focus_handle(),
             scope,
             list,
             commands,
@@ -361,11 +369,11 @@ impl FarcasterApp {
     pub(in crate::app) fn render_picker(
         &self,
         entity: WeakEntity<Self>,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
         let picker = self.navigation.picker.as_ref()?;
         let list = picker.list.clone();
-        let focus = list.read(cx).focus_handle(cx);
+        let focus = picker.focus.clone();
         let back_label = picker
             .previous
             .as_ref()

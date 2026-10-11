@@ -1,12 +1,11 @@
+use crate::app::ui::primitives::DropdownMenu as _;
+use crate::app::ui::primitives::Popover;
 use gpui::{
     Animation, AnimationExt as _, AnyElement, InteractiveElement as _, IntoElement as _,
     ParentElement as _, Styled as _, Transformation, WeakEntity, div, percentage,
     prelude::FluentBuilder as _,
 };
-use gpui_component::{
-    menu::{DropdownMenu as _, PopupMenuItem},
-    popover::Popover,
-};
+use gpui_component::menu::PopupMenuItem;
 
 use super::separator;
 use crate::app::FarcasterApp;

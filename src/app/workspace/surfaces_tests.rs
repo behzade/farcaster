@@ -1,11 +1,11 @@
 use super::*;
 
 #[gpui::test]
-fn worker_notices_cover_native_surfaces_until_closed(cx: &mut gpui::TestAppContext) {
+fn worker_notices_block_surface_switch_until_closed(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
         concat!(
             module_path!(),
-            "::worker_notices_cover_native_surfaces_until_closed"
+            "::worker_notices_block_surface_switch_until_closed"
         ),
         cx,
         |cx, app, _, _| {
@@ -15,7 +15,10 @@ fn worker_notices_cover_native_surfaces_until_closed(cx: &mut gpui::TestAppConte
                         app.set_surface(surface, cx);
                         app.open_worker_notices(window, cx);
                         assert!(app.native_workspace_modal_active());
-                        assert!(app.native_surface_obscured(window, cx));
+                        assert_eq!(
+                            app.native_surface_obscured(window, cx),
+                            !cfg!(target_os = "macos")
+                        );
                         app.cycle_workspace_surface(true, window, cx);
                         assert_eq!(app.workspace.surface, surface);
 
@@ -90,11 +93,11 @@ fn move_and_model_access_dialogs_block_workspace_surface_cycle(cx: &mut gpui::Te
 }
 
 #[gpui::test]
-fn hovering_the_workspace_bar_obscures_the_native_surface(cx: &mut gpui::TestAppContext) {
+fn workspace_bar_hover_uses_platform_overlay_policy(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
         concat!(
             module_path!(),
-            "::hovering_the_workspace_bar_obscures_the_native_surface"
+            "::workspace_bar_hover_uses_platform_overlay_policy"
         ),
         cx,
         |cx, app, _, _| {
@@ -102,7 +105,10 @@ fn hovering_the_workspace_bar_obscures_the_native_surface(cx: &mut gpui::TestApp
                 app.update(cx, |app, cx| {
                     assert!(!app.native_surface_obscured(window, cx));
                     app.set_workspace_bar_hovered(true, cx);
-                    assert!(app.native_surface_obscured(window, cx));
+                    assert_eq!(
+                        app.native_surface_obscured(window, cx),
+                        !cfg!(target_os = "macos")
+                    );
                     app.set_workspace_bar_hovered(false, cx);
                     assert!(!app.native_surface_obscured(window, cx));
                 });
@@ -112,11 +118,11 @@ fn hovering_the_workspace_bar_obscures_the_native_surface(cx: &mut gpui::TestApp
 }
 
 #[gpui::test]
-fn focusing_a_native_surface_waits_until_the_bar_stops_obscuring_it(cx: &mut gpui::TestAppContext) {
+fn native_surface_focus_waits_only_for_the_snapshot_fallback(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
         concat!(
             module_path!(),
-            "::focusing_a_native_surface_waits_until_the_bar_stops_obscuring_it"
+            "::native_surface_focus_waits_only_for_the_snapshot_fallback"
         ),
         cx,
         |cx, app, _, _| {
@@ -126,7 +132,10 @@ fn focusing_a_native_surface_waits_until_the_bar_stops_obscuring_it(cx: &mut gpu
                     app.set_workspace_bar_hovered(true, cx);
                     app.request_active_surface_focus(None);
                     app.apply_post_render_focus(window, cx);
-                    assert!(app.overlays.post_render_focus.is_some());
+                    assert_eq!(
+                        app.overlays.post_render_focus.is_some(),
+                        !cfg!(target_os = "macos")
+                    );
                     app.set_workspace_bar_hovered(false, cx);
                     app.apply_post_render_focus(window, cx);
                     assert!(app.overlays.post_render_focus.is_none());

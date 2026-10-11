@@ -223,3 +223,415 @@ fn async_permission_modal_blocks_surface_switch_and_tracks_owner_size(
         },
     );
 }
+
+#[cfg(target_os = "macos")]
+#[gpui::test]
+fn sheets_and_picker_share_the_live_modal_layer(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::sheets_and_picker_share_the_live_modal_layer"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.update(|window, _| window.activate_window());
+            cx.run_until_parked();
+            for surface in [AppSurface::Editor, AppSurface::Terminal] {
+                for sheet in 0..8 {
+                    cx.update(|window, cx| {
+                        app.update(cx, |app, cx| {
+                            app.set_surface(surface, cx);
+                            match sheet {
+                                0 => app.open_settings(window, cx),
+                                1 => app.open_sessions_sheet(window, cx),
+                                2 => app.open_run_sheet(window, cx),
+                                3 => app.open_worker_notices(window, cx),
+                                4 => app.open_keybindings_help(window, cx),
+                                5 => app.open_project_trust(window, cx),
+                                6 => app.open_picker(crate::app::PickerScope::Actions, window, cx),
+                                _ => app.open_session_import(window, cx),
+                            }
+                            assert!(app.modal_uses_native_host());
+                            assert!(!app.workspace.native_surface_covered);
+                            assert!(app.workspace.native_surface_snapshot.is_none());
+                        });
+                        window.draw(cx).clear(cx);
+                    });
+                    cx.run_until_parked();
+                    let panel =
+                        cx.update(|_, cx| {
+                            app.read(cx).overlays.modal.window.unwrap_or_else(|| {
+                                panic!("missing panel: {surface:?} sheet {sheet}")
+                            })
+                        });
+                    let panel_cx =
+                        gpui::VisualTestContext::from_window(panel.into(), cx).into_mut();
+                    panel_cx.update(|window, cx| {
+                        window.activate_window();
+                        window.draw(cx).clear(cx);
+                        assert!(gpui_base::active_focus_trap(window, cx).is_some());
+                        assert!(
+                            app.read(cx)
+                                .keyboard_overlay_focus(window, cx)
+                                .unwrap()
+                                .contains_focused(window, cx)
+                        );
+                        assert!(crate::app::ui::primitives::tooltip_overlay(window, cx).is_some());
+                    });
+                    panel_cx.run_until_parked();
+                    panel_cx.simulate_keystrokes("tab shift-tab escape");
+                    cx.run_until_parked();
+                    cx.update(|window, cx| {
+                        window.draw(cx).clear(cx);
+                        assert!(
+                            !app.read(cx).native_workspace_modal_active(),
+                            "sheet {sheet}"
+                        );
+                        assert!(app.read(cx).overlays.modal.window.is_none());
+                        assert_eq!(app.read(cx).workspace.surface, surface);
+                    });
+                }
+            }
+        },
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[gpui::test]
+fn worker_model_prompt_uses_modal_host_and_keeps_nested_picker_focus(
+    cx: &mut gpui::TestAppContext,
+) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::worker_model_prompt_uses_modal_host_and_keeps_nested_picker_focus"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.update(|window, _| window.activate_window());
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.set_surface(AppSurface::Terminal, cx);
+                    app.apply_extension_request(
+                        ExtensionUiRequest::WorkerModel {
+                            id: "worker".into(),
+                            profile: "Worker".into(),
+                            choices: vec![crate::protocol::WorkerModelChoice {
+                                harness: crate::agents::Backend::Codex,
+                                provider: "test".into(),
+                                id: "test".into(),
+                                name: "Test model".into(),
+                                efforts: vec![],
+                                service_tiers: vec![],
+                            }],
+                        },
+                        app.runtime_generation,
+                        cx,
+                    );
+                    cx.notify();
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.run_until_parked();
+            let panel = cx.update(|_, cx| {
+                app.read(cx)
+                    .overlays
+                    .modal
+                    .window
+                    .expect("worker prompt panel")
+            });
+            cx.update(|window, cx| {
+                assert!(
+                    popup::uses_native_popups(window, cx),
+                    "the passive request must not disable native menus and tooltips"
+                );
+            });
+            let panel_cx = gpui::VisualTestContext::from_window(panel.into(), cx).into_mut();
+            panel_cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                assert!(
+                    !window.is_window_active(),
+                    "the collapsed model request must not take editor focus"
+                );
+                assert!(!app.read(cx).center_surface_switch_blocked());
+                app.update(cx, |app, cx| {
+                    app.set_worker_model_picker_open(true, "worker", window, cx)
+                });
+            });
+            panel_cx.update(|window, cx| window.draw(cx).clear(cx));
+            panel_cx.update(|window, cx| {
+                assert!(
+                    app.read(cx)
+                        .worker_model_picker_focus(cx)
+                        .unwrap()
+                        .is_focused(window)
+                );
+            });
+            panel_cx.simulate_input("Test");
+            panel_cx.update(|window, cx| {
+                let app = app.read(cx);
+                assert!(app.workspace.runtime_picker.open);
+                assert!(app.extensions.active.dialog.is_some());
+                assert!(!app.native_surface_obscured(window, cx));
+            });
+            panel_cx.simulate_keystrokes("escape");
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                assert!(!app.read(cx).workspace.runtime_picker.open);
+                assert!(
+                    app.read(cx).extensions.active.dialog.is_some(),
+                    "first Escape closes only the picker"
+                );
+            });
+            panel_cx.update(|window, cx| window.draw(cx).clear(cx));
+            panel_cx.simulate_keystrokes("escape");
+            cx.run_until_parked();
+            cx.update(|_, cx| assert!(app.read(cx).extensions.active.dialog.is_none()));
+        },
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[gpui::test]
+fn project_menu_hosts_submenus_and_releases_its_panel(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::project_menu_hosts_submenus_and_releases_its_panel"
+        ),
+        cx,
+        |cx, app, _, project| {
+            cx.update(|window, _| window.activate_window());
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let session = crate::sessions::SessionSummary::from_cached(
+                        "menu-session".into(),
+                        project.join("menu.jsonl"),
+                        project.into(),
+                        "Menu session".into(),
+                        String::new(),
+                        String::new(),
+                        None,
+                        std::time::SystemTime::now(),
+                        0,
+                        Default::default(),
+                        false,
+                        false,
+                        String::new(),
+                    );
+                    app.sessions.all = vec![session.clone()].into();
+                    app.sessions.visible = vec![session].into();
+                    app.workspace.session_rail_hidden = false;
+                    app.settings.group_sessions_by_project = true;
+                    app.set_surface(AppSurface::Editor, cx);
+                    app.notify_session_rail(cx);
+                    cx.notify();
+                });
+                window.draw(cx).clear(cx);
+            });
+            let trigger = cx
+                .debug_bounds("session-group-menu")
+                .expect("project menu trigger");
+            cx.simulate_click(trigger.center(), Default::default());
+            cx.run_until_parked();
+            let panel = cx.update(|_, cx| {
+                cx.windows()
+                    .into_iter()
+                    .find_map(|window| window.downcast::<popup::PopupWindow>())
+                    .expect("native menu panel")
+            });
+            let panel_cx = gpui::VisualTestContext::from_window(panel.into(), cx).into_mut();
+            panel_cx.update(|window, cx| {
+                window.activate_window();
+                window.draw(cx).clear(cx);
+                assert!(!app.read(cx).workspace.native_surface_covered);
+                assert!(gpui_base::GlobalState::is_in_deferred_context(cx));
+            });
+            panel_cx.simulate_keystrokes("down right");
+            panel_cx.update(|window, cx| window.draw(cx).clear(cx));
+            panel_cx.simulate_keystrokes("escape");
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                assert!(!gpui_base::GlobalState::is_in_deferred_context(cx));
+                assert!(panel.update(cx, |_, _, _| ()).is_err(), "menu panel closes");
+                assert!(!app.read(cx).workspace.native_surface_covered);
+            });
+        },
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[gpui::test]
+fn native_tooltip_preserves_owner_focus_and_expires(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::native_tooltip_preserves_owner_focus_and_expires"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.update(|window, cx| {
+                window.replace_root(cx, |window, cx| {
+                    gpui_base::Root::new(app.clone(), window, cx)
+                });
+                window.activate_window();
+            });
+            cx.run_until_parked();
+            let focus = cx.update(|window, cx| {
+                let focus = app.read(cx).navigation.chat.focus.clone();
+                focus.focus(window, cx);
+                app.update(cx, |app, cx| {
+                    app.set_surface(AppSurface::Editor, cx);
+                    cx.notify();
+                });
+                window.draw(cx).clear(cx);
+                focus
+            });
+            let bar = cx.debug_bounds("workspace-bar").unwrap();
+            cx.simulate_mouse_move(
+                point(bar.right() - px(29.0), bar.center().y),
+                None,
+                Default::default(),
+            );
+            cx.run_until_parked();
+            cx.executor()
+                .advance_clock(std::time::Duration::from_millis(400));
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                assert!(
+                    crate::app::ui::primitives::tooltip_overlay(window, cx)
+                        .unwrap()
+                        .read(cx)
+                        .is_visible()
+                );
+                assert!(focus.is_focused(window));
+                assert!(!app.read(cx).workspace.native_surface_covered);
+            });
+            let panel = cx.update(|_, cx| {
+                cx.windows()
+                    .into_iter()
+                    .find_map(|window| window.downcast::<popup::PopupWindow>())
+                    .expect("native tooltip panel")
+            });
+            panel
+                .update(cx, |_, window, cx| assert!(window.focused(cx).is_none()))
+                .unwrap();
+            cx.simulate_mouse_move(point(px(10.0), px(450.0)), None, Default::default());
+            cx.executor()
+                .advance_clock(std::time::Duration::from_millis(600));
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                assert!(focus.is_focused(window));
+                assert!(panel.update(cx, |_, _, _| ()).is_err());
+            });
+        },
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[gpui::test]
+fn picker_action_survives_its_source_popup_closing(cx: &mut gpui::TestAppContext) {
+    use gpui::AppContext as _;
+    use std::rc::Rc;
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::picker_action_survives_its_source_popup_closing"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.update(|window, _| window.activate_window());
+            cx.run_until_parked();
+            let source = cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.set_surface(AppSurface::Editor, cx);
+                    cx.notify();
+                });
+                let state = cx.new(|_| popup::PopupState::default());
+                let owner = app.downgrade();
+                popup::prepare(
+                    state.clone(),
+                    true,
+                    Rc::new(move |_, _| {
+                        crate::app::ui::primitives::button(
+                            "open-actions",
+                            "Actions",
+                            crate::app::ui::primitives::ButtonTone::Neutral,
+                            true,
+                            {
+                                let owner = owner.clone();
+                                move |window, cx| {
+                                    let _ = owner.update(cx, |app, cx| {
+                                        app.open_picker(
+                                            crate::app::PickerScope::Actions,
+                                            window,
+                                            cx,
+                                        )
+                                    });
+                                }
+                            },
+                        )
+                        .debug_selector(|| "open-actions".into())
+                        .into_any_element()
+                    }),
+                    OverlayInput::Modal,
+                    None,
+                    window,
+                    cx,
+                );
+                state
+            });
+            cx.run_until_parked();
+            let source_panel = cx.update(|_, cx| source.read(cx).window.unwrap());
+            let source_cx =
+                gpui::VisualTestContext::from_window(source_panel.into(), cx).into_mut();
+            source_cx.update(|window, cx| {
+                window.activate_window();
+                window.draw(cx).clear(cx);
+            });
+            let button = source_cx.debug_bounds("open-actions").unwrap();
+            source_cx.simulate_click(button.center(), Default::default());
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                assert!(
+                    app.read(cx).overlays.modal.window.is_some(),
+                    "the active source panel must not prevent its dialog from opening"
+                );
+                popup::prepare(
+                    source.clone(),
+                    false,
+                    Rc::new(|_, _| div().into_any_element()),
+                    OverlayInput::Modal,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            let panel =
+                cx.update(|_, cx| app.read(cx).overlays.modal.window.expect("picker panel"));
+            let panel_cx = gpui::VisualTestContext::from_window(panel.into(), cx).into_mut();
+            panel_cx.update(|window, cx| {
+                window.activate_window();
+                window.draw(cx).clear(cx);
+            });
+            panel_cx.simulate_input("Settings");
+            panel_cx.simulate_keystrokes("enter");
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                assert!(
+                    app.read(cx).overlays.view.settings,
+                    "picker subscription still reaches the owner after its source panel closes"
+                );
+                assert!(app.read(cx).navigation.picker.is_none());
+                assert!(!app.read(cx).workspace.native_surface_covered);
+            });
+            panel_cx.simulate_keystrokes("escape");
+        },
+    );
+}

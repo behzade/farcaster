@@ -5,8 +5,9 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, AnyView, App, Bounds, Context, Entity, EntityId, InteractiveElement, IntoElement,
-    MouseButton, ParentElement as _, Pixels, Render, SharedString, Task, Window, deferred, div,
+    AnyElement, AnyView, App, AppContext as _, Bounds, Context, Entity, EntityId,
+    InteractiveElement, IntoElement, MouseButton, ParentElement as _, Pixels, Render, SharedString,
+    Task, Window, deferred, div,
 };
 use gpui_component::{ElementExt, Placement, tooltip::Tooltip};
 
@@ -21,6 +22,7 @@ pub(crate) struct AppTooltips {
     last_hide: Option<Instant>,
     show_task: Option<Task<()>>,
     hide_task: Option<Task<()>>,
+    native: Option<Entity<crate::app::views::native_overlay::popup::PopupState>>,
 }
 
 pub(crate) fn init_tooltips(cx: &mut App) {
@@ -28,10 +30,19 @@ pub(crate) fn init_tooltips(cx: &mut App) {
 }
 
 pub(crate) fn tooltip_overlay(window: &Window, cx: &App) -> Option<Entity<AppTooltips>> {
+    if let Some(root) = window.root::<gpui_base::Root>().flatten() {
+        return root.read(cx).plugin::<AppTooltips>();
+    }
+    if let Some(root) = window
+        .root::<crate::app::views::native_overlay::ModalWindow>()
+        .flatten()
+    {
+        return Some(root.read(cx).tooltips.clone());
+    }
     window
-        .root::<gpui_base::Root>()??
-        .read(cx)
-        .plugin::<AppTooltips>()
+        .root::<crate::app::views::native_overlay::popup::PopupWindow>()
+        .flatten()
+        .map(|root| root.read(cx).tooltips.clone())
 }
 
 impl AppTooltips {
@@ -94,18 +105,60 @@ impl AppTooltips {
 }
 
 impl gpui_base::RootPlugin for AppTooltips {}
+impl AppTooltips {
+    fn render_content(&self, window: &mut Window, cx: &mut App) -> AnyElement {
+        render_content(self.content.as_ref(), window, cx)
+    }
+}
+
+fn render_content(
+    content: Option<&(Bounds<Pixels>, Builder)>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let Some((bounds, build)) = content else {
+        return div().into_any_element();
+    };
+    deferred(
+        gpui_base::TooltipPositioner::new(*bounds)
+            .placement(Placement::Right)
+            .child(build(window, cx)),
+    )
+    .with_priority(200)
+    .into_any_element()
+}
+
 impl Render for AppTooltips {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some((bounds, build)) = &self.content else {
-            return div().into_any_element();
-        };
-        deferred(
-            gpui_base::TooltipPositioner::new(*bounds)
-                .placement(Placement::Right)
-                .child(build(window, cx)),
-        )
-        .with_priority(200)
-        .into_any_element()
+        use crate::app::views::native_overlay::{native::OverlayInput, popup};
+        let native = popup::uses_native_popups(window, cx);
+        if native && self.native.is_none() {
+            self.native = Some(cx.new(|_| popup::PopupState::default()));
+        }
+        if let Some(state) = &self.native {
+            let owner = cx.entity().downgrade();
+            let hosted = popup::prepare(
+                state.clone(),
+                native && self.is_visible(),
+                Rc::new(move |window, cx| {
+                    owner
+                        .upgrade()
+                        .map(|owner| {
+                            let content = owner.read(cx).content.clone();
+                            render_content(content.as_ref(), window, cx)
+                        })
+                        .unwrap_or_else(|| div().into_any_element())
+                }),
+                OverlayInput::Tooltip,
+                None,
+                window,
+                cx,
+            );
+            if native && hosted {
+                return div().into_any_element();
+            }
+        }
+        self.render_content(window, cx)
     }
 }
 

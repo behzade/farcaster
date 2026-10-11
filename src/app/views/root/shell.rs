@@ -188,11 +188,17 @@ impl FarcasterApp {
                             .flex_none()
                             .border_r(theme().border)
                             .border_color(theme().colors.border)
-                            .child(
-                                self.views
-                                    .session_rail
-                                    .clone()
-                                    .cached(gpui::StyleRefinement::default().size_full()),
+                            .when(
+                                !(self.modal_rendered_in_native_window()
+                                    && self.overlays.view.sessions),
+                                |panel| {
+                                    panel.child(
+                                        self.views
+                                            .session_rail
+                                            .clone()
+                                            .cached(gpui::StyleRefinement::default().size_full()),
+                                    )
+                                },
                             )
                             .child(resize_handle(
                                 "session-rail-resize",
@@ -221,7 +227,10 @@ impl FarcasterApp {
                             .border_l(theme().border)
                             .border_color(theme().colors.border)
                             .child(
-                                if self.views.workgraph_inspector_issue.is_some()
+                                if self.modal_rendered_in_native_window() && self.overlays.view.run
+                                {
+                                    div().into_any_element()
+                                } else if self.views.workgraph_inspector_issue.is_some()
                                     && self.visible_review().is_none()
                                 {
                                     self.views.workgraph_detail.clone().into_any_element()

@@ -1,6 +1,6 @@
 use crate::agents::Backend;
+use crate::app::ui::primitives::ContextMenuExt as _;
 use crate::{app::session::status::run_status_label, runtime::RunStatus};
-use gpui_component::menu::ContextMenuExt as _;
 use std::{
     path::{Path, PathBuf},
     time::{Duration, SystemTime},

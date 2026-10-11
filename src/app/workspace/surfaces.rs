@@ -99,9 +99,13 @@ impl FarcasterApp {
             Some(pending.focus.clone())
         } else if let Some(pending) = &self.sessions.pending_delete {
             Some(pending.focus.clone())
+        } else if let Some(pending) = &self.sessions.pending_move {
+            Some(pending.focus.clone())
         } else if let Some(dialog) = &self.sessions.import {
             Some(dialog.focus.clone())
         } else if let Some(pending) = &self.sessions.pending_archive {
+            Some(pending.focus.clone())
+        } else if let Some(pending) = &self.navigation.pending_model_access {
             Some(pending.focus.clone())
         } else if self.current_sheet_flags().any() {
             Some(self.overlays.sheet_focus.clone())
@@ -124,6 +128,9 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn composer_region_focus(&self, cx: &gpui::App) -> FocusHandle {
+        if let Some(focus) = self.worker_model_picker_focus(cx) {
+            return focus;
+        }
         match self.extensions.active.dialog {
             Some(ExtensionUiRequest::Input { .. } | ExtensionUiRequest::Editor { .. }) => {
                 self.extensions.dialog_input.read(cx).focus_handle(cx)
@@ -140,7 +147,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(owner_window) = self.modal_owner_window(window) {
+        if let Some(owner_window) = self.modal_owner_window(window, cx) {
             let closing = closing.clone();
             crate::app::views::native_overlay::in_owner_window(
                 cx.entity().downgrade(),
@@ -209,7 +216,7 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn cover_native_workspace_surface(&mut self, cx: &mut Context<Self>) {
-        if self.modal_uses_native_host() {
+        if self.native_overlays_available() {
             return;
         }
         if !self.workspace.native_surface_covered {
@@ -441,7 +448,7 @@ impl FarcasterApp {
         cx.notify();
     }
 
-    fn request_active_surface_focus(&mut self, chat: Option<FocusHandle>) {
+    pub(in crate::app) fn request_active_surface_focus(&mut self, chat: Option<FocusHandle>) {
         self.overlays.post_render_focus = Some(PostRenderFocus::ActiveSurface(chat));
     }
 
@@ -501,11 +508,8 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn native_workspace_modal_active(&self) -> bool {
-        self.workspace.send_to_chat.is_some() || self.native_workspace_other_modal_active()
-    }
-
-    pub(in crate::app) fn native_workspace_other_modal_active(&self) -> bool {
-        self.navigation.picker.is_some()
+        self.workspace.send_to_chat.is_some()
+            || self.navigation.picker.is_some()
             || self.current_sheet_flags().any()
             || self.lifecycle.pending_quit.is_some()
             || self.sessions.pending_archive.is_some()
@@ -532,7 +536,7 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn native_surface_obscured(&self, window: &Window, cx: &gpui::App) -> bool {
-        if self.modal_uses_native_host() {
+        if self.native_overlays_available() {
             return false;
         }
         self.native_workspace_covered_by_overlay()
@@ -896,6 +900,9 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.route_overlay_action(window, cx, Self::open_settings) {
+            return;
+        }
         self.workspace.voice.capturing_shortcut = false;
         self.refresh_voice_availability(cx);
         self.refresh_theme_editor(window, cx);
@@ -1177,6 +1184,7 @@ impl FarcasterApp {
             || self.overlays.view.run
             || self.overlays.view.keybindings
             || self.overlays.view.settings
+            || self.overlays.view.worker_notices
         {
             self.close_sheet(window, cx);
         } else if self.navigation.pending_model_access.is_some() {

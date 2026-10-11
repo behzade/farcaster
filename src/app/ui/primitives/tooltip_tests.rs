@@ -1,5 +1,5 @@
 use super::*;
-use gpui::{AppContext as _, Styled as _, point, px, size};
+use gpui::{Styled as _, point, px, size};
 
 #[gpui::test]
 fn tooltip_delay_cancellation_grace_and_click_dismissal(cx: &mut gpui::TestAppContext) {

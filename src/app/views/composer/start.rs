@@ -1,7 +1,8 @@
 use crate::agents::{Backend, HarnessProfile};
+use crate::app::ui::primitives::DropdownMenu as _;
 use gpui::{IntoElement, Styled as _, WeakEntity};
 
-use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_component::menu::PopupMenuItem;
 
 use crate::app::{
     FarcasterApp,

@@ -1,10 +1,11 @@
+use crate::app::ui::primitives::DropdownMenu as _;
 use std::cell::RefCell;
 
 use gpui::{
     Anchor, AnyElement, InteractiveElement as _, IntoElement, ListState, MouseButton,
     ParentElement as _, Styled as _, WeakEntity, div, list, prelude::FluentBuilder as _,
 };
-use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_component::menu::PopupMenuItem;
 use gpui_component::scroll::Scrollbar;
 
 use super::{

@@ -45,6 +45,16 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
         action: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
     ) {
+        if let Some(owner) = self.modal_owner_window(window, cx) {
+            crate::app::views::native_overlay::in_owner_window(
+                cx.entity().downgrade(),
+                Some(owner),
+                window,
+                cx,
+                move |app, window, cx| app.retry_after_session_refresh(path, window, cx, action),
+            );
+            return;
+        }
         let current_target = self.composer.sessions.current_target().to_owned();
         let mut action = Some(action);
         cx.spawn_in(window, async move |weak, cx| {

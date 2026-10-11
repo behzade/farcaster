@@ -70,7 +70,16 @@ fn notification_window_follows_owner_activation_and_size(cx: &mut gpui::TestAppC
                 window.draw(cx).clear(cx);
             });
             cx.update(|_, cx| assert!(app.read(cx).overlays.notices.window.is_none()));
-            assert!(cx.debug_bounds("floating-notices").is_some());
+            if cfg!(target_os = "macos") {
+                let panel =
+                    cx.update(|_, cx| app.read(cx).overlays.modal.window.expect("sheet panel"));
+                let panel_cx = gpui::VisualTestContext::from_window(panel.into(), cx).into_mut();
+                panel_cx.update(|window, cx| window.draw(cx).clear(cx));
+                assert!(panel_cx.debug_bounds("floating-notices").is_some());
+                assert!(cx.debug_bounds("floating-notices").is_none());
+            } else {
+                assert!(cx.debug_bounds("floating-notices").is_some());
+            }
         },
     );
 }

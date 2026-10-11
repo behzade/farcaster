@@ -1,14 +1,18 @@
-use gpui::{Bounds, Pixels, Window, WindowKind};
+use gpui::{
+    App, Bounds, Entity, Pixels, Render, Window, WindowBounds, WindowHandle, WindowKind,
+    WindowOptions,
+};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-#[derive(Clone, Copy)]
-pub(in crate::app::views) enum OverlayInput {
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(in crate::app) enum OverlayInput {
     Passive,
+    Tooltip,
     Modal,
 }
 
 #[derive(Clone)]
-pub(in crate::app::views) enum NativeHost {
+pub(in crate::app) enum NativeHost {
     #[cfg(target_os = "macos")]
     Mac(macos::Host),
     #[cfg(target_os = "linux")]
@@ -19,7 +23,51 @@ pub(in crate::app::views) enum NativeHost {
 }
 
 impl NativeHost {
-    pub(in crate::app::views) fn capture(window: &Window) -> Result<Self, String> {
+    pub(super) fn open_panel<V: Render + 'static>(
+        owner: &Window,
+        bounds: Bounds<Pixels>,
+        input: OverlayInput,
+        offset: gpui::Point<Pixels>,
+        build: impl FnOnce(Self, &mut Window, &mut App) -> Entity<V>,
+        cx: &mut App,
+    ) -> Result<WindowHandle<V>, String> {
+        let host = Self::capture(owner)?;
+        let view_host = host.clone();
+        let rem_size = owner.rem_size();
+        let popup = cx
+            .open_window(
+                WindowOptions {
+                    kind: WindowKind::PopUp,
+                    focus: false,
+                    show: false,
+                    titlebar: None,
+                    is_movable: false,
+                    is_resizable: false,
+                    is_minimizable: false,
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_background: gpui::WindowBackgroundAppearance::Transparent,
+                    ..Default::default()
+                },
+                move |window, cx| {
+                    window.set_rem_size(rem_size);
+                    build(view_host, window, cx)
+                },
+            )
+            .map_err(|error| error.to_string())?;
+        let result = popup
+            .update(cx, |_, window, _| {
+                host.present(window, bounds, offset, input)
+            })
+            .map_err(|error| error.to_string())
+            .and_then(|result| result);
+        if let Err(error) = result {
+            let _ = popup.update(cx, |_, window, _| window.remove_window());
+            return Err(error);
+        }
+        Ok(popup)
+    }
+
+    pub(in crate::app) fn capture(window: &Window) -> Result<Self, String> {
         let handle = match HasWindowHandle::window_handle(window) {
             Ok(handle) => handle.as_raw(),
             #[cfg(test)]
@@ -39,7 +87,7 @@ impl NativeHost {
         }
     }
 
-    pub(in crate::app::views) fn kind(
+    pub(in crate::app) fn kind(
         &self,
         parent: gpui::AnyWindowHandle,
         anchor: Bounds<Pixels>,
@@ -60,7 +108,7 @@ impl NativeHost {
         }
     }
 
-    pub(in crate::app::views) fn present(
+    pub(in crate::app) fn present(
         &self,
         window: &Window,
         bounds: Bounds<Pixels>,
@@ -76,7 +124,7 @@ impl NativeHost {
         self.position(window, bounds, offset)
     }
 
-    pub(in crate::app::views) fn position(
+    pub(in crate::app) fn position(
         &self,
         window: &Window,
         bounds: Bounds<Pixels>,
@@ -128,7 +176,7 @@ mod macos {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
     #[derive(Clone)]
-    pub(in crate::app::views) struct Host {
+    pub(in crate::app) struct Host {
         window: Retained<NSWindow>,
         view: Retained<NSView>,
     }
@@ -194,12 +242,15 @@ mod macos {
                 .downcast_ref::<NSPanel>()
                 .ok_or("notification window is not a panel")?;
             panel.setStyleMask(NSWindowStyleMask::NonactivatingPanel);
-            panel.setBecomesKeyOnlyIfNeeded(matches!(input, super::OverlayInput::Passive));
+            panel.setBecomesKeyOnlyIfNeeded(!matches!(input, super::OverlayInput::Modal));
+            panel.setIgnoresMouseEvents(matches!(input, super::OverlayInput::Tooltip));
             panel.setHidesOnDeactivate(true);
             panel.setHasShadow(false);
             self.position_window(&popup.window, bounds, offset);
             match input {
-                super::OverlayInput::Passive => popup.window.orderFront(None),
+                super::OverlayInput::Passive | super::OverlayInput::Tooltip => {
+                    popup.window.orderFront(None)
+                }
                 super::OverlayInput::Modal => {
                     panel.setCollectionBehavior(
                         NSWindowCollectionBehavior::MoveToActiveSpace

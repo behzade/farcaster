@@ -46,6 +46,7 @@ impl FarcasterApp {
                 AppSurface::Editor | AppSurface::Terminal
             )
             && !self.native_workspace_covered_by_overlay()
+            && (!self.modal_rendered_in_native_window() || self.native_request_is_passive())
     }
 
     pub(in crate::app) fn notices_render_in_native_window(&self) -> bool {

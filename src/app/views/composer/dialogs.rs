@@ -2,12 +2,12 @@ mod confirm;
 mod select;
 mod text_input;
 
+use crate::app::ui::primitives::Popover;
 use gpui::{
     AnyElement, ElementId, FontWeight, InteractiveElement as _, IntoElement, KeyDownEvent,
     ParentElement as _, Role, SharedString, StatefulInteractiveElement as _, Styled as _,
     WeakEntity, div, prelude::FluentBuilder as _,
 };
-use gpui_component::popover::Popover;
 use gpui_component::text::TextView;
 
 use self::{confirm::ConfirmRequestView, select::SelectRequestView, text_input::TextRequestView};

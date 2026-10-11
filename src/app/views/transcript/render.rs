@@ -1,4 +1,4 @@
-use gpui_component::menu::ContextMenuExt as _;
+use crate::app::ui::primitives::ContextMenuExt as _;
 use std::{
     borrow::Cow,
     hash::{Hash, Hasher},

@@ -2,6 +2,7 @@ use super::{
     super::super::FarcasterApp,
     repository_presentation::{git_identity, repository_sync_metadata},
 };
+use crate::app::ui::primitives::DropdownMenu as _;
 use crate::{
     app::{
         RunPanelView,
@@ -28,7 +29,7 @@ use gpui::{
 use gpui_component::{
     Disableable as _, Sizable as _, Size,
     button::{Button, ButtonVariants as _},
-    menu::{DropdownMenu as _, PopupMenuItem},
+    menu::PopupMenuItem,
 };
 
 pub(super) fn file_action(
