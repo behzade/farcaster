@@ -3,6 +3,7 @@ mod attachments;
 mod composer;
 pub(in crate::app) mod dialogs;
 mod notifications;
+pub(in crate::app) mod notice_window;
 pub(crate) mod overlay_state;
 mod regions;
 mod root;

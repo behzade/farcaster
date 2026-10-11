@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, Context, FocusHandle, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
+    AnyElement, Context, FocusHandle, IntoElement as _, ParentElement as _, Styled as _,
+    WeakEntity, div, prelude::FluentBuilder as _,
 };
 
 use super::{
@@ -22,8 +22,7 @@ impl FarcasterApp {
         work_active: bool,
         cx: &Context<Self>,
     ) -> gpui::Div {
-        let task_notice = self.render_code_task_notice(entity.clone());
-        let has_notices = !self.extensions.active.notifications.is_empty() || task_notice.is_some();
+        let has_notices = self.has_floating_notices() && !self.notices_render_in_native_window();
         let workgraph_focus = self.views.workgraph.read(cx).focus_handle();
         let sessions_sheet = self.overlays.view.sessions.then(|| {
             panel_sheet(
@@ -171,28 +170,12 @@ impl FarcasterApp {
             )
             .when(has_notices, |root| {
                 root.child(
-                    div()
-                        .debug_selector(|| "floating-notices".into())
+                    self.render_notice_stack(entity.clone(), None)
                         .absolute()
                         .top(theme().space.md)
                         .right(theme().space.md)
                         .w(theme().size(360.0))
-                        .max_w_full()
-                        .flex()
-                        .flex_col()
-                        .gap(theme().space.xs)
-                        .children(task_notice)
-                        .children(self.extensions.active.notifications.iter().enumerate().map(
-                            |(index, notice)| {
-                                self.render_notification(
-                                    ("notification", index),
-                                    &notice.id,
-                                    &notice.message,
-                                    notice.tone,
-                                    entity.clone(),
-                                )
-                            },
-                        )),
+                        .max_w_full(),
                 )
             })
             .when(self.lifecycle.pending_quit.is_some(), |root| {

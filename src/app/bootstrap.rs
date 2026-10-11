@@ -394,6 +394,7 @@ impl FarcasterApp {
                 panel_space: None,
             },
             overlays: views::AppOverlays {
+                notices: Default::default(),
                 view: Default::default(),
                 image_preview: None,
                 image_preview_focus: cx.focus_handle(),

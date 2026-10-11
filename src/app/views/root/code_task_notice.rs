@@ -15,6 +15,7 @@ impl FarcasterApp {
     pub(in crate::app) fn render_code_task_notice(
         &self,
         entity: WeakEntity<Self>,
+        owner_window: Option<gpui::AnyWindowHandle>,
     ) -> Option<AnyElement> {
         let message = self.workspace.code_tasks.notice_message()?;
         let dismiss = entity.clone();
@@ -45,9 +46,13 @@ impl FarcasterApp {
                     ButtonTone::Neutral,
                     true,
                     move |window, cx| {
-                        let _ = entity.update(cx, |this, cx| {
-                            this.open_code_task_chat(window, cx);
-                        });
+                        crate::app::views::notice_window::in_owner_window(
+                            entity.clone(),
+                            owner_window,
+                            window,
+                            cx,
+                            |this, window, cx| this.open_code_task_chat(window, cx),
+                        );
                     },
                 ))
                 .child(button(

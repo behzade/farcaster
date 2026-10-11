@@ -1935,6 +1935,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "objc2-user-notifications",
  "path-clean",
+ "raw-window-handle",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1946,6 +1947,7 @@ dependencies = [
  "url",
  "uuid",
  "workgraph",
+ "x11rb",
 ]
 
 [[package]]

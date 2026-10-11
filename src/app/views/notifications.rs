@@ -14,6 +14,31 @@ use crate::{
 };
 
 impl FarcasterApp {
+    pub(in crate::app::views) fn render_notice_stack(
+        &self,
+        entity: WeakEntity<Self>,
+        owner_window: Option<gpui::AnyWindowHandle>,
+    ) -> gpui::Div {
+        div()
+            .debug_selector(|| "floating-notices".into())
+            .flex()
+            .flex_col()
+            .gap(theme().space.xs)
+            .children(self.render_code_task_notice(entity.clone(), owner_window))
+            .children(self.extensions.active.notifications.iter().enumerate().map(
+                |(index, notice)| {
+                    self.render_notification(
+                        ("notification", index),
+                        &notice.id,
+                        &notice.message,
+                        notice.tone,
+                        entity.clone(),
+                        owner_window,
+                    )
+                },
+            ))
+    }
+
     pub(in crate::app::views) fn render_notification(
         &self,
         id: impl Into<ElementId>,
@@ -21,6 +46,7 @@ impl FarcasterApp {
         message: &str,
         tone: NotifyTone,
         entity: WeakEntity<Self>,
+        owner_window: Option<gpui::AnyWindowHandle>,
     ) -> AnyElement {
         let tone = match tone {
             NotifyTone::Error => FeedbackTone::Error,
@@ -32,9 +58,15 @@ impl FarcasterApp {
             return feedback(id, message.to_owned(), tone);
         };
         let open = move |window: &mut Window, cx: &mut App| {
-            let _ = entity.update(cx, |app, cx| {
-                app.select_session_and_focus(path.clone(), project.clone(), window, cx);
-            });
+            let path = path.clone();
+            let project = project.clone();
+            super::notice_window::in_owner_window(
+                entity.clone(),
+                owner_window,
+                window,
+                cx,
+                move |app, window, cx| app.select_session_and_focus(path, project, window, cx),
+            );
         };
         let click = open.clone();
         let (title, preview) = message.split_once('\n').unwrap_or((message, ""));

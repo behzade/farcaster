@@ -81,6 +81,7 @@ impl FarcasterApp {
                         &notice.message,
                         notice.tone,
                         entity.clone(),
+                        None,
                     )
                 })
                 .collect::<Vec<_>>()
