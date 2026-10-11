@@ -51,7 +51,7 @@ thread_local! {
     static SCROLL_TIMING: RefCell<ScrollTimingState> = RefCell::default();
 }
 
-const OPERATION_COUNT: usize = 13;
+const OPERATION_COUNT: usize = 16;
 static OPERATION_CALLS: [AtomicU64; OPERATION_COUNT] =
     [const { AtomicU64::new(0) }; OPERATION_COUNT];
 static OPERATION_TOTAL_NS: [AtomicU64; OPERATION_COUNT] =
@@ -76,6 +76,9 @@ pub(crate) enum OperationKind {
     TranscriptPrepaint,
     TranscriptPaint,
     SessionSidebar,
+    SidebarSessionLists,
+    SidebarFamilyStatus,
+    SidebarNotifications,
 }
 
 impl OperationKind {
@@ -93,6 +96,9 @@ impl OperationKind {
         Self::TranscriptPrepaint,
         Self::TranscriptPaint,
         Self::SessionSidebar,
+        Self::SidebarSessionLists,
+        Self::SidebarFamilyStatus,
+        Self::SidebarNotifications,
     ];
 
     const fn label(self) -> &'static str {
@@ -110,6 +116,9 @@ impl OperationKind {
             Self::TranscriptPrepaint => "Transcript row prepaint",
             Self::TranscriptPaint => "Transcript row paint",
             Self::SessionSidebar => "Session sidebar build",
+            Self::SidebarSessionLists => "Sidebar session preparation",
+            Self::SidebarFamilyStatus => "Sidebar family status",
+            Self::SidebarNotifications => "Sidebar notification cards",
         }
     }
 
@@ -127,6 +136,8 @@ impl OperationKind {
             Self::HistoryLoad => "entries",
             Self::RuntimeDrain => "events",
             Self::SessionSidebar => "renders",
+            Self::SidebarSessionLists | Self::SidebarFamilyStatus => "catalog entries",
+            Self::SidebarNotifications => "cards",
         }
     }
 }

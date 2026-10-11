@@ -12,7 +12,7 @@ use super::{
     colors::palette_color,
     draft_row::{DraftRow, DraftRowInput},
     folders::{FolderRow, folder_header, new_folder_row, project_header},
-    groups::{ActiveSessionItem, session_rail_lists_for_roots},
+    groups::{ActiveSessionItem, active_session_rail_lists_for_roots},
     numbered_session_items, reconcile_list_rows,
     rendering::{active_session_drop_target, subagent_counts},
     rows::{SessionRow, SessionRowInput, project_label},
@@ -20,6 +20,7 @@ use super::{
 use crate::{
     app::PickerScope,
     app::ProjectPickerIntent,
+    app::infrastructure::performance::{OperationKind, OperationTiming},
     app::session::status::{resolved_session_status, roots_waiting_for_active_descendants},
     app::ui::assets::AppIcon,
     app::ui::layout::TRAFFIC_LIGHT_INSET,
@@ -35,6 +36,7 @@ impl FarcasterApp {
         &self,
         panel: RailPanel,
         collapsed: bool,
+        archived_count: usize,
         entity: &WeakEntity<Self>,
         children: impl IntoIterator<Item = AnyElement>,
     ) -> Panel {
@@ -43,7 +45,8 @@ impl FarcasterApp {
         state.set_collapsed(collapsed);
         let toggle_entity = entity.clone();
         let resize_entity = entity.clone();
-        Panel::new(id, &state, self.panel_bounds(panel, collapsed), title)
+        let bounds = self.panel_bounds_with_archived_count(panel, collapsed, archived_count);
+        Panel::new(id, &state, bounds, title)
             .on_toggle(move |_, cx| {
                 let _ = toggle_entity.update(cx, |this, cx| this.toggle_rail_panel(panel, cx));
             })
@@ -55,28 +58,43 @@ impl FarcasterApp {
             .children(children)
     }
 
-    fn render_notification_panel(&self, entity: WeakEntity<Self>) -> AnyElement {
+    fn render_notification_panel(
+        &self,
+        entity: WeakEntity<Self>,
+        archived_count: usize,
+    ) -> AnyElement {
+        let mut operation = OperationTiming::new(OperationKind::SidebarNotifications, 0);
         let collapsed = self.panel_state(RailPanel::Notifications).is_collapsed();
-        let notifications = self
-            .extensions
-            .active
-            .notification_history
-            .iter()
-            .rev()
-            .enumerate()
-            .map(|(index, notice)| {
-                self.render_notification(
-                    ("rail-notification", index),
-                    &notice.id,
-                    &notice.message,
-                    notice.tone,
-                    entity.clone(),
-                )
-            })
-            .collect::<Vec<_>>();
-        self.render_rail_panel(RailPanel::Notifications, collapsed, &entity, notifications)
-            .count(self.extensions.active.unseen_notifications())
-            .into_any_element()
+        let notifications = if collapsed {
+            Vec::new()
+        } else {
+            self.extensions
+                .active
+                .notification_history
+                .iter()
+                .rev()
+                .enumerate()
+                .map(|(index, notice)| {
+                    self.render_notification(
+                        ("rail-notification", index),
+                        &notice.id,
+                        &notice.message,
+                        notice.tone,
+                        entity.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        operation.set_work(notifications.len());
+        self.render_rail_panel(
+            RailPanel::Notifications,
+            collapsed,
+            archived_count,
+            &entity,
+            notifications,
+        )
+        .count(self.extensions.active.unseen_notifications())
+        .into_any_element()
     }
 
     pub(in crate::app::views) fn render_sessions(
@@ -99,18 +117,27 @@ impl FarcasterApp {
             .visible
             .root_for_path(self.snapshot.live_session.as_deref())
             .map(|session| session.path.clone());
-        let waiting_roots =
-            roots_waiting_for_active_descendants(&self.sessions.all, &self.activity.agents);
-        let lists = session_rail_lists_for_roots(
-            self.sessions.visible.roots(),
-            &self.sessions.drafts,
-            self.sessions.project_filter.as_deref(),
-            &self.sessions.order,
-        );
+        let waiting_roots = {
+            let _timing =
+                OperationTiming::new(OperationKind::SidebarFamilyStatus, self.sessions.all.len());
+            roots_waiting_for_active_descendants(&self.sessions.all, &self.activity.agents)
+        };
+        let lists = {
+            let _timing = OperationTiming::new(
+                OperationKind::SidebarSessionLists,
+                self.sessions.visible.len(),
+            );
+            active_session_rail_lists_for_roots(
+                self.sessions.visible.roots(),
+                &self.sessions.drafts,
+                self.sessions.project_filter.as_deref(),
+                &self.sessions.order,
+            )
+        };
         let counts = subagent_counts(&self.sessions.all);
         let session_colors = self.sessions.folders.session_colors.clone();
         let active_entry_count = lists.active.len();
-        let archived_entry_count = lists.archived.len();
+        let archived_entry_count = lists.archived_count;
         let active_rows = lists.active;
         let last_active_row = if !self.settings.group_sessions_by_project
             && self.sessions.folders.folders.is_empty()
@@ -275,6 +302,7 @@ impl FarcasterApp {
             .render_rail_panel(
                 RailPanel::Archived,
                 !self.sessions.archived_expanded || session_drag_active,
+                archived_entry_count,
                 &entity,
                 [div()
                     .flex_1()
@@ -484,7 +512,7 @@ impl FarcasterApp {
                             ),
                     )
                     .child(archived_panel)
-                    .child(self.render_notification_panel(entity)),
+                    .child(self.render_notification_panel(entity, archived_entry_count)),
             )
             .into_any_element()
     }

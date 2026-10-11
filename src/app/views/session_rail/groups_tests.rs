@@ -7,6 +7,95 @@ use std::{
 use super::*;
 use crate::sessions::UsageSummary;
 
+thread_local! {
+    static LIST_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn record_list_build() {
+    LIST_BUILDS.set(LIST_BUILDS.get() + 1);
+}
+
+#[gpui::test]
+fn sidebar_prepares_session_lists_once_for_both_panels(cx: &mut gpui::TestAppContext) {
+    use gpui::{IntoElement as _, ListAlignment, ListState, px};
+    use std::cell::RefCell;
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::sidebar_prepares_session_lists_once_for_both_panels"
+        ),
+        cx,
+        |cx, app, _, project| {
+            cx.update(|_, cx| {
+                app.update(cx, |app, _| {
+                    app.sessions.visible = vec![
+                        session("active", 1, project, false),
+                        session("archived", 2, project, true),
+                    ]
+                    .into();
+                    app.sessions.drafts.clear();
+                });
+                for collapsed in [true, false] {
+                    app.update(cx, |app, _| {
+                        app.sessions.archived_expanded = !collapsed;
+                        app.views.notification_panel.set_collapsed(collapsed);
+                    });
+                    LIST_BUILDS.set(0);
+                    let _sidebar = app
+                        .read(cx)
+                        .render_sessions(
+                            app.downgrade(),
+                            false,
+                            ListState::new(0, ListAlignment::Top, px(0.)),
+                            &RefCell::new(Vec::new()),
+                        )
+                        .into_any_element();
+                    assert_eq!(
+                        LIST_BUILDS.get(),
+                        1,
+                        "panel sizing must reuse prepared counts"
+                    );
+                }
+            });
+        },
+    );
+}
+
+#[test]
+fn active_sidebar_counts_archives_without_preparing_their_rows() {
+    let alpha = PathBuf::from("/alpha");
+    let beta = PathBuf::from("/beta");
+    let sessions = vec![
+        session("active-one", 1, &alpha, false),
+        session("active-two", 2, &alpha, false),
+        session("shadowed", 3, &alpha, true),
+        session("archived", 4, &alpha, true),
+        session("other-project", 5, &beta, true),
+    ];
+    let mut draft = DraftSession::with_id(Some(Backend::Pi), "shadow".into(), alpha.clone());
+    draft.app_session_id = 3;
+    draft.submitted = true;
+    assert!(draft.set_archived(true));
+    let drafts = [draft];
+    let ids = |items: &[ActiveSessionItem]| {
+        items
+            .iter()
+            .map(ActiveSessionItem::app_session_id)
+            .collect::<Vec<_>>()
+    };
+    for filter in [None, Some(alpha.as_path()), Some(beta.as_path())] {
+        let full = session_rail_lists_for_roots(sessions.iter(), &drafts, filter, &[1, 2]);
+        let active = active_session_rail_lists_for_roots(sessions.iter(), &drafts, filter, &[1, 2]);
+        assert_eq!(active.archived_count, full.archived.len());
+        assert!(
+            active.archived.is_empty(),
+            "the active sidebar only needs an archive count"
+        );
+        assert_eq!(ids(&active.active), ids(&full.active));
+    }
+}
+
 fn archived_session(item: &ActiveSessionItem) -> &SessionRailItem {
     match item {
         ActiveSessionItem::Session(item) => item,

@@ -60,6 +60,7 @@ impl ActiveSessionItem {
 pub(super) struct SessionRailLists {
     pub(super) active: Vec<ActiveSessionItem>,
     pub(super) archived: Vec<ActiveSessionItem>,
+    pub(super) archived_count: usize,
 }
 
 pub(super) fn session_rail_lists(
@@ -82,48 +83,66 @@ pub(super) fn session_rail_lists_for_roots<'a>(
     project_filter: Option<&Path>,
     manual_order: &[i64],
 ) -> SessionRailLists {
-    let mut active = drafts
+    build_session_rail_lists(roots, drafts, project_filter, manual_order, true)
+}
+
+pub(super) fn active_session_rail_lists_for_roots<'a>(
+    roots: impl IntoIterator<Item = &'a SessionSummary>,
+    drafts: &[DraftSession],
+    project_filter: Option<&Path>,
+    manual_order: &[i64],
+) -> SessionRailLists {
+    build_session_rail_lists(roots, drafts, project_filter, manual_order, false)
+}
+
+fn build_session_rail_lists<'a>(
+    roots: impl IntoIterator<Item = &'a SessionSummary>,
+    drafts: &[DraftSession],
+    project_filter: Option<&Path>,
+    manual_order: &[i64],
+    include_archived: bool,
+) -> SessionRailLists {
+    #[cfg(test)]
+    tests::record_list_build();
+    let mut active = Vec::new();
+    let mut archived = Vec::new();
+    let mut archived_count = 0;
+    let mut shadowed = HashSet::new();
+    for draft in drafts
         .iter()
         .filter(|draft| project_filter.is_none_or(|filter| filter == draft.project))
-        .filter(|draft| !draft.archived)
-        .cloned()
-        .map(ActiveSessionItem::Draft)
-        .collect::<Vec<_>>();
-    let archived_drafts = drafts
-        .iter()
-        .filter(|draft| project_filter.is_none_or(|filter| filter == draft.project))
-        .filter(|draft| draft.archived)
-        .cloned()
-        .collect::<Vec<_>>();
-    let shadowed = archived_drafts
-        .iter()
-        .map(|draft| draft.app_session_id)
-        .collect::<HashSet<_>>();
-    let mut archived = archived_drafts
-        .into_iter()
-        .map(ActiveSessionItem::Draft)
-        .collect::<Vec<_>>();
+    {
+        if draft.archived {
+            archived_count += 1;
+            shadowed.insert(draft.app_session_id);
+            if include_archived {
+                archived.push(ActiveSessionItem::Draft(draft.clone()));
+            }
+        } else {
+            active.push(ActiveSessionItem::Draft(draft.clone()));
+        }
+    }
 
     for session in roots
         .into_iter()
         .filter(|session| project_filter.is_none_or(|filter| filter == session.project))
     {
-        let item = SessionRailItem {
-            session: session.clone(),
-            kind: if session.archived {
-                SessionRailKind::Archived
-            } else {
-                SessionRailKind::Project
-            },
-        };
-        match item.kind {
-            SessionRailKind::Project => active.push(ActiveSessionItem::Session(item)),
-            SessionRailKind::Archived => {
-                if !shadowed.contains(&item.session.app_session_id) {
-                    archived.push(ActiveSessionItem::Session(item));
-                }
+        let (items, kind) = if session.archived {
+            if shadowed.contains(&session.app_session_id) {
+                continue;
             }
-        }
+            archived_count += 1;
+            if !include_archived {
+                continue;
+            }
+            (&mut archived, SessionRailKind::Archived)
+        } else {
+            (&mut active, SessionRailKind::Project)
+        };
+        items.push(ActiveSessionItem::Session(SessionRailItem {
+            session: session.clone(),
+            kind,
+        }));
     }
 
     active.sort_by(|left, right| {
@@ -140,7 +159,11 @@ pub(super) fn session_rail_lists_for_roots<'a>(
     active.sort_by_key(|item| !matches!(item, ActiveSessionItem::Draft(draft) if !draft.submitted));
     archived.sort_by_key(|item| Reverse((item.recency_ms(), item.app_session_id())));
 
-    SessionRailLists { active, archived }
+    SessionRailLists {
+        active,
+        archived,
+        archived_count,
+    }
 }
 
 fn apply_manual_order<T>(items: &mut [T], order: &[i64], app_session_id: impl Fn(&T) -> i64) {

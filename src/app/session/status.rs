@@ -7,7 +7,7 @@ use crate::runtime::RunStatus;
 
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, agent_activity_key},
-    sessions::{SessionRootIndex, SessionSummary},
+    sessions::{SessionCatalog, SessionRootIndex, SessionSummary},
 };
 
 pub(in crate::app) fn resolved_session_status(
@@ -90,13 +90,23 @@ pub(in crate::app) fn roots_waiting_for_descendants(
 }
 
 pub(in crate::app) fn roots_waiting_for_active_descendants(
-    sessions: &[SessionSummary],
+    sessions: &SessionCatalog,
     activities: &HashMap<String, AgentActivity>,
 ) -> HashSet<PathBuf> {
     let active_paths = active_activity_session_paths(sessions, activities);
-    roots_waiting_for_descendants_where(sessions, |session| {
-        session.is_running || active_paths.contains(session.path.as_path())
-    })
+    let mut waiting = HashSet::new();
+    for session in sessions
+        .iter()
+        .filter(|session| session.is_running || active_paths.contains(session.path.as_path()))
+    {
+        waiting.extend(
+            sessions
+                .ancestors(session)
+                .into_iter()
+                .map(|parent| parent.path.clone()),
+        );
+    }
+    waiting
 }
 
 fn active_activity_session_paths<'a>(

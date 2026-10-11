@@ -151,7 +151,7 @@ fn parent_waits_for_active_worker_when_catalog_state_is_stale() {
     );
     let activities = HashMap::from([(agent_activity_key(&child.path), activity)]);
 
-    let waiting = roots_waiting_for_active_descendants(&[parent, child], &activities);
+    let waiting = roots_waiting_for_active_descendants(&vec![parent, child].into(), &activities);
 
     assert!(waiting.contains(Path::new("/parent.jsonl")));
 }

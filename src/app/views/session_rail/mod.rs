@@ -29,8 +29,7 @@ use super::super::FarcasterApp;
 use super::SessionReveal;
 use crate::{
     app::ui::primitives::{
-        PanelSlot, ReorderPosition, ResizeBounds, ResizeState, panel_bounds, panel_resized,
-        panel_room,
+        ReorderPosition, ResizeBounds, ResizeState, panel_bounds, panel_resized, panel_room,
     },
     app::ui::theme::theme,
     sessions::DraftSession,
@@ -405,15 +404,11 @@ impl FarcasterApp {
         }
     }
 
-    fn panel_slot(&self, panel: RailPanel, collapsed: bool) -> PanelSlot {
-        rail_panel_slot(panel, self.archived_session_count(), collapsed)
-    }
-
-    fn rail_panel_sizes(&self) -> (Vec<Pixels>, Vec<Pixels>) {
+    fn rail_panel_sizes(&self, archived: usize) -> (Vec<Pixels>, Vec<Pixels>) {
         RailPanel::ALL
             .into_iter()
             .map(|panel| {
-                let slot = self.panel_slot(panel, self.panel_collapsed(panel));
+                let slot = rail_panel_slot(panel, archived, self.panel_collapsed(panel));
                 (
                     self.panel_state(panel).height_or(slot.preferred),
                     slot.floor,
@@ -429,22 +424,30 @@ impl FarcasterApp {
     }
 
     pub(super) fn panel_bounds(&self, panel: RailPanel, collapsed: bool) -> ResizeBounds {
-        let (sizes, floors) = self.rail_panel_sizes();
+        self.panel_bounds_with_archived_count(panel, collapsed, self.archived_session_count())
+    }
+
+    fn panel_bounds_with_archived_count(
+        &self,
+        panel: RailPanel,
+        collapsed: bool,
+        archived: usize,
+    ) -> ResizeBounds {
+        let (sizes, floors) = self.rail_panel_sizes(archived);
         let index = panel.index();
         let resizing = self.panel_state(panel).is_resizing();
         let room = panel_room(&sizes, &floors, self.panel_budget(), index, resizing);
-        panel_bounds(room, self.panel_slot(panel, collapsed))
+        panel_bounds(room, rail_panel_slot(panel, archived, collapsed))
     }
 
     fn archived_session_count(&self) -> usize {
-        session_rail_lists_for_roots(
+        groups::active_session_rail_lists_for_roots(
             self.sessions.visible.roots(),
             &self.sessions.drafts,
             self.sessions.project_filter.as_deref(),
             &self.sessions.order,
         )
-        .archived
-        .len()
+        .archived_count
     }
     fn archived_visible_rows(&self) -> usize {
         if !self.sessions.archived_expanded {
@@ -494,7 +497,7 @@ impl FarcasterApp {
         pointer_y: Pixels,
         cx: &mut gpui::Context<Self>,
     ) {
-        let (mut sizes, floors) = self.rail_panel_sizes();
+        let (mut sizes, floors) = self.rail_panel_sizes(self.archived_session_count());
         for panel in RailPanel::ALL {
             if !self.panel_state(panel).is_resizing() {
                 continue;
