@@ -1,8 +1,14 @@
 use gpui::{Bounds, Pixels, Window, WindowKind};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
+#[derive(Clone, Copy)]
+pub(in crate::app::views) enum OverlayInput {
+    Passive,
+    Modal,
+}
+
 #[derive(Clone)]
-pub(super) enum NativeHost {
+pub(in crate::app::views) enum NativeHost {
     #[cfg(target_os = "macos")]
     Mac(macos::Host),
     #[cfg(target_os = "linux")]
@@ -13,7 +19,7 @@ pub(super) enum NativeHost {
 }
 
 impl NativeHost {
-    pub(super) fn capture(window: &Window) -> Result<Self, String> {
+    pub(in crate::app::views) fn capture(window: &Window) -> Result<Self, String> {
         let handle = match HasWindowHandle::window_handle(window) {
             Ok(handle) => handle.as_raw(),
             #[cfg(test)]
@@ -33,7 +39,11 @@ impl NativeHost {
         }
     }
 
-    pub(super) fn kind(&self, parent: gpui::AnyWindowHandle, anchor: Bounds<Pixels>) -> WindowKind {
+    pub(in crate::app::views) fn kind(
+        &self,
+        parent: gpui::AnyWindowHandle,
+        anchor: Bounds<Pixels>,
+    ) -> WindowKind {
         if matches!(self, Self::Wayland) {
             WindowKind::AnchoredPopup(gpui::popup::PopupOptions {
                 parent,
@@ -50,19 +60,32 @@ impl NativeHost {
         }
     }
 
-    pub(super) fn present(&self, window: &Window, bounds: Bounds<Pixels>) -> Result<(), String> {
+    pub(in crate::app::views) fn present(
+        &self,
+        window: &Window,
+        bounds: Bounds<Pixels>,
+        offset: gpui::Point<Pixels>,
+        input: OverlayInput,
+    ) -> Result<(), String> {
         #[cfg(target_os = "macos")]
         if let Self::Mac(host) = self {
-            return host.present(window, bounds);
+            return host.present(window, bounds, offset, input);
         }
         // GPUI maps X11 and Wayland windows when opening them, even with show=false.
-        self.position(window, bounds)
+        let _ = input;
+        self.position(window, bounds, offset)
     }
 
-    pub(super) fn position(&self, window: &Window, bounds: Bounds<Pixels>) -> Result<(), String> {
+    pub(in crate::app::views) fn position(
+        &self,
+        window: &Window,
+        bounds: Bounds<Pixels>,
+        offset: gpui::Point<Pixels>,
+    ) -> Result<(), String> {
+        let _ = offset;
         match self {
             #[cfg(target_os = "macos")]
-            Self::Mac(host) => host.position(window, bounds),
+            Self::Mac(host) => host.position(window, bounds, offset),
             #[cfg(target_os = "linux")]
             Self::X11(connection) => {
                 use x11rb::{
@@ -98,12 +121,14 @@ impl NativeHost {
 mod macos {
     use gpui::{Bounds, Pixels, Window};
     use objc2::{MainThreadMarker, rc::Retained};
-    use objc2_app_kit::{NSApplication, NSPanel, NSView, NSWindow, NSWindowStyleMask};
+    use objc2_app_kit::{
+        NSApplication, NSPanel, NSView, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
+    };
     use objc2_foundation::{NSPoint, NSRect, NSSize};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
     #[derive(Clone)]
-    pub(in crate::app::views::notice_window) struct Host {
+    pub(in crate::app::views) struct Host {
         window: Retained<NSWindow>,
         view: Retained<NSView>,
     }
@@ -150,35 +175,54 @@ mod macos {
             &self,
             popup: &Window,
             bounds: Bounds<Pixels>,
+            offset: gpui::Point<Pixels>,
         ) -> Result<(), String> {
-            self.position_window(&Self::capture(popup)?.window, bounds);
+            self.position_window(&Self::capture(popup)?.window, bounds, offset);
             Ok(())
         }
 
-        pub(super) fn present(&self, popup: &Window, bounds: Bounds<Pixels>) -> Result<(), String> {
+        pub(super) fn present(
+            &self,
+            popup: &Window,
+            bounds: Bounds<Pixels>,
+            offset: gpui::Point<Pixels>,
+            input: super::OverlayInput,
+        ) -> Result<(), String> {
             let popup = Self::capture(popup)?;
             let panel = popup
                 .window
                 .downcast_ref::<NSPanel>()
                 .ok_or("notification window is not a panel")?;
             panel.setStyleMask(NSWindowStyleMask::NonactivatingPanel);
-            panel.setBecomesKeyOnlyIfNeeded(true);
+            panel.setBecomesKeyOnlyIfNeeded(matches!(input, super::OverlayInput::Passive));
             panel.setHidesOnDeactivate(true);
             panel.setHasShadow(false);
-            self.position_window(&popup.window, bounds);
-            popup.window.orderFront(None);
+            self.position_window(&popup.window, bounds, offset);
+            match input {
+                super::OverlayInput::Passive => popup.window.orderFront(None),
+                super::OverlayInput::Modal => {
+                    panel.setCollectionBehavior(
+                        NSWindowCollectionBehavior::MoveToActiveSpace
+                            | NSWindowCollectionBehavior::FullScreenAuxiliary,
+                    );
+                    popup.window.makeKeyAndOrderFront(None);
+                }
+            }
             Ok(())
         }
 
-        fn position_window(&self, popup: &NSWindow, bounds: Bounds<Pixels>) {
+        fn position_window(
+            &self,
+            popup: &NSWindow,
+            bounds: Bounds<Pixels>,
+            offset: gpui::Point<Pixels>,
+        ) {
             let rect = NSRect::new(
                 NSPoint::new(
-                    self.view.bounds().size.width
-                        - bounds.size.width.as_f32() as f64
-                        - super::super::window_inset().as_f32() as f64,
+                    offset.x.as_f32() as f64,
                     self.view.bounds().size.height
                         - bounds.size.height.as_f32() as f64
-                        - super::super::window_inset().as_f32() as f64,
+                        - offset.y.as_f32() as f64,
                 ),
                 NSSize::new(
                     bounds.size.width.as_f32() as f64,

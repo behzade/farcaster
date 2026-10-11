@@ -18,7 +18,10 @@ pub(super) fn bind(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div
     bind_pointer_interactions(root, cx)
 }
 
-fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
+pub(in crate::app::views) fn bind_actions(
+    root: gpui::Div,
+    cx: &mut Context<FarcasterApp>,
+) -> gpui::Div {
     root.on_action(cx.listener(|this, _: &CopySelection, window, cx| {
         this.copy_selection(window, cx);
     }))

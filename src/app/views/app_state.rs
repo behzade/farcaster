@@ -17,6 +17,7 @@ pub(in crate::app) struct AppViews {
 }
 
 pub(in crate::app) struct AppOverlays {
+    pub(in crate::app) modal: super::native_overlay::ModalWindowState,
     pub(in crate::app) notices: super::notice_window::NoticeWindowState,
     pub(in crate::app) view: views::overlay_state::OverlayViewState,
     pub(in crate::app) image_preview: Option<ImagePreview>,

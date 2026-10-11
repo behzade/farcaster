@@ -1,5 +1,3 @@
-mod native;
-
 use gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, Context, InteractiveElement as _, IntoElement,
     ParentElement as _, Pixels, Render, Size, StatefulInteractiveElement as _, Styled as _,
@@ -8,12 +6,12 @@ use gpui::{
 };
 
 use super::FarcasterApp;
+use super::native_overlay::native::{NativeHost, OverlayInput};
 use crate::app::{
     AppSurface,
     ui::theme::{theme, ui_font},
 };
 use gpui_base::ElementExt as _;
-use native::NativeHost;
 
 fn window_inset() -> Pixels {
     theme().space.md
@@ -118,7 +116,10 @@ fn synchronize(owner: WeakEntity<FarcasterApp>, window: &mut Window, cx: &mut Ap
                 .update(cx, |view, window, cx| {
                     view.owner_bounds = bounds;
                     view.owner_size = viewport;
-                    if let Err(error) = view.host.position(window, view.bounds(window)) {
+                    if let Err(error) =
+                        view.host
+                            .position(window, view.bounds(window), view.offset(window))
+                    {
                         zlog::warn!("Position notification window: {error}");
                     }
                     cx.notify();
@@ -192,7 +193,12 @@ fn open(
         .map_err(|error| error.to_string())?;
     let configured = handle
         .update(cx, |view, window, _| {
-            view.host.present(window, view.bounds(window))
+            view.host.present(
+                window,
+                view.bounds(window),
+                view.offset(window),
+                OverlayInput::Passive,
+            )
         })
         .map_err(|error| error.to_string())?;
     if let Err(error) = configured {
@@ -214,6 +220,10 @@ fn popup_bounds(owner: Bounds<Pixels>, viewport: Size<Pixels>, height: Pixels) -
 }
 
 impl NoticeWindow {
+    fn offset(&self, window: &Window) -> gpui::Point<Pixels> {
+        self.bounds(window).origin - self.owner_bounds.origin
+    }
+
     fn bounds(&self, window: &Window) -> Bounds<Pixels> {
         popup_bounds(
             self.owner_bounds,
@@ -257,31 +267,15 @@ impl Render for NoticeWindow {
                         let host = host.clone();
                         window.defer(cx, move |window, _| {
                             window.resize(desired.size);
-                            if let Err(error) = host.position(window, desired) {
+                            if let Err(error) =
+                                host.position(window, desired, desired.origin - owner_bounds.origin)
+                            {
                                 zlog::warn!("Resize notification window: {error}");
                             }
                         });
                     }),
             )
             .into_any_element()
-    }
-}
-
-pub(in crate::app) fn in_owner_window(
-    owner: WeakEntity<FarcasterApp>,
-    owner_window: Option<AnyWindowHandle>,
-    window: &mut Window,
-    cx: &mut App,
-    action: impl FnOnce(&mut FarcasterApp, &mut Window, &mut Context<FarcasterApp>) + 'static,
-) {
-    if let Some(target) = owner_window.filter(|target| *target != window.window_handle()) {
-        cx.defer(move |cx| {
-            let _ = target.update(cx, |_, window, cx| {
-                let _ = owner.update(cx, |app, cx| action(app, window, cx));
-            });
-        });
-    } else {
-        let _ = owner.update(cx, |app, cx| action(app, window, cx));
     }
 }
 

@@ -138,6 +138,7 @@ impl FarcasterApp {
             });
         }
         self.watch_tooltip_overlay(window, cx);
+        self.prepare_modal_window(window, cx);
         self.prepare_notice_window(window, cx);
         match native_surface_action(
             self.workspace.native_surface_covered,

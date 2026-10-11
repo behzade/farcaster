@@ -153,7 +153,6 @@ impl FarcasterApp {
                     },
                     FarcasterApp::confirm_send_to_chat,
                 );
-                this.cover_native_workspace_surface(cx);
                 let input_focus = input.read(cx).focus_handle(cx);
                 let current = CodeDestination {
                     target: target.clone(),
@@ -176,6 +175,7 @@ impl FarcasterApp {
                     return_focus,
                     _subscription: subscription,
                 });
+                this.cover_native_workspace_surface(cx);
                 input_focus.focus(window, cx);
                 cx.notify();
             });

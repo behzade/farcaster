@@ -111,7 +111,9 @@ impl FarcasterApp {
             .flex_col()
             .child(self.render_workspace_bar(entity.clone(), mode))
             .child(div().relative().flex_1().min_h_0().child(main).when(
-                native_surface && self.extensions.active.dialog.is_some(),
+                native_surface
+                    && self.extensions.active.dialog.is_some()
+                    && !self.modal_rendered_in_native_window(),
                 |center| {
                     center.child(
                         div()

@@ -46,7 +46,7 @@ impl FarcasterApp {
                     ButtonTone::Neutral,
                     true,
                     move |window, cx| {
-                        crate::app::views::notice_window::in_owner_window(
+                        crate::app::views::native_overlay::in_owner_window(
                             entity.clone(),
                             owner_window,
                             window,

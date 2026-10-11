@@ -22,7 +22,9 @@ impl FarcasterApp {
         work_active: bool,
         cx: &Context<Self>,
     ) -> gpui::Div {
-        let has_notices = self.has_floating_notices() && !self.notices_render_in_native_window();
+        let has_notices = self.has_floating_notices()
+            && !self.notices_render_in_native_window()
+            && !self.modal_rendered_in_native_window();
         let workgraph_focus = self.views.workgraph.read(cx).focus_handle();
         let sessions_sheet = self.overlays.view.sessions.then(|| {
             panel_sheet(
@@ -140,7 +142,9 @@ impl FarcasterApp {
                 root.child(dialogs::archive_confirmation::render(self, entity.clone()))
             })
             .when(
-                self.workspace.send_to_chat.is_some() && !self.overlays.view.project_trust,
+                self.workspace.send_to_chat.is_some()
+                    && !self.overlays.view.project_trust
+                    && !self.modal_rendered_in_native_window(),
                 |root| root.child(dialogs::send_to_chat::render(self, entity.clone(), cx)),
             )
             .when(self.sessions.pending_delete.is_some(), |root| {
@@ -169,14 +173,7 @@ impl FarcasterApp {
                 |root, preview| root.child(preview),
             )
             .when(has_notices, |root| {
-                root.child(
-                    self.render_notice_stack(entity.clone(), None)
-                        .absolute()
-                        .top(theme().space.md)
-                        .right(theme().space.md)
-                        .w(theme().size(360.0))
-                        .max_w_full(),
-                )
+                root.child(self.render_floating_notices(entity.clone(), None))
             })
             .when(self.lifecycle.pending_quit.is_some(), |root| {
                 root.child(dialogs::quit_confirmation::render(self, entity.clone()))

@@ -38,6 +38,9 @@ impl FarcasterApp {
         cx: &App,
     ) -> AnyElement {
         if self.extensions.active.dialog.is_some() {
+            if self.modal_rendered_in_native_window() {
+                return div().into_any_element();
+            }
             return div()
                 .w_full()
                 .flex_none()

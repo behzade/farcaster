@@ -14,6 +14,19 @@ use crate::{
 };
 
 impl FarcasterApp {
+    pub(in crate::app::views) fn render_floating_notices(
+        &self,
+        entity: WeakEntity<Self>,
+        owner_window: Option<gpui::AnyWindowHandle>,
+    ) -> gpui::Div {
+        self.render_notice_stack(entity, owner_window)
+            .absolute()
+            .top(theme().space.md)
+            .right(theme().space.md)
+            .w(theme().size(360.0))
+            .max_w_full()
+    }
+
     pub(in crate::app::views) fn render_notice_stack(
         &self,
         entity: WeakEntity<Self>,
@@ -60,7 +73,7 @@ impl FarcasterApp {
         let open = move |window: &mut Window, cx: &mut App| {
             let path = path.clone();
             let project = project.clone();
-            super::notice_window::in_owner_window(
+            super::native_overlay::in_owner_window(
                 entity.clone(),
                 owner_window,
                 window,

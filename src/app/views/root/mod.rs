@@ -6,6 +6,7 @@ mod lifecycle;
 mod overlays;
 mod shell;
 mod sidebar_resize;
+pub(in crate::app::views) use actions::bind_actions as bind_overlay_actions;
 pub(in crate::app) use sidebar_resize::SidebarResize;
 
 use gpui::{InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _, div};

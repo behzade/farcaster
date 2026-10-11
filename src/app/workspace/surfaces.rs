@@ -140,6 +140,17 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(owner_window) = self.modal_owner_window(window) {
+            let closing = closing.clone();
+            crate::app::views::native_overlay::in_owner_window(
+                cx.entity().downgrade(),
+                Some(owner_window),
+                window,
+                cx,
+                move |app, window, cx| app.restore_overlay_focus(target, &closing, window, cx),
+            );
+            return;
+        }
         let overlay = self.keyboard_overlay_focus(window, cx);
         let restored = crate::app::ui::focus::restore(
             target,
@@ -198,6 +209,9 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn cover_native_workspace_surface(&mut self, cx: &mut Context<Self>) {
+        if self.modal_uses_native_host() {
+            return;
+        }
         if !self.workspace.native_surface_covered {
             self.workspace.native_surface_covered = self.native_workspace_surface_ready();
             if self.workspace.native_surface_covered {
@@ -487,8 +501,11 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn native_workspace_modal_active(&self) -> bool {
-        self.workspace.send_to_chat.is_some()
-            || self.navigation.picker.is_some()
+        self.workspace.send_to_chat.is_some() || self.native_workspace_other_modal_active()
+    }
+
+    pub(in crate::app) fn native_workspace_other_modal_active(&self) -> bool {
+        self.navigation.picker.is_some()
             || self.current_sheet_flags().any()
             || self.lifecycle.pending_quit.is_some()
             || self.sessions.pending_archive.is_some()
@@ -515,6 +532,9 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn native_surface_obscured(&self, window: &Window, cx: &gpui::App) -> bool {
+        if self.modal_uses_native_host() {
+            return false;
+        }
         self.native_workspace_covered_by_overlay()
             || self.workspace.bar_hovered
             || gpui_base::GlobalState::is_in_deferred_context(cx)
