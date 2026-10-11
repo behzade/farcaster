@@ -106,8 +106,7 @@ impl FarcasterApp {
         let session = rows[visible[index]];
         let path = session.path.clone();
         let project = session.project.clone();
-        self.select_session_restoring_center(path, project, false, window, cx);
-        self.recover_keyboard_focus(window, cx);
+        self.select_session_and_focus(path, project, window, cx);
     }
 
     pub(super) fn selected_rail_root(&self) -> Option<&SessionSummary> {
@@ -173,18 +172,7 @@ impl FarcasterApp {
             None => return,
         };
         let key = target.rail_identity();
-        match target {
-            VisibleSessionTarget::Draft(draft) => {
-                self.resume_draft_restoring_center(draft.id, draft.project, false, window, cx)
-            }
-            VisibleSessionTarget::Persisted(session) => self.select_session_restoring_center(
-                session.path,
-                session.project,
-                false,
-                window,
-                cx,
-            ),
-        }
+        self.select_visible_session(target, window, cx);
         if let Some(index) = archived_index {
             self.sessions.archived_expanded |= index >= self.archived_visible_rows();
             self.views.archived_session_rail.update(cx, |view, cx| {
@@ -194,7 +182,6 @@ impl FarcasterApp {
         } else {
             self.reveal_active_session_row(key, cx);
         }
-        self.recover_keyboard_focus(window, cx);
         self.notify_session_rail(cx);
         cx.notify();
     }

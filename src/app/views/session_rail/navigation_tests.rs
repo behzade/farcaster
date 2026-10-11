@@ -1,7 +1,7 @@
 use super::*;
 use crate::agents::Backend;
-use crate::app::AppSurface;
 use crate::app::views::session_rail::groups::session_rail_lists;
+use crate::app::{AppSurface, draft_target};
 
 fn archived_session(item: &ActiveSessionItem) -> &SessionSummary {
     match item {
@@ -11,19 +11,16 @@ fn archived_session(item: &ActiveSessionItem) -> &SessionSummary {
 }
 
 #[gpui::test]
-fn native_session_navigation_preserves_surface_and_dialog_focus(cx: &mut gpui::TestAppContext) {
+fn native_navigation_restores_session_view(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
-        concat!(
-            module_path!(),
-            "::native_session_navigation_preserves_surface_and_dialog_focus"
-        ),
+        concat!(module_path!(), "::native_navigation_restores_session_view"),
         cx,
         |cx, app, _, project| {
             crate::app::project::trust::apply(project, crate::projects::TrustChoice::TrustProject)
                 .expect("trust the test project");
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
-                    app.sessions.drafts = [1, 2]
+                    app.sessions.drafts = [1, 2, 3]
                         .map(|id| {
                             let mut draft = crate::sessions::DraftSession::with_id(
                                 Some(Backend::Pi),
@@ -31,24 +28,40 @@ fn native_session_navigation_preserves_surface_and_dialog_focus(cx: &mut gpui::T
                                 project.into(),
                             );
                             draft.app_session_id = id;
+                            draft.submitted = true;
                             draft
                         })
                         .to_vec();
-                    app.sessions.order = vec![1, 2];
+                    app.sessions.order = vec![1, 2, 3];
                     for surface in [AppSurface::Editor, AppSurface::Terminal] {
+                        app.workspace.surface = AppSurface::Chat;
+                        app.sessions.selected_draft = None;
+                        app.switch_composer_target(draft_target("1"), window, cx);
+                        app.workspace.session_surfaces.clear();
                         app.workspace.surface = surface;
                         app.navigation.chat.focus.focus(window, cx);
                         app.sessions.selected_draft = Some("1".into());
                         app.switch_transcript_session(1, window, cx);
                         assert_eq!(app.sessions.selected_draft.as_deref(), Some("2"));
-                        assert_eq!(app.workspace.surface, surface);
-                        assert!(!app.composer.focus.is_focused(window));
+                        assert_eq!(app.workspace.surface, AppSurface::Chat);
+                        assert_eq!(
+                            app.workspace.session_surfaces.get(&draft_target("1")),
+                            Some(&surface)
+                        );
                         app.open_keybindings_help(window, cx);
                         app.overlays.sheet_focus.focus(window, cx);
                         app.switch_transcript_session(-1, window, cx);
                         assert_eq!(app.sessions.selected_draft.as_deref(), Some("2"));
                         assert!(app.overlays.sheet_focus.is_focused(window));
                         app.close_sheet(window, cx);
+                        app.switch_to_session_number(3, window, cx);
+                        assert_eq!(app.sessions.selected_draft.as_deref(), Some("3"));
+                        assert_eq!(app.workspace.surface, AppSurface::Chat);
+                        assert!(
+                            !app.workspace
+                                .session_surfaces
+                                .contains_key(&draft_target("2"))
+                        );
                     }
                 });
             });
