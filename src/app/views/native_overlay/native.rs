@@ -58,7 +58,8 @@ impl NativeHost {
             window_background: gpui::WindowBackgroundAppearance::Transparent,
             ..Default::default()
         };
-        let popup = if host.is_wayland() {
+        // Tooltips need no input state. Skip Root and its full-window shadow.
+        let popup = if host.is_wayland() && input != OverlayInput::Tooltip {
             let owner_handle = owner.window_handle();
             let root = cx
                 .open_window(options, move |window, cx| {
@@ -73,7 +74,6 @@ impl NativeHost {
                 })
                 .map_err(|error| error.to_string())?;
             keyboard::register(owner_handle, root.into(), offset, input, cx);
-            super::stack::register(owner_handle, root.into(), cx);
             Panel::root(root)
         } else {
             Panel::Direct(
@@ -84,6 +84,9 @@ impl NativeHost {
                 .map_err(|error| error.to_string())?,
             )
         };
+        if host.is_wayland() {
+            super::stack::register(owner.window_handle(), popup.into(), cx);
+        }
         let result = popup
             .update(cx, |_, window, _| {
                 host.present(window, bounds, offset, input)

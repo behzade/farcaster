@@ -600,6 +600,7 @@ fn native_tooltip_preserves_owner_focus_and_expires(cx: &mut gpui::TestAppContex
         cx,
         |cx, app, _, _| {
             cx.update(|window, cx| {
+                cx.set_global(native::TestHost(NativeHost::TestWayland));
                 window.replace_root(cx, |window, cx| {
                     gpui_base::Root::new(app.clone(), window, cx)
                 });
@@ -641,11 +642,13 @@ fn native_tooltip_preserves_owner_focus_and_expires(cx: &mut gpui::TestAppContex
                 cx.windows()
                     .into_iter()
                     .find_map(|window| window.downcast::<popup::PopupWindow>())
-                    .expect("native tooltip panel")
+                    .expect("tooltip panel without a decorated Root")
             });
-            panel
-                .update(cx, |_, window, cx| assert!(window.focused(cx).is_none()))
-                .unwrap();
+            let panel_cx = gpui::VisualTestContext::from_window(panel.into(), cx).into_mut();
+            panel_cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                assert!(window.focused(cx).is_none());
+            });
             cx.simulate_mouse_move(point(px(10.0), px(450.0)), None, Default::default());
             cx.executor()
                 .advance_clock(std::time::Duration::from_millis(600));
