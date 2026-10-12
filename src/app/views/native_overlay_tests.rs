@@ -2,7 +2,7 @@ use super::*;
 use crate::protocol::ExtensionUiRequest;
 use gpui::Focusable as _;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[gpui::test]
 fn terminal_picker_keeps_search_focus_in_its_panel(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
@@ -57,7 +57,7 @@ fn terminal_picker_keeps_search_focus_in_its_panel(cx: &mut gpui::TestAppContext
     );
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[gpui::test]
 fn native_modal_accepts_text_and_restores_owner_focus(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
@@ -177,7 +177,7 @@ fn native_modal_accepts_text_and_restores_owner_focus(cx: &mut gpui::TestAppCont
     );
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[gpui::test]
 fn async_permission_modal_blocks_surface_switch_and_tracks_owner_size(
     cx: &mut gpui::TestAppContext,
@@ -279,7 +279,7 @@ fn async_permission_modal_blocks_surface_switch_and_tracks_owner_size(
     );
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[gpui::test]
 fn sheets_and_picker_share_the_live_modal_layer(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
@@ -354,7 +354,7 @@ fn sheets_and_picker_share_the_live_modal_layer(cx: &mut gpui::TestAppContext) {
     );
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[gpui::test]
 fn worker_model_prompt_uses_modal_host_and_keeps_nested_picker_focus(
     cx: &mut gpui::TestAppContext,
@@ -450,17 +450,40 @@ fn worker_model_prompt_uses_modal_host_and_keeps_nested_picker_focus(
     );
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[gpui::test]
 fn project_menu_hosts_submenus_and_releases_its_panel(cx: &mut gpui::TestAppContext) {
+    project_menu_host_test(cx, false);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[gpui::test]
+fn wayland_project_menu_relays_owner_keys_and_releases_its_panel(cx: &mut gpui::TestAppContext) {
+    project_menu_host_test(cx, true);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn project_menu_host_test(cx: &mut gpui::TestAppContext, wayland: bool) {
     crate::app::test_support::with_offline_app(
-        concat!(
-            module_path!(),
-            "::project_menu_hosts_submenus_and_releases_its_panel"
-        ),
+        if wayland {
+            concat!(
+                module_path!(),
+                "::wayland_project_menu_relays_owner_keys_and_releases_its_panel"
+            )
+        } else {
+            concat!(
+                module_path!(),
+                "::project_menu_hosts_submenus_and_releases_its_panel"
+            )
+        },
         cx,
         |cx, app, _, project| {
-            cx.update(|window, _| window.activate_window());
+            cx.update(|window, cx| {
+                if wayland {
+                    cx.set_global(native::TestHost(NativeHost::TestWayland));
+                }
+                window.activate_window();
+            });
             cx.run_until_parked();
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
@@ -494,22 +517,67 @@ fn project_menu_hosts_submenus_and_releases_its_panel(cx: &mut gpui::TestAppCont
                 .expect("project menu trigger");
             cx.simulate_click(trigger.center(), Default::default());
             cx.run_until_parked();
-            let panel = cx.update(|_, cx| {
+            let mut panel = cx.update(|_, cx| {
                 cx.windows()
                     .into_iter()
-                    .find_map(|window| window.downcast::<popup::PopupWindow>())
+                    .find(|handle| {
+                        handle
+                            .update(cx, |_, window, cx| {
+                                Panel::<popup::PopupWindow>::from_window(window, cx).is_some()
+                            })
+                            .unwrap_or(false)
+                    })
                     .expect("native menu panel")
             });
-            let panel_cx = gpui::VisualTestContext::from_window(panel.into(), cx).into_mut();
+            let panel_cx = gpui::VisualTestContext::from_window(panel, cx).into_mut();
             panel_cx.update(|window, cx| {
-                window.activate_window();
+                if !wayland {
+                    window.activate_window();
+                }
                 window.draw(cx).clear(cx);
                 assert!(!app.read(cx).workspace.native_surface_covered);
                 assert!(gpui_base::GlobalState::is_in_deferred_context(cx));
             });
-            panel_cx.simulate_keystrokes("down right");
+            if wayland {
+                let focus = panel_cx.update(|window, cx| window.focused(cx));
+                cx.simulate_resize(gpui::size(px(1320.0), px(720.0)));
+                cx.run_until_parked();
+                cx.update(|window, cx| window.draw(cx).clear(cx));
+                cx.run_until_parked();
+                panel = cx.update(|_, cx| {
+                    assert!(!cx.windows().contains(&panel));
+                    cx.windows()
+                        .into_iter()
+                        .find(|handle| {
+                            handle
+                                .update(cx, |_, window, cx| {
+                                    Panel::<popup::PopupWindow>::from_window(window, cx).is_some()
+                                })
+                                .unwrap_or(false)
+                        })
+                        .expect("reanchored menu")
+                });
+                cx.update(|_, cx| {
+                    panel
+                        .update(cx, |_, window, cx| {
+                            window.draw(cx).clear(cx);
+                            assert_eq!(window.focused(cx), focus, "resize preserves menu input");
+                        })
+                        .unwrap()
+                });
+            }
+            let panel_cx = gpui::VisualTestContext::from_window(panel, cx).into_mut();
+            if wayland {
+                cx.simulate_keystrokes("down right");
+            } else {
+                panel_cx.simulate_keystrokes("down right");
+            }
             panel_cx.update(|window, cx| window.draw(cx).clear(cx));
-            panel_cx.simulate_keystrokes("escape");
+            if wayland {
+                cx.simulate_keystrokes("escape");
+            } else {
+                panel_cx.simulate_keystrokes("escape");
+            }
             cx.run_until_parked();
             cx.update(|window, cx| {
                 window.draw(cx).clear(cx);
@@ -521,7 +589,7 @@ fn project_menu_hosts_submenus_and_releases_its_panel(cx: &mut gpui::TestAppCont
     );
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[gpui::test]
 fn native_tooltip_preserves_owner_focus_and_expires(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
@@ -591,7 +659,7 @@ fn native_tooltip_preserves_owner_focus_and_expires(cx: &mut gpui::TestAppContex
     );
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[gpui::test]
 fn picker_action_survives_its_source_popup_closing(cx: &mut gpui::TestAppContext) {
     use gpui::AppContext as _;

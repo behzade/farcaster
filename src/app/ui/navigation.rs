@@ -165,6 +165,13 @@ impl FarcasterApp {
                 if window.window_handle().window_id() != window_id {
                     return;
                 }
+                if crate::app::views::native_overlay::keyboard::relay_keystroke(
+                    &event.keystroke,
+                    window,
+                    cx,
+                ) {
+                    return;
+                }
                 let consumed = entity
                     .update(cx, |this, cx| {
                         if this.voice_key_down(&event.keystroke, window, cx) {

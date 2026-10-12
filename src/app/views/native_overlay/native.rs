@@ -1,6 +1,7 @@
+use super::{keyboard, panel::Panel};
 use gpui::{
-    App, Bounds, Entity, Pixels, Render, Window, WindowBounds, WindowHandle, WindowKind,
-    WindowOptions,
+    App, AppContext as _, Bounds, Entity, Pixels, Render, Styled as _, Window, WindowBounds,
+    WindowKind, WindowOptions,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
@@ -20,7 +21,14 @@ pub(in crate::app) enum NativeHost {
     Wayland,
     #[cfg(test)]
     Test,
+    #[cfg(test)]
+    TestWayland,
 }
+
+#[cfg(test)]
+pub(super) struct TestHost(pub NativeHost);
+#[cfg(test)]
+impl gpui::Global for TestHost {}
 
 impl NativeHost {
     pub(super) fn open_panel<V: Render + 'static>(
@@ -30,30 +38,52 @@ impl NativeHost {
         offset: gpui::Point<Pixels>,
         build: impl FnOnce(Self, &mut Window, &mut App) -> Entity<V>,
         cx: &mut App,
-    ) -> Result<WindowHandle<V>, String> {
-        let host = Self::capture(owner)?;
+    ) -> Result<Panel<V>, String> {
+        #[cfg(test)]
+        let host = cx.try_global::<TestHost>().map(|host| host.0.clone());
+        #[cfg(not(test))]
+        let host: Option<Self> = None;
+        let host = host.map(Ok).unwrap_or_else(|| Self::capture(owner))?;
         let view_host = host.clone();
         let rem_size = owner.rem_size();
-        let popup = cx
-            .open_window(
-                WindowOptions {
-                    kind: WindowKind::PopUp,
-                    focus: false,
-                    show: false,
-                    titlebar: None,
-                    is_movable: false,
-                    is_resizable: false,
-                    is_minimizable: false,
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_background: gpui::WindowBackgroundAppearance::Transparent,
-                    ..Default::default()
-                },
-                move |window, cx| {
+        let options = WindowOptions {
+            kind: host.panel_kind(owner, offset, input),
+            focus: false,
+            show: false,
+            titlebar: None,
+            is_movable: false,
+            is_resizable: false,
+            is_minimizable: false,
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_background: gpui::WindowBackgroundAppearance::Transparent,
+            ..Default::default()
+        };
+        let popup = if host.is_wayland() {
+            let owner_handle = owner.window_handle();
+            let root = cx
+                .open_window(options, move |window, cx| {
+                    window.set_rem_size(rem_size);
+                    let content = build(view_host, window, cx);
+                    let handle = Window::window_handle(window);
+                    cx.observe_release(&content, move |_, cx| keyboard::unregister(handle, cx))
+                        .detach();
+                    cx.new(|cx| {
+                        gpui_base::Root::new(content, window, cx).bg(gpui::transparent_black())
+                    })
+                })
+                .map_err(|error| error.to_string())?;
+            keyboard::register(owner_handle, root.into(), offset, input, cx);
+            super::stack::register(owner_handle, root.into(), cx);
+            Panel::root(root)
+        } else {
+            Panel::Direct(
+                cx.open_window(options, move |window, cx| {
                     window.set_rem_size(rem_size);
                     build(view_host, window, cx)
-                },
+                })
+                .map_err(|error| error.to_string())?,
             )
-            .map_err(|error| error.to_string())?;
+        };
         let result = popup
             .update(cx, |_, window, _| {
                 host.present(window, bounds, offset, input)
@@ -61,10 +91,88 @@ impl NativeHost {
             .map_err(|error| error.to_string())
             .and_then(|result| result);
         if let Err(error) = result {
-            let _ = popup.update(cx, |_, window, _| window.remove_window());
+            let _ = popup.update(cx, |_, window, cx| super::stack::close(window, cx));
             return Err(error);
         }
         Ok(popup)
+    }
+
+    pub(in crate::app::views) fn is_wayland(&self) -> bool {
+        match self {
+            Self::Wayland => true,
+            #[cfg(test)]
+            Self::TestWayland => true,
+            _ => false,
+        }
+    }
+
+    pub(super) fn hides_on_deactivate(&self) -> bool {
+        match self {
+            #[cfg(target_os = "macos")]
+            Self::Mac(_) => true,
+            #[cfg(test)]
+            Self::Test => true,
+            _ => false,
+        }
+    }
+
+    fn panel_kind(
+        &self,
+        owner: &Window,
+        offset: gpui::Point<Pixels>,
+        input: OverlayInput,
+    ) -> WindowKind {
+        if !self.is_wayland() {
+            return WindowKind::PopUp;
+        }
+        let passive = input == OverlayInput::Passive;
+        let desired = gpui::point(
+            offset.x,
+            if passive {
+                owner.viewport_size().height
+            } else {
+                offset.y
+            },
+        );
+        // GPUI clamps anchors inside the parent's visible geometry. Compensate
+        // for client-side shadow insets so popup and owner coordinates agree.
+        let padding = gpui_component::window_paddings(owner);
+        let minimum = gpui::point(padding.left, padding.top);
+        let maximum = gpui::point(
+            owner.viewport_size().width - padding.right - gpui::px(1.0),
+            owner.viewport_size().height - padding.bottom - gpui::px(1.0),
+        )
+        .max(&minimum);
+        let anchor = desired.min(&maximum).max(&minimum);
+        WindowKind::AnchoredPopup(gpui::popup::PopupOptions {
+            parent: owner.window_handle(),
+            anchor_rect: Bounds::new(anchor, gpui::size(gpui::px(1.0), gpui::px(1.0))),
+            anchor: if passive {
+                gpui::popup::PopupAnchor::BottomLeft
+            } else {
+                gpui::popup::PopupAnchor::TopLeft
+            },
+            gravity: if passive {
+                gpui::popup::PopupGravity::TopRight
+            } else {
+                gpui::popup::PopupGravity::BottomRight
+            },
+            constraint_adjustment: gpui::popup::PopupConstraintAdjustment::SLIDE_X
+                | gpui::popup::PopupConstraintAdjustment::SLIDE_Y,
+            offset: desired
+                - anchor
+                - gpui::point(
+                    gpui::px(0.0),
+                    if passive {
+                        gpui::px(1.0)
+                    } else {
+                        gpui::px(0.0)
+                    },
+                ),
+            // Async requests have no triggering press serial. Keyboard and IME
+            // input stays on the owner and is relayed to this popup instead.
+            grab: false,
+        })
     }
 
     pub(in crate::app) fn capture(window: &Window) -> Result<Self, String> {
@@ -119,8 +227,17 @@ impl NativeHost {
         if let Self::Mac(host) = self {
             return host.present(window, bounds, offset, input);
         }
+        window.set_input_region((input == OverlayInput::Tooltip).then_some(&[][..]));
+        #[cfg(target_os = "linux")]
+        if let Self::X11(connection) = self {
+            super::x11::configure_input(
+                connection,
+                x11_window_id(window)?,
+                input == OverlayInput::Modal,
+                input == OverlayInput::Tooltip,
+            )?;
+        }
         // GPUI maps X11 and Wayland windows when opening them, even with show=false.
-        let _ = input;
         self.position(window, bounds, offset)
     }
 
@@ -138,22 +255,17 @@ impl NativeHost {
             Self::X11(connection) => {
                 use x11rb::{
                     connection::Connection as _,
-                    protocol::xproto::{ConfigureWindowAux, ConnectionExt as _},
+                    protocol::xproto::{ConfigureWindowAux, ConnectionExt as _, StackMode},
                 };
-                let handle =
-                    HasWindowHandle::window_handle(window).map_err(|error| error.to_string())?;
-                let id = match handle.as_raw() {
-                    RawWindowHandle::Xcb(handle) => handle.window.get(),
-                    RawWindowHandle::Xlib(handle) => handle.window as u32,
-                    _ => return Err("notification window is not an X11 window".into()),
-                };
+                let id = x11_window_id(window)?;
                 let scale = window.scale_factor();
                 connection
                     .configure_window(
                         id,
                         &ConfigureWindowAux::new()
                             .x((bounds.origin.x.as_f32() * scale).round() as i32)
-                            .y((bounds.origin.y.as_f32() * scale).round() as i32),
+                            .y((bounds.origin.y.as_f32() * scale).round() as i32)
+                            .stack_mode(StackMode::ABOVE),
                     )
                     .map_err(|error| error.to_string())?
                     .check()
@@ -162,6 +274,16 @@ impl NativeHost {
             }
             _ => Ok(()),
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn x11_window_id(window: &Window) -> Result<u32, String> {
+    let handle = HasWindowHandle::window_handle(window).map_err(|error| error.to_string())?;
+    match handle.as_raw() {
+        RawWindowHandle::Xcb(handle) => Ok(handle.window.get()),
+        RawWindowHandle::Xlib(handle) => Ok(handle.window as u32),
+        _ => Err("native overlay is not an X11 window".into()),
     }
 }
 

@@ -67,7 +67,9 @@ impl FarcasterApp {
                 cx.observe_window_visibility(window, |_, _, _, cx| cx.notify()),
                 cx.on_release(|this, cx| {
                     if let Some(popup) = this.overlays.notices.window.take() {
-                        let _ = popup.update(cx, |_, window, _| window.remove_window());
+                        let _ = popup.update(cx, |_, window, cx| {
+                            super::native_overlay::stack::close(window, cx)
+                        });
                     }
                 }),
             ];
@@ -97,7 +99,10 @@ fn synchronize(owner: WeakEntity<FarcasterApp>, window: &mut Window, cx: &mut Ap
             app.notices_need_native_window()
                 && window.is_window_active()
                 && window.visibility() == gpui::WindowVisibility::Visible,
-            app.overlays.notices.window,
+            app.overlays
+                .notices
+                .window
+                .filter(|popup| cx.windows().contains(&(*popup).into())),
         )
     };
     let bounds = window.bounds();
@@ -107,7 +112,9 @@ fn synchronize(owner: WeakEntity<FarcasterApp>, window: &mut Window, cx: &mut Ap
             matches!(view.host, NativeHost::Wayland) && view.owner_size != viewport
         });
         if !wanted || stale {
-            let _ = existing.update(cx, |_, window, _| window.remove_window());
+            let _ = existing.update(cx, |_, window, cx| {
+                super::native_overlay::stack::close(window, cx)
+            });
             popup = None;
         }
     }
@@ -202,8 +209,13 @@ fn open(
             )
         })
         .map_err(|error| error.to_string())?;
+    if handle.read(cx).is_ok_and(|view| view.host.is_wayland()) {
+        super::native_overlay::stack::register(owner_window, handle.into(), cx);
+    }
     if let Err(error) = configured {
-        let _ = handle.update(cx, |_, window, _| window.remove_window());
+        let _ = handle.update(cx, |_, window, cx| {
+            super::native_overlay::stack::close(window, cx)
+        });
         return Err(error);
     }
     Ok(handle)

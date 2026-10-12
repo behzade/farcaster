@@ -110,5 +110,10 @@ impl Render for FarcasterApp {
         let root = actions::bind(root, cx).child(shell);
 
         self.render_root_overlays(root, entity, picker, work_active, cx)
+            .child(super::native_overlay::keyboard::input_proxy(
+                window,
+                &self.navigation.chat.focus,
+                cx,
+            ))
     }
 }

@@ -3,12 +3,13 @@ use std::{collections::HashMap, rc::Rc};
 use gpui::{
     AnyElement, AnyWindowHandle, App, AppContext as _, Bounds, Context, Entity, FocusHandle,
     InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, Styled as _,
-    Subscription, WeakEntity, Window, WindowHandle, div, point, px,
+    Subscription, WeakEntity, Window, div, point, px,
 };
 
 use super::{
     FarcasterApp,
     native::{NativeHost, OverlayInput},
+    panel::Panel,
 };
 use crate::app::ui::{
     primitives::AppTooltips,
@@ -20,7 +21,7 @@ pub(in crate::app) type Dismiss = Rc<dyn Fn(&mut Window, &mut App)>;
 
 #[derive(Default)]
 pub(in crate::app) struct PopupState {
-    pub(in crate::app) window: Option<WindowHandle<PopupWindow>>,
+    pub(in crate::app) window: Option<Panel<PopupWindow>>,
     pub(in crate::app) failed: bool,
     owner_window: Option<AnyWindowHandle>,
     subscriptions: Vec<Subscription>,
@@ -33,6 +34,7 @@ pub(in crate::app) struct PopupWindow {
     builder: Builder,
     focus: Option<FocusHandle>,
     input: OverlayInput,
+    owner_size: gpui::Size<Pixels>,
     owner: Option<WeakEntity<FarcasterApp>>,
     _escape: Option<Subscription>,
     _tooltip_watch: Subscription,
@@ -68,13 +70,13 @@ pub(super) fn owner_active(window: &Window, cx: &mut App) -> bool {
     let owner = window.window_handle();
     window.is_window_active()
         || cx.windows().into_iter().any(|handle| {
-            handle.downcast::<PopupWindow>().is_some_and(|popup| {
-                popup
-                    .update(cx, |view, window, _| {
-                        view.owner_window == owner && window.is_window_active()
+            handle
+                .update(cx, |_, window, cx| {
+                    Panel::<PopupWindow>::from_window(window, cx).is_some_and(|view| {
+                        view.read(cx).owner_window == owner && window.is_window_active()
                     })
-                    .unwrap_or(false)
-            })
+                })
+                .unwrap_or(false)
         })
 }
 
@@ -114,9 +116,9 @@ pub(in crate::app) fn prepare(
                 cx.on_release(|state, cx| {
                     if let Some(popup) = state.window.take() {
                         let active = popup
-                            .update(cx, |_, window, _| {
+                            .update(cx, |_, window, cx| {
                                 let active = window.is_window_active();
-                                window.remove_window();
+                                super::stack::close(window, cx);
                                 active
                             })
                             .unwrap_or(false);
@@ -138,22 +140,44 @@ pub(in crate::app) fn prepare(
     if state.read(cx).failed {
         return false;
     }
-    let focus = matches!(input, OverlayInput::Modal)
+    let mut focus = matches!(input, OverlayInput::Modal)
         .then(|| window.focused(cx))
         .flatten();
     window.defer(cx, move |window, cx| {
-        let existing = state.read(cx).window;
+        let mut existing = state
+            .read(cx)
+            .window
+            .filter(|popup| cx.windows().contains(&(*popup).into()));
+        let keep = existing.is_some_and(|popup| {
+            popup
+                .update(cx, |view, window, _| {
+                    view.host.hides_on_deactivate() || window.is_window_active()
+                })
+                .unwrap_or(false)
+        });
         let visible = visible
             && window.visibility() == gpui::WindowVisibility::Visible
-            && (window.is_window_active()
-                || (matches!(input, OverlayInput::Modal) && existing.is_some()));
+            && (window.is_window_active() || (matches!(input, OverlayInput::Modal) && keep));
         let bounds = Bounds::new(window.bounds().origin, window.viewport_size());
+        if visible
+            && existing.is_some_and(|popup| {
+                popup.read(cx).is_ok_and(|view| {
+                    view.host.is_wayland() && view.owner_size != window.viewport_size()
+                })
+            })
+        {
+            let popup = existing.take().unwrap();
+            let _ = popup.update(cx, |_, window, cx| {
+                focus = window.focused(cx).or(focus.take());
+                super::stack::close(window, cx);
+            });
+        }
         let result = if !visible {
             if let Some(popup) = existing {
                 let active = popup
-                    .update(cx, |_, window, _| {
+                    .update(cx, |_, window, cx| {
                         let active = window.is_window_active();
-                        window.remove_window();
+                        super::stack::close(window, cx);
                         active
                     })
                     .unwrap_or(false);
@@ -183,7 +207,7 @@ pub(in crate::app) fn prepare(
             Ok(popup) => state.window = popup,
             Err(error) => {
                 if let Some(popup) = existing {
-                    let _ = popup.update(cx, |_, window, _| window.remove_window());
+                    let _ = popup.update(cx, |_, window, cx| super::stack::close(window, cx));
                 }
                 state.window = None;
                 state.failed = true;
@@ -209,8 +233,9 @@ fn open(
     input: OverlayInput,
     dismiss: Option<Dismiss>,
     cx: &mut App,
-) -> Result<WindowHandle<PopupWindow>, String> {
+) -> Result<Panel<PopupWindow>, String> {
     let owner_window = window.window_handle();
+    let owner_size = window.viewport_size();
     let owner = app_owner(window, cx).map(|owner| owner.downgrade());
     NativeHost::open_panel(
         window,
@@ -240,6 +265,7 @@ fn open(
                     builder,
                     focus,
                     input,
+                    owner_size,
                     tooltips,
                     _escape: escape,
                     _tooltip_watch: watch,
