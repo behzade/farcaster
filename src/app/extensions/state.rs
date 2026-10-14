@@ -110,8 +110,9 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn reset_transcript_ui(&mut self, cx: &mut Context<Self>) {
+        let items = &self.snapshot.transcript_presentation().items;
         self.views.transcript.update(cx, |transcript, cx| {
-            transcript.reset();
+            transcript.reset(items);
             cx.notify();
         });
     }
@@ -123,8 +124,22 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         if let Some((path, project)) = self.activity.system_notification_targets.get(tag).cloned() {
-            self.select_session(path, project, window, cx);
+            self.select_session_at_latest(path, project, window, cx);
         }
+    }
+
+    pub(in crate::app) fn select_session_at_latest(
+        &mut self,
+        path: PathBuf,
+        project: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.views.transcript.update(cx, |transcript, cx| {
+            transcript.follow_session(&path);
+            cx.notify();
+        });
+        self.select_session_and_focus(path, project, window, cx);
     }
 
     pub(in crate::app) fn show_attention_notification(

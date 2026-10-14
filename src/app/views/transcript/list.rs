@@ -26,6 +26,7 @@ struct StateInner {
     viewport_height: Pixels,
     width: Option<Pixels>,
     following_tail: bool,
+    pending_restore: Option<ListOffset>,
     pending_scroll: Pixels,
     next_frame_token: u64,
     scheduled_frame: Option<u64>,
@@ -117,6 +118,7 @@ impl StateInner {
         if delta == px(0.0) {
             return None;
         }
+        self.pending_restore = None;
         self.pending_scroll += delta;
         let maximum = self.maximum_scroll();
         let projected = (self.scroll_y - self.pending_scroll)
@@ -214,6 +216,7 @@ impl TranscriptListState {
         state.scroll_y = px(0.0);
         state.pending_scroll = px(0.0);
         state.following_tail = false;
+        state.pending_restore = None;
         state.clear_selection();
     }
 
@@ -270,13 +273,36 @@ impl TranscriptListState {
     }
 
     pub(crate) fn logical_scroll_top(&self) -> ListOffset {
-        self.0.borrow().logical_scroll_top()
+        let state = self.0.borrow();
+        state
+            .pending_restore
+            .unwrap_or_else(|| state.logical_scroll_top())
+    }
+
+    pub(crate) fn has_pending_restore(&self) -> bool {
+        self.0.borrow().pending_restore.is_some()
+    }
+
+    pub(crate) fn restore_scroll(&self, offset: ListOffset) {
+        // Measure the anchor row before applying its saved offset. Its initial
+        // height hint may describe a collapsed tool or a different window width.
+        self.scroll_to(ListOffset {
+            item_ix: offset.item_ix,
+            offset_in_item: px(0.0),
+        });
+        self.0.borrow_mut().pending_restore = Some(offset);
     }
 
     pub(crate) fn scroll_to(&self, offset: ListOffset) {
         let mut state = self.0.borrow_mut();
         let index = offset.item_ix.min(state.heights.len());
-        state.scroll_y = state.heights.prefix(index) + offset.offset_in_item;
+        if state.pending_restore.is_some() {
+            // A row update may remap the anchor before its first paint.
+            state.pending_restore = Some(offset);
+            state.scroll_y = state.heights.prefix(index);
+        } else {
+            state.scroll_y = state.heights.prefix(index) + offset.offset_in_item;
+        }
         if index < state.heights.len() {
             state.following_tail = false;
         }
@@ -285,6 +311,7 @@ impl TranscriptListState {
 
     pub(crate) fn scroll_to_start(&self) {
         let mut state = self.0.borrow_mut();
+        state.pending_restore = None;
         state.pending_scroll = px(0.0);
         state.following_tail = false;
         state.scroll_y = px(0.0);
@@ -292,6 +319,7 @@ impl TranscriptListState {
 
     pub(crate) fn scroll_to_end(&self) {
         let mut state = self.0.borrow_mut();
+        state.pending_restore = None;
         state.pending_scroll = px(0.0);
         state.following_tail = true;
         state.scroll_y = state.maximum_scroll();
@@ -408,9 +436,12 @@ impl Element for TranscriptList {
     ) -> Self::PrepaintState {
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         let (_, viewport_scrolled) = self.state.0.borrow_mut().begin_frame(bounds.size);
-        let (anchor, handler, scrolled) = {
+        let (anchor, handler, following_before_layout) = {
             let mut state = self.state.0.borrow_mut();
-            let anchor = state.logical_scroll_top();
+            let anchor = state
+                .pending_restore
+                .take()
+                .unwrap_or_else(|| state.logical_scroll_top());
             if state.selection_drag_active
                 && state.selection_anchor.is_some()
                 && let Some(position) = state.selection_drag_position
@@ -418,7 +449,7 @@ impl Element for TranscriptList {
             {
                 state.selection_cursor = Some((self.selection_key)(row));
             }
-            (anchor, state.scroll_handler.clone(), viewport_scrolled)
+            (anchor, state.scroll_handler.clone(), state.following_tail)
         };
 
         let available = gpui::size(bounds.size.width.into(), AvailableSpace::MinContent);
@@ -495,7 +526,10 @@ impl Element for TranscriptList {
             }
         });
 
-        if scrolled && let Some(handler) = handler {
+        // Restoration or resizing can reach the tail without queued scrolling.
+        if (viewport_scrolled || following_tail != following_before_layout)
+            && let Some(handler) = handler
+        {
             handler.borrow_mut()(following_tail, window, cx);
         }
 

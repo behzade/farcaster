@@ -414,6 +414,23 @@ fn remeasurement_clamps_an_anchor_to_the_new_row_height(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+fn reading_restore_measures_expanded_row_before_applying_offset(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    let state = state_with_rows(100);
+    state.restore_scroll(ListOffset {
+        item_ix: 12,
+        offset_in_item: px(500.0),
+    });
+    // Streaming can change the row layout again before the first paint.
+    state.scroll_to(state.logical_scroll_top());
+    draw_transcript(cx, &state, px(1_000.0), px(100.0));
+    let offset = state.logical_scroll_top();
+    assert_eq!(offset.item_ix, 12);
+    assert_eq!(offset.offset_in_item, px(500.0));
+    assert!(!state.is_following_tail());
+}
+
+#[gpui::test]
 fn downward_scroll_at_the_end_resumes_tail_following(cx: &mut TestAppContext) {
     let cx = cx.add_empty_window();
     let state = state_with_rows(100);

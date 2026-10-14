@@ -258,7 +258,13 @@ impl FarcasterApp {
             self.reset_session_ui(generation, transcript_preselected, cx);
             dirty.root = true;
         }
-        let row_update = if session_changed && !transcript_preselected {
+        let transcript_changed = self.views.transcript.update(cx, |transcript, _| {
+            transcript.select_session(
+                snapshot.selected_session.as_deref(),
+                &self.snapshot.transcript_presentation().items,
+            )
+        });
+        let row_update = if transcript_changed || (session_changed && !transcript_preselected) {
             let _timing = crate::app::infrastructure::performance::OperationTiming::new(
                 crate::app::infrastructure::performance::OperationKind::FullProjection,
                 snapshot.conversation.items.len(),

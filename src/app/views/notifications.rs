@@ -78,7 +78,7 @@ impl FarcasterApp {
                 owner_window,
                 window,
                 cx,
-                move |app, window, cx| app.select_session_and_focus(path, project, window, cx),
+                move |app, window, cx| app.select_session_at_latest(path, project, window, cx),
             );
         };
         let click = open.clone();

@@ -102,9 +102,7 @@ impl FarcasterApp {
 
     pub(in crate::app) fn jump_to_latest(&mut self, cx: &mut Context<Self>) {
         self.views.transcript.update(cx, |transcript, cx| {
-            transcript.following = true;
-            transcript.unseen = 0;
-            transcript.list.scroll_to_end();
+            transcript.jump_to_latest();
             cx.notify();
         });
     }
