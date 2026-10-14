@@ -283,6 +283,10 @@ impl TranscriptListState {
         self.0.borrow().pending_restore.is_some()
     }
 
+    pub(crate) fn has_pending_scroll(&self) -> bool {
+        self.0.borrow().pending_scroll != px(0.0)
+    }
+
     pub(crate) fn restore_scroll(&self, offset: ListOffset) {
         // Measure the anchor row before applying its saved offset. Its initial
         // height hint may describe a collapsed tool or a different window width.

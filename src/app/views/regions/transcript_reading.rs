@@ -93,19 +93,9 @@ fn text_start(row: TranscriptRow, items: &Items) -> usize {
 
 impl ReadingState {
     pub(super) fn capture(view: &mut TranscriptView, items: &Items) -> Self {
-        let offset = view.list.logical_scroll_top();
-        let anchor = view.take_pending_reading_anchor().or_else(|| {
-            if view.list.is_following_tail() {
-                return None;
-            }
-            let row = *view.rows.get(offset.item_ix)?;
-            Some(ReadingAnchor {
-                row,
-                offset: offset.offset_in_item,
-                source: SourceItem::new(row.key(), items)?,
-                text_start: text_start(row, items),
-            })
-        });
+        let anchor = view
+            .take_pending_reading_anchor()
+            .or_else(|| ReadingAnchor::capture(view, items));
         let source = |key| {
             SourceItem::new(
                 if key < items.len() {
@@ -162,6 +152,20 @@ impl ReadingState {
 }
 
 impl ReadingAnchor {
+    pub(super) fn capture(view: &TranscriptView, items: &Items) -> Option<Self> {
+        if view.list.is_following_tail() {
+            return None;
+        }
+        let offset = view.list.logical_scroll_top();
+        let row = *view.rows.get(offset.item_ix)?;
+        Some(Self {
+            row,
+            offset: offset.offset_in_item,
+            source: SourceItem::new(row.key(), items)?,
+            text_start: text_start(row, items),
+        })
+    }
+
     pub(super) fn resolve(
         &self,
         rows: &PersistentVec<TranscriptRow>,

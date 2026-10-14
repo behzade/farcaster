@@ -111,9 +111,23 @@ impl TranscriptView {
     pub(crate) fn apply_rows(
         &mut self,
         update: transcript::TranscriptRowUpdate,
+        previous_items: &PersistentVec<Arc<crate::conversation::TranscriptItem>>,
         items: &PersistentVec<Arc<crate::conversation::TranscriptItem>>,
     ) -> bool {
         let mut anchor = self.take_pending_reading_anchor();
+        // Final Markdown rows have different boundaries from streaming chunks.
+        // Capture the current text position before replacing those rows, too.
+        if anchor.is_none()
+            && !self.list.has_pending_scroll()
+            && let Some(transcript::TranscriptRow::StreamChunk { index, .. }) =
+                self.rows.get(self.list.logical_scroll_top().item_ix)
+            && previous_items
+                .get(*index)
+                .is_some_and(|item| item.streaming)
+            && items.get(*index).is_some_and(|item| !item.streaming)
+        {
+            anchor = ReadingAnchor::capture(self, previous_items);
+        }
         let changed = update.apply(&self.list, &mut self.rows, items);
         if !self.rows.is_empty()
             && let Some(session) = &self.session

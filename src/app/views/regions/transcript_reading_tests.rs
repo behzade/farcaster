@@ -246,6 +246,30 @@ fn transcript_reading_rejects_replaced_messages(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+fn transcript_reading_keeps_position_when_visible_stream_finishes(cx: &mut gpui::TestAppContext) {
+    check_stream_reading_restore(
+        cx,
+        concat!(
+            module_path!(),
+            "::transcript_reading_keeps_position_when_visible_stream_finishes"
+        ),
+        StreamFinish::WhileReading,
+    );
+}
+
+#[gpui::test]
+fn transcript_reading_stream_completion_keeps_queued_scroll(cx: &mut gpui::TestAppContext) {
+    check_stream_reading_restore(
+        cx,
+        concat!(
+            module_path!(),
+            "::transcript_reading_stream_completion_keeps_queued_scroll"
+        ),
+        StreamFinish::WhileScrolling,
+    );
+}
+
+#[gpui::test]
 fn transcript_reading_remaps_stream_finished_before_paint(cx: &mut gpui::TestAppContext) {
     check_stream_reading_restore(
         cx,
@@ -283,6 +307,8 @@ fn transcript_reading_does_not_restore_again_after_paint(cx: &mut gpui::TestAppC
 
 #[derive(Clone, Copy)]
 enum StreamFinish {
+    WhileReading,
+    WhileScrolling,
     BeforePaint,
     AfterJump,
     AfterPaint,
@@ -337,21 +363,33 @@ fn check_stream_reading_restore(
                 view.following = false;
             });
         });
-        send_snapshot(runtime, 2, reading_snapshot(project, "b", 60));
-        cx.update(|_, cx| app.update(cx, |app, cx| app.drain_runtime(cx)));
-        let restoring = Arc::new(streaming.clone());
+        let generation = if matches!(
+            finish,
+            StreamFinish::WhileReading | StreamFinish::WhileScrolling
+        ) {
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            1
+        } else {
+            send_snapshot(runtime, 2, reading_snapshot(project, "b", 60));
+            cx.update(|_, cx| app.update(cx, |app, cx| app.drain_runtime(cx)));
+            send_snapshot(runtime, 3, Arc::new(streaming.clone()));
+            3
+        };
         answer.streaming = false;
         answer.stream_chunks = Arc::default();
         answer.text = paragraphs.concat();
         Arc::make_mut(&mut streaming.conversation)
             .items
             .set(1, Arc::new(answer));
-        send_snapshot(runtime, 3, restoring);
         cx.update(|window, cx| {
             app.update(cx, |app, cx| app.drain_runtime(cx));
             let view = transcript.read(cx);
             assert_eq!(view.list.logical_scroll_top().item_ix, 4);
             match finish {
+                StreamFinish::WhileScrolling => {
+                    view.list
+                        .scroll_by(px(1_000_000.0), window, transcript.entity_id());
+                }
                 StreamFinish::AfterJump => {
                     transcript.update(cx, |view, _| view.jump_to_latest());
                 }
@@ -366,12 +404,19 @@ fn check_stream_reading_restore(
                 _ => {}
             }
             // Without an intervening paint, finalization must remap the pending anchor.
-            send_snapshot(runtime, 3, Arc::new(streaming));
+            send_snapshot(runtime, generation, Arc::new(streaming));
             app.update(cx, |app, cx| app.drain_runtime(cx));
 
             window.draw(cx).clear(cx);
             let view = transcript.read(cx);
             match finish {
+                StreamFinish::WhileScrolling => {
+                    assert!(
+                        view.list.is_following_tail(),
+                        "queued scroll must reach the end"
+                    );
+                    return;
+                }
                 StreamFinish::AfterJump => {
                     assert!(view.list.is_following_tail());
                     assert!(view.following);

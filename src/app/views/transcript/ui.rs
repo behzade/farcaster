@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use gpui::Context;
 
 use super::{TranscriptRowUpdate, refresh_presentation_rows, update_presentation_rows};
 use crate::app::FarcasterApp;
-use crate::conversation::TranscriptKind;
+use crate::conversation::{TranscriptItem, TranscriptKind};
+use crate::utility::persistent_vec::PersistentVec;
 
 impl FarcasterApp {
     pub(in crate::app) fn adjust_transcript_font_size(
@@ -166,12 +169,13 @@ impl FarcasterApp {
     pub(in crate::app) fn apply_transcript_rows(
         &mut self,
         update: TranscriptRowUpdate,
+        previous_items: &PersistentVec<Arc<TranscriptItem>>,
         cx: &mut Context<Self>,
     ) -> bool {
         let items = self.snapshot.transcript_presentation().items.clone();
-        self.views
-            .transcript
-            .update(cx, |transcript, _| transcript.apply_rows(update, &items))
+        self.views.transcript.update(cx, |transcript, _| {
+            transcript.apply_rows(update, previous_items, &items)
+        })
     }
 
     pub(in crate::app) fn mark_transcript_changed(
@@ -189,7 +193,7 @@ impl FarcasterApp {
         let conversation = self.snapshot.transcript_presentation();
         self.views.transcript.update(cx, |transcript, cx| {
             let rows = refresh_presentation_rows(&transcript.rows, &conversation, index);
-            let _changed = transcript.apply_rows(rows, &conversation.items);
+            let _changed = transcript.apply_rows(rows, &conversation.items, &conversation.items);
             cx.notify();
         });
     }

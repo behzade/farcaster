@@ -258,11 +258,9 @@ impl FarcasterApp {
             self.reset_session_ui(generation, transcript_preselected, cx);
             dirty.root = true;
         }
+        let previous_items = self.snapshot.transcript_presentation().items.clone();
         let transcript_changed = self.views.transcript.update(cx, |transcript, _| {
-            transcript.select_session(
-                snapshot.selected_session.as_deref(),
-                &self.snapshot.transcript_presentation().items,
-            )
+            transcript.select_session(snapshot.selected_session.as_deref(), &previous_items)
         });
         let row_update = if transcript_changed || (session_changed && !transcript_preselected) {
             let _timing = crate::app::infrastructure::performance::OperationTiming::new(
@@ -311,7 +309,7 @@ impl FarcasterApp {
         if picker_choices_changed {
             self.refresh_configuration_picker(cx);
         }
-        dirty.transcript |= self.apply_transcript_rows(row_update, cx);
+        dirty.transcript |= self.apply_transcript_rows(row_update, &previous_items, cx);
         self.sync_restored_dialog();
         self.sync_composer_history();
         dirty.rail |= self.reconcile_submitted_drafts(cx);
