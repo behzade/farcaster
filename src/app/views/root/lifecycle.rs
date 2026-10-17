@@ -94,6 +94,14 @@ impl FarcasterApp {
                 }
                 _ => String::new(),
             };
+            let blocking = dialog.is_some_and(ExtensionUiRequest::is_blocking);
+            let question = self.extensions.active.current_question();
+            let question_key = dialog
+                .and_then(ExtensionUiRequest::dialog_id)
+                .zip(question.map(|q| q.id.as_str()))
+                .map(|(request, question)| (request.to_owned(), question.to_owned()));
+            let secret = question.is_some_and(|q| q.secret);
+            let question_input = self.extensions.question_input.clone();
             let uses_textarea = matches!(
                 dialog,
                 Some(ExtensionUiRequest::Input { .. } | ExtensionUiRequest::Editor { .. })
@@ -102,11 +110,7 @@ impl FarcasterApp {
                 .and_then(ExtensionUiRequest::dialog_id)
                 .map(str::to_owned);
             let input = self.extensions.dialog_input.clone();
-            let focus = if uses_textarea {
-                input.read(cx).focus_handle(cx)
-            } else {
-                self.extensions.dialog_focus.clone()
-            };
+            let focus = self.extensions.dialog_input_focus(cx);
             let composer_slot_owns = self.composer.focus.is_focused(window)
                 || self.extensions.dialog_focus.contains_focused(window, cx)
                 || self
@@ -127,12 +131,30 @@ impl FarcasterApp {
                 {
                     return;
                 }
+                if this.extensions.active.current_question().map(|q| &q.id)
+                    != question_key.as_ref().map(|(_, question)| question)
+                {
+                    return;
+                }
+                this.extensions.save_question_draft(cx);
+                let draft = question_key
+                    .as_ref()
+                    .map(|key| this.extensions.active.question_draft(key))
+                    .unwrap_or_default();
+                this.extensions.question_input_key = question_key;
+                question_input.update(cx, |state, cx| {
+                    state.set_value(draft, window, cx);
+                    state.set_masked(secret, window, cx);
+                });
                 if uses_textarea {
                     input.update(cx, |state, cx| {
                         state.set_value(prefill, window, cx);
                     });
                 }
-                if composer_slot_owns && this.keyboard_overlay_focus(window, cx).is_none() {
+                if blocking
+                    && composer_slot_owns
+                    && this.keyboard_overlay_focus(window, cx).is_none()
+                {
                     this.focus_overlay(&focus, window, cx);
                 }
             });

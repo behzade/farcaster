@@ -37,7 +37,13 @@ impl FarcasterApp {
         focused: bool,
         cx: &App,
     ) -> AnyElement {
-        if self.extensions.active.dialog.is_some() {
+        if self
+            .extensions
+            .active
+            .dialog
+            .as_ref()
+            .is_some_and(crate::protocol::ExtensionUiRequest::is_blocking)
+        {
             if self.modal_rendered_in_native_window() {
                 return div().into_any_element();
             }
@@ -184,6 +190,10 @@ impl FarcasterApp {
                     crate::app::composer::queue::action_handler(entity.clone()),
                 ),
                 |composer, queue| composer.child(queue),
+            )
+            .when(
+                self.extensions.active.dialog.is_some() && !self.modal_rendered_in_native_window(),
+                |body| body.child(self.render_composer_request(entity.clone(), focused)),
             )
             .child(composer)
             .child(self.render_composer_status(status_scroll, mode))

@@ -8,6 +8,10 @@ mod commands;
 mod handoff;
 use handoff::BatchInput;
 
+#[path = "worker_questions.rs"]
+mod question_delivery;
+use question_delivery::QUESTION_SUBMISSION_PREFIX;
+
 use std::{
     collections::{HashMap, VecDeque},
     io::{BufReader, Write as _},
@@ -22,6 +26,7 @@ use super::{
     connection::{CodexConnection, read_message},
     contract::{CodexClientInfo, CodexInbound, CodexRequestId, CodexUserInput, TurnResponse},
     notification::{CodexMethod, CodexNotificationTier},
+    questions::{PendingQuestion, QuestionSource, input_id},
     skills::Skills,
     tool,
     wire::{encode_error_response, encode_request, encode_response},
@@ -159,6 +164,10 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             manual_compaction: false,
             pending: HashMap::new(),
             pending_inputs: HashMap::new(),
+            pending_questions: HashMap::new(),
+            async_answers: VecDeque::new(),
+            question_submissions: HashMap::new(),
+            seen_async_questions: std::collections::HashSet::new(),
             prompt_requests: HashMap::new(),
             client_submissions: HashMap::new(),
             native_inputs: HashMap::new(),
@@ -332,6 +341,10 @@ pub fn spawn_main(
         manual_compaction: false,
         pending: HashMap::new(),
         pending_inputs: HashMap::new(),
+        pending_questions: HashMap::new(),
+        async_answers: VecDeque::new(),
+        question_submissions: HashMap::new(),
+        seen_async_questions: std::collections::HashSet::new(),
         prompt_requests: HashMap::new(),
         client_submissions: HashMap::new(),
         native_inputs: HashMap::new(),
@@ -747,6 +760,13 @@ struct Handoff {
     batch_client_id: Option<String>,
 }
 
+struct PendingApproval {
+    id: CodexRequestId,
+    permissions: Option<Value>,
+    thread_id: String,
+    turn_id: Option<String>,
+}
+
 struct CodexWorkerSession {
     caller_identity: crate::core::CallerIdentity,
     child: Child,
@@ -777,7 +797,11 @@ struct CodexWorkerSession {
     compacting: bool,
     manual_compaction: bool,
     pending: HashMap<CodexRequestId, PendingRequest>,
-    pending_inputs: HashMap<String, CodexRequestId>,
+    pending_inputs: HashMap<String, PendingApproval>,
+    pending_questions: HashMap<String, PendingQuestion>,
+    async_answers: VecDeque<crate::QuestionResponse>,
+    question_submissions: HashMap<String, crate::QuestionResponse>,
+    seen_async_questions: std::collections::HashSet<String>,
     prompt_requests: HashMap<CodexRequestId, String>,
     client_submissions: HashMap<String, String>,
     native_inputs: HashMap<String, PendingNativeInput>,
@@ -807,6 +831,7 @@ impl WorkerSession for CodexWorkerSession {
             && !self.manual_compaction
             && self.pending.is_empty()
             && self.pending_inputs.is_empty()
+            && self.pending_questions.is_empty()
             && self.native_inputs.is_empty()
             && self.handoff.is_none()
             && self.abort_cleanup.is_none()
@@ -883,14 +908,18 @@ impl WorkerSession for CodexWorkerSession {
     }
 
     fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), crate::PromptRejection>)> {
-        self.prompt_acks.pop()
+        while let Some(ack) = self.prompt_acks.pop() {
+            if !ack.0.starts_with(QUESTION_SUBMISSION_PREFIX) {
+                return Some(ack);
+            }
+        }
+        None
     }
 
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String> {
-        let request_id = self
-            .pending_inputs
-            .remove(&response.id)
-            .ok_or_else(|| format!("unknown Codex worker input: {}", response.id))?;
+        let Some(approval) = self.pending_inputs.get(&response.id) else {
+            return Ok(());
+        };
         let accepted = !response.cancel
             && response.value.as_deref().is_some_and(|value| {
                 matches!(
@@ -898,8 +927,14 @@ impl WorkerSession for CodexWorkerSession {
                     "yes" | "true" | "allow" | "accept" | "accepted"
                 )
             });
-        let result = json!({"decision": if accepted { "accept" } else { "decline" }});
-        let encoded = encode_response(&request_id, result)?;
+        let result = match &approval.permissions {
+            Some(permissions) => json!({
+                "permissions": if accepted { permissions.clone() } else { json!({}) },
+                "scope": "turn",
+            }),
+            None => json!({"decision": if accepted { "accept" } else { "decline" }}),
+        };
+        let encoded = encode_response(&approval.id, result)?;
         let writer = self
             .writer
             .as_mut()
@@ -907,7 +942,31 @@ impl WorkerSession for CodexWorkerSession {
         writer
             .write_all(&encoded)
             .and_then(|()| writer.flush())
-            .map_err(|error| format!("answer Codex worker request: {error}"))
+            .map_err(|error| format!("answer Codex worker request: {error}"))?;
+        self.pending_inputs.remove(&response.id);
+        self.events
+            .push_back(WorkerEvent::InputResolved { id: response.id });
+        Ok(())
+    }
+
+    fn respond_questions(&mut self, response: crate::QuestionResponse) -> Result<(), String> {
+        // Resolution can race a user's click. Never send an answer for a cleared request.
+        let Some(pending) = self.pending_questions.get(&response.id) else {
+            return Ok(());
+        };
+        let QuestionSource::ServerRequest(id) = &pending.source else {
+            return self.answer_async_question(response);
+        };
+        let encoded = encode_response(id, pending.reply(&response)?)?;
+        let writer = self.writer.as_mut().ok_or("Codex worker input is closed")?;
+        writer
+            .write_all(&encoded)
+            .and_then(|()| writer.flush())
+            .map_err(|error| format!("answer Codex questions: {error}"))?;
+        self.pending_questions.remove(&response.id);
+        self.events
+            .push_back(WorkerEvent::InputResolved { id: response.id });
+        Ok(())
     }
 
     fn abort(&mut self) -> Result<(), String> {
@@ -915,6 +974,7 @@ impl WorkerSession for CodexWorkerSession {
             return Err(error.clone());
         }
         self.arm_abort_deadline()?;
+        self.cancel_async_answers();
         if self.abort_cleanup.is_some() {
             return Ok(());
         }
@@ -1030,6 +1090,69 @@ impl WorkerSession for CodexWorkerSession {
     }
 
     fn poll(&mut self) -> Option<WorkerEvent> {
+        loop {
+            let event = self.poll_event()?;
+            match &event {
+                WorkerEvent::Activity(WorkerActivity::InputDelivered { submission_id, .. })
+                    if submission_id
+                        .as_deref()
+                        .is_some_and(|id| id.starts_with(QUESTION_SUBMISSION_PREFIX)) =>
+                {
+                    // Keep the receipt identity so shared delivery matching cannot
+                    // mistake this answer for a same-text composer submission.
+                    self.resolve_question_submission(submission_id.as_deref().unwrap());
+                }
+                WorkerEvent::PromptCancelled { submission_id }
+                    if submission_id.starts_with(QUESTION_SUBMISSION_PREFIX) =>
+                {
+                    self.resolve_question_submission(submission_id);
+                    continue;
+                }
+                WorkerEvent::PromptDeliveryUnknown {
+                    submission_id,
+                    error,
+                } if submission_id.starts_with(QUESTION_SUBMISSION_PREFIX) => {
+                    return Some(WorkerEvent::RequestFailed {
+                        operation: "Codex question delivery is unknown".into(),
+                        error: error.clone(),
+                    });
+                }
+                _ => {}
+            }
+            return Some(event);
+        }
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        super::subagents::forget_parent(&self.thread_id);
+        self.writer.take();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            if self
+                .child
+                .try_wait()
+                .map_err(|error| format!("check Codex worker: {error}"))?
+                .is_some()
+            {
+                return Ok(());
+            }
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        self.child
+            .kill()
+            .map_err(|error| format!("terminate Codex worker: {error}"))?;
+        self.child
+            .wait()
+            .map_err(|error| format!("reap Codex worker: {error}"))?;
+        Ok(())
+    }
+}
+
+impl CodexWorkerSession {
+    fn poll_event(&mut self) -> Option<WorkerEvent> {
         if self.abort_failure.is_some() {
             return None;
         }
@@ -1038,6 +1161,9 @@ impl WorkerSession for CodexWorkerSession {
         }
         if let Some(event) = self.events.pop_front() {
             return Some(event);
+        }
+        if let Err(error) = self.send_next_async_answer() {
+            return Some(WorkerEvent::Failed(error));
         }
         if let Some(event) = self.release_abort_cleanup_if_ready() {
             return Some(event);
@@ -1316,6 +1442,32 @@ impl WorkerSession for CodexWorkerSession {
                             if let Some(client_id) = self.normal_start_clients.remove(&id) {
                                 self.batch_deliveries.remove(&client_id);
                             }
+                            if rejected_prompt
+                                .as_ref()
+                                .is_some_and(|id| id.starts_with(QUESTION_SUBMISSION_PREFIX))
+                            {
+                                let activity = self.activity();
+                                self.caller_identity.set_activity(activity);
+                                if activity != WorkerActivityState::Idle {
+                                    return self.events.pop_front();
+                                }
+                                self.abort_starting_turn = false;
+                                if self.abort_deadline.is_some() {
+                                    if let Err(error) = self.clean_completed_abort("idle") {
+                                        return Some(WorkerEvent::Failed(error));
+                                    }
+                                    if let Some(cleanup) = self.abort_cleanup.as_mut() {
+                                        cleanup.completion = Some(WorkerEvent::Settled {
+                                            output: String::new(),
+                                        });
+                                    }
+                                } else {
+                                    self.events.push_back(WorkerEvent::Settled {
+                                        output: String::new(),
+                                    });
+                                }
+                                return self.events.pop_front();
+                            }
                             self.abort_starting_turn = false;
                             self.caller_identity.set_activity(WorkerActivityState::Idle);
                         }
@@ -1345,7 +1497,10 @@ impl WorkerSession for CodexWorkerSession {
                                 "Codex {operation} request was rejected: {}",
                                 error.message
                             );
-                            if rejected_prompt.is_some() {
+                            if let Some(prompt) = rejected_prompt {
+                                if prompt.starts_with(QUESTION_SUBMISSION_PREFIX) {
+                                    return self.events.pop_front();
+                                }
                                 continue;
                             }
                             return Some(WorkerEvent::RequestFailed {
@@ -1419,6 +1574,18 @@ impl WorkerSession for CodexWorkerSession {
                 Ok(CodexInbound::Notification { method, params }) => {
                     let method_name = method.as_str();
                     let method = CodexMethod::parse(method_name);
+                    if method == CodexMethod::ServerRequestResolved {
+                        if let Some(event) = self.resolve_input(&params) {
+                            return Some(event);
+                        }
+                        continue;
+                    }
+                    if method == CodexMethod::TurnCompleted
+                        && let (Some(thread), Some(turn)) =
+                            (params["threadId"].as_str(), params["turn"]["id"].as_str())
+                    {
+                        self.clear_turn_inputs(thread, turn);
+                    }
                     let tier = method.tier();
                     match tier {
                         CodexNotificationTier::Skills => {
@@ -1554,9 +1721,16 @@ impl WorkerSession for CodexWorkerSession {
                                 );
                             }
                         }
-                        CodexMethod::CommandExecutionOutputDelta => {
+                        CodexMethod::CommandExecutionOutputDelta
+                        | CodexMethod::FileChangeOutputDelta
+                        | CodexMethod::McpToolCallProgress => {
+                            let text_field = if method == CodexMethod::McpToolCallProgress {
+                                "message"
+                            } else {
+                                "delta"
+                            };
                             if let (Some(id), Some(delta)) =
-                                (params["itemId"].as_str(), params["delta"].as_str())
+                                (params["itemId"].as_str(), params[text_field].as_str())
                             {
                                 return Some(WorkerEvent::Activity(WorkerActivity::ToolUpdated {
                                     id: id.to_owned(),
@@ -1566,11 +1740,42 @@ impl WorkerSession for CodexWorkerSession {
                             log_bad_codex_notification(
                                 method_name,
                                 &params,
-                                "command output delta is missing itemId or delta",
+                                "tool progress is missing itemId or text",
+                            );
+                        }
+                        CodexMethod::FileChangePatchUpdated => {
+                            if let Some(activity) = codex_patch_update(&params) {
+                                return Some(WorkerEvent::Activity(activity));
+                            }
+                            log_bad_codex_notification(
+                                method_name,
+                                &params,
+                                "patch update is missing itemId or changes",
                             );
                         }
                         CodexMethod::ItemCompleted => {
                             let item_type = params.pointer("/item/type").and_then(Value::as_str);
+                            if item_type == Some("agentMessage")
+                                && params["item"]["delivery"] == "async"
+                                && !params["item"]["questions"].is_null()
+                            {
+                                match PendingQuestion::parse_async(&params) {
+                                    Ok(pending)
+                                        if self
+                                            .seen_async_questions
+                                            .insert(pending.request.id.clone()) =>
+                                    {
+                                        let request = pending.request.clone();
+                                        self.pending_questions.insert(request.id.clone(), pending);
+                                        return Some(WorkerEvent::QuestionsRequested(request));
+                                    }
+                                    Ok(_) => {}
+                                    Err(error) => {
+                                        zlog::warn!("{error}");
+                                    }
+                                }
+                                continue;
+                            }
                             if item_type == Some("exitedReviewMode")
                                 && let Some(review) = params["item"]["review"].as_str()
                             {
@@ -1840,8 +2045,7 @@ impl WorkerSession for CodexWorkerSession {
                         | CodexMethod::TurnDiffUpdated
                         | CodexMethod::TurnPlanUpdated
                         | CodexMethod::ServerRequestResolved
-                        | CodexMethod::TerminalInteraction
-                        | CodexMethod::FileChangeOutputDelta => {}
+                        | CodexMethod::TerminalInteraction => {}
                         CodexMethod::Unknown(method) => log_bad_codex_notification(
                             method,
                             &params,
@@ -1856,7 +2060,8 @@ impl WorkerSession for CodexWorkerSession {
                         | CodexMethod::ThreadStarted
                         | CodexMethod::CommandApproval
                         | CodexMethod::FileChangeApproval
-                        | CodexMethod::PermissionsApproval => log_bad_codex_notification(
+                        | CodexMethod::PermissionsApproval
+                        | CodexMethod::RequestUserInput => log_bad_codex_notification(
                             method_name,
                             &params,
                             "unmapped same-thread notification",
@@ -1866,35 +2071,65 @@ impl WorkerSession for CodexWorkerSession {
                 Ok(CodexInbound::ServerRequest { id, method, params }) => {
                     let method_name = method.as_str();
                     let method = CodexMethod::parse(method_name);
+                    if method == CodexMethod::RequestUserInput {
+                        match PendingQuestion::parse(id.clone(), params) {
+                            Ok(pending) => {
+                                let request = pending.request.clone();
+                                self.pending_questions.insert(request.id.clone(), pending);
+                                return Some(WorkerEvent::QuestionsRequested(request));
+                            }
+                            Err(message) => {
+                                if let Err(error) =
+                                    self.reject_server_request(&id, -32602, &message)
+                                {
+                                    return Some(WorkerEvent::Failed(error));
+                                }
+                                continue;
+                            }
+                        }
+                    }
                     if !method.is_approval_request() {
                         zlog::warn!(
                             "Unsupported Codex server request was not mapped: id={id:?} method={} params={params}",
                             method_name,
                         );
                         let message = format!("unsupported Codex server request: {method_name}");
-                        let rejected =
-                            encode_error_response(&id, -32601, &message).and_then(|encoded| {
-                                let writer = self
-                                    .writer
-                                    .as_mut()
-                                    .ok_or_else(|| "Codex worker input is closed".to_owned())?;
-                                writer
-                                    .write_all(&encoded)
-                                    .and_then(|()| writer.flush())
-                                    .map_err(|error| error.to_string())
-                            });
-                        if let Err(error) = rejected {
+                        if let Err(error) = self.reject_server_request(&id, -32601, &message) {
                             return Some(WorkerEvent::Failed(format!(
                                 "reject unsupported Codex server request: {error}"
                             )));
                         }
                         continue;
                     }
-                    let input_id = match &id {
-                        CodexRequestId::Number(value) => value.to_string(),
-                        CodexRequestId::String(value) => value.clone(),
+                    let permissions = if method == CodexMethod::PermissionsApproval {
+                        let Some(permissions) = params.get("permissions").filter(|p| p.is_object())
+                        else {
+                            if let Err(error) = self.reject_server_request(
+                                &id,
+                                -32602,
+                                "Codex permission request is missing a permissions object",
+                            ) {
+                                return Some(WorkerEvent::Failed(error));
+                            }
+                            continue;
+                        };
+                        Some(permissions.clone())
+                    } else {
+                        None
                     };
-                    self.pending_inputs.insert(input_id.clone(), id);
+                    let input_id = input_id(&id);
+                    self.pending_inputs.insert(
+                        input_id.clone(),
+                        PendingApproval {
+                            id,
+                            permissions,
+                            thread_id: params["threadId"]
+                                .as_str()
+                                .unwrap_or(&self.thread_id)
+                                .to_owned(),
+                            turn_id: params["turnId"].as_str().map(str::to_owned),
+                        },
+                    );
                     return Some(WorkerEvent::NeedsInput(WorkerInput {
                         id: input_id,
                         prompt: approval_prompt(method_name, &params),
@@ -1907,35 +2142,68 @@ impl WorkerSession for CodexWorkerSession {
         }
     }
 
-    fn close(&mut self) -> Result<(), String> {
-        super::subagents::forget_parent(&self.thread_id);
-        self.writer.take();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        loop {
-            if self
-                .child
-                .try_wait()
-                .map_err(|error| format!("check Codex worker: {error}"))?
-                .is_some()
-            {
-                return Ok(());
-            }
-            if std::time::Instant::now() >= deadline {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+    fn resolve_input(&mut self, params: &Value) -> Option<WorkerEvent> {
+        let id: CodexRequestId = serde_json::from_value(params.get("requestId")?.clone()).ok()?;
+        let thread = params.get("threadId")?.as_str()?;
+        let key = input_id(&id);
+        let matches_question = self
+            .pending_questions
+            .get(&key)
+            .is_some_and(|p| p.thread_id == thread);
+        let matches_approval = self
+            .pending_inputs
+            .get(&key)
+            .is_some_and(|p| p.thread_id == thread);
+        if !matches_question && !matches_approval {
+            return None;
         }
-        self.child
-            .kill()
-            .map_err(|error| format!("terminate Codex worker: {error}"))?;
-        self.child
-            .wait()
-            .map_err(|error| format!("reap Codex worker: {error}"))?;
-        Ok(())
+        if matches_question {
+            self.pending_questions.remove(&key);
+        }
+        if matches_approval {
+            self.pending_inputs.remove(&key);
+        }
+        Some(WorkerEvent::InputResolved { id: key })
     }
-}
 
-impl CodexWorkerSession {
+    fn clear_turn_inputs(&mut self, thread: &str, turn: &str) {
+        self.pending_questions.retain(|id, pending| {
+            let resolved = matches!(pending.source, QuestionSource::ServerRequest(_))
+                && pending.thread_id == thread
+                && pending.turn_id == turn;
+            if resolved {
+                self.events
+                    .push_back(WorkerEvent::InputResolved { id: id.clone() });
+            }
+            !resolved
+        });
+        self.pending_inputs.retain(|id, pending| {
+            let resolved = pending.thread_id == thread && pending.turn_id.as_deref() == Some(turn);
+            if resolved {
+                self.events
+                    .push_back(WorkerEvent::InputResolved { id: id.clone() });
+            }
+            !resolved
+        });
+    }
+
+    fn reject_server_request(
+        &mut self,
+        id: &CodexRequestId,
+        code: i64,
+        message: &str,
+    ) -> Result<(), String> {
+        let encoded = encode_error_response(id, code, message)?;
+        let writer = self
+            .writer
+            .as_mut()
+            .ok_or_else(|| "Codex worker input is closed".to_owned())?;
+        writer
+            .write_all(&encoded)
+            .and_then(|()| writer.flush())
+            .map_err(|error| format!("reject Codex server request: {error}"))
+    }
+
     fn ensure_abort_cleanup_finished(&self) -> Result<(), String> {
         if let Some(error) = &self.abort_failure {
             return Err(error.clone());
@@ -2144,6 +2412,7 @@ impl CodexWorkerSession {
     }
 
     fn record_prompt_ack(&mut self, id: String, result: Result<(), crate::PromptRejection>) {
+        self.question_ack(&id, &result);
         self.prompt_acks.record(id, result);
     }
 
@@ -2312,6 +2581,9 @@ impl CodexWorkerSession {
 
     fn begin_turn(&mut self, turn_id: &str) -> bool {
         let is_new = self.current_turn.as_deref() != Some(turn_id);
+        if is_new && let Some(previous) = self.current_turn.clone() {
+            self.clear_turn_inputs(&self.thread_id.clone(), &previous);
+        }
         self.current_turn = Some(turn_id.to_owned());
         self.caller_identity
             .set_activity(WorkerActivityState::Working);
@@ -2336,7 +2608,12 @@ impl CodexWorkerSession {
         } else if self.pending.values().any(|request| {
             matches!(
                 request,
-                PendingRequest::StartTurn | PendingRequest::Command(_)
+                PendingRequest::StartTurn
+                    | PendingRequest::Command(_)
+                    | PendingRequest::HandoffTurn {
+                        starts_turn: true,
+                        ..
+                    }
             )
         }) {
             WorkerActivityState::Starting
@@ -2940,6 +3217,16 @@ fn codex_tool_metadata_changed(params: &Value) -> Option<WorkerActivity> {
     })
 }
 
+fn codex_patch_update(params: &Value) -> Option<WorkerActivity> {
+    let id = params.get("itemId")?.as_str()?;
+    let changes = params.get("changes")?.as_array()?;
+    codex_tool_metadata_changed(&json!({"item": {
+        "id": id,
+        "type": "fileChange",
+        "changes": changes,
+    }}))
+}
+
 fn codex_tool_end(params: &Value) -> Option<WorkerActivity> {
     let item = params.get("item")?;
     let kind = item.get("type")?.as_str()?;
@@ -3006,6 +3293,16 @@ fn codex_tool_end(params: &Value) -> Option<WorkerActivity> {
 }
 
 fn approval_prompt(method: &str, params: &Value) -> String {
+    if CodexMethod::parse(method) == CodexMethod::PermissionsApproval {
+        let reason = params["reason"]
+            .as_str()
+            .unwrap_or("Additional access requested");
+        let cwd = params["cwd"].as_str().unwrap_or("unknown directory");
+        return format!(
+            "{reason}\nWorking directory: {cwd}\nRequested permissions (this turn only):\n{:#}",
+            params["permissions"]
+        );
+    }
     params["command"]
         .as_str()
         .or_else(|| params["reason"].as_str())

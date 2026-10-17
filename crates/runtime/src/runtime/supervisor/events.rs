@@ -226,7 +226,11 @@ impl Supervisor {
                     if let Some(dialogs) = self.active_dialogs.get_mut(&key) {
                         dialogs.retain(|request| {
                             request.dialog_id().is_some_and(agents::is_child_input_id)
+                                || matches!(request, ExtensionUiRequest::Questions(_))
                         });
+                        if !dialogs.iter().any(ExtensionUiRequest::is_blocking) {
+                            self.needs_input.remove(&key);
+                        }
                         if dialogs.is_empty() {
                             self.active_dialogs.remove(&key);
                             self.needs_input.remove(&key);
@@ -282,6 +286,9 @@ impl Supervisor {
             RuntimeEvent::ExtensionUiDismissed { id, .. } => {
                 if let Some(dialogs) = self.active_dialogs.get_mut(&key) {
                     dialogs.retain(|request| request.dialog_id() != Some(id.as_str()));
+                    if !dialogs.iter().any(ExtensionUiRequest::is_blocking) {
+                        self.needs_input.remove(&key);
+                    }
                     if dialogs.is_empty() {
                         self.active_dialogs.remove(&key);
                         self.needs_input.remove(&key);
@@ -335,7 +342,9 @@ impl Supervisor {
                         .entry(key.clone())
                         .or_default()
                         .push(request.clone());
-                    self.needs_input.insert(key.clone());
+                    if request.is_blocking() {
+                        self.needs_input.insert(key.clone());
+                    }
                     let session = self.latest.get(&key).and_then(|snapshot| {
                         snapshot
                             .live_session
@@ -347,7 +356,14 @@ impl Supervisor {
                         &mut self.published_statuses,
                         &key,
                         session,
-                        RunStatus::NeedsInput,
+                        self.latest
+                            .get(&key)
+                            .map(|snapshot| session_status(&self.needs_input, &key, snapshot))
+                            .unwrap_or(if request.is_blocking() {
+                                RunStatus::NeedsInput
+                            } else {
+                                RunStatus::Working
+                            }),
                     );
                 }
                 if key == self.selected {

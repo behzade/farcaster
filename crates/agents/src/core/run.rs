@@ -58,6 +58,9 @@ fn run(
 ) {
     let (responses, response_rx) = mpsc::channel::<crate::WorkerInputResponse>();
     let mut input_leases = Vec::new();
+    let (question_responses, question_response_rx) = mpsc::channel::<crate::QuestionResponse>();
+    let mut questions = std::collections::BTreeMap::<String, bool>::new();
+    let mut approvals = std::collections::BTreeMap::<String, crate::WorkerInput>::new();
     let mut turn_active = true;
     let error = 'run: loop {
         match commands.recv_timeout(POLL_INTERVAL) {
@@ -104,27 +107,31 @@ fn run(
                 break 'run error;
             }
             input_leases.retain(|(input_id, _)| input_id != &id);
-            update(&snapshot, |current| {
-                if current
-                    .pending_input
-                    .as_ref()
-                    .is_some_and(|input| input.id == id)
-                {
-                    current.pending_input = None;
-                }
-                if input_leases.is_empty() {
-                    current.status = WorkerStatus::Running;
-                }
-            });
+            approvals.remove(&id);
+            refresh_inputs(&snapshot, &approvals, &questions, turn_active);
+            notify(updates);
+        }
+        while let Ok(response) = question_response_rx.try_recv() {
+            let id = response.id.clone();
+            if !questions.contains_key(&id) {
+                continue;
+            }
+            if let Err(error) = session.respond_questions(response) {
+                break 'run error;
+            }
+            // Keep the worker resident until the adapter confirms resolution/delivery.
+            if let Some(blocking) = questions.get_mut(&id) {
+                *blocking = false;
+            }
+            input_leases.retain(|(input_id, _)| input_id != &id);
+            refresh_inputs(&snapshot, &approvals, &questions, turn_active);
             notify(updates);
         }
         while let Some(event) = session.poll() {
             match event {
                 WorkerEvent::Started => {
                     turn_active = true;
-                    update(&snapshot, |current| {
-                        current.status = WorkerStatus::Running;
-                    });
+                    refresh_inputs(&snapshot, &approvals, &questions, turn_active);
                 }
                 WorkerEvent::Settled { output } => {
                     if std::mem::replace(&mut turn_active, false)
@@ -133,14 +140,16 @@ fn run(
                     {
                         parent.report(output.clone());
                     }
-                    input_leases.clear();
+                    // Questions have explicit resolution events and can outlive the main turn.
+                    input_leases.retain(|(id, _)| questions.contains_key(id));
+                    approvals.clear();
                     slot.release();
                     update(&snapshot, |current| {
-                        current.status = WorkerStatus::Idle;
                         current.output = Some(output);
                         current.error = None;
                         current.pending_input = None;
                     });
+                    refresh_inputs(&snapshot, &approvals, &questions, turn_active);
                     notify(updates);
                 }
                 WorkerEvent::SessionChanged { locator } => {
@@ -160,10 +169,30 @@ fn run(
                             Err(error) => break 'run error,
                         }
                     }
-                    update(&snapshot, |current| {
-                        current.status = WorkerStatus::NeedsInput;
-                        current.pending_input = Some(input);
-                    });
+                    approvals.insert(input.id.clone(), input);
+                    refresh_inputs(&snapshot, &approvals, &questions, turn_active);
+                    notify(updates);
+                }
+                WorkerEvent::QuestionsRequested(request) => {
+                    if let Some(parent) = &parent {
+                        match super::CallerRegistry::shared().request_child_questions(
+                            parent,
+                            request.clone(),
+                            question_responses.clone(),
+                        ) {
+                            Ok(lease) => input_leases.push((request.id.clone(), lease)),
+                            Err(error) => break 'run error,
+                        }
+                    }
+                    questions.insert(request.id, request.blocking);
+                    refresh_inputs(&snapshot, &approvals, &questions, turn_active);
+                    notify(updates);
+                }
+                WorkerEvent::InputResolved { id } => {
+                    approvals.remove(&id);
+                    questions.remove(&id);
+                    input_leases.retain(|(input_id, _)| input_id != &id);
+                    refresh_inputs(&snapshot, &approvals, &questions, turn_active);
                     notify(updates);
                 }
                 WorkerEvent::Activity(_) => {}
@@ -188,6 +217,26 @@ fn run(
         parent.report(format!("Worker failed: {error}"));
     }
     notify(updates);
+}
+
+fn refresh_inputs(
+    snapshot: &Mutex<WorkerSnapshot>,
+    approvals: &std::collections::BTreeMap<String, crate::WorkerInput>,
+    questions: &std::collections::BTreeMap<String, bool>,
+    turn_active: bool,
+) {
+    update(snapshot, |current| {
+        current.pending_input = approvals.values().next().cloned();
+        current.status = if !approvals.is_empty()
+            || questions.values().any(|blocking| *blocking || !turn_active)
+        {
+            WorkerStatus::NeedsInput
+        } else if turn_active {
+            WorkerStatus::Running
+        } else {
+            WorkerStatus::Idle
+        };
+    });
 }
 
 fn notify(updates: &async_channel::Sender<()>) {

@@ -95,6 +95,18 @@ pub(super) fn interaction_notification(
         return None;
     }
     let (title, body) = match request {
+        ExtensionUiRequest::Questions(request) => (
+            if request.blocking {
+                "Farcaster: Input needed"
+            } else {
+                "Farcaster: Question"
+            },
+            request
+                .questions
+                .first()
+                .map(|question| question.prompt.clone())
+                .unwrap_or_default(),
+        ),
         ExtensionUiRequest::WorkerModel { profile, .. } => (
             "Farcaster: Input needed",
             format!("{profile} needs a model to start a worker"),

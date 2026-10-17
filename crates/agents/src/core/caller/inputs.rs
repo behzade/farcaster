@@ -1,6 +1,13 @@
 use super::*;
 use crate::Backend;
-use crate::{WorkerInput, WorkerInputResponse};
+use crate::{
+    QuestionRequest, QuestionResponse, WorkerInput, WorkerInputResponse, WorkerInteraction,
+};
+
+enum InputResponder {
+    Input(mpsc::Sender<WorkerInputResponse>),
+    Questions(mpsc::Sender<QuestionResponse>),
+}
 
 const INPUT_PREFIX: &str = "farcaster-worker-input-";
 
@@ -10,10 +17,10 @@ pub fn is_child_input_id(id: &str) -> bool {
 
 pub(super) struct PendingInput {
     pub(super) parent_id: String,
-    input: WorkerInput,
+    input: WorkerInteraction,
     original_id: String,
     delivered: bool,
-    responses: mpsc::Sender<WorkerInputResponse>,
+    responses: InputResponder,
     pub(super) parent_session: CallerSession,
 }
 
@@ -33,7 +40,7 @@ impl Drop for InputLease {
         if let Ok(mut inputs) = self.registry.inputs.lock() {
             let Some(index) = inputs
                 .iter()
-                .position(|pending| pending.input.id == self.id)
+                .position(|pending| pending.input.id() == self.id)
             else {
                 return;
             };
@@ -46,7 +53,7 @@ impl Drop for InputLease {
                 expired.push(ExpiredInput {
                     parent: pending.parent_session.clone(),
                     parent_id: pending.parent_id.clone(),
-                    id: pending.input.id,
+                    id: pending.input.id().to_owned(),
                 });
             }
             if let Ok(callers) = self.registry.callers.lock()
@@ -67,7 +74,7 @@ impl CallerRegistry {
     pub fn request_profile_input(
         &self,
         caller: &CallerContext,
-        mut input: WorkerInput,
+        input: WorkerInput,
         responses: mpsc::Sender<WorkerInputResponse>,
     ) -> Result<InputLease, String> {
         let callers = self
@@ -86,27 +93,12 @@ impl CallerRegistry {
         let parent_session = parent
             .session_key()
             .ok_or("caller has no persistent session")?;
-        let original_id = input.id;
-        input.id = new_identity("farcaster-worker-input");
-        let id = input.id.clone();
-        self.inputs
-            .lock()
-            .map_err(|_| "worker input registry is unavailable")?
-            .push(PendingInput {
-                parent_id: parent.worker_id.clone(),
-                input,
-                original_id,
-                delivered: false,
-                responses,
-                parent_session,
-            });
-        if let Some(wake) = &parent.wake {
-            wake.unpark();
-        }
-        Ok(InputLease {
-            registry: self.clone(),
-            id,
-        })
+        self.publish_input(
+            parent,
+            parent_session,
+            WorkerInteraction::Input(input),
+            InputResponder::Input(responses),
+        )
     }
 
     pub fn take_child_inputs(
@@ -127,6 +119,27 @@ impl CallerRegistry {
         &self,
         identity: &NativeSessionIdentity,
     ) -> Vec<WorkerInput> {
+        self.take_inputs(identity, true)
+            .into_iter()
+            .filter_map(|input| match input {
+                WorkerInteraction::Input(input) => Some(input),
+                WorkerInteraction::Questions(_) => None,
+            })
+            .collect()
+    }
+
+    pub fn take_child_interactions_for_session(
+        &self,
+        identity: &NativeSessionIdentity,
+    ) -> Vec<WorkerInteraction> {
+        self.take_inputs(identity, false)
+    }
+
+    fn take_inputs(
+        &self,
+        identity: &NativeSessionIdentity,
+        legacy_only: bool,
+    ) -> Vec<WorkerInteraction> {
         let Ok(callers) = self.callers.lock() else {
             return Vec::new();
         };
@@ -142,7 +155,10 @@ impl CallerRegistry {
         inputs
             .iter_mut()
             .filter_map(|pending| {
-                if pending.parent_id != parent.worker_id || pending.delivered {
+                if pending.parent_id != parent.worker_id
+                    || pending.delivered
+                    || (legacy_only && matches!(pending.input, WorkerInteraction::Questions(_)))
+                {
                     return None;
                 }
                 pending.delivered = true;
@@ -169,12 +185,35 @@ impl CallerRegistry {
             .map_err(|_| "worker input registry is unavailable")?;
         let index = inputs
             .iter()
-            .position(|pending| pending.input.id == response.id)
+            .position(|pending| pending.input.id() == response.id)
             .ok_or("worker input request is no longer available")?;
+        let InputResponder::Input(sender) = &inputs[index].responses else {
+            return Err("This request needs structured answers".into());
+        };
+        let sender = sender.clone();
         let pending = inputs.remove(index);
         response.id = pending.original_id;
-        pending
-            .responses
+        sender
+            .send(response)
+            .map_err(|_| "worker is no longer available".into())
+    }
+
+    pub fn respond_to_child_questions(&self, mut response: QuestionResponse) -> Result<(), String> {
+        let mut inputs = self
+            .inputs
+            .lock()
+            .map_err(|_| "worker input registry is unavailable")?;
+        let index = inputs
+            .iter()
+            .position(|pending| pending.input.id() == response.id)
+            .ok_or("worker question is no longer available")?;
+        let InputResponder::Questions(sender) = &inputs[index].responses else {
+            return Err("This request is not a question batch".into());
+        };
+        let sender = sender.clone();
+        let pending = inputs.remove(index);
+        response.id = pending.original_id;
+        sender
             .send(response)
             .map_err(|_| "worker is no longer available".into())
     }
@@ -224,8 +263,34 @@ impl CallerRegistry {
     pub(in crate::core) fn request_child_input(
         &self,
         child: &WorkerParent,
-        mut input: WorkerInput,
+        input: WorkerInput,
         responses: mpsc::Sender<WorkerInputResponse>,
+    ) -> Result<InputLease, String> {
+        self.request_child_interaction(
+            child,
+            WorkerInteraction::Input(input),
+            InputResponder::Input(responses),
+        )
+    }
+
+    pub(in crate::core) fn request_child_questions(
+        &self,
+        child: &WorkerParent,
+        request: QuestionRequest,
+        responses: mpsc::Sender<QuestionResponse>,
+    ) -> Result<InputLease, String> {
+        self.request_child_interaction(
+            child,
+            WorkerInteraction::Questions(request),
+            InputResponder::Questions(responses),
+        )
+    }
+
+    fn request_child_interaction(
+        &self,
+        child: &WorkerParent,
+        mut input: WorkerInteraction,
+        responses: InputResponder,
     ) -> Result<InputLease, String> {
         let callers = self
             .callers
@@ -254,10 +319,29 @@ impl CallerRegistry {
         let parent_session = parent
             .session_key()
             .ok_or("parent worker has no persistent session")?;
-        let original_id = input.id;
-        input.id = new_identity("farcaster-worker-input");
-        input.prompt = format!("Child {}\n\n{}", child.child_name, input.prompt);
-        let id = input.id.clone();
+        match &mut input {
+            WorkerInteraction::Input(input) => {
+                input.prompt = format!("Child {}\n\n{}", child.child_name, input.prompt)
+            }
+            WorkerInteraction::Questions(request) => {
+                for question in &mut request.questions {
+                    question.prompt = format!("Child {}\n\n{}", child.child_name, question.prompt);
+                }
+            }
+        }
+        self.publish_input(parent, parent_session, input, responses)
+    }
+
+    fn publish_input(
+        &self,
+        parent: &RegisteredCaller,
+        parent_session: CallerSession,
+        mut input: WorkerInteraction,
+        responses: InputResponder,
+    ) -> Result<InputLease, String> {
+        let original_id = input.id().to_owned();
+        input.set_id(new_identity("farcaster-worker-input"));
+        let id = input.id().to_owned();
         self.inputs
             .lock()
             .map_err(|_| "worker input registry is unavailable")?

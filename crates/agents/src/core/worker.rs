@@ -224,6 +224,10 @@ pub enum WorkerEvent {
         locator: String,
     },
     NeedsInput(WorkerInput),
+    QuestionsRequested(crate::QuestionRequest),
+    InputResolved {
+        id: String,
+    },
     Activity(WorkerActivity),
     RequestFailed {
         operation: String,
@@ -294,6 +298,9 @@ pub trait WorkerSession: Send {
         None
     }
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String>;
+    fn respond_questions(&mut self, _response: crate::QuestionResponse) -> Result<(), String> {
+        Err("This backend does not support structured questions".into())
+    }
     fn abort(&mut self) -> Result<(), String>;
     fn apply_steering(&mut self) -> Result<(), String> {
         Ok(())

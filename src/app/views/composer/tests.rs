@@ -5,6 +5,114 @@ use super::{
 use crate::protocol::ExtensionUiRequest;
 
 #[gpui::test]
+fn concurrent_question_keeps_composer_focus_and_sends_typed_answer(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::concurrent_question_keeps_composer_focus_and_sends_typed_answer"
+        ),
+        cx,
+        |cx, app, runtime, _| {
+            cx.update(|window, cx| {
+                window.activate_window();
+                app.update(cx, |app, cx| {
+                    app.set_surface(crate::app::AppSurface::Chat, cx);
+                    app.composer.focus.focus(window, cx);
+                    app.apply_extension_request(
+                        ExtensionUiRequest::Questions(crate::agents::QuestionRequest {
+                            id: "question".into(),
+                            blocking: false,
+                            questions: vec![crate::agents::Question {
+                                id: "answer".into(),
+                                header: "Question".into(),
+                                prompt: "Details?".into(),
+                                options: vec![],
+                                allow_free_text: true,
+                                secret: true,
+                            }],
+                        }),
+                        app.runtime_generation,
+                        cx,
+                    );
+                    cx.notify();
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                assert!(app.read(cx).composer.focus.is_focused(window));
+                assert!(!app.read(cx).center_surface_switch_blocked());
+                assert!(
+                    app.read(cx)
+                        .extensions
+                        .question_input
+                        .read(cx)
+                        .context_menu_capabilities()
+                        .is_masked()
+                );
+            });
+            cx.simulate_input("Keep working");
+            cx.update(|window, cx| {
+                assert!(
+                    app.read(cx)
+                        .composer
+                        .input
+                        .read(cx)
+                        .value()
+                        .contains("Keep working")
+                );
+                app.update(cx, |app, cx| {
+                    app.extensions
+                        .question_input
+                        .update(cx, |input, cx| input.set_value("Secret answer", window, cx));
+                    app.apply_extension_request(
+                        ExtensionUiRequest::Confirm {
+                            id: "approval".into(),
+                            title: "Approval".into(),
+                            message: "Continue?".into(),
+                            timeout: None,
+                        },
+                        app.runtime_generation,
+                        cx,
+                    );
+                    cx.notify();
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    assert_eq!(
+                        app.extensions.active.dialog.as_ref().unwrap().dialog_id(),
+                        Some("approval")
+                    );
+                    app.cancel_dialog(window, cx);
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    assert_eq!(
+                        app.extensions.question_input.read(cx).value().as_ref(),
+                        "Secret answer"
+                    );
+                    app.respond_question_text("question".into(), "answer".into(), window, cx);
+                    assert!(app.extensions.active.dialog.is_none());
+                    assert!(app.extensions.question_input.read(cx).value().is_empty());
+                });
+            });
+            let responses: Vec<_> = std::iter::from_fn(|| runtime.try_recv_command()).collect();
+            assert!(responses.iter().any(|command| matches!(command,
+                crate::runtime::RuntimeCommand::ExtensionResponse(crate::protocol::ExtensionUiResponse::Questions(response))
+                if response.id=="question" && response.answers["answer"]==["Secret answer"] && !response.cancelled
+            )));
+        },
+    );
+}
+
+#[gpui::test]
 fn saved_prompt_body_keeps_actions_in_view_for_large_text(cx: &mut gpui::TestAppContext) {
     use gpui::{
         AppContext as _, InteractiveElement as _, IntoElement as _, ParentElement as _,
@@ -190,4 +298,164 @@ fn number_keys_ignore_missing_options_and_non_select_dialogs() {
 
     assert_eq!(dialog_number_selection(&select, "2"), None);
     assert_eq!(dialog_number_selection(&input, "1"), None);
+}
+
+#[gpui::test]
+fn question_progress_survives_session_switches(cx: &mut gpui::TestAppContext) {
+    use crate::app::*;
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::question_progress_survives_session_switches"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let request = ExtensionUiRequest::Questions(crate::agents::QuestionRequest {
+                id: "batch".into(),
+                blocking: false,
+                questions: ["first", "second"]
+                    .into_iter()
+                    .map(|id| crate::agents::Question {
+                        id: id.into(),
+                        header: "Question".into(),
+                        prompt: id.into(),
+                        options: vec![],
+                        allow_free_text: true,
+                        secret: false,
+                    })
+                    .collect(),
+            });
+            for (generation, session) in [(1, "one"), (2, "two"), (3, "one")] {
+                runtime.send_event(RuntimeEvent::SessionReset {
+                    generation,
+                    preserve_submission: false,
+                });
+                runtime.send_event(RuntimeEvent::Snapshot {
+                    generation,
+                    snapshot: Arc::new(RuntimeSnapshot {
+                        selected_session: Some(project.join(session)),
+                        project: project.into(),
+                        ..Default::default()
+                    }),
+                });
+                runtime.send_event(RuntimeEvent::ExtensionUi {
+                    generation,
+                    request: request.clone(),
+                    system_notification_target: None,
+                });
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| {
+                        app.drain_runtime(cx);
+                        cx.notify();
+                    });
+                    window.draw(cx).clear(cx);
+                });
+                cx.run_until_parked();
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| {
+                        if generation == 1 {
+                            assert!(
+                                app.extensions
+                                    .active
+                                    .answer_question("batch", "first", "Saved answer".into())
+                                    .unwrap()
+                                    .is_none()
+                            );
+                            app.extensions.pending_dialog_setup = true;
+                        } else if generation == 2 {
+                            assert_eq!(
+                                app.extensions.active.current_question().unwrap().id,
+                                "first",
+                                "sessions must not share progress"
+                            );
+                        } else {
+                            assert_eq!(
+                                app.extensions.active.current_question().unwrap().id,
+                                "second"
+                            );
+                            assert_eq!(
+                                app.extensions.question_input.read(cx).value().as_ref(),
+                                "Unfinished answer"
+                            );
+                            let Some(crate::protocol::ExtensionUiResponse::Questions(response)) =
+                                app.extensions
+                                    .active
+                                    .answer_question("batch", "second", "Finished answer".into())
+                                    .unwrap()
+                            else {
+                                panic!("response");
+                            };
+                            assert_eq!(response.answers["first"], vec!["Saved answer"]);
+                        }
+                        cx.notify();
+                    });
+                    window.draw(cx).clear(cx);
+                });
+                cx.run_until_parked();
+                if generation == 1 {
+                    cx.update(|window, cx| {
+                        app.update(cx, |app, cx| {
+                            app.extensions.question_input.update(cx, |input, cx| {
+                                input.set_value("Unfinished answer", window, cx)
+                            });
+                        })
+                    });
+                }
+            }
+        },
+    );
+}
+
+#[gpui::test]
+fn blocking_option_question_has_visible_native_focus(cx: &mut gpui::TestAppContext) {
+    use crate::app::*;
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::blocking_option_question_has_visible_native_focus"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.update(|window, cx| {
+                window.activate_window();
+                app.update(cx, |app, cx| {
+                    app.set_surface(AppSurface::Terminal, cx);
+                    app.navigation.chat.focus.focus(window, cx);
+                    app.apply_extension_request(
+                        ExtensionUiRequest::Questions(crate::agents::QuestionRequest {
+                            id: "option-only".into(),
+                            blocking: true,
+                            questions: vec![crate::agents::Question {
+                                id: "choice".into(),
+                                header: "Choice".into(),
+                                prompt: "Choose".into(),
+                                options: vec![crate::agents::QuestionOption {
+                                    label: "A".into(),
+                                    description: "First".into(),
+                                }],
+                                allow_free_text: false,
+                                secret: false,
+                            }],
+                        }),
+                        app.runtime_generation,
+                        cx,
+                    );
+                    cx.notify();
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.run_until_parked();
+            let panel = cx.update(|_, cx| app.read(cx).overlays.modal.window.expect("modal"));
+            let popup_cx = gpui::VisualTestContext::from_window(panel.into(), cx).into_mut();
+            popup_cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                assert!(
+                    app.read(cx)
+                        .extensions
+                        .dialog_focus
+                        .contains_focused(window, cx)
+                );
+            });
+        },
+    );
 }

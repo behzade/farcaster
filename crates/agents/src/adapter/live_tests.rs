@@ -708,7 +708,9 @@ fn exercise_abort(session: &mut dyn SessionTransport) -> Result<(), String> {
             }
             Some(SessionEvent::Interaction(request)) => approve(session, request, &[])?,
             Some(SessionEvent::Failure(error)) => return Err(error),
-            Some(SessionEvent::Stderr(_)) | None => thread::sleep(Duration::from_millis(20)),
+            Some(SessionEvent::InputResolved { .. }) | Some(SessionEvent::Stderr(_)) | None => {
+                thread::sleep(Duration::from_millis(20))
+            }
         }
     }
     if !started || abort_id.is_none() || !abort_response || !settled {
@@ -754,7 +756,12 @@ fn exercise_compaction(session: &mut dyn SessionTransport) -> Result<(), String>
             Some(SessionEvent::Interaction(request)) => approve(session, request, &[])?,
             Some(SessionEvent::Failure(error)) if compaction_not_needed(&error) => return Ok(()),
             Some(SessionEvent::Failure(error)) => return Err(error),
-            Some(SessionEvent::Response(_) | SessionEvent::Stderr(_)) | None => {
+            Some(
+                SessionEvent::InputResolved { .. }
+                | SessionEvent::Response(_)
+                | SessionEvent::Stderr(_),
+            )
+            | None => {
                 thread::sleep(Duration::from_millis(20));
             }
         }
@@ -962,7 +969,7 @@ fn poll_until(
                 }
             }
             SessionEvent::Failure(error) => return Err(error),
-            SessionEvent::Stderr(_) => {}
+            SessionEvent::Stderr(_) | SessionEvent::InputResolved { .. } => {}
         }
     }
     Err(format!("timed out after {} seconds", timeout.as_secs()))
@@ -2412,6 +2419,7 @@ pub mod support {
                     return Err(format!("live {} transport failure: {error}", self.harness));
                 }
                 Some(SessionEvent::Stderr(line)) => self.stderr.push(line),
+                Some(SessionEvent::InputResolved { .. }) => {}
                 None => thread::park_timeout(EVENT_POLL),
             }
             Ok(())

@@ -23,6 +23,8 @@ pub(in crate::app) enum NativeHost {
     Test,
     #[cfg(test)]
     TestWayland,
+    #[cfg(test)]
+    TestX11,
 }
 
 #[cfg(test)]
@@ -59,7 +61,7 @@ impl NativeHost {
             ..Default::default()
         };
         // Tooltips need no input state. Skip Root and its full-window shadow.
-        let popup = if host.is_wayland() && input != OverlayInput::Tooltip {
+        let popup = if host.relays_input(input) && input != OverlayInput::Tooltip {
             let owner_handle = owner.window_handle();
             let root = cx
                 .open_window(options, move |window, cx| {
@@ -115,6 +117,23 @@ impl NativeHost {
             Self::Mac(_) => true,
             #[cfg(test)]
             Self::Test => true,
+            _ => false,
+        }
+    }
+
+    pub(super) fn relays_input(&self, input: OverlayInput) -> bool {
+        // Wayland popups and passive X11 panels leave native focus on the owner.
+        if self.is_wayland() {
+            return true;
+        }
+        if input != OverlayInput::Passive {
+            return false;
+        }
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::X11(_) => true,
+            #[cfg(test)]
+            Self::TestX11 => true,
             _ => false,
         }
     }

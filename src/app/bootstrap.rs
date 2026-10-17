@@ -361,6 +361,7 @@ impl FarcasterApp {
             },
             extensions: extensions::ExtensionState {
                 active: ExtensionUiState::default(),
+                question_sessions: HashMap::new(),
                 parked: None,
                 restored_dialog_id: None,
                 dismissed_restored_dialog_id: None,
@@ -369,6 +370,8 @@ impl FarcasterApp {
                 pending_title: None,
                 pending_editor_text: None,
                 dialog_input: inputs.dialog,
+                question_input: cx.new(|cx| gpui_component::input::InputState::new(window, cx)),
+                question_input_key: None,
                 dialog_focus: inputs.dialog_focus,
                 dialog_return_focus: None,
             },

@@ -323,6 +323,9 @@ impl WorkerSession for PiWorkerSession {
                     self.pending_session_events.clear();
                     return Some(WorkerEvent::Failed(error));
                 }
+                SessionEvent::InputResolved { id } => {
+                    return Some(WorkerEvent::InputResolved { id });
+                }
                 SessionEvent::Response(_) | SessionEvent::Stderr(_) => {}
             }
         }

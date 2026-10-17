@@ -1,6 +1,10 @@
 use std::{path::PathBuf, thread, time::SystemTime};
 
 pub use farcaster_contracts::{Backend, WorkerInput, WorkerStatus};
+mod questions;
+pub use questions::{
+    Question, QuestionOption, QuestionRequest, QuestionResponse, WorkerInteraction,
+};
 use serde::{Deserialize, Serialize};
 
 mod delivery;
@@ -256,6 +260,7 @@ impl From<PromptDelivery> for SessionActivity {
 pub enum SessionEvent {
     Response(SessionResponse),
     Interaction(ExtensionUiRequest),
+    InputResolved { id: String },
     Activity(SessionActivity),
     Stderr(String),
     Failure(String),

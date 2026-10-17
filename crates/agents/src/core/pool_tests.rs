@@ -724,6 +724,73 @@ fn failure_releases_capacity_and_notifies_parent_without_a_child_registration() 
 }
 
 #[test]
+fn questions_keep_workers_running_or_waiting_until_resolved() -> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let factory = Arc::new(FakeFactory::default());
+    let (pool, updates) = pool(factory.clone(), project.path(), 1)?;
+    let id = pool.start(request(project.path()))?.id;
+    wait_for_update(&updates)?;
+    let events = factory.events.lock().map_err(|_| "events")?[0].clone();
+    for (request_id, blocking, expected) in [
+        ("async", false, WorkerStatus::Running),
+        ("blocking", true, WorkerStatus::NeedsInput),
+    ] {
+        events
+            .send(WorkerEvent::QuestionsRequested(crate::QuestionRequest {
+                id: request_id.into(),
+                blocking,
+                questions: vec![],
+            }))
+            .map_err(|_| "send question")?;
+        wait_for_update(&updates)?;
+        wait_for_worker_status(&pool, &id, expected)?;
+    }
+    events
+        .send(WorkerEvent::InputResolved {
+            id: "blocking".into(),
+        })
+        .map_err(|_| "resolve")?;
+    wait_for_worker_status(&pool, &id, WorkerStatus::Running)?;
+    events
+        .send(WorkerEvent::Settled {
+            output: "Main turn done".into(),
+        })
+        .map_err(|_| "settled")?;
+    wait_for_worker_status(&pool, &id, WorkerStatus::NeedsInput)?;
+    let second = pool.start(request(project.path()))?;
+    assert_eq!(
+        factory.closes.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "starting another worker must preserve the unanswered async question"
+    );
+    events.send(WorkerEvent::Started).map_err(|_| "started")?;
+    wait_for_worker_status(&pool, &id, WorkerStatus::Running)?;
+    events
+        .send(WorkerEvent::InputResolved { id: "async".into() })
+        .map_err(|_| "resolve")?;
+    wait_for_worker_status(&pool, &id, WorkerStatus::Running)?;
+    events
+        .send(WorkerEvent::Settled {
+            output: String::new(),
+        })
+        .map_err(|_| "settled")?;
+    wait_for_worker_status(&pool, &id, WorkerStatus::Idle)?;
+    factory.events.lock().map_err(|_| "events")?[1]
+        .send(WorkerEvent::Settled {
+            output: String::new(),
+        })
+        .map_err(|_| "settled")?;
+    wait_for_worker_status(&pool, &second.id, WorkerStatus::Idle)?;
+    pool.start(request(project.path()))?;
+    assert_eq!(
+        factory.closes.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "resolved questions must not prevent later idle retirement"
+    );
+    Ok(())
+}
+
+#[test]
 fn child_input_reaches_parent_and_answer_returns_to_worker() -> Result<(), String> {
     let project = tempfile::tempdir().map_err(|error| error.to_string())?;
     let factory = Arc::new(FakeFactory::default());

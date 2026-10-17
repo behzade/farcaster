@@ -334,3 +334,147 @@ impl gpui::Render for EmptyPanel {
         div()
     }
 }
+
+#[gpui::test]
+fn wayland_nonblocking_question_forwards_keys_after_input_focus(cx: &mut TestAppContext) {
+    passive_question_input(
+        concat!(
+            module_path!(),
+            "::wayland_nonblocking_question_forwards_keys_after_input_focus"
+        ),
+        NativeHost::TestWayland,
+        cx,
+    );
+}
+
+#[gpui::test]
+fn x11_nonblocking_question_forwards_keys_after_input_focus(cx: &mut TestAppContext) {
+    passive_question_input(
+        concat!(
+            module_path!(),
+            "::x11_nonblocking_question_forwards_keys_after_input_focus"
+        ),
+        NativeHost::TestX11,
+        cx,
+    );
+}
+
+fn passive_question_input(name: &'static str, host: NativeHost, cx: &mut TestAppContext) {
+    use gpui::Focusable as _;
+    crate::app::test_support::with_offline_app(name, cx, |cx, app, _, _| {
+        cx.update(|window, cx| {
+            cx.set_global(TestHost(host));
+            window.activate_window();
+            app.update(cx, |app, cx| {
+                app.set_surface(AppSurface::Terminal, cx);
+                app.navigation.chat.focus.focus(window, cx);
+                app.apply_extension_request(
+                    ExtensionUiRequest::Questions(crate::agents::QuestionRequest {
+                        id: "async-question".into(),
+                        blocking: false,
+                        questions: vec![crate::agents::Question {
+                            id: "choice".into(),
+                            header: "Question".into(),
+                            prompt: "Details?".into(),
+                            options: vec![],
+                            allow_free_text: true,
+                            secret: false,
+                        }],
+                    }),
+                    app.runtime_generation,
+                    cx,
+                );
+                cx.notify();
+            });
+            window.draw(cx).clear(cx);
+        });
+        cx.run_until_parked();
+        let panel = cx.update(|window, cx| {
+            assert!(
+                target(window, cx).is_none(),
+                "async questions must not take keyboard input on arrival"
+            );
+            app.read(cx).overlays.modal.window.expect("question panel")
+        });
+        let input = cx.update(|_, cx| app.read(cx).extensions.question_input.clone());
+        let popup_cx = VisualTestContext::from_window(panel.into(), cx).into_mut();
+        popup_cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            input.read(cx).focus_handle(cx).focus(window, cx);
+            window.draw(cx).clear(cx);
+            assert!(window.focused_input(cx).is_some());
+            assert!(
+                !window.is_window_active(),
+                "ungrabbed popup retains owner keyboard focus"
+            );
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            assert!(
+                relay_keystroke(
+                    &Keystroke {
+                        key: "x".into(),
+                        key_char: Some("ع".into()),
+                        modifiers: Modifiers::default(),
+                    },
+                    window,
+                    cx
+                ),
+                "a focused nonblocking question must receive owner keyboard input"
+            );
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            assert_eq!(input.read(cx).value().as_ref(), "ع");
+            let mut ime = OwnerInput {
+                popup: panel.into(),
+                offset: Point::default(),
+            };
+            assert!(ime.accepts_text_input(window, cx));
+            ime.replace_and_mark_text_in_range(None, "に", Some(1..1), window, cx);
+            assert_eq!(ime.marked_text_range(window, cx), Some(1..2));
+            ime.replace_text_in_range(None, "日本", window, cx);
+            assert_eq!(input.read(cx).value().as_ref(), "ع日本");
+        });
+        cx.simulate_click(gpui::point(px(400.0), px(200.0)), Modifiers::default());
+        cx.run_until_parked();
+        popup_cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            assert!(
+                window.focused(cx).is_none(),
+                "owner clicks release popup focus"
+            );
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            assert!(target(window, cx).is_none());
+            let mut ime = OwnerInput {
+                popup: panel.into(),
+                offset: Point::default(),
+            };
+            assert!(!ime.accepts_text_input(window, cx));
+            assert!(!relay_keystroke(
+                &Keystroke::parse("x").unwrap(),
+                window,
+                cx
+            ));
+            assert_eq!(input.read(cx).value().as_ref(), "ع日本");
+        });
+        popup_cx.update(|window, cx| {
+            input.read(cx).focus_handle(cx).focus(window, cx);
+            window.draw(cx).clear(cx);
+        });
+        cx.simulate_keystrokes("backspace");
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            assert_eq!(input.read(cx).value().as_ref(), "ع日");
+        });
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            assert!(target(window, cx).is_none());
+            assert!(!cx.windows().contains(&panel.into()));
+        });
+    });
+}

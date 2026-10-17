@@ -6,6 +6,7 @@ mod connection;
 mod connection_tests;
 mod contract;
 mod notification;
+mod questions;
 mod skills;
 mod subagents;
 mod tool;

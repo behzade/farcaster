@@ -83,7 +83,8 @@ impl Render for FarcasterApp {
             .capture_key_down(cx.listener(|this, event, window, cx| {
                 this.capture_chat_navigation(event, window, cx);
             }))
-            .capture_any_mouse_down(cx.listener(|this, _, _, cx| {
+            .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
+                super::native_overlay::keyboard::release_passive_focus(window, cx);
                 this.interrupt_voice_gesture(cx);
             }))
             .capture_key_up(cx.listener(|this, event, window, cx| {

@@ -190,6 +190,8 @@ impl PromptImage {
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(tag = "method")]
 pub enum ExtensionUiRequest {
+    #[serde(rename = "questions")]
+    Questions(crate::QuestionRequest),
     #[serde(rename = "workerModel")]
     WorkerModel {
         id: String,
@@ -257,6 +259,13 @@ pub enum ExtensionUiRequest {
 }
 
 impl ExtensionUiRequest {
+    pub fn is_blocking(&self) -> bool {
+        match self {
+            Self::Questions(request) => request.blocking,
+            _ => self.dialog_id().is_some(),
+        }
+    }
+
     pub fn from_worker_input(input: crate::WorkerInput) -> Self {
         if let Some(payload) = input.prompt.strip_prefix(WORKER_MODEL_REQUEST_PREFIX)
             && let Ok(request) = serde_json::from_str::<WorkerModelRequest>(payload)
@@ -297,6 +306,7 @@ impl ExtensionUiRequest {
 
     pub fn dialog_id(&self) -> Option<&str> {
         match self {
+            Self::Questions(request) => Some(&request.id),
             Self::WorkerModel { id, .. }
             | Self::Select { id, .. }
             | Self::Confirm { id, .. }
@@ -329,12 +339,31 @@ pub enum WidgetPlacement {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ExtensionUiResponse {
+    Questions(crate::QuestionResponse),
     #[serde(rename = "extension_ui_response")]
-    Value { id: String, value: String },
+    Value {
+        id: String,
+        value: String,
+    },
     #[serde(rename = "extension_ui_response")]
-    Confirmed { id: String, confirmed: bool },
+    Confirmed {
+        id: String,
+        confirmed: bool,
+    },
     #[serde(rename = "extension_ui_response")]
-    Cancelled { id: String, cancelled: bool },
+    Cancelled {
+        id: String,
+        cancelled: bool,
+    },
+}
+
+impl ExtensionUiResponse {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Questions(response) => &response.id,
+            Self::Value { id, .. } | Self::Confirmed { id, .. } | Self::Cancelled { id, .. } => id,
+        }
+    }
 }
 
 #[cfg(test)]

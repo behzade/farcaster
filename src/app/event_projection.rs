@@ -306,6 +306,11 @@ impl FarcasterApp {
             || self.snapshot.access_mode != snapshot.access_mode
             || self.snapshot.session_identity() != snapshot.session_identity();
         self.snapshot = snapshot;
+        if let Some(session) = self.snapshot.selected_session.as_ref()
+            && let Some(progress) = self.extensions.question_sessions.remove(session)
+        {
+            self.extensions.active.question_progress.extend(progress);
+        }
         if picker_choices_changed {
             self.refresh_configuration_picker(cx);
         }
@@ -537,6 +542,9 @@ impl FarcasterApp {
             snapshot.history_preview = false;
             snapshot.pending_question = None;
         }
+        self.extensions
+            .question_sessions
+            .retain(|path, _| !paths.contains(path));
     }
     fn project_session_moved(
         &mut self,

@@ -294,13 +294,12 @@ impl Supervisor {
                     return true;
                 }
                 if let RuntimeCommand::ExtensionResponse(response) = &command {
-                    let id = match response {
-                        ExtensionUiResponse::Value { id, .. }
-                        | ExtensionUiResponse::Confirmed { id, .. }
-                        | ExtensionUiResponse::Cancelled { id, .. } => id,
-                    };
+                    let id = response.id();
                     if let Some(dialogs) = self.active_dialogs.get_mut(&self.selected) {
-                        dialogs.retain(|request| request.dialog_id() != Some(id.as_str()));
+                        dialogs.retain(|request| request.dialog_id() != Some(id));
+                        if !dialogs.iter().any(ExtensionUiRequest::is_blocking) {
+                            self.needs_input.remove(&self.selected);
+                        }
                         if dialogs.is_empty() {
                             self.active_dialogs.remove(&self.selected);
                             self.needs_input.remove(&self.selected);
@@ -319,7 +318,9 @@ impl Supervisor {
                         session,
                         if self.needs_input.contains(&self.selected) {
                             RunStatus::NeedsInput
-                        } else if agents::is_child_input_id(id) {
+                        } else if agents::is_child_input_id(id)
+                            || matches!(response, ExtensionUiResponse::Questions(_))
+                        {
                             self.latest
                                 .get(&self.selected)
                                 .map_or(RunStatus::Done, |snapshot| semantic_status(snapshot))

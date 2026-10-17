@@ -21,6 +21,8 @@ pub(super) enum CodexMethod<'a> {
     ReasoningTextDelta,
     ItemStarted,
     CommandExecutionOutputDelta,
+    McpToolCallProgress,
+    FileChangePatchUpdated,
     ItemCompleted,
     AutoApprovalReviewStarted,
     AutoApprovalReviewCompleted,
@@ -42,6 +44,7 @@ pub(super) enum CodexMethod<'a> {
     CommandApproval,
     FileChangeApproval,
     PermissionsApproval,
+    RequestUserInput,
     Unknown(&'a str),
 }
 
@@ -63,6 +66,8 @@ impl<'a> CodexMethod<'a> {
             }
             "item/started" => Self::ItemStarted,
             "item/commandExecution/outputDelta" => Self::CommandExecutionOutputDelta,
+            "item/mcpToolCall/progress" => Self::McpToolCallProgress,
+            "item/fileChange/patchUpdated" => Self::FileChangePatchUpdated,
             "item/completed" => Self::ItemCompleted,
             "item/autoApprovalReview/started" => Self::AutoApprovalReviewStarted,
             "item/autoApprovalReview/completed" => Self::AutoApprovalReviewCompleted,
@@ -86,6 +91,7 @@ impl<'a> CodexMethod<'a> {
             }
             "item/fileChange/requestApproval" | "applyPatchApproval" => Self::FileChangeApproval,
             "item/permissions/requestApproval" => Self::PermissionsApproval,
+            "item/tool/requestUserInput" => Self::RequestUserInput,
             _ => Self::Unknown(method),
         }
     }

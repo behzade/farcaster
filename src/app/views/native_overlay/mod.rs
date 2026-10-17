@@ -53,10 +53,18 @@ impl FarcasterApp {
 
     pub(in crate::app::views) fn native_request_is_passive(&self) -> bool {
         !self.native_workspace_modal_active()
-            && matches!(
-                self.extensions.active.dialog,
-                Some(crate::protocol::ExtensionUiRequest::WorkerModel { .. })
-            )
+            && self
+                .extensions
+                .active
+                .dialog
+                .as_ref()
+                .is_some_and(|request| {
+                    !request.is_blocking()
+                        || matches!(
+                            request,
+                            crate::protocol::ExtensionUiRequest::WorkerModel { .. }
+                        )
+                })
             && !self.workspace.runtime_picker.open
     }
 
@@ -217,7 +225,7 @@ fn synchronize(owner: WeakEntity<FarcasterApp>, window: &mut Window, cx: &mut Ap
     if wanted
         && existing.is_some_and(|popup| {
             popup.read(cx).is_ok_and(|view| {
-                view.host.is_wayland()
+                (view.host.relays_input(view.input) || view.host.relays_input(input))
                     && (view.owner_size != window.viewport_size()
                         || view.owner_left != offset.x
                         || view.input != input)
@@ -350,7 +358,10 @@ impl Render for ModalWindow {
             if app.native_request_is_passive() {
                 self.focus = None;
                 let measure = cx.entity().downgrade();
+                let scope = self.scope.clone();
+                let relays_input = self.host.relays_input(self.input);
                 return div()
+                    .track_focus(&self.scope)
                     .font(ui_font())
                     .text_color(theme().colors.text)
                     .text_size(theme().type_scale.body)
@@ -364,6 +375,18 @@ impl Render for ModalWindow {
                             }
                         });
                     })
+                    .child(gpui::canvas(
+                        |_, _, _| (),
+                        move |_, _, window, cx| {
+                            if relays_input {
+                                keyboard::set_passive_focus(
+                                    window.window_handle(),
+                                    scope.contains_focused(window, cx),
+                                    cx,
+                                );
+                            }
+                        },
+                    ))
                     .child(self.tooltips.clone())
                     .into_any_element();
             }

@@ -429,6 +429,13 @@ impl RuntimeOwner {
                 SnapshotChange::None
             }
             SessionEvent::Interaction(request) => self.apply_interaction(request),
+            SessionEvent::InputResolved { id } => {
+                let _ = self.event_tx.send(RuntimeEvent::ExtensionUiDismissed {
+                    generation: self.process_generation,
+                    id,
+                });
+                SnapshotChange::None
+            }
             SessionEvent::Activity(event) => {
                 if matches!(
                     event.kind(),

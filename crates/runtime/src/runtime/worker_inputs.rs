@@ -36,7 +36,8 @@ impl RuntimeOwner {
                 id,
             });
         }
-        for input in agents::CallerRegistry::shared().take_child_inputs_for_session(&identity) {
+        for input in agents::CallerRegistry::shared().take_child_interactions_for_session(&identity)
+        {
             let _ = self.event_tx.send(RuntimeEvent::ExtensionUi {
                 generation: self.process_generation,
                 request: child_interaction(input),
@@ -46,7 +47,23 @@ impl RuntimeOwner {
     }
 
     pub(super) fn respond_to_child_input(&mut self, response: &ExtensionUiResponse) -> bool {
+        if let ExtensionUiResponse::Questions(response) = response {
+            if !agents::is_child_input_id(&response.id) {
+                return false;
+            }
+            if let Err(error) =
+                agents::CallerRegistry::shared().respond_to_child_questions(response.clone())
+            {
+                zlog::warn!("Child question response rejected: {error}");
+                let _ = self.event_tx.send(RuntimeEvent::ExtensionUiDismissed {
+                    generation: self.process_generation,
+                    id: response.id.clone(),
+                });
+            }
+            return true;
+        }
         let (id, value, cancel) = match response {
+            ExtensionUiResponse::Questions(_) => unreachable!(),
             ExtensionUiResponse::Value { id, value } => (id, Some(value.clone()), false),
             ExtensionUiResponse::Confirmed { id, confirmed } => (
                 id,
@@ -74,8 +91,11 @@ impl RuntimeOwner {
     }
 }
 
-fn child_interaction(input: agents::WorkerInput) -> ExtensionUiRequest {
-    ExtensionUiRequest::from_worker_input(input)
+fn child_interaction(input: agents::WorkerInteraction) -> ExtensionUiRequest {
+    match input {
+        agents::WorkerInteraction::Input(input) => ExtensionUiRequest::from_worker_input(input),
+        agents::WorkerInteraction::Questions(request) => ExtensionUiRequest::Questions(request),
+    }
 }
 
 #[cfg(test)]

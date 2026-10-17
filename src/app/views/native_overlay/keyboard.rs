@@ -13,6 +13,7 @@ struct Relay {
     owner: AnyWindowHandle,
     popup: AnyWindowHandle,
     offset: Point<Pixels>,
+    passive: bool,
     enabled: bool,
 }
 
@@ -34,9 +35,52 @@ pub(super) fn register(
         owner,
         popup,
         offset,
+        passive: input == OverlayInput::Passive,
         enabled: input == OverlayInput::Modal,
     });
     refresh_owner(owner, cx);
+}
+
+pub(super) fn set_passive_focus(popup: AnyWindowHandle, focused: bool, cx: &mut App) {
+    if !cx.has_global::<Relays>() {
+        return;
+    }
+    let relays = cx.global_mut::<Relays>();
+    let Some(relay) = relays
+        .0
+        .iter_mut()
+        .find(|relay| relay.popup == popup && relay.passive)
+    else {
+        return;
+    };
+    if relay.enabled != focused {
+        relay.enabled = focused;
+        let owner = relay.owner;
+        refresh_owner(owner, cx);
+    }
+}
+
+pub(in crate::app) fn release_passive_focus(window: &Window, cx: &mut App) {
+    if !cx.has_global::<Relays>() {
+        return;
+    }
+    let relays = cx.global_mut::<Relays>();
+    let mut popups = Vec::new();
+    for relay in &mut relays.0 {
+        if relay.owner == window.window_handle() && relay.passive && relay.enabled {
+            relay.enabled = false;
+            popups.push(relay.popup);
+        }
+    }
+    if !popups.is_empty() {
+        refresh_owner(window.window_handle(), cx);
+        // The owner click does not blur a passive popup itself.
+        cx.defer(move |cx| {
+            for popup in popups {
+                let _ = popup.update(cx, |_, window, cx| window.blur(cx));
+            }
+        });
+    }
 }
 
 pub(super) fn unregister(popup: AnyWindowHandle, cx: &mut App) {

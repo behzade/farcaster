@@ -512,6 +512,229 @@ fn thread_settings_notification_reports_external_selection() {
     assert_eq!(session.effort.as_deref(), Some("high"));
 }
 
+#[test]
+fn tool_progress_uses_existing_tool_updates_and_filters_other_threads() {
+    let mut session = test_session();
+    for (method, field) in [
+        ("item/mcpToolCall/progress", "message"),
+        ("item/fileChange/outputDelta", "delta"),
+    ] {
+        for thread in ["other-thread", "thread-1"] {
+            session
+                .queued_inbound
+                .push_back(Ok(CodexInbound::Notification {
+                    method: method.into(),
+                    params: json!({"threadId": thread, "itemId": "tool-1", field: "Working"}),
+                }));
+        }
+        assert_eq!(
+            session.poll(),
+            Some(WorkerEvent::Activity(WorkerActivity::ToolUpdated {
+                id: "tool-1".into(),
+                content: json!([{"type": "text", "text": "Working"}]),
+            }))
+        );
+        assert_eq!(session.poll(), None);
+    }
+}
+
+#[test]
+fn patch_updates_refresh_changes_and_targets_without_starting_another_tool() {
+    let mut session = test_session();
+    let changes = json!([
+        {"path": "/project/a.rs", "kind": {"type": "update", "move_path": null}, "diff": "-old\n+new"},
+        {"path": "/project/b.rs", "kind": {"type": "add"}, "diff": "+added"},
+    ]);
+    for thread in ["other-thread", "thread-1"] {
+        session
+            .queued_inbound
+            .push_back(Ok(CodexInbound::Notification {
+                method: "item/fileChange/patchUpdated".into(),
+                params: json!({"threadId": thread, "itemId": "patch-1", "changes": changes}),
+            }));
+    }
+    let Some(WorkerEvent::Activity(WorkerActivity::ToolMetadataChanged {
+        id,
+        args: Some(args),
+        metadata,
+    })) = session.poll()
+    else {
+        panic!("expected patch metadata update");
+    };
+    assert_eq!(id, "patch-1");
+    assert_eq!(args["changes"], changes);
+    assert_eq!(metadata.targets, ["/project/a.rs", "/project/b.rs"]);
+    assert_eq!(metadata.category, Some(crate::ToolCategory::Change));
+    assert_eq!(session.poll(), None);
+
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "item/fileChange/patchUpdated".into(),
+            params: json!({"threadId": "thread-1", "itemId": "patch-1", "changes": []}),
+        }));
+    let Some(WorkerEvent::Activity(WorkerActivity::ToolMetadataChanged {
+        args: Some(args),
+        metadata,
+        ..
+    })) = session.poll()
+    else {
+        panic!("expected empty patch update");
+    };
+    assert_eq!(args["changes"], json!([]));
+    assert!(metadata.targets.is_empty());
+}
+
+#[test]
+fn malformed_tool_updates_do_not_emit_app_events() {
+    let mut session = test_session();
+    for (method, fields) in [
+        (
+            "item/mcpToolCall/progress",
+            json!({"itemId": "tool-1", "message": 5}),
+        ),
+        ("item/fileChange/outputDelta", json!({"delta": "output"})),
+        (
+            "item/fileChange/patchUpdated",
+            json!({"itemId": "patch-1", "changes": {}}),
+        ),
+        ("item/fileChange/patchUpdated", json!({"changes": []})),
+    ] {
+        let mut params = fields;
+        params["threadId"] = json!("thread-1");
+        session
+            .queued_inbound
+            .push_back(Ok(CodexInbound::Notification {
+                method: method.into(),
+                params,
+            }));
+    }
+    assert_eq!(session.poll(), None);
+}
+
+#[test]
+fn permission_replies_grant_only_requested_permissions_for_the_turn() {
+    use std::io::BufRead as _;
+
+    let permissions = json!({
+        "network": {"enabled": true},
+        "fileSystem": {"entries": [{"access": "write", "path": {"type": "path", "path": "/project/output"}}]},
+    });
+    let (mut session, mut sent) = writable_test_session();
+    for (value, cancel, accepted) in [
+        (Some("Allow"), false, true),
+        (Some("Decline"), false, false),
+        (Some("Allow"), true, false),
+        (None, false, false),
+    ] {
+        session
+            .queued_inbound
+            .push_back(Ok(CodexInbound::ServerRequest {
+                id: CodexRequestId::String("permissions-1".into()),
+                method: "item/permissions/requestApproval".into(),
+                params: json!({
+                    "threadId": "thread-1", "turnId": "turn-1", "itemId": "tool-1",
+                    "cwd": "/project", "reason": "Write export", "permissions": permissions,
+                }),
+            }));
+        let Some(WorkerEvent::NeedsInput(input)) = session.poll() else {
+            panic!("expected permission prompt");
+        };
+        assert!(input.prompt.contains("Write export"));
+        assert!(input.prompt.contains("/project/output"));
+        assert!(input.prompt.contains("this turn only"));
+        session
+            .respond(WorkerInputResponse {
+                id: input.id,
+                value: value.map(str::to_owned),
+                cancel,
+            })
+            .expect("answer permission request");
+        let mut line = String::new();
+        sent.read_line(&mut line).expect("read permission reply");
+        let reply: Value = serde_json::from_str(&line).expect("decode reply");
+        assert_eq!(
+            reply,
+            json!({
+                "id": "permissions-1",
+                "result": {"permissions": if accepted { permissions.clone() } else { json!({}) }, "scope": "turn"},
+            })
+        );
+        assert!(session.pending_inputs.is_empty());
+        assert!(matches!(
+            session.poll(),
+            Some(WorkerEvent::InputResolved { .. })
+        ));
+    }
+    session.close().expect("close fixture");
+}
+
+#[test]
+fn invalid_permission_request_is_rejected_without_a_prompt() {
+    use std::io::BufRead as _;
+
+    let (mut session, mut sent) = writable_test_session();
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::ServerRequest {
+            id: CodexRequestId::Number(3),
+            method: "item/permissions/requestApproval".into(),
+            params: json!({"reason": "Missing permissions"}),
+        }));
+    assert_eq!(session.poll(), None);
+    assert!(session.pending_inputs.is_empty());
+    let mut line = String::new();
+    sent.read_line(&mut line)
+        .expect("read invalid request reply");
+    let reply: Value = serde_json::from_str(&line).expect("decode reply");
+    assert_eq!(reply["id"], 3);
+    assert_eq!(reply["error"]["code"], -32602);
+    session.close().expect("close fixture");
+}
+
+#[test]
+fn approval_replies_preserve_numeric_and_string_request_ids() {
+    use std::io::BufRead as _;
+
+    let (mut session, mut sent) = writable_test_session();
+    let mut inputs = Vec::new();
+    for id in [
+        CodexRequestId::Number(7),
+        CodexRequestId::String("7".into()),
+    ] {
+        session
+            .queued_inbound
+            .push_back(Ok(CodexInbound::ServerRequest {
+                id,
+                method: "item/commandExecution/requestApproval".into(),
+                params: json!({"command": "echo hello"}),
+            }));
+        let Some(WorkerEvent::NeedsInput(input)) = session.poll() else {
+            panic!("expected approval prompt");
+        };
+        inputs.push(input.id);
+    }
+    assert_ne!(inputs[0], inputs[1]);
+    for (id, native_id) in inputs.into_iter().zip([json!(7), json!("7")]) {
+        session
+            .respond(WorkerInputResponse {
+                id,
+                value: Some("Allow".into()),
+                cancel: false,
+            })
+            .expect("answer approval");
+        let mut line = String::new();
+        sent.read_line(&mut line).expect("read approval reply");
+        assert_eq!(
+            serde_json::from_str::<Value>(&line).expect("decode reply"),
+            json!({
+                "id": native_id, "result": {"decision": "accept"},
+            })
+        );
+    }
+    session.close().expect("close fixture");
+}
+
 fn test_session() -> CodexWorkerSession {
     use crate::core::{CallerProfile, CallerRegistry};
 
@@ -560,6 +783,10 @@ fn test_session() -> CodexWorkerSession {
         manual_compaction: false,
         pending: HashMap::new(),
         pending_inputs: HashMap::new(),
+        pending_questions: HashMap::new(),
+        async_answers: VecDeque::new(),
+        question_submissions: HashMap::new(),
+        seen_async_questions: std::collections::HashSet::new(),
         prompt_requests: HashMap::new(),
         client_submissions: HashMap::new(),
         native_inputs: HashMap::new(),
@@ -573,6 +800,422 @@ fn test_session() -> CodexWorkerSession {
         events: VecDeque::new(),
         turn_error: None,
     }
+}
+
+fn question_request(id: CodexRequestId, blocking: bool, thread: &str, turn: &str) -> CodexInbound {
+    CodexInbound::ServerRequest {
+        id,
+        method: "item/tool/requestUserInput".into(),
+        params: json!({"threadId":thread, "turnId":turn, "itemId":"question-tool", "isBlocking":blocking,
+            "questions":[{"id":"choice", "header":"Choice", "question":"Which?", "options":[{"label":"A", "description":"First"}]}]}),
+    }
+}
+
+fn async_question_message(item_id: &str) -> CodexInbound {
+    CodexInbound::Notification {
+        method: "item/completed".into(),
+        params: json!({"threadId":"thread-1", "turnId":"turn-1", "item":{
+            "type":"agentMessage", "id":item_id, "delivery":"async", "phase":"final_answer",
+            "text":"Which?\n- A\n- B", "questions":[{"title":"Which?", "options":["A","B"]}]
+        }}),
+    }
+}
+
+#[test]
+fn async_agent_message_exposes_questions_without_replacing_final_output() {
+    let mut session = test_session();
+    session.current_turn = Some("turn-1".into());
+    session.output = "Existing output".into();
+    session
+        .queued_inbound
+        .push_back(Ok(async_question_message("question-item")));
+    let Some(WorkerEvent::QuestionsRequested(request)) = session.poll() else {
+        panic!("async questions must reach the user");
+    };
+    assert!(!request.blocking);
+    assert_eq!(request.questions[0].prompt, "Which?");
+    assert_eq!(request.questions[0].options[1].label, "B");
+    assert!(request.questions[0].allow_free_text);
+    assert_eq!(session.output, "Existing output");
+    session
+        .queued_inbound
+        .push_back(Ok(async_question_message("question-item")));
+    assert_eq!(
+        session.poll(),
+        None,
+        "same item must not create duplicate questions"
+    );
+}
+
+fn receive_async_question(session: &mut CodexWorkerSession) -> crate::QuestionRequest {
+    session
+        .queued_inbound
+        .push_back(Ok(async_question_message("question-item")));
+    match session.poll() {
+        Some(WorkerEvent::QuestionsRequested(request)) => request,
+        event => panic!("expected question batch, got {event:?}"),
+    }
+}
+
+fn answer_async_question(session: &mut CodexWorkerSession, request: &crate::QuestionRequest) {
+    session
+        .respond_questions(crate::QuestionResponse {
+            id: request.id.clone(),
+            answers: std::collections::BTreeMap::from([(
+                request.questions[0].id.clone(),
+                vec!["Custom answer".into()],
+            )]),
+            cancelled: false,
+        })
+        .unwrap();
+}
+
+fn read_question_wire(sent: &mut std::io::BufReader<std::process::ChildStdout>) -> Value {
+    use std::io::BufRead as _;
+    let mut line = String::new();
+    sent.read_line(&mut line).unwrap();
+    serde_json::from_str(&line).unwrap()
+}
+
+fn question_reply(
+    session: &mut CodexWorkerSession,
+    wire: &Value,
+    result: Value,
+) -> Vec<WorkerEvent> {
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: serde_json::from_value(wire["id"].clone()).unwrap(),
+        result,
+    }));
+    std::iter::from_fn(|| session.poll()).collect()
+}
+
+fn question_delivered(session: &mut CodexWorkerSession, wire: &Value) -> Vec<WorkerEvent> {
+    session.queued_inbound.push_back(Ok(CodexInbound::Notification {
+        method: "item/started".into(),
+        params: json!({"threadId":"thread-1", "turnId":"turn-1", "item":{
+            "type":"userMessage", "id":"input", "clientId":wire["params"]["clientUserMessageId"],
+            "content":wire["params"]["input"],
+        }}),
+    }));
+    std::iter::from_fn(|| session.poll()).collect()
+}
+
+#[test]
+fn async_answers_resolve_on_native_delivery_during_or_after_a_turn() {
+    for completed in [false, true] {
+        let (mut session, mut sent) = writable_test_session();
+        session.current_turn = Some("turn-1".into());
+        let request = receive_async_question(&mut session);
+        if completed {
+            session.queued_inbound.push_back(Ok(CodexInbound::Notification {
+                method: "turn/completed".into(),
+                params: json!({"threadId":"thread-1", "turn":{"id":"turn-1", "status":"completed"}}),
+            }));
+            assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
+        }
+        answer_async_question(&mut session, &request);
+        answer_async_question(&mut session, &request);
+        assert!(session.poll().is_none());
+        let wire = read_question_wire(&mut sent);
+        assert_eq!(
+            wire["method"],
+            if completed {
+                "turn/start"
+            } else {
+                "turn/steer"
+            }
+        );
+        assert_eq!(session.question_submissions.len(), 1);
+        let submission_id = session.question_submissions.keys().next().unwrap().clone();
+        let events = question_reply(
+            &mut session,
+            &wire,
+            if completed {
+                json!({"turn":{"id":"turn-2", "status":"inProgress"}})
+            } else {
+                json!({"turnId":"turn-1"})
+            },
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, WorkerEvent::InputResolved { .. }))
+        );
+        assert!(session.pending_questions.contains_key(&request.id));
+        assert!(
+            session.poll_prompt_ack().is_none(),
+            "internal question admission stays in adapter"
+        );
+        let events = question_delivered(&mut session, &wire);
+        assert!(events.contains(&WorkerEvent::InputResolved {
+            id: request.id.clone()
+        }));
+        assert!(events.iter().any(|event| matches!(event,
+            WorkerEvent::Activity(WorkerActivity::InputDelivered { submission_id: Some(id), message, .. })
+            if *id == submission_id && message == "> Which?\n\nCustom answer")));
+        assert!(session.question_submissions.is_empty());
+        session.close().unwrap();
+    }
+}
+
+#[test]
+fn async_answers_share_handoff_tracking_without_replaying_delivered_answers() {
+    for delivered in [false, true] {
+        let (mut session, mut sent) = writable_test_session();
+        session.current_turn = Some("turn-1".into());
+        let request = receive_async_question(&mut session);
+        answer_async_question(&mut session, &request);
+        assert!(session.poll().is_none());
+        let answer = read_question_wire(&mut sent);
+        question_reply(&mut session, &answer, json!({"turnId":"turn-1"}));
+        if delivered {
+            question_delivered(&mut session, &answer);
+        }
+        session
+            .submit_prompt(
+                "followup".into(),
+                "Separate instruction".into(),
+                WorkerSendMode::Steer,
+                vec![],
+            )
+            .unwrap();
+        let followup = read_question_wire(&mut sent);
+        question_reply(&mut session, &followup, json!({"turnId":"turn-1"}));
+        session.apply_steering().unwrap();
+        assert_eq!(read_question_wire(&mut sent)["method"], "turn/interrupt");
+        session.queued_inbound.push_back(Ok(CodexInbound::Notification {
+            method: "turn/completed".into(),
+            params: json!({"threadId":"thread-1", "turn":{"id":"turn-1", "status":"interrupted"}}),
+        }));
+        while session.poll().is_some() {}
+        let replay = read_question_wire(&mut sent);
+        assert_eq!(replay["method"], "turn/start");
+        let text = replay["params"]["input"].to_string();
+        assert!(text.contains("Separate instruction"));
+        assert_eq!(text.contains("Custom answer"), !delivered);
+        let events = question_delivered(&mut session, &replay);
+        assert_eq!(
+            events.contains(&WorkerEvent::InputResolved { id: request.id }),
+            !delivered
+        );
+        session.close().unwrap();
+    }
+}
+
+#[test]
+fn rejected_async_answers_preserve_text_for_retry_and_abort_does_not_reopen_them() {
+    for (running, abort, competing) in [
+        (false, false, false),
+        (false, true, false),
+        (true, false, false),
+        (false, false, true),
+    ] {
+        let (mut session, mut sent) = writable_test_session();
+        if running {
+            session.current_turn = Some("turn-1".into());
+        }
+        let request = receive_async_question(&mut session);
+        answer_async_question(&mut session, &request);
+        assert!(session.poll().is_none());
+        let wire = read_question_wire(&mut sent);
+        if competing {
+            session
+                .submit_prompt(
+                    "user".into(),
+                    "Other prompt".into(),
+                    WorkerSendMode::Prompt,
+                    vec![],
+                )
+                .unwrap();
+            read_question_wire(&mut sent);
+        }
+        if abort {
+            session.abort().unwrap();
+            assert!(matches!(
+                session.poll(),
+                Some(WorkerEvent::InputResolved { .. })
+            ));
+        }
+        session.queued_inbound.push_back(Ok(CodexInbound::Error {
+            id: serde_json::from_value(wire["id"].clone()).unwrap(),
+            error: super::super::contract::CodexRpcError {
+                code: -32600,
+                message: "unavailable".into(),
+                data: Value::Null,
+            },
+        }));
+        let events: Vec<_> = std::iter::from_fn(|| session.poll()).collect();
+        if abort {
+            assert!(events.is_empty());
+            let cleanup = read_question_wire(&mut sent);
+            assert_eq!(cleanup["method"], "thread/backgroundTerminals/clean");
+            assert!(
+                question_reply(&mut session, &cleanup, json!({}))
+                    .iter()
+                    .any(|event| matches!(event, WorkerEvent::Settled { .. }))
+            );
+            assert!(session.abort_deadline.is_none());
+        } else {
+            assert_eq!(
+                events
+                    .iter()
+                    .any(|event| matches!(event, WorkerEvent::Settled { .. })),
+                !running && !competing
+            );
+            if competing {
+                assert_eq!(session.activity(), WorkerActivityState::Starting);
+            }
+            let retry = events
+                .iter()
+                .find_map(|event| match event {
+                    WorkerEvent::QuestionsRequested(request) => Some(request),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(retry.questions[0].options[0].label, "Custom answer");
+            assert_eq!(
+                retry.questions[0].options[1..],
+                request.questions[0].options
+            );
+            assert!(session.question_submissions.is_empty());
+        }
+        session.close().unwrap();
+    }
+}
+
+#[test]
+fn concurrent_questions_keep_streaming_and_reply_to_exact_requests() {
+    let (mut session, mut sent) = writable_test_session();
+    session.current_turn = Some("turn-1".into());
+    let mut requests = Vec::new();
+    for (id, blocking) in [
+        (CodexRequestId::Number(9), false),
+        (CodexRequestId::String("9".into()), true),
+    ] {
+        session
+            .queued_inbound
+            .push_back(Ok(question_request(id, blocking, "thread-1", "turn-1")));
+        let Some(WorkerEvent::QuestionsRequested(request)) = session.poll() else {
+            panic!("question batch");
+        };
+        assert_eq!(request.blocking, blocking);
+        requests.push(request);
+    }
+    assert_ne!(requests[0].id, requests[1].id);
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "item/agentMessage/delta".into(),
+            params: json!({"threadId":"thread-1", "delta":"Still working"}),
+        }));
+    assert!(
+        matches!(session.poll(), Some(WorkerEvent::Activity(WorkerActivity::TextDelta { delta, .. })) if delta == "Still working")
+    );
+    for (request, native) in requests.iter().zip([json!(9), json!("9")]) {
+        session
+            .respond_questions(crate::QuestionResponse {
+                id: request.id.clone(),
+                answers: std::collections::BTreeMap::from([("choice".into(), vec!["A".into()])]),
+                cancelled: false,
+            })
+            .expect("answer");
+        assert_eq!(
+            read_question_wire(&mut sent),
+            json!({"id":native,"result":{"answers":{"choice":{"answers":["A"]}}}})
+        );
+        assert_eq!(
+            session.poll(),
+            Some(WorkerEvent::InputResolved {
+                id: request.id.clone()
+            })
+        );
+    }
+    assert!(session.pending_questions.is_empty());
+    session.close().expect("close fixture");
+}
+
+#[test]
+fn server_resolution_is_thread_scoped_and_late_answers_are_harmless() {
+    let mut session = test_session();
+    session.queued_inbound.push_back(Ok(question_request(
+        CodexRequestId::Number(9),
+        false,
+        "child-thread",
+        "turn-1",
+    )));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::QuestionsRequested(_))
+    ));
+    for thread in ["other-thread", "child-thread"] {
+        session
+            .queued_inbound
+            .push_back(Ok(CodexInbound::Notification {
+                method: "serverRequest/resolved".into(),
+                params: json!({"threadId":thread,"requestId":9}),
+            }));
+    }
+    assert_eq!(
+        session.poll(),
+        Some(WorkerEvent::InputResolved { id: "9".into() })
+    );
+    assert!(session.pending_questions.is_empty());
+    session
+        .respond_questions(crate::QuestionResponse {
+            id: "9".into(),
+            answers: Default::default(),
+            cancelled: true,
+        })
+        .expect("late answer must not write to closed transport or fail the worker");
+    assert_eq!(session.poll(), None);
+}
+
+#[test]
+fn completed_turn_clears_only_its_pending_questions_and_approvals() {
+    let mut session = test_session();
+    session.current_turn = Some("turn-1".into());
+    for (id, thread) in [(1, "thread-1"), (2, "child-thread")] {
+        session.queued_inbound.push_back(Ok(question_request(
+            CodexRequestId::Number(id),
+            false,
+            thread,
+            "turn-1",
+        )));
+        assert!(matches!(
+            session.poll(),
+            Some(WorkerEvent::QuestionsRequested(_))
+        ));
+    }
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::ServerRequest {
+            id: CodexRequestId::Number(3),
+            method: "item/fileChange/requestApproval".into(),
+            params: json!({"threadId":"thread-1","turnId":"turn-1"}),
+        }));
+    assert!(matches!(session.poll(), Some(WorkerEvent::NeedsInput(_))));
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "turn/completed".into(),
+            params: json!({"threadId":"thread-1","turn":{"id":"turn-1","status":"interrupted"}}),
+        }));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
+    let mut resolved = Vec::new();
+    while let Some(WorkerEvent::InputResolved { id }) = session.poll() {
+        resolved.push(id);
+    }
+    resolved.sort();
+    assert_eq!(resolved, ["1", "3"]);
+    assert!(session.pending_questions.contains_key("2"));
+    assert!(session.pending_inputs.is_empty());
+    session
+        .respond(WorkerInputResponse {
+            id: "3".into(),
+            value: Some("allow".into()),
+            cancel: false,
+        })
+        .expect("late approval must not fail the worker or write to the closed transport");
 }
 
 #[test]

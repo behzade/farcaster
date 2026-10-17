@@ -1,5 +1,97 @@
 use super::*;
 
+fn questions(id: &str, blocking: bool) -> ExtensionUiRequest {
+    ExtensionUiRequest::Questions(crate::agents::QuestionRequest {
+        id: id.into(),
+        blocking,
+        questions: ["first", "second"]
+            .into_iter()
+            .map(|id| crate::agents::Question {
+                id: id.into(),
+                header: id.into(),
+                prompt: "Which?".into(),
+                options: vec![],
+                allow_free_text: true,
+                secret: false,
+            })
+            .collect(),
+    })
+}
+
+#[test]
+fn question_batches_keep_answers_across_blocking_prompt_and_submit_once() {
+    let mut state = ExtensionUiState::default();
+    state.apply(questions("async", false));
+    assert!(!state.dialog.as_ref().unwrap().is_blocking());
+    assert!(
+        state
+            .answer_question("async", "first", "one".into())
+            .unwrap()
+            .is_none()
+    );
+    state.apply(input("approval"));
+    state.apply(input("second-approval"));
+    assert_eq!(state.dialog.as_ref().unwrap().dialog_id(), Some("approval"));
+    state.cancel("approval");
+    assert_eq!(
+        state.dialog.as_ref().unwrap().dialog_id(),
+        Some("second-approval")
+    );
+    state.cancel("second-approval");
+    assert_eq!(state.current_question().unwrap().id, "second");
+    let Some(ExtensionUiResponse::Questions(response)) = state
+        .answer_question("async", "second", "two".into())
+        .unwrap()
+    else {
+        panic!("structured response");
+    };
+    assert_eq!(
+        response.answers,
+        BTreeMap::from([
+            ("first".into(), vec!["one".into()]),
+            ("second".into(), vec!["two".into()])
+        ])
+    );
+    assert!(!response.cancelled);
+    assert!(state.dialog.is_none());
+    assert!(
+        state
+            .question_progress
+            .values()
+            .all(|progress| progress.answers.is_empty())
+    );
+}
+
+#[test]
+fn question_cancellation_and_resolution_discard_drafts_without_answering() {
+    let mut state = ExtensionUiState::default();
+    state.apply(questions("one", false));
+    state.apply(questions("two", false));
+    state.apply(questions("two", false));
+    state
+        .answer_question("one", "first", "draft".into())
+        .unwrap();
+    assert!(
+        state
+            .answer_question("one", "first", "stale double click".into())
+            .is_err()
+    );
+    assert_eq!(state.current_question().unwrap().id, "second");
+    assert_eq!(state.dismiss_dialog("one"), DialogDismissal::ActiveWithNext);
+    assert!(
+        state
+            .question_progress
+            .values()
+            .all(|progress| progress.answers.is_empty())
+    );
+    let Some(ExtensionUiResponse::Questions(response)) = state.cancel("two") else {
+        panic!("question cancellation");
+    };
+    assert!(response.cancelled);
+    assert!(response.answers.is_empty());
+    assert!(state.dialog.is_none(), "duplicate batch must not reappear");
+}
+
 fn input(id: &str) -> ExtensionUiRequest {
     ExtensionUiRequest::Input {
         id: id.into(),
@@ -209,4 +301,32 @@ fn reset_clears_every_session_owned_surface() {
     });
     state.reset();
     assert_eq!(state, ExtensionUiState::default());
+}
+
+#[test]
+fn question_drafts_stay_with_their_request_and_clear_on_answer_or_resolution() {
+    let mut state = ExtensionUiState::default();
+    state.apply(questions("one", false));
+    state.apply(questions("two", false));
+    let one = ("one".into(), "first".into());
+    let two = ("two".into(), "first".into());
+    state.remember_question_draft(&one, "First draft".into());
+    state.remember_question_draft(&two, "Second draft".into());
+    state.apply(input("approval"));
+    state.cancel("approval");
+    assert_eq!(state.question_draft(&one), "First draft");
+    state
+        .answer_question("one", "first", "Submitted".into())
+        .unwrap();
+    state.remember_question_draft(&one, "Stale input".into());
+    assert!(state.question_draft(&one).is_empty());
+    assert_eq!(state.question_draft(&two), "Second draft");
+    state.dismiss_dialog("two");
+    state.remember_question_draft(&two, "Stale dismissed input".into());
+    assert!(
+        state
+            .question_progress
+            .values()
+            .all(|progress| progress.drafts.is_empty())
+    );
 }

@@ -44,6 +44,9 @@ pub use contract::{
     StartWorker, SteerErrorRecovery, WorkerContext, WorkerInput, WorkerInputResponse, effort_rank,
     model_efforts, valid_worker_name, validate_child_access,
 };
+pub use contract::{
+    Question, QuestionOption, QuestionRequest, QuestionResponse, WorkerInteraction,
+};
 
 #[derive(Clone, Default)]
 pub struct AgentLaunchConfig {

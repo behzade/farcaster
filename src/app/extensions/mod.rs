@@ -33,10 +33,18 @@ pub(crate) struct NotificationRecord {
     pub tone: NotifyTone,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::app) struct QuestionProgress {
+    request: crate::agents::QuestionRequest,
+    answers: BTreeMap<String, Vec<String>>,
+    drafts: BTreeMap<String, String>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ExtensionUiState {
     pub dialog: Option<ExtensionUiRequest>,
     queued_dialogs: VecDeque<ExtensionUiRequest>,
+    pub(in crate::app) question_progress: BTreeMap<String, QuestionProgress>,
     pub notifications: VecDeque<Notification>,
     pub notification_history: VecDeque<NotificationRecord>,
     unseen_notifications: usize,
@@ -66,11 +74,41 @@ pub(crate) enum DialogDismissal {
 impl ExtensionUiState {
     pub(crate) fn apply(&mut self, request: ExtensionUiRequest) -> ExtensionEffect {
         match request {
-            request @ (ExtensionUiRequest::WorkerModel { .. }
+            request @ (ExtensionUiRequest::Questions(_)
+            | ExtensionUiRequest::WorkerModel { .. }
             | ExtensionUiRequest::Select { .. }
             | ExtensionUiRequest::Confirm { .. }
             | ExtensionUiRequest::Input { .. }
             | ExtensionUiRequest::Editor { .. }) => {
+                if self.dialog.as_ref().and_then(ExtensionUiRequest::dialog_id)
+                    == request.dialog_id()
+                    || self
+                        .queued_dialogs
+                        .iter()
+                        .any(|q| q.dialog_id() == request.dialog_id())
+                {
+                    return ExtensionEffect::None;
+                }
+                if let ExtensionUiRequest::Questions(batch) = &request
+                    && self
+                        .question_progress
+                        .get(&batch.id)
+                        .is_none_or(|saved| saved.request != *batch)
+                {
+                    self.question_progress.insert(
+                        batch.id.clone(),
+                        QuestionProgress {
+                            request: batch.clone(),
+                            answers: BTreeMap::new(),
+                            drafts: BTreeMap::new(),
+                        },
+                    );
+                }
+                if request.is_blocking() && self.dialog.as_ref().is_some_and(|d| !d.is_blocking()) {
+                    if let Some(previous) = self.dialog.take() {
+                        self.queued_dialogs.push_front(previous);
+                    }
+                }
                 if self.dialog.is_none() {
                     self.dialog = Some(request);
                     ExtensionEffect::DialogOpened
@@ -167,6 +205,71 @@ impl ExtensionUiState {
         self.notifications.len() != before
     }
 
+    pub(crate) fn current_question(&self) -> Option<&crate::agents::Question> {
+        let ExtensionUiRequest::Questions(request) = self.dialog.as_ref()? else {
+            return None;
+        };
+        let answers = self
+            .question_progress
+            .get(&request.id)
+            .map(|progress| &progress.answers);
+        request
+            .questions
+            .iter()
+            .find(|question| answers.is_none_or(|a| !a.contains_key(&question.id)))
+    }
+
+    pub(crate) fn remember_question_draft(&mut self, key: &(String, String), value: String) {
+        if let Some(progress) = self.question_progress.get_mut(&key.0)
+            && progress.request.questions.iter().any(|q| q.id == key.1)
+            && !progress.answers.contains_key(&key.1)
+        {
+            progress.drafts.insert(key.1.clone(), value);
+        }
+    }
+
+    pub(crate) fn question_draft(&self, key: &(String, String)) -> String {
+        self.question_progress
+            .get(&key.0)
+            .and_then(|progress| progress.drafts.get(&key.1))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn answer_question(
+        &mut self,
+        id: &str,
+        question_id: &str,
+        value: String,
+    ) -> Result<Option<ExtensionUiResponse>, ()> {
+        if self.dialog.as_ref().and_then(ExtensionUiRequest::dialog_id) != Some(id) {
+            return Err(());
+        }
+        let question = self.current_question().ok_or(())?;
+        if question.id != question_id
+            || value.trim().is_empty()
+            || (!question.allow_free_text && !question.options.iter().any(|o| o.label == value))
+        {
+            return Err(());
+        }
+        let question_id = question.id.clone();
+        let progress = self.question_progress.get_mut(id).ok_or(())?;
+        progress.drafts.remove(&question_id);
+        progress.answers.insert(question_id, vec![value]);
+        if self.current_question().is_some() {
+            return Ok(None);
+        }
+        let answers = self.question_progress.remove(id).ok_or(())?.answers;
+        self.take_dialog(id);
+        Ok(Some(ExtensionUiResponse::Questions(
+            crate::agents::QuestionResponse {
+                id: id.to_owned(),
+                answers,
+                cancelled: false,
+            },
+        )))
+    }
+
     pub(crate) fn respond_value(&mut self, id: &str, value: String) -> Option<ExtensionUiResponse> {
         self.take_dialog(id).map(|_| ExtensionUiResponse::Value {
             id: id.to_owned(),
@@ -187,11 +290,19 @@ impl ExtensionUiState {
     }
 
     pub(crate) fn cancel(&mut self, id: &str) -> Option<ExtensionUiResponse> {
-        self.take_dialog(id)
-            .map(|_| ExtensionUiResponse::Cancelled {
+        self.take_dialog(id).map(|request| match request {
+            ExtensionUiRequest::Questions(_) => {
+                ExtensionUiResponse::Questions(crate::agents::QuestionResponse {
+                    id: id.to_owned(),
+                    answers: BTreeMap::new(),
+                    cancelled: true,
+                })
+            }
+            _ => ExtensionUiResponse::Cancelled {
                 id: id.to_owned(),
                 cancelled: true,
-            })
+            },
+        })
     }
 
     pub(crate) fn dismiss_dialog(&mut self, id: &str) -> DialogDismissal {
@@ -203,6 +314,7 @@ impl ExtensionUiState {
                 DialogDismissal::ActiveFinal
             };
         }
+        self.question_progress.remove(id);
         let queued = self.queued_dialogs.len();
         self.queued_dialogs
             .retain(|request| request.dialog_id() != Some(id));
@@ -217,8 +329,14 @@ impl ExtensionUiState {
         if self.dialog.as_ref().and_then(ExtensionUiRequest::dialog_id) != Some(id) {
             return None;
         }
+        self.question_progress.remove(id);
         let taken = self.dialog.take();
-        self.dialog = self.queued_dialogs.pop_front();
+        self.dialog = self
+            .queued_dialogs
+            .iter()
+            .position(ExtensionUiRequest::is_blocking)
+            .and_then(|index| self.queued_dialogs.remove(index))
+            .or_else(|| self.queued_dialogs.pop_front());
         taken
     }
 }

@@ -47,6 +47,9 @@ impl IdleRetirement {
                     self.requests.remove(id);
                 }
             }
+            SessionEvent::InputResolved { id } => {
+                self.dialogs.remove(id);
+            }
             SessionEvent::Interaction(request) => {
                 if let Some(id) = request.dialog_id() {
                     self.dialogs.insert(id.to_owned());
@@ -73,10 +76,7 @@ impl IdleRetirement {
     }
 
     pub(super) fn responded(&mut self, response: &ExtensionUiResponse) {
-        let (ExtensionUiResponse::Value { id, .. }
-        | ExtensionUiResponse::Confirmed { id, .. }
-        | ExtensionUiResponse::Cancelled { id, .. }) = response;
-        self.dialogs.remove(id);
+        self.dialogs.remove(response.id());
     }
 }
 

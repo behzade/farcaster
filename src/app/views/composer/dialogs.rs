@@ -1,4 +1,5 @@
 mod confirm;
+mod questions;
 mod select;
 mod text_input;
 
@@ -38,6 +39,37 @@ impl FarcasterApp {
             return div().into_any_element();
         }
         let (title, body) = match dialog {
+            ExtensionUiRequest::Questions(request) => {
+                let Some(question) = self.extensions.active.current_question() else {
+                    return div().into_any_element();
+                };
+                let index = request
+                    .questions
+                    .iter()
+                    .position(|q| q.id == question.id)
+                    .unwrap_or(0)
+                    + 1;
+                let title = format!(
+                    "{} ({}/{}){}",
+                    question.header,
+                    index,
+                    request.questions.len(),
+                    if request.blocking {
+                        ""
+                    } else {
+                        " · Agent is continuing"
+                    }
+                );
+                (
+                    title.into(),
+                    questions::render(
+                        &request.id,
+                        question,
+                        &self.extensions.question_input,
+                        entity.clone(),
+                    ),
+                )
+            }
             ExtensionUiRequest::WorkerModel { id, profile, .. } => {
                 let title = format!("{profile} needs a model");
                 let picker_entity = entity.clone();

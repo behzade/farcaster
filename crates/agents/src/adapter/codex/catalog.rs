@@ -683,6 +683,8 @@ pub(super) fn user_content(content: Option<&Value>) -> Vec<Value> {
                     .then(|| json!({"type":"image", "mimeType":mime, "data":data}));
             }
             let text = string(part, &["text"])?;
+            let display = super::questions::async_reply_display(text);
+            let text = display.as_deref().unwrap_or(text);
             Some(json!({"type": "text", "text": text}))
         })
         .collect()

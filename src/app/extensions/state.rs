@@ -28,6 +28,20 @@ impl FarcasterApp {
         if self.workspace.runtime_picker.worker.is_some() {
             self.workspace.runtime_picker = Default::default();
         }
+        self.extensions.save_question_draft(cx);
+        let state = self
+            .extensions
+            .parked
+            .as_mut()
+            .unwrap_or(&mut self.extensions.active);
+        if let Some(session) = self.snapshot.selected_session.as_ref()
+            && !state.question_progress.is_empty()
+        {
+            self.extensions.question_sessions.insert(
+                session.clone(),
+                std::mem::take(&mut state.question_progress),
+            );
+        }
         self.extensions.active.reset();
         self.extensions.parked = None;
         self.activity.background_jobs.clear();

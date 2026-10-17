@@ -2,6 +2,91 @@ use super::*;
 use crate::Backend;
 
 #[test]
+fn child_question_answers_keep_native_request_and_question_ids_and_expire() -> Result<(), String> {
+    let registry = CallerRegistry::default();
+    let parent = registry.issue(
+        Path::new("/project"),
+        CallerProfile {
+            backend: Backend::Codex,
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    parent.bind("parent");
+    let context = registry.resolve(parent.token())?;
+    let identity = CallerSession::from_context(&context).native;
+    let child = WorkerParent::new(
+        context.worker_id,
+        context.project,
+        "child".into(),
+        context.session,
+    );
+    let (sender, receiver) = mpsc::channel();
+    let request = QuestionRequest {
+        id: "native-request".into(),
+        blocking: false,
+        questions: vec![crate::Question {
+            id: "native-question".into(),
+            header: "Header".into(),
+            prompt: "Question?".into(),
+            options: vec![],
+            allow_free_text: true,
+            secret: false,
+        }],
+    };
+    let lease = registry.request_child_questions(&child, request.clone(), sender.clone())?;
+    assert!(
+        registry.take_child_inputs_for_session(&identity).is_empty(),
+        "legacy accessor must not consume questions"
+    );
+    let inputs = registry.take_child_interactions_for_session(&identity);
+    let WorkerInteraction::Questions(projected) = &inputs[0] else {
+        panic!("questions");
+    };
+    assert!(!projected.blocking);
+    assert!(projected.questions[0].prompt.contains("child"));
+    assert!(
+        registry
+            .respond_to_child_input(WorkerInputResponse {
+                id: projected.id.clone(),
+                value: Some("incorrect response type".into()),
+                cancel: false
+            })
+            .is_err()
+    );
+    registry.respond_to_child_questions(QuestionResponse {
+        id: projected.id.clone(),
+        answers: std::collections::BTreeMap::from([(
+            "native-question".into(),
+            vec!["answer".into()],
+        )]),
+        cancelled: false,
+    })?;
+    let response = receiver.try_recv().unwrap();
+    assert_eq!(response.id, "native-request");
+    assert_eq!(response.answers["native-question"], ["answer"]);
+    drop(lease);
+    assert!(
+        registry
+            .take_expired_child_inputs_for_session(&identity)
+            .is_empty()
+    );
+    let lease = registry.request_child_questions(&child, request, sender)?;
+    let projected = registry
+        .take_child_interactions_for_session(&identity)
+        .pop()
+        .unwrap();
+    drop(lease);
+    assert_eq!(
+        registry.take_expired_child_inputs_for_session(&identity),
+        [projected.id()]
+    );
+    Ok(())
+}
+
+#[test]
 fn retired_parent_wakes_and_routes_nested_child_input_with_exact_profile() -> Result<(), String> {
     let registry = CallerRegistry::default();
     let profile = CallerProfile {

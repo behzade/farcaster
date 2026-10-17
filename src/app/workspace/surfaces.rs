@@ -146,7 +146,13 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn composer_region_focused(&self, window: &Window, cx: &gpui::App) -> bool {
-        let focus = if self.extensions.active.dialog.is_some() {
+        let focus = if self
+            .extensions
+            .active
+            .dialog
+            .as_ref()
+            .is_some_and(ExtensionUiRequest::is_blocking)
+        {
             &self.extensions.dialog_focus
         } else {
             &self.composer.focus
@@ -158,13 +164,16 @@ impl FarcasterApp {
         if let Some(focus) = self.worker_model_picker_focus(cx) {
             return focus;
         }
-        match self.extensions.active.dialog {
-            Some(ExtensionUiRequest::Input { .. } | ExtensionUiRequest::Editor { .. }) => {
-                self.extensions.dialog_input.read(cx).focus_handle(cx)
-            }
-            Some(_) => self.extensions.dialog_focus.clone(),
-            None => self.composer.focus.clone(),
+        if self
+            .extensions
+            .active
+            .dialog
+            .as_ref()
+            .is_none_or(|d| !d.is_blocking())
+        {
+            return self.composer.focus.clone();
         }
+        self.extensions.dialog_input_focus(cx)
     }
 
     pub(in crate::app) fn restore_overlay_focus(
@@ -557,8 +566,9 @@ impl FarcasterApp {
                 .dialog
                 .as_ref()
                 .is_some_and(|dialog| {
-                    !matches!(dialog, ExtensionUiRequest::WorkerModel { .. })
-                        || self.workspace.runtime_picker.open
+                    dialog.is_blocking()
+                        && (!matches!(dialog, ExtensionUiRequest::WorkerModel { .. })
+                            || self.workspace.runtime_picker.open)
                 })
     }
 
@@ -606,7 +616,10 @@ impl FarcasterApp {
                 .active
                 .dialog
                 .as_ref()
-                .is_some_and(|dialog| !matches!(dialog, ExtensionUiRequest::WorkerModel { .. }))
+                .is_some_and(|dialog| {
+                    dialog.is_blocking()
+                        && !matches!(dialog, ExtensionUiRequest::WorkerModel { .. })
+                })
     }
 
     pub(in crate::app) fn workspace_switch_blocked(&self) -> bool {
@@ -644,6 +657,40 @@ impl FarcasterApp {
     ) {
         let value = self.extensions.dialog_input.read(cx).value().to_string();
         self.respond_dialog_value(id, value, window, cx);
+    }
+
+    pub(in crate::app) fn respond_question_text(
+        &mut self,
+        id: String,
+        question_id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let value = self.extensions.question_input.read(cx).value().to_string();
+        self.respond_question_value(id, question_id, value, window, cx);
+    }
+
+    pub(in crate::app) fn respond_question_value(
+        &mut self,
+        id: String,
+        question_id: String,
+        value: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Ok(response) = self
+            .extensions
+            .active
+            .answer_question(&id, &question_id, value)
+        {
+            if let Some(response) = response {
+                self.send(RuntimeCommand::ExtensionResponse(response), cx);
+            }
+            self.extensions
+                .question_input
+                .update(cx, |input, cx| input.set_value(String::new(), window, cx));
+            self.advance_or_restore_dialog(window, cx);
+        }
     }
 
     pub(in crate::app) fn respond_dialog_value(
@@ -737,6 +784,10 @@ impl FarcasterApp {
             self.extensions.pending_dialog_setup = true;
             cx.notify();
         } else {
+            self.extensions.question_input_key = None;
+            self.extensions
+                .question_input
+                .update(cx, |input, cx| input.set_value(String::new(), window, cx));
             self.extensions.dialog_input.update(cx, |input, cx| {
                 input.set_value(String::new(), window, cx);
             });

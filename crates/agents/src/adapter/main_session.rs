@@ -484,6 +484,15 @@ impl WorkerSessionTransport {
                 self.pending
                     .push_back(SessionEvent::Interaction(interaction(input)));
             }
+            WorkerEvent::QuestionsRequested(request) => {
+                self.pending
+                    .push_back(SessionEvent::Interaction(ExtensionUiRequest::Questions(
+                        request,
+                    )))
+            }
+            WorkerEvent::InputResolved { id } => {
+                self.pending.push_back(SessionEvent::InputResolved { id });
+            }
             WorkerEvent::Activity(activity) => self.enqueue_activity(activity),
             WorkerEvent::RequestFailed { operation, error } => {
                 self.pending.push_back(activity(json!({
@@ -1093,6 +1102,9 @@ impl SessionTransport for WorkerSessionTransport {
 
     fn respond(&mut self, response: ExtensionUiResponse) -> Result<(), String> {
         let response = match response {
+            ExtensionUiResponse::Questions(response) => {
+                return self.worker.respond_questions(response);
+            }
             ExtensionUiResponse::Value { id, value } => WorkerInputResponse {
                 id,
                 value: Some(value),

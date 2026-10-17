@@ -71,6 +71,7 @@ impl WorkerSession for ModelSelectionWorker {
 
 #[derive(Default)]
 struct ControlledPromptState {
+    question_responses: Vec<crate::QuestionResponse>,
     requests: Vec<(
         String,
         WorkerSendMode,
@@ -88,6 +89,14 @@ struct ControlledPromptState {
 struct ControlledPromptWorker(Arc<std::sync::Mutex<ControlledPromptState>>);
 
 impl WorkerSession for ControlledPromptWorker {
+    fn respond_questions(&mut self, response: crate::QuestionResponse) -> Result<(), String> {
+        self.0
+            .lock()
+            .expect("test lock")
+            .question_responses
+            .push(response);
+        Ok(())
+    }
     fn tracks_prompt_delivery(&self, _: WorkerSendMode) -> bool {
         true
     }
@@ -168,6 +177,66 @@ fn project_transport(
         }
     }
     responses
+}
+
+#[test]
+fn question_requests_answers_and_resolution_cross_the_main_session_bridge() {
+    let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "questions".into(),
+        Box::new(ControlledPromptWorker(backend.clone())),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .unwrap();
+    while transport.poll().is_some() {}
+    let request = crate::QuestionRequest {
+        id: "native".into(),
+        blocking: false,
+        questions: vec![crate::Question {
+            id: "choice".into(),
+            header: "Choice".into(),
+            prompt: "Which?".into(),
+            options: vec![],
+            allow_free_text: true,
+            secret: false,
+        }],
+    };
+    backend
+        .lock()
+        .unwrap()
+        .events
+        .push_back(WorkerEvent::QuestionsRequested(request.clone()));
+    assert_eq!(
+        transport.poll(),
+        Some(SessionEvent::Interaction(ExtensionUiRequest::Questions(
+            request
+        )))
+    );
+    let response = crate::QuestionResponse {
+        id: "native".into(),
+        answers: std::collections::BTreeMap::from([("choice".into(), vec!["B".into()])]),
+        cancelled: false,
+    };
+    transport
+        .respond(ExtensionUiResponse::Questions(response.clone()))
+        .unwrap();
+    assert_eq!(backend.lock().unwrap().question_responses, [response]);
+    backend
+        .lock()
+        .unwrap()
+        .events
+        .push_back(WorkerEvent::InputResolved {
+            id: "native".into(),
+        });
+    assert_eq!(
+        transport.poll(),
+        Some(SessionEvent::InputResolved {
+            id: "native".into()
+        })
+    );
 }
 
 #[derive(Default)]

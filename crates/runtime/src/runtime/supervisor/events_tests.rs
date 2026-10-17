@@ -887,6 +887,101 @@ fn dialog(id: &str) -> ExtensionUiRequest {
 }
 
 #[test]
+fn concurrent_questions_do_not_block_and_resolving_approval_restores_working_status() {
+    let mut fixture = SupervisorFixture::new("selected", PathBuf::from("/project"), None);
+    let snapshot = Arc::make_mut(fixture.supervisor.latest.get_mut("selected").unwrap());
+    Arc::make_mut(&mut snapshot.conversation).running = true;
+    let request = ExtensionUiRequest::Questions(agents::QuestionRequest {
+        id: "async".into(),
+        blocking: false,
+        questions: vec![],
+    });
+    fixture.supervisor.handle_actor_event(
+        "selected".into(),
+        RuntimeEvent::ExtensionUi {
+            generation: 0,
+            request,
+            system_notification_target: None,
+        },
+    );
+    assert!(!fixture.supervisor.needs_input.contains("selected"));
+    assert_eq!(
+        fixture.supervisor.published_statuses["selected"].1,
+        RunStatus::Working
+    );
+    fixture.supervisor.handle_actor_event(
+        "selected".into(),
+        RuntimeEvent::ExtensionUi {
+            generation: 0,
+            request: dialog("blocking"),
+            system_notification_target: None,
+        },
+    );
+    assert!(fixture.supervisor.needs_input.contains("selected"));
+    fixture.supervisor.handle_actor_event(
+        "selected".into(),
+        RuntimeEvent::ExtensionUiDismissed {
+            generation: 0,
+            id: "blocking".into(),
+        },
+    );
+    assert!(!fixture.supervisor.needs_input.contains("selected"));
+    assert_eq!(
+        fixture.supervisor.published_statuses["selected"].1,
+        RunStatus::Working
+    );
+    assert_eq!(fixture.supervisor.active_dialogs["selected"].len(), 1);
+    assert_eq!(
+        fixture.supervisor.active_dialogs["selected"][0].dialog_id(),
+        Some("async")
+    );
+}
+
+#[test]
+fn answering_a_concurrent_question_does_not_restart_a_finished_session() {
+    let mut fixture = SupervisorFixture::new("selected", PathBuf::from("/project"), None);
+    let actor = fixture.add_recording_actor("selected");
+    fixture.supervisor.active_dialogs.insert(
+        "selected".into(),
+        vec![ExtensionUiRequest::Questions(agents::QuestionRequest {
+            id: "async".into(),
+            blocking: false,
+            questions: vec![],
+        })],
+    );
+    let mut snapshot = (**fixture.supervisor.latest.get("selected").unwrap()).clone();
+    Arc::make_mut(&mut snapshot.conversation).settled = true;
+    fixture.supervisor.handle_actor_event(
+        "selected".into(),
+        RuntimeEvent::Snapshot {
+            generation: 0,
+            snapshot: Arc::new(snapshot),
+        },
+    );
+    assert_eq!(fixture.supervisor.active_dialogs["selected"].len(), 1);
+    fixture
+        .commands
+        .send(RuntimeCommand::ExtensionResponse(
+            ExtensionUiResponse::Questions(agents::QuestionResponse {
+                id: "async".into(),
+                answers: Default::default(),
+                cancelled: true,
+            }),
+        ))
+        .unwrap();
+    assert!(fixture.supervisor.process_next_command());
+    assert_eq!(
+        fixture.supervisor.published_statuses["selected"].1,
+        RunStatus::Done
+    );
+    assert!(!fixture.supervisor.active_dialogs.contains_key("selected"));
+    assert!(matches!(
+        actor.recv_timeout(Duration::from_secs(1)).unwrap(),
+        RuntimeCommand::ExtensionResponse(ExtensionUiResponse::Questions(_))
+    ));
+}
+
+#[test]
 fn selected_dismissal_uses_supervisor_generation_and_clears_needs_input_last() {
     let mut fixture = SupervisorFixture::new("selected", PathBuf::from("/project"), None);
     fixture.supervisor.generation = 8;
