@@ -1,4 +1,4 @@
-use crate::app::*;
+use crate::{app::*, protocol::ExtensionUiRequest};
 use gpui::App;
 
 pub(in crate::app) struct ExtensionState {
