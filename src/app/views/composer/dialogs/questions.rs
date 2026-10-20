@@ -1,5 +1,8 @@
-use gpui::{AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div};
-use gpui_component::input::{Input, InputState};
+use gpui::{
+    AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _, Styled as _,
+    WeakEntity, div,
+};
+use gpui_component::input::{Enter, Input, InputState};
 
 use super::selectable_dialog_text;
 use crate::{
@@ -60,17 +63,43 @@ pub(super) fn render(
     if question.allow_free_text {
         let id = id.to_owned();
         let question_id = question.id.clone();
-        body = body.child(Input::new(input).w_full()).child(button(
-            "question-submit",
-            "Submit answer",
-            ButtonTone::Accent,
-            true,
-            move |window, cx| {
-                let _ = app.update(cx, |app, cx| {
-                    app.respond_question_text(id.clone(), question_id.clone(), window, cx)
-                });
-            },
-        ));
+        let submit = move |window: &mut gpui::Window, cx: &mut gpui::App| {
+            let _ = app.update(cx, |app, cx| {
+                app.respond_question_text(id.clone(), question_id.clone(), window, cx)
+            });
+        };
+        let enter_submit = submit.clone();
+        let theme = theme();
+        body = body
+            .child(
+                div()
+                    .debug_selector(|| "question-answer-field".into())
+                    .flex_none()
+                    .on_action(move |action: &Enter, window, cx| {
+                        if !action.shift {
+                            enter_submit(window, cx);
+                            cx.stop_propagation();
+                        }
+                    })
+                    .child(
+                        Input::new(input)
+                            .w_full()
+                            .text_size(theme.type_scale.body)
+                            .line_height(theme.type_scale.line_body)
+                            .py(theme.space.sm)
+                            .border(theme.border)
+                            .min_h(
+                                theme.type_scale.line_body + (theme.space.sm + theme.border) * 2.0,
+                            ),
+                    ),
+            )
+            .child(button(
+                "question-submit",
+                "Submit answer",
+                ButtonTone::Accent,
+                true,
+                submit,
+            ));
     }
     body.into_any_element()
 }

@@ -3,6 +3,7 @@ use super::{
     numbered_dialog_choice, plain_text_html,
 };
 use crate::protocol::ExtensionUiRequest;
+use gpui::Focusable as _;
 
 #[gpui::test]
 fn concurrent_question_keeps_composer_focus_and_sends_typed_answer(cx: &mut gpui::TestAppContext) {
@@ -39,10 +40,17 @@ fn concurrent_question_keeps_composer_focus_and_sends_typed_answer(cx: &mut gpui
                 window.draw(cx).clear(cx);
             });
             cx.run_until_parked();
+            let field = cx.debug_bounds("question-answer-field").unwrap();
             cx.update(|window, cx| {
                 window.draw(cx).clear(cx);
                 assert!(app.read(cx).composer.focus.is_focused(window));
                 assert!(!app.read(cx).center_surface_switch_blocked());
+                let input = app.read(cx).extensions.question_input.read(cx);
+                let bounds = input.input_bounds();
+                let theme = crate::app::ui::theme::theme();
+                let inset = theme.space.sm + theme.border;
+                assert!(bounds.top() >= field.top() + inset);
+                assert!(bounds.bottom() <= field.bottom() - inset);
                 assert!(
                     app.read(cx)
                         .extensions
@@ -98,10 +106,29 @@ fn concurrent_question_keeps_composer_focus_and_sends_typed_answer(cx: &mut gpui
                         app.extensions.question_input.read(cx).value().as_ref(),
                         "Secret answer"
                     );
-                    app.respond_question_text("question".into(), "answer".into(), window, cx);
-                    assert!(app.extensions.active.dialog.is_none());
-                    assert!(app.extensions.question_input.read(cx).value().is_empty());
+                    app.extensions
+                        .question_input
+                        .read(cx)
+                        .focus_handle(cx)
+                        .focus(window, cx);
                 });
+                window.draw(cx).clear(cx);
+            });
+            cx.simulate_keystrokes("shift-enter");
+            cx.update(|_, cx| {
+                assert!(app.read(cx).extensions.active.dialog.is_some());
+            });
+            cx.simulate_keystrokes("enter");
+            cx.update(|_, cx| {
+                assert!(app.read(cx).extensions.active.dialog.is_none());
+                assert!(
+                    app.read(cx)
+                        .extensions
+                        .question_input
+                        .read(cx)
+                        .value()
+                        .is_empty()
+                );
             });
             let responses: Vec<_> = std::iter::from_fn(|| runtime.try_recv_command()).collect();
             assert!(responses.iter().any(|command| matches!(command,
