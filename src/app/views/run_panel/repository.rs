@@ -406,7 +406,7 @@ impl FarcasterApp {
                                 .flex_1()
                                 .text_size(theme().type_scale.caption)
                                 .text_color(theme().colors.text)
-                                .text_ellipsis()
+                                .truncate()
                                 .child(filename),
                         )
                         .when(

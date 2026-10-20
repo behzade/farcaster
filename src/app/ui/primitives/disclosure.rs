@@ -96,7 +96,7 @@ pub(crate) fn tree_folder_row(
             },
             AppIconSize::Inline,
         )))
-        .child(div().min_w_0().flex_1().text_ellipsis().child(label));
+        .child(div().min_w_0().flex_1().truncate().child(label));
     if !enabled {
         return row;
     }
