@@ -9,14 +9,19 @@ depends=('gcc-libs' 'glibc' 'fontconfig' 'freetype2' 'libx11' 'libxcb'
          'libxkbcommon' 'libxkbcommon-x11' 'wayland' 'libglvnd'
          'vulkan-icd-loader' 'libxml2' 'libc++>=21' 'git' 'ca-certificates')
 optdepends=('neovim: embedded editor')
-makedepends=('rust>=1.95' 'zig=0.16.0' 'clang' 'cmake' 'pkgconf')
-source=("$url/releases/download/v$pkgver/farcaster-$pkgver-source.tar.gz")
-sha256sums=('@SHA256@')
+makedepends=('rust>=1.95' 'clang' 'cmake' 'pkgconf')
+# Ghostty needs this compiler even when Arch upgrades Zig.
+_zigver=0.16.0
+source=("$url/releases/download/v$pkgver/farcaster-$pkgver-source.tar.gz"
+        "https://ziglang.org/download/$_zigver/zig-x86_64-linux-$_zigver.tar.xz")
+sha256sums=('@SHA256@'
+            '70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00')
 options=('!lto' '!debug')
 
 build() {
     cd "$srcdir/farcaster-$pkgver"
     export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$srcdir/target}"
+    export ZIG="$srcdir/zig-x86_64-linux-$_zigver/zig"
     cargo build --release --locked --bin farcaster
 }
 

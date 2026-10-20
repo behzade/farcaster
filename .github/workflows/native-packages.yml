@@ -15,7 +15,7 @@ jobs:
     steps:
       - name: Install build tools
         run: |
-          pacman -Syu --noconfirm --needed base-devel rust zig clang cmake pkgconf git \
+          pacman -Syu --noconfirm --needed base-devel rust clang cmake pkgconf git \
             fontconfig freetype2 libx11 libxcb libxkbcommon libxkbcommon-x11 \
             wayland libglvnd vulkan-icd-loader libxml2 libc++
           useradd --create-home builder
