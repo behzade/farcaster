@@ -376,7 +376,7 @@ fn new_worker(
         project: caller.project,
         name: name.clone(),
         prompt: format!(
-            "Task delegated by Farcaster parent {} to child {name}:\n\n{message}",
+            "Task delegated by Farcaster parent {} to child {name}:\n\nSend clarification questions to your parent with worker_send. If you use a user-question tool, Farcaster forwards the question to your parent and closes that request; wait for the parent reply through worker messages before deciding.\n\n{message}",
             caller.worker_name
         ),
         backend: assignment.execution.harness,

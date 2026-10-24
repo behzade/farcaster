@@ -15,6 +15,8 @@ struct FakeFactory {
     sends: Mutex<Vec<Arc<Mutex<Vec<WorkerSendMode>>>>>,
     events: Mutex<Vec<mpsc::Sender<WorkerEvent>>>,
     responses: Arc<Mutex<Vec<WorkerInputResponse>>>,
+    question_responses: Arc<Mutex<Vec<crate::QuestionResponse>>>,
+    peer_messages: Arc<Mutex<Vec<crate::PeerMessage>>>,
     aborts: Arc<std::sync::atomic::AtomicUsize>,
     closes: Arc<std::sync::atomic::AtomicUsize>,
     drops: Arc<std::sync::atomic::AtomicUsize>,
@@ -33,6 +35,8 @@ struct FakeSession {
     events: mpsc::Receiver<WorkerEvent>,
     sent: Arc<Mutex<Vec<WorkerSendMode>>>,
     responses: Arc<Mutex<Vec<WorkerInputResponse>>>,
+    question_responses: Arc<Mutex<Vec<crate::QuestionResponse>>>,
+    peer_messages: Arc<Mutex<Vec<crate::PeerMessage>>>,
     aborts: Arc<std::sync::atomic::AtomicUsize>,
     closes: Arc<std::sync::atomic::AtomicUsize>,
     drops: Arc<std::sync::atomic::AtomicUsize>,
@@ -105,6 +109,8 @@ impl WorkerSessionFactory for FakeFactory {
             events: receiver,
             sent,
             responses: self.responses.clone(),
+            question_responses: self.question_responses.clone(),
+            peer_messages: self.peer_messages.clone(),
             aborts: self.aborts.clone(),
             closes: self.closes.clone(),
             drops: self.drops.clone(),
@@ -147,6 +153,14 @@ impl WorkerSession for FakeSession {
         Ok(())
     }
 
+    fn respond_questions(&mut self, response: crate::QuestionResponse) -> Result<(), String> {
+        self.question_responses
+            .lock()
+            .map_err(|_| "question responses")?
+            .push(response);
+        Ok(())
+    }
+
     fn abort(&mut self) -> Result<(), String> {
         self.aborts
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -154,6 +168,16 @@ impl WorkerSession for FakeSession {
     }
 
     fn poll(&mut self) -> Option<WorkerEvent> {
+        if let Some(message) = self
+            .identity
+            .as_ref()
+            .and_then(|identity| identity.try_recv())
+        {
+            self.peer_messages
+                .lock()
+                .expect("peer messages")
+                .push(message);
+        }
         let event = self.events.try_recv().ok()?;
         if let (Some(identity), WorkerEvent::SessionChanged { locator }) = (&self.identity, &event)
         {
@@ -791,6 +815,102 @@ fn questions_keep_workers_running_or_waiting_until_resolved() -> Result<(), Stri
 }
 
 #[test]
+fn child_questions_use_parent_messages_and_leave_no_user_dialog() -> Result<(), String> {
+    for blocking in [false, true] {
+        let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let factory = Arc::new(FakeFactory::default());
+        let (pool, updates) = pool(factory.clone(), project.path(), 1)?;
+        let registry = CallerRegistry::shared();
+        let parent = registry.issue(
+            project.path(),
+            CallerProfile {
+                backend: Backend::Pi,
+                provider: None,
+                model: None,
+                effort: None,
+            },
+            None,
+        );
+        parent.bind("question-parent");
+        let context = registry.resolve(parent.token())?;
+        let mut child = request(project.path());
+        child.parent_worker_id = Some(context.worker_id);
+        let id = pool.start(child)?.id;
+        wait_for_update(&updates)?;
+        let events = factory.events.lock().map_err(|_| "events")?[0].clone();
+        events
+            .send(WorkerEvent::QuestionsRequested(crate::QuestionRequest {
+                id: "native-question-request".into(),
+                blocking,
+                questions: vec![crate::Question {
+                    id: "choice".into(),
+                    header: "Search".into(),
+                    prompt: "Include archived conversations?".into(),
+                    options: vec![crate::QuestionOption {
+                        label: "Exclude".into(),
+                        description: "Only search active conversations".into(),
+                    }],
+                    allow_free_text: false,
+                    secret: false,
+                }],
+            }))
+            .map_err(|_| "question event")?;
+        // Settling proves the native question no longer pins the worker in NeedsInput.
+        events
+            .send(WorkerEvent::Settled {
+                output: String::new(),
+            })
+            .map_err(|_| "settle")?;
+        wait_for_worker_status(&pool, &id, WorkerStatus::Idle)?;
+        let message = parent.try_recv().ok_or("missing question")?;
+        assert_eq!(message.from, "implementation");
+        assert!(message.message.contains("Include archived conversations?"));
+        assert!(
+            message
+                .message
+                .contains("Exclude: Only search active conversations")
+        );
+        assert!(message.message.contains("worker_send to implementation"));
+        assert!(parent.try_recv().is_none(), "only one parent message");
+        assert!(
+            registry
+                .take_child_inputs(&context.project, Backend::Pi, "question-parent")
+                .is_empty()
+        );
+        assert_eq!(
+            *factory.question_responses.lock().map_err(|_| "responses")?,
+            vec![crate::QuestionResponse {
+                id: "native-question-request".into(),
+                answers: Default::default(),
+                cancelled: true,
+            }]
+        );
+        registry.send(
+            parent.token(),
+            "implementation",
+            "Exclude archived conversations".into(),
+        )?;
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while factory
+            .peer_messages
+            .lock()
+            .map_err(|_| "messages")?
+            .is_empty()
+        {
+            if Instant::now() >= deadline {
+                return Err("parent reply did not reach worker".into());
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            factory.peer_messages.lock().map_err(|_| "messages")?[0].message,
+            "Exclude archived conversations"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn child_input_reaches_parent_and_answer_returns_to_worker() -> Result<(), String> {
     let project = tempfile::tempdir().map_err(|error| error.to_string())?;
     let factory = Arc::new(FakeFactory::default());
@@ -826,7 +946,7 @@ fn child_input_reaches_parent_and_answer_returns_to_worker() -> Result<(), Strin
     assert_eq!(inputs[0].options, ["A", "B"]);
     assert!(
         parent.try_recv().is_none(),
-        "questions must go to the user, not the parent model"
+        "approval inputs must still go to the user"
     );
     registry.respond_to_child_input(WorkerInputResponse {
         id: inputs[0].id.clone(),

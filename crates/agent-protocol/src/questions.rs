@@ -32,25 +32,3 @@ pub struct QuestionResponse {
     pub answers: BTreeMap<String, Vec<String>>,
     pub cancelled: bool,
 }
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum WorkerInteraction {
-    Input(crate::WorkerInput),
-    Questions(QuestionRequest),
-}
-
-impl WorkerInteraction {
-    pub fn id(&self) -> &str {
-        match self {
-            Self::Input(input) => &input.id,
-            Self::Questions(request) => &request.id,
-        }
-    }
-
-    pub fn set_id(&mut self, id: String) {
-        match self {
-            Self::Input(input) => input.id = id,
-            Self::Questions(request) => request.id = id,
-        }
-    }
-}

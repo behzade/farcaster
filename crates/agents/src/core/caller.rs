@@ -1121,27 +1121,47 @@ impl WorkerParent {
         }))
     }
 
+    pub(super) fn report_questions(&self, request: &crate::QuestionRequest) -> Result<(), String> {
+        let mut message = format!(
+            "Questions for the parent. Reply with worker_send to {}. Ask the user only if their decision is needed.",
+            self.child_name
+        );
+        for question in &request.questions {
+            message.push_str(&format!("\n\n{}", question.prompt));
+            for option in &question.options {
+                message.push_str(&format!("\n- {}", option.label));
+                if !option.description.is_empty() {
+                    message.push_str(&format!(": {}", option.description));
+                }
+            }
+        }
+        self.send_report(message)
+    }
+
     pub(super) fn report(&self, message: String) {
+        if let Err(error) = self.send_report(message) {
+            zlog::warn!("Failed to send worker {} report: {error}", self.child_name);
+        }
+    }
+
+    fn send_report(&self, message: String) -> Result<(), String> {
         let registry = CallerRegistry::shared();
-        let Ok(callers) = registry.callers.lock() else {
-            return;
-        };
-        let Ok(retired) = registry.retired_inboxes.lock() else {
-            return;
-        };
+        let callers = registry
+            .callers
+            .lock()
+            .map_err(|_| "caller registry unavailable")?;
+        let retired = registry
+            .retired_inboxes
+            .lock()
+            .map_err(|_| "retired inbox registry unavailable")?;
         let parent = callers
             .values()
             .chain(retired.values())
             .find(|caller| caller.worker_id == self.id && caller.project == self.project)
             .or_else(|| self.find(&callers))
-            .or_else(|| self.find(&retired));
-        let Some(parent) = parent else {
-            zlog::warn!("Parent unavailable for worker {} report", self.child_name);
-            return;
-        };
-        if let Err(error) = parent.send_message(self.child_name.clone(), message) {
-            zlog::warn!("Failed to send worker {} report: {error}", self.child_name);
-        }
+            .or_else(|| self.find(&retired))
+            .ok_or("parent worker is unavailable")?;
+        parent.send_message(self.child_name.clone(), message)
     }
 }
 

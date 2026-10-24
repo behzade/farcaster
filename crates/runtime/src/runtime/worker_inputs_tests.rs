@@ -206,12 +206,12 @@ fn check_child_lease_expiry(retired: bool) -> Result<(), String> {
 
 #[test]
 fn child_questions_preserve_two_choices() {
-    let request = child_interaction(agents::WorkerInteraction::Input(agents::WorkerInput {
+    let request = ExtensionUiRequest::from_worker_input(agents::WorkerInput {
         id: "question".into(),
         prompt: "Choose".into(),
         options: vec!["First".into(), "Second".into()],
         secret: false,
-    }));
+    });
     assert!(matches!(request, ExtensionUiRequest::Select { options, .. }
             if options == ["First", "Second"]));
 }

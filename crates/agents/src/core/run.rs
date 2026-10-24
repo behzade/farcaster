@@ -58,7 +58,6 @@ fn run(
 ) {
     let (responses, response_rx) = mpsc::channel::<crate::WorkerInputResponse>();
     let mut input_leases = Vec::new();
-    let (question_responses, question_response_rx) = mpsc::channel::<crate::QuestionResponse>();
     let mut questions = std::collections::BTreeMap::<String, bool>::new();
     let mut approvals = std::collections::BTreeMap::<String, crate::WorkerInput>::new();
     let mut turn_active = true;
@@ -111,22 +110,6 @@ fn run(
             refresh_inputs(&snapshot, &approvals, &questions, turn_active);
             notify(updates);
         }
-        while let Ok(response) = question_response_rx.try_recv() {
-            let id = response.id.clone();
-            if !questions.contains_key(&id) {
-                continue;
-            }
-            if let Err(error) = session.respond_questions(response) {
-                break 'run error;
-            }
-            // Keep the worker resident until the adapter confirms resolution/delivery.
-            if let Some(blocking) = questions.get_mut(&id) {
-                *blocking = false;
-            }
-            input_leases.retain(|(input_id, _)| input_id != &id);
-            refresh_inputs(&snapshot, &approvals, &questions, turn_active);
-            notify(updates);
-        }
         while let Some(event) = session.poll() {
             match event {
                 WorkerEvent::Started => {
@@ -175,14 +158,19 @@ fn run(
                 }
                 WorkerEvent::QuestionsRequested(request) => {
                     if let Some(parent) = &parent {
-                        match super::CallerRegistry::shared().request_child_questions(
-                            parent,
-                            request.clone(),
-                            question_responses.clone(),
-                        ) {
-                            Ok(lease) => input_leases.push((request.id.clone(), lease)),
-                            Err(error) => break 'run error,
+                        if let Err(error) = parent.report_questions(&request) {
+                            break 'run error;
                         }
+                        // The parent replies through worker_send. Close the native request
+                        // so a blocking question cannot prevent that message from arriving.
+                        if let Err(error) = session.respond_questions(crate::QuestionResponse {
+                            id: request.id,
+                            answers: Default::default(),
+                            cancelled: true,
+                        }) {
+                            break 'run error;
+                        }
+                        continue;
                     }
                     questions.insert(request.id, request.blocking);
                     refresh_inputs(&snapshot, &approvals, &questions, turn_active);

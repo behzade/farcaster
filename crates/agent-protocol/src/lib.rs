@@ -2,9 +2,7 @@ use std::{path::PathBuf, thread, time::SystemTime};
 
 pub use farcaster_contracts::{Backend, WorkerInput, WorkerStatus};
 mod questions;
-pub use questions::{
-    Question, QuestionOption, QuestionRequest, QuestionResponse, WorkerInteraction,
-};
+pub use questions::{Question, QuestionOption, QuestionRequest, QuestionResponse};
 use serde::{Deserialize, Serialize};
 
 mod delivery;

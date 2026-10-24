@@ -319,7 +319,7 @@ fn tools_for_role(child: bool, tasks: &crate::agents::WorkerProfiles) -> Vec<rmc
             }
             schema.insert("required".into(), serde_json::json!(["message"]));
             tool.description = Some(Cow::Borrowed(
-                "Send a message to your parent worker. The parent is implicit; use this tool for all communication, including final results.",
+                "Send a message to your parent worker. The parent is implicit; use this tool for all communication, including clarification questions and final results.",
             ));
         } else {
             if let Some(properties) = schema
