@@ -28,7 +28,9 @@ pub struct DiscoveredSession {
     pub title: String,
     pub first_user_message: String,
     pub timestamp: String,
+    /// Worker ownership; ordinary fork ancestry belongs in `forked_from`.
     pub parent_session: Option<String>,
+    pub forked_from: Option<String>,
     pub modified: SystemTime,
     pub message_count: usize,
     pub usage: DiscoveredUsage,
@@ -59,7 +61,10 @@ pub struct SessionMetadata {
     pub project: PathBuf,
     pub title: Option<String>,
     pub first_user_message: Option<String>,
+    /// Worker ownership; ordinary fork ancestry belongs in `forked_from`.
     pub parent_session: Option<String>,
+    #[serde(default)]
+    pub forked_from: Option<String>,
     pub message_count: Option<usize>,
     pub model: Option<(String, String)>,
     pub thinking_level: Option<String>,

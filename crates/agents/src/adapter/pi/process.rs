@@ -1453,9 +1453,13 @@ fn stamp_parent_session(path: &Path, parent: &str) -> Result<(), String> {
         .as_object_mut()
         .filter(|header| header.get("type").and_then(Value::as_str) == Some("session"))
         .ok_or_else(|| format!("invalid Pi child session header: {}", path.display()))?;
-    if object.get("parentSession").and_then(Value::as_str) == Some(parent) {
+    if object.get("farcasterParentSession").and_then(Value::as_str) == Some(parent) {
         return Ok(());
     }
+    object.insert(
+        "farcasterParentSession".into(),
+        Value::String(parent.to_owned()),
+    );
     object.insert("parentSession".into(), Value::String(parent.to_owned()));
     let mut encoded = serde_json::to_string(&header)
         .map_err(|error| format!("encode Pi child session header: {error}"))?;

@@ -66,11 +66,7 @@ impl FarcasterApp {
         let selected_root = self
             .selected_rail_root()
             .map(|session| session.path.clone());
-        let live_root = self
-            .sessions
-            .visible
-            .root_for_path(self.snapshot.live_session.as_deref())
-            .map(|session| session.path.clone());
+        let live_session = self.snapshot.live_session.clone();
         let waiting_roots = roots_waiting_for_descendants(&self.sessions.all);
         let lists = session_rail_lists_for_roots(
             self.sessions.visible.roots(),
@@ -133,7 +129,7 @@ impl FarcasterApp {
                             kind,
                             item,
                             &run_statuses,
-                            live_root.as_deref(),
+                            live_session.as_deref(),
                             live_status,
                             &waiting_roots,
                         );

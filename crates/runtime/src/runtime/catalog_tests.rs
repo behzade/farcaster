@@ -51,6 +51,31 @@ fn import_preview_skips_nested_child_workers() {
 }
 
 #[test]
+fn fork_metadata_records_provenance_and_reset_clears_it() {
+    let (mut owner, events) = crate::runtime::tests::owner_without_process("/project".into());
+    owner.active_session = Some("/fork".into());
+    owner.session_id = Some("source".into());
+    owner.forked_from = Some("source".into());
+    let state = serde_json::from_value(json!({
+        "sessionId": "fork", "sessionFile": "/fork", "isStreaming": false, "isCompacting": false,
+        "autoCompactionEnabled": false, "messageCount": 0, "pendingMessageCount": 0
+    }))
+    .expect("session state");
+    owner.apply_response(agents::SessionResponse::success(
+        None,
+        agents::SessionResponsePayload::LoadState(Box::new(state)),
+    ));
+    assert_eq!(owner.session_id.as_deref(), Some("fork"));
+    assert!(events.try_iter().any(|event| matches!(event,
+        RuntimeEvent::SessionMetadata(metadata)
+            if metadata.id == "fork" && metadata.forked_from.as_deref() == Some("source")
+                && metadata.parent_session.is_none()
+    )));
+    owner.reset_process_runtime();
+    assert!(owner.forked_from.is_none());
+}
+
+#[test]
 fn pool_snapshot_maps_to_persisted_child_and_projects_needs_input() {
     let mut parent = summary(Path::new("/sessions/parent.jsonl"));
     parent.id = "parent".into();

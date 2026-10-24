@@ -14,6 +14,7 @@ CREATE TABLE sessions (
   locator TEXT,
   backend_id TEXT,
   parent_backend_id TEXT,
+  forked_from_backend_id TEXT,
   parent_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
   client_key TEXT UNIQUE,
   title TEXT NOT NULL DEFAULT '',

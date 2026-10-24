@@ -188,6 +188,10 @@ pub fn discover_sessions_for_profile(
     for_backend(harness).discover_sessions_for_profile(config, root.as_deref(), query)
 }
 
+pub fn session_fork_source(harness: Backend, path: &Path) -> Option<String> {
+    for_backend(harness).fork_source(path)
+}
+
 pub(super) fn import_session(session: crate::DiscoveredSession) -> SessionSummary {
     let mut summary = SessionSummary::import(farcaster_sessions::SessionImport {
         id: session.id,
@@ -198,6 +202,7 @@ pub(super) fn import_session(session: crate::DiscoveredSession) -> SessionSummar
         first_user_message: session.first_user_message,
         timestamp: session.timestamp,
         parent_session: session.parent_session,
+        forked_from: session.forked_from,
         modified: session.modified,
         message_count: session.message_count,
         usage: farcaster_sessions::UsageSummary {

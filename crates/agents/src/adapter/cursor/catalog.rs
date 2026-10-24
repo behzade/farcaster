@@ -251,6 +251,7 @@ fn listed_session(
     Some(DiscoveredSession {
         path: super::super::main_session::external_session_path(locator_root, PROFILE.backend, &id),
         parent_session: crate::core::CallerRegistry::shared().session_parent(PROFILE.backend, &id),
+        forked_from: None,
         id,
         harness: PROFILE.backend,
         project,

@@ -5,6 +5,29 @@ use tempfile::tempdir;
 type TestResult = Result<(), Box<dyn Error>>;
 
 #[test]
+fn ordinary_fork_is_a_root_and_does_not_join_the_source_family() -> TestResult {
+    let root = tempdir()?;
+    let project = tempdir()?;
+    session(root.path(), "source", project.path(), None, "history")?;
+    let source = root.path().join("custom/nested/source.jsonl");
+    let fork = root.path().join("custom/nested/fork.jsonl");
+    fs::write(
+        &fork,
+        serde_json::json!({
+            "type":"session", "id":"fork", "cwd":project.path(), "parentSession":source
+        })
+        .to_string(),
+    )?;
+    let sessions = discover_in(root.path(), "")?;
+    let fork = sessions.iter().find(|s| s.id == "fork").expect("fork");
+    assert_eq!(fork.forked_from.as_deref(), Some("source"));
+    assert!(fork.parent_session.is_none());
+    assert_eq!(root_sessions(&sessions).len(), 2);
+    assert!(descendant_sessions(&sessions, "source").is_empty());
+    Ok(())
+}
+
+#[test]
 fn lexical_normalization_preserves_unresolved_relative_parents() {
     assert_eq!(
         normalize_lexical(Path::new("../../a")),
@@ -32,7 +55,7 @@ fn session_with_parent(
     let directory = root.join("custom/nested");
     fs::create_dir_all(&directory)?;
     let mut lines = vec![
-        serde_json::json!({"type":"session","version":3,"id":file,"timestamp":"2026-01-02T00:00:00Z","cwd":cwd,"parentSession":parent}),
+        serde_json::json!({"type":"session","version":3,"id":file,"timestamp":"2026-01-02T00:00:00Z","cwd":cwd,"parentSession":parent,"farcasterParentSession":parent}),
     ];
     lines.push(serde_json::json!({"type":"unknown","data":true}));
     lines.push(serde_json::json!({"type":"message","message":{"role":"user","content":message}}));

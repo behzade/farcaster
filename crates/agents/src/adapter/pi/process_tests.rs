@@ -1879,6 +1879,10 @@ fn stamp_parent_session_rewrites_the_header_in_place() -> TestResult {
         header["parentSession"].as_str(),
         Some("/sessions/parent.jsonl")
     );
+    assert_eq!(
+        header["farcasterParentSession"].as_str(),
+        Some("/sessions/parent.jsonl")
+    );
     assert!(contents.contains(r#""id":"m1""#));
     Ok(())
 }

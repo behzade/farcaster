@@ -13,6 +13,7 @@ fn session(id: &str, path: &str, parent: Option<&str>) -> SessionSummary {
         first_user_message: String::new(),
         timestamp: String::new(),
         parent_session: parent.map(str::to_owned),
+        forked_from: None,
         modified: SystemTime::UNIX_EPOCH,
         message_count: 0,
         usage: UsageSummary::default(),

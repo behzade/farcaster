@@ -42,6 +42,7 @@ mod migrate_v18;
 mod migrate_v19;
 mod migrate_v20;
 mod migrate_v21;
+mod migrate_v22;
 #[cfg(test)]
 mod persistence_tests;
 #[path = "projects.rs"]
@@ -71,7 +72,7 @@ pub use session_state::SessionStateChanges;
 pub use session_writer::SessionStateWriter;
 pub use snapshot::snapshot_database;
 
-const SCHEMA_VERSION: i64 = 21;
+const SCHEMA_VERSION: i64 = 22;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 const LEGACY_PI_GPUI_IMPORT_KEY: &str = "legacy_pi_gpui_state_imported";
 const REPOSITORY_BACKENDS: [&str; 3] = ["auto", "git", "jj"];

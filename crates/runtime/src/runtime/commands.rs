@@ -294,6 +294,7 @@ impl RuntimeOwner {
                         title: Some(name),
                         first_user_message: None,
                         parent_session: None,
+                        forked_from: None,
                         message_count: None,
                         model: None,
                         thinking_level: None,

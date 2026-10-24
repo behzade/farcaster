@@ -79,7 +79,8 @@ impl StateStore {
                         s.total_tokens, s.cost_micros, s.search_text,
                         s.archived_at IS NOT NULL, s.harness,
                         m.provider, m.model, m.effort, COALESCE(s.backend_id, s.locator),
-                        parent.harness, s.parent_id, s.created_ms, s.profile_id
+                        parent.harness, s.parent_id, s.created_ms, s.profile_id,
+                        s.forked_from_backend_id
                    FROM sessions s
                    JOIN projects p ON p.id = s.project_id
                    LEFT JOIN sessions parent ON parent.id = s.parent_id
@@ -188,6 +189,7 @@ impl StateStore {
                    THEN search_text || ' ' || LOWER(?5) ELSE search_text END,
                title=COALESCE(?5,NULLIF(title,''),?6,''),
                first_user_message=CASE WHEN first_user_message='' THEN COALESCE(?6,'') ELSE first_user_message END,
+               forked_from_backend_id=COALESCE(?13,forked_from_backend_id),
                parent_backend_id=COALESCE(?7,parent_backend_id),
                parent_id=COALESCE(parent_id,(SELECT id FROM sessions
                  WHERE harness=?8 AND project_id=?2 AND profile_id IS ?12 AND backend_id=?7 LIMIT 1)),
@@ -196,8 +198,9 @@ impl StateStore {
               WHERE id=?1",
             params![id, project, path.to_string_lossy(), update.id, update.title,
                 update.first_user_message, update.parent_session, update.harness.as_str(),
-                update.message_count.map(|n| n as i64), now, access_mode, profile_id],
+                update.message_count.map(|n| n as i64), now, access_mode, profile_id, update.forked_from],
         ).map_err(|error| format!("update live session metadata: {error}"))?;
+        super::identity::clear_fork_parent(&tx, id)?;
         tx.execute(
             "UPDATE sessions SET search_text=LOWER(title || ' ' || first_user_message)
              WHERE id=?1 AND search_text=''",
@@ -635,10 +638,12 @@ fn upsert_bound_session(
     };
     transaction
         .execute(
-            "UPDATE sessions SET backend_id=?2, parent_backend_id=?3 WHERE id=?1",
-            params![id, session.id, session.parent_session],
+            "UPDATE sessions SET backend_id=?2, parent_backend_id=?3,
+               forked_from_backend_id=COALESCE(?4,forked_from_backend_id) WHERE id=?1",
+            params![id, session.id, session.parent_session, session.forked_from],
         )
         .map_err(|error| format!("save backend session identity: {error}"))?;
+    super::identity::clear_fork_parent(transaction, id)?;
     if let Some((provider, model)) = &session.model {
         transaction
             .execute(
@@ -757,6 +762,7 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
     )
     .with_app_session_id(id);
     session.profile_id = row.get(25)?;
+    session.forked_from = row.get(26)?;
     session.created_at = session
         .created_at
         .or(UNIX_EPOCH.checked_add(Duration::from_millis(row.get::<_, u64>(24)?)));

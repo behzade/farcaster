@@ -81,6 +81,17 @@ pub(super) fn bind_locator(
         .map_err(|error| error.to_string())
 }
 
+pub(super) fn clear_fork_parent(tx: &Transaction<'_>, id: i64) -> Result<(), String> {
+    tx.execute(
+        "UPDATE sessions SET parent_id=NULL,parent_backend_id=NULL
+          WHERE id=?1 AND forked_from_backend_id IS NOT NULL
+            AND NOT EXISTS(SELECT 1 FROM worker_families WHERE child_id=?1)",
+        [id],
+    )
+    .map_err(|error| format!("separate fork ancestry from worker ownership: {error}"))?;
+    Ok(())
+}
+
 pub(super) fn merge_session(tx: &Transaction<'_>, keep: i64, other: i64) -> Result<(), String> {
     super::workgraph_identity::merge(tx, keep, other)?;
     let offset: i64 = tx
@@ -127,6 +138,7 @@ pub(super) fn merge_session(tx: &Transaction<'_>, keep: i64, other: i64) -> Resu
            profile_id=COALESCE(profile_id,(SELECT profile_id FROM sessions WHERE id=?2)),
            backend_id=COALESCE((SELECT backend_id FROM sessions WHERE id=?2),backend_id),
            parent_backend_id=COALESCE(parent_backend_id,(SELECT parent_backend_id FROM sessions WHERE id=?2)),
+           forked_from_backend_id=COALESCE(forked_from_backend_id,(SELECT forked_from_backend_id FROM sessions WHERE id=?2)),
            title=COALESCE(NULLIF((SELECT title FROM sessions WHERE id=?2),''),title),
            first_user_message=COALESCE(NULLIF((SELECT first_user_message FROM sessions WHERE id=?2),''),first_user_message),
            search_text=TRIM(search_text || ' ' || (SELECT search_text FROM sessions WHERE id=?2)),
@@ -181,6 +193,7 @@ pub(super) fn merge_session(tx: &Transaction<'_>, keep: i64, other: i64) -> Resu
     ] {
         tx.execute(sql, params![keep, other]).map_err(|error| format!("merge session state: {error}"))?;
     }
+    clear_fork_parent(tx, keep)?;
     if let Some((client_key, submitted, rail_order, created_ms)) = transferred_draft {
         tx.execute(
             "UPDATE sessions SET client_key=?2,submitted=?3,rail_order=?4,created_ms=?5 WHERE id=?1",

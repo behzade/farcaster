@@ -511,9 +511,17 @@ fn summary(
                 .ok()
         })
         .unwrap_or_default();
-    let parent_session = string(thread, &["parentThreadId", "parent_thread_id"])
-        .map(str::to_owned)
-        .or_else(|| crate::core::CallerRegistry::shared().session_parent(Backend::Codex, id));
+    let native_parent = string(thread, &["parentThreadId", "parent_thread_id"]);
+    let ordinary_fork = matches!(
+        thread.get("source").and_then(Value::as_str),
+        Some("cli" | "vscode" | "exec" | "appServer")
+    );
+    let parent_session = crate::core::CallerRegistry::shared()
+        .session_parent(Backend::Codex, id)
+        .or_else(|| native_parent.filter(|_| !ordinary_fork).map(str::to_owned));
+    let forked_from = native_parent
+        .filter(|parent| parent_session.as_deref() != Some(*parent))
+        .map(str::to_owned);
     let is_running = super::subagents::is_running(id).unwrap_or_else(|| {
         status(thread).is_some_and(|status| {
             matches!(status, "active" | "running" | "inProgress" | "in_progress")
@@ -530,6 +538,7 @@ fn summary(
         first_user_message,
         timestamp,
         parent_session,
+        forked_from,
         modified,
         message_count: thread
             .get("turns")

@@ -47,6 +47,7 @@ fn same_native_session_id_in_two_profiles_keeps_two_rows() -> Result<(), Box<dyn
             first_user_message: String::new(),
             timestamp: String::new(),
             parent_session: None,
+            forked_from: None,
             modified: SystemTime::now(),
             message_count: 0,
             usage: UsageSummary::default(),
@@ -259,6 +260,7 @@ fn configuration_catalogs_survive_reopen() -> Result<(), Box<dyn std::error::Err
         project: temp.path().to_path_buf(),
         catalog: ConfigurationCatalog {
             models: vec![Model {
+                adapter_data: None,
                 id: "model".into(),
                 name: "Model".into(),
                 provider: "provider".into(),
@@ -309,6 +311,7 @@ fn legacy_configuration_catalog_aliases_share_one_project_key()
     StateStore::open_at(&database)?;
     let catalog = |id: &str| ConfigurationCatalog {
         models: vec![Model {
+            adapter_data: None,
             id: id.into(),
             name: id.into(),
             provider: "provider".into(),
@@ -364,6 +367,7 @@ fn session_control_defaults_survive_reopen() -> Result<(), Box<dyn std::error::E
         harness: Backend::Codex,
         profile_id: None,
         model: Some(Model {
+            adapter_data: None,
             id: "model".into(),
             name: "Model".into(),
             provider: "provider".into(),

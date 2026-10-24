@@ -129,6 +129,7 @@ struct RuntimeOwner {
     document_refresh_generation: Option<u64>,
     pending_document_refresh: Option<(PathBuf, PathBuf)>,
     active_session: Option<PathBuf>,
+    forked_from: Option<String>,
     parked_snapshot: Option<RuntimeSnapshot>,
     queued_prompts: VecDeque<crate::agents::QueuedPrompt>,
     saved_prompts: VecDeque<crate::agents::QueuedPrompt>,

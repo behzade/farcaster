@@ -8,6 +8,36 @@ use std::{
 use super::*;
 
 #[test]
+fn repeated_forks_get_distinct_actors_and_selection_reuses_a_fork() {
+    let command = RuntimeCommand::ForkSession {
+        path: "/source".into(),
+        harness: Backend::Pi,
+        session_id: "source".into(),
+        project: "/project".into(),
+    };
+    let first = actor_key_for_command(&command, "fork:/source", &HashMap::new());
+    let second = actor_key_for_command(&command, "fork:/source", &HashMap::new());
+    assert_ne!(first, second);
+    let snapshots = HashMap::from([(
+        first.clone(),
+        Arc::new(RuntimeSnapshot {
+            live_session: Some("/fork".into()),
+            ..RuntimeSnapshot::default()
+        }),
+    )]);
+    let selection = RuntimeCommand::SelectSession {
+        path: "/fork".into(),
+        harness: Backend::Pi,
+        session_id: "fork".into(),
+        project: "/project".into(),
+    };
+    assert_eq!(
+        actor_key_for_command(&selection, "requested", &snapshots),
+        first
+    );
+}
+
+#[test]
 fn startup_and_later_draft_selection_use_the_same_profile_defaults() -> Result<(), String> {
     let host = crate::test_support::host();
     let state = host.state_store()?;

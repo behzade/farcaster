@@ -597,11 +597,16 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
         .unwrap_or_default()
         .to_owned();
     let started = parse_iso_timestamp(&timestamp).unwrap_or(file_started);
-    let parent_session = header
+    let forked_from = header
         .get("parentSession")
+        .and_then(Value::as_str)
+        .and_then(|parent| resolve_parent_session(path, parent));
+    let parent_session = header
+        .get("farcasterParentSession")
         .and_then(Value::as_str)
         .and_then(|parent| resolve_parent_session(path, parent))
         .or_else(|| parent_session_from_path(path));
+    let forked_from = forked_from.filter(|source| parent_session.as_ref() != Some(source));
     let mut name = None;
     let mut first_user_message = None;
     let mut activity = ActivityBuilder::default();
@@ -720,6 +725,7 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
             parent_harness: parent_session.as_ref().map(|_| Backend::Pi),
             parent_app_session_id: None,
             parent_session,
+            forked_from,
             modified,
             message_count,
             usage,
@@ -830,6 +836,14 @@ pub fn validate_session_file(path: &Path) -> Result<(), String> {
 }
 
 fn session_header_id(path: &Path) -> Option<String> {
+    session_header(path)?
+        .get("id")?
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+}
+
+fn session_header(path: &Path) -> Option<Value> {
     let file = File::open(path).ok()?;
     let mut reader = BufReader::new(file).take((MAX_HEADER_BYTES + 1) as u64);
     let mut line = Vec::new();
@@ -839,11 +853,20 @@ fn session_header_id(path: &Path) -> Option<String> {
     }
     trim_frame(&mut line);
     let header = serde_json::from_slice::<Value>(&line).ok()?;
-    (header.get("type").and_then(Value::as_str) == Some("session"))
-        .then(|| header.get("id").and_then(Value::as_str))
-        .flatten()
-        .filter(|id| !id.is_empty())
-        .map(str::to_owned)
+    (header.get("type").and_then(Value::as_str) == Some("session")).then_some(header)
+}
+
+pub(super) fn fork_source(path: &Path) -> Option<String> {
+    let header = session_header(path)?;
+    if header
+        .get("farcasterParentSession")
+        .and_then(Value::as_str)
+        .is_some()
+        || parent_session_from_path(path).is_some()
+    {
+        return None;
+    }
+    resolve_parent_session(path, header.get("parentSession")?.as_str()?)
 }
 
 fn parent_session_from_path(path: &Path) -> Option<String> {

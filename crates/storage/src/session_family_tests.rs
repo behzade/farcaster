@@ -60,6 +60,7 @@ fn persisted_cross_project_parent_survives_catalog_refresh_and_family_queries() 
         title: None,
         first_user_message: None,
         parent_session: child.parent_session.clone(),
+        forked_from: None,
         message_count: None,
         model: None,
         thinking_level: None,

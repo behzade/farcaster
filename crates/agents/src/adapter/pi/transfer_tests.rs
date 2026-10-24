@@ -3,6 +3,32 @@ use tempfile::tempdir;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+#[test]
+fn moving_an_ordinary_fork_keeps_its_origin_without_worker_ownership() -> TestResult {
+    let temp = tempdir()?;
+    let source = temp.path().join("source.jsonl");
+    let fork = temp.path().join("fork.jsonl");
+    let destination = temp.path().join("destination");
+    session(&source, "source", temp.path(), None, "history\n")?;
+    session(&fork, "fork", temp.path(), Some(&source), "history\n")?;
+    let moved = move_family(
+        &[TransferMember {
+            id: "fork".into(),
+            path: fork,
+            parent_id: None,
+        }],
+        "fork",
+        temp.path(),
+        &destination,
+    )?;
+    assert!(source.exists());
+    assert_eq!(
+        super::super::session_files::fork_source(&moved.root).as_deref(),
+        Some("source")
+    );
+    Ok(())
+}
+
 fn session(path: &Path, id: &str, cwd: &Path, parent: Option<&Path>, body: &str) -> TestResult {
     let mut file = File::create(path)?;
     writeln!(

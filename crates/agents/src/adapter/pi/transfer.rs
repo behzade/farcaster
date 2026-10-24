@@ -222,9 +222,16 @@ fn stage_session(
     match parent {
         Some(parent) => {
             object.insert("parentSession".to_owned(), Value::String(parent.to_owned()));
+            object.insert(
+                "farcasterParentSession".to_owned(),
+                Value::String(parent.to_owned()),
+            );
         }
         None => {
-            object.remove("parentSession");
+            object.remove("farcasterParentSession");
+            if object.get("parentSession").is_some_and(Value::is_null) {
+                object.remove("parentSession");
+            }
         }
     }
 

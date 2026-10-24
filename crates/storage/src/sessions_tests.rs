@@ -14,6 +14,7 @@ fn metadata(id: &str) -> crate::agents::SessionMetadata {
         title: Some(id.into()),
         first_user_message: None,
         parent_session: None,
+        forked_from: None,
         message_count: Some(1),
         model: None,
         thinking_level: None,
@@ -22,6 +23,80 @@ fn metadata(id: &str) -> crate::agents::SessionMetadata {
         usage: None,
         is_running: true,
     }
+}
+
+#[test]
+fn fork_ancestry_stays_separate_after_stale_discovery_and_reopen() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let mut store = StateStore::open_at(&database)?;
+    let source = store.update_session_metadata(&metadata("source"))?;
+    let mut fork_update = metadata("fork");
+    fork_update.parent_session = Some(source.id.clone());
+    let stale_fork = store.update_session_metadata(&fork_update)?;
+    assert_eq!(
+        stale_fork.parent_app_session_id,
+        Some(source.app_session_id)
+    );
+    fork_update.parent_session = None;
+    fork_update.forked_from = Some(source.id.clone());
+    store.update_session_metadata(&fork_update)?;
+    // An old catalog response must not restore the mistaken family link.
+    store.index_sessions(std::slice::from_ref(&stale_fork), false)?;
+    assert!(
+        store
+            .cached_sessions("")?
+            .iter()
+            .all(|s| s.parent_session.is_none())
+    );
+    fork_update.forked_from = None;
+    fork_update.parent_session = Some(source.id.clone());
+    store.update_session_metadata(&fork_update)?;
+    assert!(
+        store
+            .cached_sessions("")?
+            .iter()
+            .all(|s| s.parent_session.is_none())
+    );
+    // Binding a duplicate record must not restore its stale parent either.
+    let tx = store.connection.transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO sessions(project_id,harness,locator,backend_id,parent_id,parent_backend_id,modified_ms,created_ms)
+         SELECT project_id,harness,'/stale-fork',backend_id,?2,'source',modified_ms,created_ms
+           FROM sessions WHERE id=?1",
+        params![stale_fork.app_session_id, source.app_session_id],
+    ).map_err(|e| e.to_string())?;
+    let duplicate = tx.last_insert_rowid();
+    super::super::identity::merge_session(&tx, stale_fork.app_session_id, duplicate)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    drop(store);
+    let mut store = StateStore::open_at(&database)?;
+    let cached = store.cached_sessions("")?;
+    let fork = cached.iter().find(|s| s.id == "fork").expect("fork");
+    assert_eq!(fork.forked_from.as_deref(), Some("source"));
+    assert!(fork.parent_session.is_none());
+    assert!(fork.parent_app_session_id.is_none());
+    assert_eq!(crate::sessions::root_sessions(&cached).len(), 2);
+    let family =
+        crate::sessions::session_family_for_path(&cached, &source.path).expect("source family");
+    assert_eq!(
+        family.iter().map(|s| &s.path).collect::<Vec<_>>(),
+        [&source.path]
+    );
+    let targets = family
+        .into_iter()
+        .map(|s| s.path.clone())
+        .collect::<Vec<_>>();
+    store.delete_session_state(&targets)?;
+    assert_eq!(
+        store
+            .cached_sessions("")?
+            .iter()
+            .map(|s| s.id.as_str())
+            .collect::<Vec<_>>(),
+        ["fork"]
+    );
+    Ok(())
 }
 
 #[test]

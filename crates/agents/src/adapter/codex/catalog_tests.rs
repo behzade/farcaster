@@ -1,6 +1,32 @@
 use super::*;
 use crate::Backend;
 
+#[test]
+fn ordinary_fork_has_provenance_without_worker_ownership() -> Result<(), String> {
+    let project = std::env::current_dir().map_err(|error| error.to_string())?;
+    let fork = summary(
+        &project,
+        &json!({
+            "id": "fork", "cwd": project, "source": "vscode", "parentThreadId": "source"
+        }),
+        false,
+    )?
+    .ok_or("fork")?;
+    assert_eq!(fork.forked_from.as_deref(), Some("source"));
+    assert!(fork.parent_session.is_none());
+    let unknown = summary(
+        &project,
+        &json!({
+            "id": "unknown", "cwd": project, "parentThreadId": "source"
+        }),
+        false,
+    )?
+    .ok_or("unknown session")?;
+    assert_eq!(unknown.parent_session.as_deref(), Some("source"));
+    assert!(unknown.forked_from.is_none());
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn profile_history_and_rename_launch_in_requested_project() -> Result<(), String> {

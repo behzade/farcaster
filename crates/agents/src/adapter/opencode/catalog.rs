@@ -222,6 +222,7 @@ fn summary(locator_root: &Path, value: &Value) -> Option<Result<DiscoveredSessio
         title,
         first_user_message,
         timestamp,
+        forked_from: None,
         parent_session: value
             .get("parentID")
             .and_then(Value::as_str)

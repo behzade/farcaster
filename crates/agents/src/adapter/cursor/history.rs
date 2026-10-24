@@ -242,6 +242,7 @@ pub(super) fn discover(
                 first_user_message: String::new(),
                 timestamp,
                 parent_session: None,
+                forked_from: None,
                 modified,
                 message_count: 0,
                 usage: Default::default(),

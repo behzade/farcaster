@@ -16,6 +16,7 @@ fn native_session_profile_comes_from_storage_and_clears_previous_selection() -> 
         title: None,
         first_user_message: None,
         parent_session: None,
+        forked_from: None,
         message_count: None,
         model: None,
         thinking_level: None,

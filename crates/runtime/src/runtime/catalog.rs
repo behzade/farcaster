@@ -46,6 +46,7 @@ impl RuntimeOwner {
                 title: session.session_name.clone(),
                 first_user_message,
                 parent_session: None,
+                forked_from: self.forked_from.clone(),
                 message_count: Some(session.message_count),
                 model: session
                     .model

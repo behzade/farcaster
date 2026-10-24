@@ -411,6 +411,7 @@ fn discover_in(
             thinking_level: None,
             usage: Default::default(),
             parent_session: None,
+            forked_from: None,
             archived: false,
             is_running: false,
             search,
@@ -437,6 +438,7 @@ fn discover_in(
                 first_user_message: first,
                 search,
                 parent_session: Some(parent.id.clone()),
+                forked_from: None,
                 timestamp: rows
                     .iter()
                     .rev()

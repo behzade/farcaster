@@ -25,6 +25,10 @@ pub(super) static STANDARD_SERVICE_TIER: LazyLock<[String; 1]> =
 mod tests;
 
 pub(super) trait BackendAdapter: Sync {
+    /// Return locally verifiable fork ancestry for repairing older catalog rows.
+    fn fork_source(&self, _path: &Path) -> Option<String> {
+        None
+    }
     fn sign_in_required(&self, _config: &AgentLaunchConfig) -> bool {
         false
     }

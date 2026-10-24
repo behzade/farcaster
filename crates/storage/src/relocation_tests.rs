@@ -29,6 +29,7 @@ fn snapshot_relocation_normalizes_symlinked_ancestors() -> Result<(), Box<dyn Er
         first_user_message: String::new(),
         timestamp: String::new(),
         parent_session: None,
+        forked_from: None,
         modified: std::time::SystemTime::now(),
         message_count: 0,
         usage: Default::default(),

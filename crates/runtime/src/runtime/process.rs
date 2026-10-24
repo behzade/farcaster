@@ -115,6 +115,7 @@ impl RuntimeOwner {
             let _ = process.close();
         }
         self.active_session = None;
+        self.forked_from = None;
         self.parked_snapshot = None;
         self.startup_state_loaded = false;
         self.startup_history_loaded = false;
@@ -220,6 +221,7 @@ impl RuntimeOwner {
             && session == self.active_session
             && fork.is_none();
         self.reset_process_runtime();
+        self.forked_from = fork.as_ref().and(self.session_id.clone());
         self.idle_retirement.inbox = retained_inbox;
         self.idle_retirement.resume_attempted = resume_attempted;
         self.idle_retirement.retired = retired;

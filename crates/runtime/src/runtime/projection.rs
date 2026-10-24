@@ -359,6 +359,9 @@ impl RuntimeOwner {
         let Ok(payload) = response.result else { return };
         match payload {
             Payload::LoadState(state) => {
+                if !state.session_id.is_empty() {
+                    self.session_id = Some(state.session_id.clone());
+                }
                 let model_change_sent = !self.pending_session_controls.model_pending();
                 let tier_change_sent = !self.pending_session_controls.service_tier_pending();
                 let normal_prompt_in_flight = self.normal_prompt_in_flight;

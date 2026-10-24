@@ -272,6 +272,7 @@ fn saved_session_access_mode_is_restored_after_runtime_restart()
         title: None,
         first_user_message: None,
         parent_session: None,
+        forked_from: None,
         message_count: None,
         model: None,
         thinking_level: None,

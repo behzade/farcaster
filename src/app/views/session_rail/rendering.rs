@@ -124,7 +124,7 @@ pub(super) fn inactive_session_badge(
     kind: SessionRailKind,
     item: &SessionRailItem,
     run_statuses: &HashMap<String, RunStatus>,
-    live_root: Option<&Path>,
+    live_session: Option<&Path>,
     live_status: RunStatus,
     waiting_roots: &HashSet<PathBuf>,
 ) -> Option<RunStatus> {
@@ -135,7 +135,7 @@ pub(super) fn inactive_session_badge(
     let status = resolved_session_status(
         &item.session,
         run_statuses.get(&target).copied(),
-        live_root,
+        live_session,
         live_status,
         waiting_roots.contains(&item.session.path),
     );

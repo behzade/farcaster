@@ -65,6 +65,26 @@ fn parent_waits_while_a_descendant_is_running() {
 }
 
 #[test]
+fn fork_activity_does_not_change_source_status() {
+    let source = session("source", None, false);
+    let mut fork = session("fork", None, true);
+    fork.forked_from = Some(source.id.clone());
+    let catalog: SessionCatalog = vec![source.clone(), fork.clone()].into();
+    let waiting = roots_waiting_for_active_descendants(&catalog, &HashMap::new());
+    assert!(!waiting.contains(&source.path));
+    assert_eq!(
+        resolved_session_status(
+            &source,
+            None,
+            Some(&fork.path),
+            RunStatus::Working,
+            waiting.contains(&source.path)
+        ),
+        RunStatus::Done
+    );
+}
+
+#[test]
 fn unknown_status_falls_back_and_explicit_activity_wins_over_waiting() {
     let running = session("running", None, true);
     assert_eq!(

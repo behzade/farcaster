@@ -835,6 +835,9 @@ pub(super) fn actor_key_for_command(
     latest: &HashMap<String, Arc<RuntimeSnapshot>>,
 ) -> String {
     let path = match command {
+        RuntimeCommand::ForkSession { .. } => {
+            return format!("{requested_key}:{}", uuid::Uuid::new_v4());
+        }
         RuntimeCommand::SelectSession { path, .. }
         | RuntimeCommand::RestartSession { path, .. } => path,
         _ => return requested_key.to_owned(),

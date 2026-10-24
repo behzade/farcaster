@@ -114,11 +114,7 @@ impl FarcasterApp {
         let selected_root = self
             .selected_rail_root()
             .map(|session| session.path.clone());
-        let live_root = self
-            .sessions
-            .visible
-            .root_for_path(self.snapshot.live_session.as_deref())
-            .map(|session| session.path.clone());
+        let live_session = self.snapshot.live_session.clone();
         let waiting_roots = {
             let _timing =
                 OperationTiming::new(OperationKind::SidebarFamilyStatus, self.sessions.all.len());
@@ -184,7 +180,7 @@ impl FarcasterApp {
         let selected_draft = self.sessions.selected_draft.clone();
         let submitted_drafts = self.sessions.submitted_drafts.clone();
         let active_selected_root = selected_root.clone();
-        let active_live_root = live_root.clone();
+        let active_live_session = live_session.clone();
         let active_live_status = self.snapshot.live_status;
         let active_run_statuses = self.activity.run_statuses.clone();
         let active_waiting_roots = waiting_roots.clone();
@@ -231,7 +227,7 @@ impl FarcasterApp {
                         let badge = Some(resolved_session_status(
                             &item.session,
                             active_run_statuses.get(&target).copied(),
-                            active_live_root.as_deref(),
+                            active_live_session.as_deref(),
                             active_live_status,
                             active_waiting_roots.contains(&item.session.path),
                         ));

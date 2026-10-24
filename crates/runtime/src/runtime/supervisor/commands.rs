@@ -395,7 +395,7 @@ impl Supervisor {
                                 actor_key_for_command(&command, &requested_key, &self.latest)
                             })
                         }
-                        _ => requested_key,
+                        _ => actor_key_for_command(&command, &requested_key, &self.latest),
                     };
                     let profile_id = match configuration_for_target(
                         &self.process_command,

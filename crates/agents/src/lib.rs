@@ -24,7 +24,7 @@ pub use adapter::{
     load_session_history, load_session_history_for_profile, move_session_family,
     move_session_family_with_config, project_trust, project_trust_description,
     refresh_configuration_catalog, rename_session, saved_project_trust, seed_configuration_catalog,
-    service_tier_policy, spawn_session, supports_auto_title_generation,
+    service_tier_policy, session_fork_source, spawn_session, supports_auto_title_generation,
     supports_individual_queue_cancellation, supports_reasoning_effort, supports_reasoning_reset,
     supports_sandbox_discovery, supports_session_fork, supports_session_move,
     supports_session_resume, supports_startup_command, supports_steering, validate_launch,
