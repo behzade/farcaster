@@ -90,6 +90,8 @@ fn isolated_with_env(name: &str, backends: &[&str], env: &[(&str, &str)], run: i
             .1
     );
     if std::env::var(CHILD_MARKER).as_deref() == Ok(test_name.as_str()) {
+        let project = std::env::current_dir().expect("isolated fixture project");
+        crate::agents::set_test_project_environment(&project, std::env::vars_os().collect());
         run();
         return;
     }
