@@ -740,7 +740,7 @@ fn automatic_title_requires_a_loaded_new_unnamed_session() {
         owner.startup_history_loaded = true;
         assert_eq!(
             owner.should_generate_automatic_title(PromptMode::Normal, false),
-            matches!(harness, "codex-cli" | "pi"),
+            matches!(harness, "codex-cli" | "pi" | "cursor-cli"),
             "{harness} fresh-session title support"
         );
         owner

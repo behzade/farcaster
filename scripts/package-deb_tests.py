@@ -55,7 +55,7 @@ class DebianPackagingTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="farcaster-package-fixture-")
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         for directory in ("tools", "release", "out", "tmp", "lib", "docs"):
             (self.root / directory).mkdir()
         (self.root / "release/farcaster").write_text("fixture release binary")
