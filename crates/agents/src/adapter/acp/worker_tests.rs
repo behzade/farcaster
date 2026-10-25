@@ -25,7 +25,6 @@ while IFS= read -r line; do
     *) exit 2 ;;
   esac
   printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$id" "$result"
-  case "$line" in *'"method":"session/close"'*) exit 0 ;; esac
 done
 "#;
     let project = tempfile::tempdir().map_err(|error| error.to_string())?;
@@ -156,7 +155,6 @@ while IFS= read -r line; do
     *) exit 2 ;;
   esac
   printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$id" "$result"
-  case "$line" in *'"method":"session/close"'*) exit 0 ;; esac
 done
 "#;
     let project = tempfile::tempdir().map_err(|error| error.to_string())?;
@@ -259,7 +257,7 @@ while IFS= read -r line; do
       printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"one","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"fixture ok"}}}}'
       id=$prompt_id; reply '{"stopReason":"end_turn"}' ;;
     *'"method":"session/cancel"'*) id=$prompt_id; reply '{"stopReason":"cancelled"}' ;;
-    *'"method":"session/close"'*) reply '{}'; exit 0 ;;
+    *'"method":"session/close"'*) reply '{}' ;;
     *) exit 2 ;;
   esac
 done
@@ -388,7 +386,7 @@ while IFS= read -r line; do
     *'"id":"approval-first"'*) ;;
     *'"id":"approval-cancel"'*) ;;
     *'"method":"session/cancel"'*) id=$prompt_id; reply '{"stopReason":"cancelled"}' ;;
-    *'"method":"session/close"'*) reply '{}'; exit 0 ;;
+    *'"method":"session/close"'*) reply '{}' ;;
     *) exit 2 ;;
   esac
 done
@@ -2453,6 +2451,7 @@ fn cursor_close_waits_for_the_matching_response_even_without_advertised_close() 
 
     let (request_seen, request_received) = mpsc::sync_channel(1);
     let (release_response, response_released) = mpsc::sync_channel(1);
+    let (finish, finished) = mpsc::sync_channel(1);
     let peer = thread::spawn(move || {
         let mut reader = std::io::BufReader::new(peer.try_clone().expect("clone peer transport"));
         let mut request = String::new();
@@ -2474,6 +2473,9 @@ fn cursor_close_waits_for_the_matching_response_even_without_advertised_close() 
         )
         .expect("write session close response");
         peer.flush().expect("flush session close response");
+        finished
+            .recv_timeout(Duration::from_secs(3))
+            .expect("release ACP close peer");
     });
 
     let close = thread::spawn(move || {
@@ -2500,6 +2502,7 @@ fn cursor_close_waits_for_the_matching_response_even_without_advertised_close() 
     let (result, status) = close.join().expect("join ACP close");
     result.expect("close response should complete graceful shutdown");
     assert!(status.is_some(), "ACP child was not reaped");
+    finish.send(()).expect("release ACP close peer");
     peer.join().expect("join ACP close peer");
 }
 

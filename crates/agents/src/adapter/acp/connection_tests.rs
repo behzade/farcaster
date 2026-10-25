@@ -237,12 +237,17 @@ mod exchange {
 
     #[test]
     fn sdk_routes_errors_and_reports_eof() {
-        let (connection, peer) = connect(|mut peer| {
+        let (finish, finished) = mpsc::channel();
+        let (connection, peer) = connect(move |mut peer| {
             peer.initialize();
             for code in [-32602, -32000] {
                 let request = peer.read();
                 peer.write(json!({"jsonrpc":"2.0", "id":request["id"], "error":{"code":code, "message":"request denied"}}));
             }
+            // Trigger EOF only after the client has consumed both error responses.
+            finished
+                .recv_timeout(Duration::from_secs(3))
+                .expect("release ACP error peer");
         });
         connection
             .initialize(&PROFILE)
@@ -261,6 +266,7 @@ mod exchange {
                 matches!(next(&connection).expect("test operation should succeed"), AcpInbound::Error {id: response_id, rejection} if response_id == id && rejection.message.contains("request denied") && rejection.reason == reason)
             );
         }
+        finish.send(()).expect("release ACP error peer");
         assert!(next(&connection).is_err());
         peer.join().expect("test operation should succeed");
     }
