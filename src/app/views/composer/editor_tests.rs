@@ -82,7 +82,7 @@ fn composer_remains_plain_text_and_restores_highlights_after_draft_replacement(
             assert_eq!(view.input.read(cx).value().as_ref(), "  سلام فارسی\n(");
         })
     });
-    cx.simulate_keystrokes("cmd-z");
+    cx.simulate_keystrokes(&crate::app::ui::keybindings::application_key("z"));
     cx.update(|_, cx| {
         assert_eq!(
             view.read(cx).input.read(cx).value().as_ref(),

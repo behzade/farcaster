@@ -143,13 +143,14 @@ class TestRunnerTests(unittest.TestCase):
         self.assertEqual(calls[0]["args"], ["test", "--locked", *args])
         self.assertEqual(calls[0]["cwd"], str(self.root))
 
-    def test_default_stops_at_failed_package_and_preserves_exit_status(self):
+    def test_default_runs_remaining_packages_and_preserves_failure_status(self):
         manifests = package_manifests()
         self.environment["TEST_CARGO_FAIL_MANIFEST"] = manifests[1]
         result, calls = self.run_script()
         self.assertEqual(result.returncode, 23, result.stderr)
         self.assertEqual([call["args"] for call in calls],
-                         [["test", "--locked", "--manifest-path", manifest] for manifest in manifests[:2]])
+                         [["test", "--locked", "--manifest-path", manifest] for manifest in manifests])
+        self.assertIn(f"Tests failed for {manifests[1]} (exit 23)", result.stderr)
 
     def test_focused_failure_preserves_exit_status(self):
         manifest = "relative package/Cargo.toml"

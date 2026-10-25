@@ -17,7 +17,7 @@ fn worker_notices_block_surface_switch_until_closed(cx: &mut gpui::TestAppContex
                         assert!(app.native_workspace_modal_active());
                         assert_eq!(
                             app.native_surface_obscured(window, cx),
-                            !cfg!(target_os = "macos")
+                            !cfg!(any(target_os = "macos", target_os = "linux"))
                         );
                         app.cycle_workspace_surface(true, window, cx);
                         assert_eq!(app.workspace.surface, surface);
@@ -107,7 +107,7 @@ fn workspace_bar_hover_uses_platform_overlay_policy(cx: &mut gpui::TestAppContex
                     app.set_workspace_bar_hovered(true, cx);
                     assert_eq!(
                         app.native_surface_obscured(window, cx),
-                        !cfg!(target_os = "macos")
+                        !cfg!(any(target_os = "macos", target_os = "linux"))
                     );
                     app.set_workspace_bar_hovered(false, cx);
                     assert!(!app.native_surface_obscured(window, cx));
@@ -134,7 +134,7 @@ fn native_surface_focus_waits_only_for_the_snapshot_fallback(cx: &mut gpui::Test
                     app.apply_post_render_focus(window, cx);
                     assert_eq!(
                         app.overlays.post_render_focus.is_some(),
-                        !cfg!(target_os = "macos")
+                        !cfg!(any(target_os = "macos", target_os = "linux"))
                     );
                     app.set_workspace_bar_hovered(false, cx);
                     app.apply_post_render_focus(window, cx);
