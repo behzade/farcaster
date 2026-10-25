@@ -41,7 +41,7 @@ minimum-system-version = "14.0"
 
 [dependencies]
 async-channel = "2.5.0"
-base64 = "0.22.1"
+base64 = "0.23.1"
 farcaster-contracts = { path = "crates/contracts" }
 farcaster-access = { path = "crates/access" }
 farcaster-agent-protocol = { path = "crates/agent-protocol" }

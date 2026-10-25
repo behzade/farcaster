@@ -1903,7 +1903,7 @@ name = "farcaster"
 version = "0.4.6"
 dependencies = [
  "async-channel",
- "base64 0.22.1",
+ "base64 0.23.1",
  "block2 0.6.2",
  "farcaster-access",
  "farcaster-agent-protocol",
