@@ -23,6 +23,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+
       - name: Check package inventory and test runner
         run: python3 scripts/test_tests.py
 
@@ -41,10 +45,6 @@ jobs:
             libfontconfig1-dev libfreetype6-dev libvulkan-dev libwayland-dev \
             libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
             libxml2-dev pkg-config python3
-
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.95.0
 
       - uses: mlugg/setup-zig@v2
         with:

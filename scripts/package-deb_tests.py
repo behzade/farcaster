@@ -17,7 +17,7 @@ name = pathlib.Path(sys.argv[0]).name
 args = sys.argv[1:]
 if name == "cargo":
     assert args == ["metadata", "--no-deps", "--format-version", "1"]
-    print('{"packages":[{"version":"1.2.3"}]}')
+    print('{"packages":[{"name":"other","version":"9.9.9"},{"name":"farcaster","version":"1.2.3"}]}')
 elif name == "dpkg":
     assert args == ["--print-architecture"]
     print("amd64")

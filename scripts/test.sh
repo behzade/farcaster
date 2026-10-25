@@ -9,7 +9,7 @@ trap 'exit 143' TERM
 
 export FARCASTER_DATA_DIR="$run_data_dir"
 if [ "$#" -gt 0 ]; then
-    cargo test "$@"
+    cargo test --locked "$@"
     exit
 fi
 
@@ -19,5 +19,5 @@ while IFS= read -r manifest <&3 || [ -n "$manifest" ]; do
     case "$manifest" in
         ''|'#'*) continue ;;
     esac
-    cargo test --manifest-path "$manifest"
+    cargo test --locked --manifest-path "$manifest"
 done 3< "$repo_root/scripts/first-party-packages.txt"

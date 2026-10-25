@@ -49,7 +49,7 @@ jobs:
         shell: bash
         run: |
           package_version=$(cargo metadata --no-deps --format-version 1 \
-            | python3 -c 'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+            | python3 -c 'import json, sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "farcaster"))')
           test "$GITHUB_REF_NAME" = "v$package_version" || {
             echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $package_version" >&2
             exit 1

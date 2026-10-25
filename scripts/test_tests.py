@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -48,6 +49,44 @@ class PackageInventoryTests(unittest.TestCase):
         for manifest in manifests:
             self.assertTrue((REPO_ROOT / manifest).is_file(), manifest)
 
+    def test_every_package_uses_the_root_workspace(self):
+        for manifest in package_manifests():
+            with self.subTest(manifest=manifest):
+                workspace = subprocess.check_output(
+                    ["cargo", "locate-project", "--workspace", "--manifest-path", manifest,
+                     "--message-format", "plain"], cwd=REPO_ROOT, text=True)
+                self.assertEqual(Path(workspace.strip()).resolve(), REPO_ROOT / "Cargo.toml")
+
+    def test_stale_shared_lock_fails_in_default_and_focused_runs(self):
+        with tempfile.TemporaryDirectory(prefix="farcaster-shared-lock-") as directory:
+            root = Path(directory)
+            (root / "Cargo.toml").write_text(
+                '[workspace]\nmembers = ["member", "dependency"]\nresolver = "2"\n')
+            for name in ("member", "dependency"):
+                (root / name / "src").mkdir(parents=True)
+                (root / name / "Cargo.toml").write_text(
+                    f'[package]\nname = "{name}"\nversion = "0.1.0"\nedition = "2021"\n')
+                (root / name / "src/lib.rs").write_text("")
+            subprocess.run(["cargo", "generate-lockfile", "--offline"], cwd=root,
+                           check=True, capture_output=True)
+            locked = (root / "Cargo.lock").read_bytes()
+            with (root / "member/Cargo.toml").open("a") as manifest:
+                manifest.write('[dependencies]\ndependency = { path = "../dependency" }\n')
+            (root / "member/Cargo.lock").write_text("obsolete crate lock must be ignored")
+            (root / "scripts").mkdir()
+            runner = root / "scripts/test.sh"
+            shutil.copyfile(SCRIPT, runner)
+            (root / "scripts/first-party-packages.txt").write_text("member/Cargo.toml\n")
+            for args in ((), ("--manifest-path", "member/Cargo.toml", "--offline")):
+                with self.subTest(args=args):
+                    result = subprocess.run(["sh", str(runner), *args], cwd=root,
+                                            env=dict(os.environ, CARGO_NET_OFFLINE="true"),
+                                            capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("--locked", result.stderr)
+                    self.assertEqual((root / "Cargo.lock").read_bytes(), locked)
+                    self.assertFalse((root / "target").exists())
+
 
 class TestRunnerTests(unittest.TestCase):
     def setUp(self):
@@ -90,7 +129,7 @@ class TestRunnerTests(unittest.TestCase):
         result, calls = self.run_script(cwd=self.root, stdin="caller input\n")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([call["args"] for call in calls],
-                         [["test", "--manifest-path", manifest]
+                         [["test", "--locked", "--manifest-path", manifest]
                           for manifest in package_manifests()])
         self.assertEqual({call["cwd"] for call in calls}, {str(REPO_ROOT)})
         self.assertEqual(calls[0]["stdin"], "caller input\n")
@@ -101,7 +140,7 @@ class TestRunnerTests(unittest.TestCase):
         result, calls = self.run_script(*args, cwd=self.root)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0]["args"], ["test", *args])
+        self.assertEqual(calls[0]["args"], ["test", "--locked", *args])
         self.assertEqual(calls[0]["cwd"], str(self.root))
 
     def test_default_stops_at_failed_package_and_preserves_exit_status(self):
@@ -110,7 +149,7 @@ class TestRunnerTests(unittest.TestCase):
         result, calls = self.run_script()
         self.assertEqual(result.returncode, 23, result.stderr)
         self.assertEqual([call["args"] for call in calls],
-                         [["test", "--manifest-path", manifest] for manifest in manifests[:2]])
+                         [["test", "--locked", "--manifest-path", manifest] for manifest in manifests[:2]])
 
     def test_focused_failure_preserves_exit_status(self):
         manifest = "relative package/Cargo.toml"

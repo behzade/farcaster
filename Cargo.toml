@@ -1,3 +1,7 @@
+[workspace]
+members = ["crates/*", "workgraph"]
+resolver = "3"
+
 [package]
 name = "farcaster"
 version = "0.4.6"

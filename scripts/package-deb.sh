@@ -5,7 +5,7 @@ cd "$root"
 target_dir=${CARGO_TARGET_DIR:-"$root/target"}
 binary=$(realpath "$target_dir/release/farcaster")
 out=$(realpath "${1:?usage: package-deb.sh OUTPUT_DIRECTORY}")
-version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "farcaster"))')
 arch=$(dpkg --print-architecture)
 stage=$(mktemp -d)
 package_root="$stage/package"
