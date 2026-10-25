@@ -26,7 +26,7 @@ fn fixture_binary() -> &'static std::path::Path {
     static BINARY: OnceLock<tempfile::TempDir> = OnceLock::new();
     BINARY
         .get_or_init(|| {
-            let dir = tempfile::tempdir().expect("test operation should succeed");
+            let dir = tempfile::tempdir_in("/tmp").expect("test operation should succeed");
             let output = Command::new("rustc")
                 .arg("--edition=2024")
                 .arg(concat!(
@@ -47,6 +47,15 @@ fn fixture_binary() -> &'static std::path::Path {
         .path()
 }
 
+fn install_fixture(path: impl AsRef<std::path::Path>) {
+    // Avoid Linux ETXTBSY without opening the installed peer for writing.
+    // macOS can kill concurrent launches when hard links to a binary disappear.
+    #[cfg(target_os = "linux")]
+    fs::hard_link(fixture_binary().join("agent"), path).expect("link fixture");
+    #[cfg(not(target_os = "linux"))]
+    fs::copy(fixture_binary().join("agent"), path).expect("copy fixture");
+}
+
 #[test]
 fn catalog_fixture_discovery_preserves_arguments_and_only_bypasses_exact_opencode_command() {
     for (backend, args, discovery) in [
@@ -55,9 +64,9 @@ fn catalog_fixture_discovery_preserves_arguments_and_only_bypasses_exact_opencod
         ("opencode", vec!["debug", "paths", "--extra"], false),
         ("codex", vec!["debug", "paths"], false),
     ] {
-        let dir = tempfile::tempdir().expect("create fixture directory");
+        let dir = tempfile::tempdir_in("/tmp").expect("create fixture directory");
         let executable = dir.path().join(backend);
-        fs::copy(fixture_binary().join("agent"), &executable).expect("copy fixture");
+        install_fixture(&executable);
         let output = Command::new(&executable)
             .args(&args)
             .stdin(Stdio::null())
@@ -100,23 +109,17 @@ fn isolated_with_env(name: &str, backends: &[&str], env: &[(&str, &str)], run: i
         .tempdir_in("/tmp")
         .expect("test operation should succeed");
     for backend in backends {
-        fs::copy(fixture_binary().join("agent"), dir.path().join(backend))
-            .expect("test operation should succeed");
+        install_fixture(dir.path().join(backend));
     }
     if backends.contains(&"cursor-cli") {
-        fs::copy(fixture_binary().join("agent"), dir.path().join("node"))
-            .expect("install SDK helper fixture");
+        install_fixture(dir.path().join("node"));
         let sdk = dir
             .path()
             .join(".local/share/farcaster/cursor-sdk/1.0.35/node_modules/@cursor/sdk/dist/esm");
         fs::create_dir_all(&sdk).expect("SDK fixture directory");
         fs::write(sdk.join("index.js"), "").expect("SDK fixture module marker");
     }
-    fs::copy(
-        fixture_binary().join("agent"),
-        dir.path().join("localharness_external"),
-    )
-    .expect("test operation should succeed");
+    install_fixture(dir.path().join("localharness_external"));
     let log = fs::File::create(dir.path().join("test.log")).expect("test operation should succeed");
     let mut command = Command::new(std::env::current_exe().expect("test operation should succeed"));
     command
