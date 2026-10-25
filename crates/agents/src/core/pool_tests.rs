@@ -842,17 +842,38 @@ fn child_questions_use_parent_messages_and_leave_no_user_dialog() -> Result<(), 
             .send(WorkerEvent::QuestionsRequested(crate::QuestionRequest {
                 id: "native-question-request".into(),
                 blocking,
-                questions: vec![crate::Question {
-                    id: "choice".into(),
-                    header: "Search".into(),
-                    prompt: "Include archived conversations?".into(),
-                    options: vec![crate::QuestionOption {
-                        label: "Exclude".into(),
-                        description: "Only search active conversations".into(),
-                    }],
-                    allow_free_text: false,
-                    secret: false,
-                }],
+                questions: vec![
+                    crate::Question {
+                        id: "choice".into(),
+                        header: "Search".into(),
+                        prompt: "Include archived conversations?".into(),
+                        options: vec![crate::QuestionOption {
+                            label: "Exclude".into(),
+                            description: "Only search active conversations".into(),
+                        }],
+                        allow_free_text: false,
+                        secret: false,
+                    },
+                    crate::Question {
+                        id: "scope".into(),
+                        header: "Search scope".into(),
+                        prompt: "Which conversations?".into(),
+                        options: vec![crate::QuestionOption {
+                            label: "All".into(),
+                            description: String::new(),
+                        }],
+                        allow_free_text: true,
+                        secret: false,
+                    },
+                    crate::Question {
+                        id: "token".into(),
+                        header: String::new(),
+                        prompt: "Which access token?".into(),
+                        options: vec![],
+                        allow_free_text: true,
+                        secret: true,
+                    },
+                ],
             }))
             .map_err(|_| "question event")?;
         // Settling proves the native question no longer pins the worker in NeedsInput.
@@ -864,13 +885,15 @@ fn child_questions_use_parent_messages_and_leave_no_user_dialog() -> Result<(), 
         wait_for_worker_status(&pool, &id, WorkerStatus::Idle)?;
         let message = parent.try_recv().ok_or("missing question")?;
         assert_eq!(message.from, "implementation");
-        assert!(message.message.contains("Include archived conversations?"));
-        assert!(
-            message
-                .message
-                .contains("Exclude: Only search active conversations")
+        assert_eq!(
+            message.message.split("\n\n").collect::<Vec<_>>(),
+            [
+                "Questions for the parent. Reply with worker_send to implementation. Identify each question in your reply. Ask the user only if their decision is needed.",
+                "Question choice: Search\nInclude archived conversations?\nChoose from the listed options.\n- Exclude: Only search active conversations",
+                "Question scope: Search scope\nWhich conversations?\nFree-text answers are allowed.\n- All",
+                "Question token\nWhich access token?\nFree-text answers are allowed.\nSensitive answer requested.",
+            ]
         );
-        assert!(message.message.contains("worker_send to implementation"));
         assert!(parent.try_recv().is_none(), "only one parent message");
         assert!(
             registry
@@ -885,11 +908,8 @@ fn child_questions_use_parent_messages_and_leave_no_user_dialog() -> Result<(), 
                 cancelled: true,
             }]
         );
-        registry.send(
-            parent.token(),
-            "implementation",
-            "Exclude archived conversations".into(),
-        )?;
+        let reply = "Exclude archived conversations";
+        registry.send(parent.token(), "implementation", reply.into())?;
         let deadline = Instant::now() + Duration::from_secs(1);
         while factory
             .peer_messages
@@ -904,7 +924,7 @@ fn child_questions_use_parent_messages_and_leave_no_user_dialog() -> Result<(), 
         }
         assert_eq!(
             factory.peer_messages.lock().map_err(|_| "messages")?[0].message,
-            "Exclude archived conversations"
+            reply
         );
     }
     Ok(())

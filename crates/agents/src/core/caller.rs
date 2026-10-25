@@ -1123,11 +1123,23 @@ impl WorkerParent {
 
     pub(super) fn report_questions(&self, request: &crate::QuestionRequest) -> Result<(), String> {
         let mut message = format!(
-            "Questions for the parent. Reply with worker_send to {}. Ask the user only if their decision is needed.",
+            "Questions for the parent. Reply with worker_send to {}. Identify each question in your reply. Ask the user only if their decision is needed.",
             self.child_name
         );
         for question in &request.questions {
-            message.push_str(&format!("\n\n{}", question.prompt));
+            message.push_str(&format!("\n\nQuestion {}", question.id));
+            if !question.header.is_empty() {
+                message.push_str(&format!(": {}", question.header));
+            }
+            message.push_str(&format!("\n{}", question.prompt));
+            message.push_str(if question.allow_free_text {
+                "\nFree-text answers are allowed."
+            } else {
+                "\nChoose from the listed options."
+            });
+            if question.secret {
+                message.push_str("\nSensitive answer requested.");
+            }
             for option in &question.options {
                 message.push_str(&format!("\n- {}", option.label));
                 if !option.description.is_empty() {
