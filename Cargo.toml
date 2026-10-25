@@ -20,10 +20,11 @@ icons = [
     "assets/icons/app/icon_512x512.png",
     "assets/icons/app/icon_512x512@2x.png",
 ]
+# Keep resources uniformly mapped: Dependabot's TOML serializer cannot round-trip mixed strings and tables.
 resources = [
-    "LICENSE",
-    "NOTICE.md",
-    "THIRD_PARTY_LICENSES",
+    { src = "LICENSE", target = "LICENSE" },
+    { src = "NOTICE.md", target = "NOTICE.md" },
+    { src = "THIRD_PARTY_LICENSES", target = "THIRD_PARTY_LICENSES" },
     { src = "assets/ibm-plex-sans/OFL.txt", target = "THIRD_PARTY_LICENSES/IBM-PLEX-OFL.txt" },
     { src = "assets/lilex/OFL.txt", target = "THIRD_PARTY_LICENSES/LILEX-OFL.txt" },
     { src = "assets/vazirmatn/OFL.txt", target = "THIRD_PARTY_LICENSES/VAZIRMATN-OFL.txt" },
