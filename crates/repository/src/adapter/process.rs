@@ -274,8 +274,9 @@ fn terminate_process_group(process_group: u32) {
 fn kill_process_group(process_group: u32, force: bool) {
     let signal = if force { "-KILL" } else { "-TERM" };
     let group = format!("-{process_group}");
+    // Older procps can parse a negative group as an option and signal our own group.
     let _status = Command::new("kill")
-        .args([signal, &group])
+        .args([signal, "--", &group])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
