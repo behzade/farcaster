@@ -1278,14 +1278,8 @@ fn child_process_omits_farcaster_mcp() -> TestResult {
 
 #[test]
 fn catalog_process_disables_session_persistence() -> TestResult {
-    let project = tempdir()?;
-    let process = rpc_command(
-        &AgentLaunchConfig {
-            ..AgentLaunchConfig::default()
-        },
-        project.path(),
-        SessionLaunch::Catalog,
-    )?;
+    let (project, command) = fake("project-directory")?;
+    let process = rpc_command(&command, project.path(), SessionLaunch::Catalog)?;
     assert!(
         process
             .get_args()
@@ -1296,15 +1290,9 @@ fn catalog_process_disables_session_persistence() -> TestResult {
 
 #[test]
 fn fork_process_passes_the_source_session_to_pi() -> TestResult {
-    let project = tempdir()?;
+    let (project, command) = fake("project-directory")?;
     let source = Path::new("/sessions/source session.jsonl");
-    let process = rpc_command(
-        &AgentLaunchConfig {
-            ..AgentLaunchConfig::default()
-        },
-        project.path(),
-        SessionLaunch::Fork(source),
-    )?;
+    let process = rpc_command(&command, project.path(), SessionLaunch::Fork(source))?;
     let arguments = process.get_args().collect::<Vec<_>>();
     assert!(arguments.windows(2).any(|pair| pair == ["--mode", "rpc"]));
     assert!(
@@ -1322,10 +1310,10 @@ fn fork_process_passes_the_source_session_to_pi() -> TestResult {
 #[test]
 fn process_omits_builtin_mcp_when_disabled() -> TestResult {
     let _mcp = DisabledMcp::new();
-    let project = tempdir()?;
+    let (project, command) = fake("project-directory")?;
     let extension = project.path().join("extension.mjs");
     let process = prepare_rpc(
-        &AgentLaunchConfig::default(),
+        &command,
         project.path(),
         SessionLaunch::New,
         RpcMetadata {

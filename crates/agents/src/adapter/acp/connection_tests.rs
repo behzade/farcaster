@@ -189,7 +189,8 @@ mod exchange {
 
     #[test]
     fn pending_permission_does_not_block_updates_and_native_ids_survive() {
-        let (connection, peer) = connect(|mut peer| {
+        let (finish, finished) = mpsc::channel();
+        let (connection, peer) = connect(move |mut peer| {
             peer.initialize();
             let prompt = peer.read();
             peer.write(json!({"jsonrpc":"2.0", "id":"approve-7", "method":"session/request_permission", "params":{
@@ -201,6 +202,10 @@ mod exchange {
             assert_eq!(answer["id"], "approve-7");
             assert_eq!(answer["result"]["outcome"]["optionId"], "allow-once-7");
             peer.reply(&prompt, json!({"stopReason":"end_turn"}));
+            // Keep the peer open until the client has consumed the response.
+            finished
+                .recv_timeout(Duration::from_secs(3))
+                .expect("release ACP test peer");
         });
         connection
             .initialize(&PROFILE)
@@ -226,6 +231,7 @@ mod exchange {
         assert!(
             matches!(next(&connection).expect("test operation should succeed"), AcpInbound::Response {id,..} if id == prompt_id)
         );
+        finish.send(()).expect("release ACP test peer");
         peer.join().expect("test operation should succeed");
     }
 

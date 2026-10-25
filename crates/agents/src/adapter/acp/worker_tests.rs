@@ -1001,6 +1001,7 @@ fn queued_acp_admission_does_not_replace_the_executing_review_turn() {
 fn model_and_service_tier_are_sent_independently() {
     use std::io::{BufRead as _, Write as _};
     use std::os::unix::net::UnixStream;
+    let (finish, finished) = std::sync::mpsc::channel();
     let (client, peer) = UnixStream::pair().expect("test operation should succeed");
     peer.set_read_timeout(Some(std::time::Duration::from_secs(3)))
         .expect("test operation should succeed");
@@ -1031,6 +1032,10 @@ fn model_and_service_tier_are_sent_independently() {
                 .flush()
                 .expect("test operation should succeed");
         }
+        // Keep the peer open until the client has consumed the final response.
+        finished
+            .recv_timeout(Duration::from_secs(3))
+            .expect("release ACP test peer");
     });
     let mut session = inert_session();
     session.profile = super::super::super::cursor::PROFILE;
@@ -1074,6 +1079,7 @@ fn model_and_service_tier_are_sent_independently() {
     assert!(session.events.iter().any(|event| matches!(event,
         WorkerEvent::Activity(WorkerActivity::ServiceTierChanged {selected:Some(tier),options})
             if tier == "priority" && options == &["standard", "priority"])));
+    finish.send(()).expect("release ACP test peer");
     peer.join().expect("test operation should succeed");
 }
 

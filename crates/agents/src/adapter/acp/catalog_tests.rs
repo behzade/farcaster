@@ -39,7 +39,13 @@ fn catalog_command_uses_profile_executable_args_and_environment() -> Result<(), 
             ..AgentLaunchConfig::default()
         };
         let (command, _) = catalog_command(&profile, &config, project.path())?;
-        assert_eq!(command.get_program(), executable.as_os_str());
+        assert_eq!(
+            command.get_program(),
+            executable
+                .canonicalize()
+                .map_err(|error| error.to_string())?
+                .as_os_str()
+        );
         assert_eq!(command.get_args().next(), Some("profile-arg".as_ref()));
         assert!(command.get_envs().any(|(key, value)| {
             key == "FARCASTER_PROMPT_BOUNDARY_URL" && value == Some("http://profile.test".as_ref())
