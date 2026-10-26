@@ -88,7 +88,8 @@ fn panel_scrolls_within_its_bounds_independently(cx: &mut gpui::TestAppContext) 
 
     let archive = cx.debug_bounds("archive").unwrap();
     let notice = cx.debug_bounds("notifications").unwrap();
-    cx.simulate_event(gpui::ScrollWheelEvent {
+    cx.simulate_event(gpui::ScrollEvent {
+        source: gpui::ScrollSource::Pointer,
         position: notice.origin + gpui::point(px(10.0), px(10.0)),
         delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-100.0))),
         ..Default::default()

@@ -178,7 +178,7 @@ pub(crate) fn run(
                     let _ = cx.update_window(window, |_, window, _| window.activate_window());
                 }
             });
-            cx.bind_keys(keybindings::bindings());
+            cx.bind_keys(keybindings::bindings(cx));
             #[cfg(target_os = "macos")]
             super::menus::install(cx);
             cx.on_window_closed(|cx, _| {

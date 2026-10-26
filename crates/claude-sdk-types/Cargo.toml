@@ -2,6 +2,7 @@
 name = "claude-sdk-types"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.98"
 publish = false
 description = "Source-derived JSON types for the Claude Agent SDK and Claude CLI"
 

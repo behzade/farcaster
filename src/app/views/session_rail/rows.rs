@@ -342,9 +342,10 @@ impl RenderOnce for SessionRow {
 fn session_shortcut(number: u8) -> impl IntoElement {
     div()
         .debug_selector(move || format!("session-shortcut-{number}"))
-        .child(Kbd::new(
-            gpui::Keystroke::parse(&number.to_string()).expect("fixed session shortcut must parse"),
-        ))
+        .child(Kbd::new(gpui::Keystroke {
+            key: number.to_string(),
+            ..Default::default()
+        }))
 }
 
 fn session_row_title(

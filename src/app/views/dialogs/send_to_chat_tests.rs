@@ -36,7 +36,7 @@ fn destination_keys_bypass_text_selection_and_still_navigate_the_picker(
 ) {
     cx.update(|cx| {
         gpui_component::init(cx);
-        cx.bind_keys(crate::app::ui::keybindings::bindings());
+        cx.bind_keys(crate::app::ui::keybindings::bindings(cx));
     });
     let (view, cx) = cx.add_window_view(|window, cx| {
         let input = cx.new(|cx| {

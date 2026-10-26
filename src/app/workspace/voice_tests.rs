@@ -301,15 +301,15 @@ fn right_shift(cx: &mut gpui::VisualTestContext, app: &gpui::Entity<FarcasterApp
 }
 
 fn chord(cx: &mut gpui::VisualTestContext, key: &str, down: bool) {
+    let keystroke =
+        cx.update(|_, cx| gpui::Keystroke::parse_with_os(key, cx.platform_info().os).unwrap());
     if down {
         cx.update(|window, cx| {
             window.draw(cx).clear(cx);
-            window.dispatch_keystroke(gpui::Keystroke::parse(key).unwrap(), cx);
+            window.dispatch_keystroke(keystroke, cx);
         });
     } else {
-        cx.simulate_event(gpui::KeyUpEvent {
-            keystroke: gpui::Keystroke::parse(key).unwrap(),
-        });
+        cx.simulate_event(gpui::KeyUpEvent { keystroke });
     }
 }
 
@@ -636,7 +636,7 @@ fn voice_shortcut_capture_accepts_right_shift_but_not_shift_used_for_typing(
                 assert!(!app.read(cx).workspace.voice.capturing_shortcut);
                 assert!(app.read(cx).workspace.voice.settings_error.is_none());
                 assert!(app.read(cx).settings.voice_shortcut.is_none());
-                assert_eq!(app.read(cx).voice_shortcut_label(), "Right Shift");
+                assert_eq!(app.read(cx).voice_shortcut_label(cx), "Right Shift");
             });
             assert!(
                 crate::app::persistence::open()

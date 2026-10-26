@@ -33,7 +33,8 @@ fn voice_setting_requires_hex_and_remembers_the_toggle(cx: &mut gpui::TestAppCon
             cx.run_until_parked();
             draw(cx);
             let content = cx.debug_bounds("settings-content").unwrap();
-            cx.simulate_event(gpui::ScrollWheelEvent {
+            cx.simulate_event(gpui::ScrollEvent {
+                source: gpui::ScrollSource::Pointer,
                 position: content.center(),
                 delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(-100_000.0))),
                 ..Default::default()
@@ -339,17 +340,19 @@ fn voice_shortcut_records_cancels_rejects_conflicts_and_resets(cx: &mut gpui::Te
             cx.run_until_parked();
             draw(cx);
             let content = cx.debug_bounds("settings-content").unwrap();
-            cx.simulate_event(gpui::ScrollWheelEvent {
+            cx.simulate_event(gpui::ScrollEvent {
+                source: gpui::ScrollSource::Pointer,
                 position: content.center(),
                 delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(-100_000.0))),
                 ..Default::default()
             });
             draw(cx);
             let press = |cx: &mut VisualTestContext, key: &str| {
-                cx.simulate_keystrokes(key);
-                cx.simulate_event(gpui::KeyUpEvent {
-                    keystroke: gpui::Keystroke::parse(key).unwrap(),
+                let keystroke = cx.update(|_, cx| {
+                    gpui::Keystroke::parse_with_os(key, cx.platform_info().os).unwrap()
                 });
+                cx.simulate_keystrokes(key);
+                cx.simulate_event(gpui::KeyUpEvent { keystroke });
                 draw(cx);
             };
             click(cx, "voice-shortcut");

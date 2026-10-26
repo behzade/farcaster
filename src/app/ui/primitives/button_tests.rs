@@ -1,6 +1,6 @@
 use super::*;
 
-fn key_event(key: &str, is_held: bool) -> KeyDownEvent {
+fn key_event(key: &'static str, is_held: bool) -> KeyDownEvent {
     KeyDownEvent {
         keystroke: gpui::Keystroke::parse(key).expect("test keystroke"),
         is_held,

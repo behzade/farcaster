@@ -56,7 +56,8 @@ fn draw_transcript(
 }
 
 fn wheel(cx: &mut VisualTestContext, delta: Pixels) {
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
+        source: gpui::ScrollSource::Pointer,
         position: point(theme().size(1.0), theme().size(1.0)),
         delta: ScrollDelta::Pixels(point(px(0.0), delta)),
         ..Default::default()

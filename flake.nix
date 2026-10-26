@@ -2,9 +2,18 @@
   description = "Farcaster native coding-agent client";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+  inputs.rust-overlay = {
+    url = "github:oxalica/rust-overlay";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
 
   outputs =
-    { self, nixpkgs, ... }:
+    {
+      self,
+      nixpkgs,
+      rust-overlay,
+      ...
+    }:
     let
       systems = [
         "aarch64-darwin"
@@ -16,13 +25,26 @@
         "aarch64-linux"
         "x86_64-linux"
       ];
-      pkgsFor = system: import nixpkgs { inherit system; };
+      pkgsFor =
+        system:
+        import nixpkgs {
+          inherit system;
+          overlays = [ rust-overlay.overlays.default ];
+        };
+      rustToolchainFor = pkgs: pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
     in
     {
       packages = forLinuxSystems (
         system:
         let
-          farcaster = (pkgsFor system).callPackage ./packaging/nix.nix { };
+          pkgs = pkgsFor system;
+          rustToolchain = rustToolchainFor pkgs;
+          farcaster = pkgs.callPackage ./packaging/nix.nix {
+            rustPlatform = pkgs.makeRustPlatform {
+              cargo = rustToolchain;
+              rustc = rustToolchain;
+            };
+          };
         in
         {
           inherit farcaster;
@@ -97,14 +119,10 @@
           default = pkgs.mkShell {
             buildInputs = nativeRuntimeLibraries;
             packages = with pkgs; [
-              cargo
-              clippy
+              (rustToolchainFor pkgs)
               git
               neovim
               pkg-config
-              rust-analyzer
-              rustc
-              rustfmt
               rustPlatform.bindgenHook
               zig_0_16
             ];

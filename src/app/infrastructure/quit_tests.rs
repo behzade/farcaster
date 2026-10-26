@@ -39,7 +39,7 @@ fn assert_quit_routes_to_guard(
             cx,
         );
         install_window(window, cx);
-        cx.bind_keys(crate::app::ui::keybindings::bindings());
+        cx.bind_keys(crate::app::ui::keybindings::bindings(cx));
         #[cfg(target_os = "macos")]
         crate::app::infrastructure::menus::install(cx);
         window.draw(cx).clear(cx);

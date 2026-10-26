@@ -25,7 +25,7 @@ pub(crate) struct PickerRow {
     pub(crate) detail: Option<String>,
     pub(crate) section: &'static str,
     opens_page: bool,
-    shortcut_keys: Vec<Keystroke>,
+    shortcut_keys: Vec<String>,
     removable_project: Option<std::path::PathBuf>,
     disabled: bool,
     search: String,
@@ -48,12 +48,7 @@ impl PickerRow {
         .to_lowercase();
         let shortcut_keys = shortcut
             .as_deref()
-            .map(|shortcut| {
-                shortcut
-                    .split_whitespace()
-                    .map(|key| Keystroke::parse(key).expect("static picker shortcut must parse"))
-                    .collect()
-            })
+            .map(|shortcut| shortcut.split_whitespace().map(str::to_owned).collect())
             .unwrap_or_default();
         Self {
             id: id.into(),
@@ -258,7 +253,7 @@ impl ListDelegate for PickerDelegate {
         &mut self,
         index: IndexPath,
         _: &mut Window,
-        _: &mut Context<ListState<Self>>,
+        cx: &mut Context<ListState<Self>>,
     ) -> Option<Self::Item> {
         let row = self.row(index)?;
         Some(
@@ -302,11 +297,13 @@ impl ListDelegate for PickerDelegate {
                                 .flex_none()
                                 .items_center()
                                 .gap(theme().space.xs)
-                                .children(
-                                    row.shortcut_keys
-                                        .iter()
-                                        .map(|key| Kbd::new(key.clone()).outline()),
-                                )
+                                .children(row.shortcut_keys.iter().map(|key| {
+                                    Kbd::new(
+                                        Keystroke::parse_with_os(key, cx.platform_info().os)
+                                            .expect("picker shortcut must parse"),
+                                    )
+                                    .outline()
+                                }))
                         }))
                         .children(
                             row.opens_page

@@ -237,7 +237,7 @@ fn general(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>, cx: &gpui::App)
                 FeedbackTone::Error,
             ))
         })
-        .child(voice_setting(app, entity))
+        .child(voice_setting(app, entity, cx))
         .when_some(
             app.workspace.voice.settings_error.clone(),
             |content, error| {
@@ -247,7 +247,11 @@ fn general(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>, cx: &gpui::App)
         .into_any_element()
 }
 
-fn voice_setting(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
+fn voice_setting(
+    app: &FarcasterApp,
+    entity: WeakEntity<FarcasterApp>,
+    cx: &gpui::App,
+) -> AnyElement {
     let available = app.workspace.voice.available;
     let enabled = app.voice_enabled();
     let description = if !cfg!(target_os = "macos") {
@@ -311,7 +315,7 @@ fn voice_setting(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEle
                                 .label(if recording {
                                     "Press shortcut…".to_owned()
                                 } else {
-                                    app.voice_shortcut_label()
+                                    app.voice_shortcut_label(cx)
                                 })
                                 .with_size(Size::Small)
                                 .secondary()

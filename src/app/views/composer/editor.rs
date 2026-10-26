@@ -231,7 +231,11 @@ fn composer_height(
         rows += 1;
         if let Some(width) = width {
             rows += wrapper
-                .wrap_line(&[gpui::LineFragment::text(line)], width)
+                .wrap_line(
+                    &[gpui::LineFragment::text(line)],
+                    width,
+                    gpui::IndentAdjustment::SameIndent,
+                )
                 .take(8 - rows)
                 .count();
         }

@@ -310,7 +310,8 @@ fn composer_clicks_focus_blank_space_and_keep_visible_text_in_place(cx: &mut gpu
                 }
             }
             let bounds = cx.update(|_, cx| input.read(cx).input_bounds());
-            cx.simulate_event(gpui::ScrollWheelEvent {
+            cx.simulate_event(gpui::ScrollEvent {
+                source: gpui::ScrollSource::Pointer,
                 position: bounds.center(),
                 delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-1_000.))),
                 ..Default::default()

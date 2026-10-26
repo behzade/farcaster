@@ -45,10 +45,11 @@ fn long_labels_and_multi_chord_keys_fit_narrow_help(cx: &mut gpui::TestAppContex
             cx.draw(
                 point(px(0.0), px(0.0)),
                 size(px(width), px(300.0)),
-                |_, _| {
+                |_, cx| {
                     div().w(px(width)).child(shortcut_row(
                         &keys,
                         "Activate app keys without changing keyboard focus",
+                        cx,
                     ))
                 },
             );
@@ -78,7 +79,7 @@ fn voice_shortcut_help_renders_right_shift_and_custom_binding(cx: &mut gpui::Tes
         cx.draw(
             point(px(0.0), px(0.0)),
             size(px(520.0), px(800.0)),
-            |_, _| render_help(key).into_any_element(),
+            |_, cx| render_help(key, cx).into_any_element(),
         );
     }
 }

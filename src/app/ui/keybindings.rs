@@ -15,14 +15,19 @@ use crate::app::{COMPOSER_KEY_CONTEXT, TRANSCRIPT_SELECTION_KEY_CONTEXT};
 use gpui::{KeyBinding, KeyBindingContextPredicate as Predicate, Unbind};
 use gpui_base::actions::{SelectDown, SelectUp};
 
-fn binding(key: &str, action: Box<dyn gpui::Action>, condition: Predicate) -> KeyBinding {
+fn binding(
+    key: &str,
+    action: Box<dyn gpui::Action>,
+    condition: Predicate,
+    cx: &gpui::App,
+) -> KeyBinding {
     KeyBinding::load(
         key,
         action,
         Some(std::rc::Rc::new(condition)),
         false,
         None,
-        &gpui::DummyKeyboardMapper,
+        cx,
     )
     .expect("registered shortcut must have a valid keystroke")
 }
@@ -143,12 +148,13 @@ impl Command {
         self
     }
 
-    pub(crate) fn into_bindings(self) -> impl Iterator<Item = KeyBinding> {
+    pub(crate) fn into_bindings(self, cx: &gpui::App) -> impl Iterator<Item = KeyBinding> + '_ {
         self.bindings.into_iter().map(move |shortcut| {
             binding(
                 &shortcut.keystroke,
                 self.action.boxed_clone(),
                 shortcut.condition,
+                cx,
             )
         })
     }
@@ -197,17 +203,23 @@ fn navigation_keys(prefix: &str, key: &str, chat: &Predicate) -> Vec<Shortcut> {
         .collect()
 }
 
-pub(crate) fn bindings() -> Vec<KeyBinding> {
+pub(crate) fn bindings(cx: &gpui::App) -> Vec<KeyBinding> {
     let mut bindings = registry()
         .into_iter()
-        .flat_map(Command::into_bindings)
+        .flat_map(|command| command.into_bindings(cx))
         .collect::<Vec<_>>();
     bindings.extend([
-        binding("tab", Box::new(Unbind("root::Tab".into())), named("Root")),
+        binding(
+            "tab",
+            Box::new(Unbind("root::Tab".into())),
+            named("Root"),
+            cx,
+        ),
         binding(
             "shift-tab",
             Box::new(Unbind("root::TabPrev".into())),
             named("Root"),
+            cx,
         ),
     ]);
     bindings

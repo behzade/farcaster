@@ -2,12 +2,12 @@
 name = "farcaster-utility"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.95"
+rust-version = "1.98"
 publish = false
 license = "GPL-3.0-or-later"
 
 [dependencies]
-sum_tree = { package = "gpui-pre-sum-tree", version = "=0.3.7" }
+sum_tree = { package = "gpui-pre-sum-tree", version = "=0.3.10" }
 
 [lints.rust]
 unsafe_code = "forbid"

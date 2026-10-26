@@ -4,7 +4,7 @@ use crate::app::{FarcasterApp, workspace::SettingsTab};
 
 const RIGHT_SHIFT: &str = "right-shift";
 
-fn validate(stroke: &Keystroke) -> Result<(), String> {
+fn validate(stroke: &Keystroke, cx: &gpui::App) -> Result<(), String> {
     let function_key = stroke
         .key
         .strip_prefix('f')
@@ -26,7 +26,7 @@ fn validate(stroke: &Keystroke) -> Result<(), String> {
                 .keystroke
                 .split_whitespace()
                 .next()
-                .and_then(|key| Keystroke::parse(key).ok())
+                .and_then(|key| Keystroke::parse_with_os(key, cx.platform_info().os).ok())
                 .is_some_and(|key| key.key == stroke.key && key.modifiers == stroke.modifiers)
         }) {
             return Err(format!(
@@ -112,21 +112,21 @@ impl FarcasterApp {
             .unwrap_or(RIGHT_SHIFT)
     }
 
-    pub(super) fn matches_voice_shortcut(&self, stroke: &Keystroke) -> bool {
+    pub(super) fn matches_voice_shortcut(&self, stroke: &Keystroke, cx: &gpui::App) -> bool {
         let key = self.voice_shortcut();
         key != RIGHT_SHIFT
-            && Keystroke::parse(key).is_ok_and(|binding| {
+            && Keystroke::parse_with_os(key, cx.platform_info().os).is_ok_and(|binding| {
                 binding.key == stroke.key && binding.modifiers == stroke.modifiers
             })
     }
 
-    pub(in crate::app) fn voice_shortcut_label(&self) -> String {
+    pub(in crate::app) fn voice_shortcut_label(&self, cx: &gpui::App) -> String {
         let key = self.voice_shortcut();
         if key == RIGHT_SHIFT {
             return "Right Shift".into();
         }
-        Keystroke::parse(key)
-            .map(|key| key.to_string())
+        Keystroke::parse_with_os(key, cx.platform_info().os)
+            .map(|key| key.display(cx.platform_info().os).to_string())
             .unwrap_or_else(|_| key.to_owned())
     }
 
@@ -172,11 +172,11 @@ impl FarcasterApp {
             self.workspace.voice.capturing_shortcut = false;
             self.workspace.voice.settings_error = None;
             cx.notify();
-        } else if let Err(error) = validate(stroke) {
+        } else if let Err(error) = validate(stroke, cx) {
             self.workspace.voice.settings_error = Some(error);
             cx.notify();
         } else {
-            self.save_voice_shortcut(Some(stroke.unparse()), cx);
+            self.save_voice_shortcut(Some(stroke.unparse(cx.platform_info().os)), cx);
         }
         true
     }

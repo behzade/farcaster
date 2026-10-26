@@ -3,8 +3,8 @@ use std::{cell::RefCell, collections::BTreeMap, ops::Range, rc::Rc};
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Element, ElementId,
     EntityId, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
-    ListOffset, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    ScrollWheelEvent, Size, Style, Window, point, px, relative,
+    ListOffset, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollEvent,
+    Size, Style, Window, point, px, relative,
 };
 
 #[path = "list/height_index.rs"]
@@ -553,7 +553,7 @@ impl Element for TranscriptList {
         let current_view = window.current_view();
         let hitbox_id = prepaint.hitbox.id;
         let state = self.state.clone();
-        window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, _cx| {
+        window.on_mouse_event(move |event: &ScrollEvent, phase, window, _cx| {
             if phase != DispatchPhase::Bubble || !hitbox_id.should_handle_scroll(window) {
                 return;
             }

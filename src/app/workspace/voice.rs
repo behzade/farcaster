@@ -159,7 +159,7 @@ impl FarcasterApp {
             self.cancel_voice(cx);
             return true;
         }
-        if !self.matches_voice_shortcut(stroke) {
+        if !self.matches_voice_shortcut(stroke, cx) {
             self.interrupt_voice_gesture(cx);
             return false;
         }

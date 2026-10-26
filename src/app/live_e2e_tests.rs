@@ -514,7 +514,10 @@ fn type_text(cx: &mut VisualTestContext, text: &str) {
 }
 
 fn dispatch_named_key(cx: &mut VisualTestContext, key: &str) {
-    dispatch_keystroke(cx, Keystroke::parse(key).expect("valid test key"));
+    let keystroke = cx.update(|_, cx| {
+        Keystroke::parse_with_os(key, cx.platform_info().os).expect("valid test key")
+    });
+    dispatch_keystroke(cx, keystroke);
 }
 
 fn type_and_enter(cx: &mut VisualTestContext, text: &str) {
@@ -655,7 +658,7 @@ fn with_live_app(
         gpui_component::init(cx);
         crate::app::ui::primitives::init_tooltips(cx);
         install_component_theme(cx);
-        cx.bind_keys(super::ui::keybindings::bindings());
+        cx.bind_keys(super::ui::keybindings::bindings(cx));
     });
     phase("gpui-initialized");
     let (workgraph_updates, workgraph_rx) = async_channel::unbounded();

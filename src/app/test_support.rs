@@ -62,7 +62,7 @@ fn with_app(
         gpui_component::init(cx);
         crate::app::ui::primitives::init_tooltips(cx);
         install_component_theme(cx);
-        cx.bind_keys(super::ui::keybindings::bindings());
+        cx.bind_keys(super::ui::keybindings::bindings(cx));
     });
     let (workgraph_updates, workgraph_rx) = async_channel::unbounded();
     let (worker_updates, worker_rx) = async_channel::unbounded();

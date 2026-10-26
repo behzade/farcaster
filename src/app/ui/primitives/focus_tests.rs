@@ -190,7 +190,7 @@ fn keyboard_harness(
     use gpui::AppContext as _;
     cx.update(|cx| {
         gpui_component::init(cx);
-        cx.bind_keys(crate::app::ui::keybindings::bindings());
+        cx.bind_keys(crate::app::ui::keybindings::bindings(cx));
     });
     cx.add_window_view(|window, cx| {
         let composer = cx

@@ -25,7 +25,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.95.0
+          toolchain: 1.98.0
 
       - name: Check package inventory and test runner
         run: python3 scripts/test_tests.py

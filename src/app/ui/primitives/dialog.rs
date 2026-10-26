@@ -74,7 +74,7 @@ fn dialog_backdrop(
         .p(theme().space.md)
         .bg(theme().colors.backdrop)
         .occlude()
-        .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+        .on_scroll(|_, _, cx| cx.stop_propagation())
         .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
         .child(
             div()

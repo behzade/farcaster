@@ -9,7 +9,7 @@ depends=('gcc-libs' 'glibc' 'fontconfig' 'freetype2' 'libx11' 'libxcb'
          'libxkbcommon' 'libxkbcommon-x11' 'wayland' 'libglvnd'
          'vulkan-icd-loader' 'libxml2' 'libc++>=21' 'git' 'ca-certificates')
 optdepends=('neovim: embedded editor')
-makedepends=('rust>=1.95' 'clang' 'cmake' 'pkgconf')
+makedepends=('rust>=1.98' 'clang' 'cmake' 'pkgconf')
 # Ghostty needs this compiler even when Arch upgrades Zig.
 _zigver=0.16.0
 source=("$url/releases/download/v$pkgver/farcaster-$pkgver-source.tar.gz"

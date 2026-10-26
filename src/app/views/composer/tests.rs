@@ -143,7 +143,7 @@ fn concurrent_question_keeps_composer_focus_and_sends_typed_answer(cx: &mut gpui
 fn saved_prompt_body_keeps_actions_in_view_for_large_text(cx: &mut gpui::TestAppContext) {
     use gpui::{
         AppContext as _, InteractiveElement as _, IntoElement as _, ParentElement as _,
-        ScrollDelta, ScrollWheelEvent, Styled as _, div, point, px, size,
+        ScrollDelta, ScrollEvent, Styled as _, div, point, px, size,
     };
 
     cx.update(gpui_component::init);
@@ -221,7 +221,8 @@ fn saved_prompt_body_keeps_actions_in_view_for_large_text(cx: &mut gpui::TestApp
                 cx.debug_bounds("saved-prompt-tail")
                     .is_none_or(|tail| tail.top() > body.bottom())
             );
-            cx.simulate_event(ScrollWheelEvent {
+            cx.simulate_event(ScrollEvent {
+                source: gpui::ScrollSource::Pointer,
                 position: body.center(),
                 delta: ScrollDelta::Pixels(point(px(0.0), px(-100_000.0))),
                 ..Default::default()

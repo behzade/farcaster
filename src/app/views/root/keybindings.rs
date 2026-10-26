@@ -39,7 +39,7 @@ fn command_help_rows(
     rows
 }
 
-pub(super) fn render_help(voice_shortcut: &str) -> impl IntoElement {
+pub(super) fn render_help(voice_shortcut: &str, cx: &gpui::App) -> impl IntoElement {
     let shortcuts = crate::app::ui::navigation::help_shortcuts()
         .into_iter()
         .chain([
@@ -123,12 +123,12 @@ pub(super) fn render_help(voice_shortcut: &str) -> impl IntoElement {
             });
         sections[index]
             .1
-            .extend([shortcut_row(&keystroke, label).into_any_element()]);
+            .extend([shortcut_row(&keystroke, label, cx).into_any_element()]);
     }
     content.children(sections.into_iter().map(|(_, section)| section))
 }
 
-fn shortcut_row(keystrokes: &[String], label: &str) -> impl IntoElement {
+fn shortcut_row(keystrokes: &[String], label: &str, cx: &gpui::App) -> impl IntoElement {
     use gpui::InteractiveElement as _;
     let keys = div()
         .debug_selector(|| "shortcut-keys".into())
@@ -149,8 +149,11 @@ fn shortcut_row(keystrokes: &[String], label: &str) -> impl IntoElement {
                     if key == "right-shift" {
                         return div().child("Right Shift").into_any_element();
                     }
-                    Kbd::new(gpui::Keystroke::parse(key).expect("registered shortcut must parse"))
-                        .into_any_element()
+                    Kbd::new(
+                        gpui::Keystroke::parse_with_os(key, cx.platform_info().os)
+                            .expect("registered shortcut must parse"),
+                    )
+                    .into_any_element()
                 }))
         }));
     div()

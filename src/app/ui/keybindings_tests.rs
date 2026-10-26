@@ -1,471 +1,520 @@
 use super::{bindings, registry};
 
-#[test]
-fn nested_overlays_do_not_start_escape_session_controls() {
-    use crate::app::{
-        AbortRun, CHAT_INPUT_CONTEXT, EscapePrefix, OVERLAY_KEY_CONTEXT, PICKER_KEY_CONTEXT,
-    };
+#[gpui::test]
+fn nested_overlays_do_not_start_escape_session_controls(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        use crate::app::{
+            AbortRun, CHAT_INPUT_CONTEXT, EscapePrefix, OVERLAY_KEY_CONTEXT, PICKER_KEY_CONTEXT,
+        };
 
-    let keymap = gpui::Keymap::new(bindings());
-    let escape = gpui::Keystroke::parse("escape").unwrap();
-    for overlay in [
-        OVERLAY_KEY_CONTEXT,
-        PICKER_KEY_CONTEXT,
-        "PopupMenu",
-        "Popover",
-    ] {
-        let contexts = [CHAT_INPUT_CONTEXT, "FarcasterChat", overlay, "Input"]
-            .map(|name| gpui::KeyContext::parse(name).unwrap());
-        for count in 1..=2 {
-            let (matched, pending) =
-                keymap.bindings_for_input(&vec![escape.clone(); count], &contexts);
-            assert!(!pending, "Escape must not wait for a sequence in {overlay}");
-            assert!(
-                matched.iter().all(|binding| {
-                    let action = binding.action().as_any();
-                    !action.is::<AbortRun>() && !action.is::<EscapePrefix>()
-                }),
-                "Escape must not control the session in {overlay}"
-            );
+        let keymap = gpui::Keymap::new(bindings(cx));
+        let escape = gpui::Keystroke::parse("escape").unwrap();
+        for overlay in [
+            OVERLAY_KEY_CONTEXT,
+            PICKER_KEY_CONTEXT,
+            "PopupMenu",
+            "Popover",
+        ] {
+            let contexts = [CHAT_INPUT_CONTEXT, "FarcasterChat", overlay, "Input"]
+                .map(|name| gpui::KeyContext::parse(name).unwrap());
+            for count in 1..=2 {
+                let (matched, pending) =
+                    keymap.bindings_for_input(&vec![escape.clone(); count], &contexts);
+                assert!(!pending, "Escape must not wait for a sequence in {overlay}");
+                assert!(
+                    matched.iter().all(|binding| {
+                        let action = binding.action().as_any();
+                        !action.is::<AbortRun>() && !action.is::<EscapePrefix>()
+                    }),
+                    "Escape must not control the session in {overlay}"
+                );
+            }
         }
-    }
+    });
 }
 
-#[test]
-fn session_numbers_work_in_embedded_views_without_claiming_control_keys() {
-    use crate::app::{APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT};
+#[gpui::test]
+fn session_numbers_work_in_embedded_views_without_claiming_control_keys(
+    cx: &mut gpui::TestAppContext,
+) {
+    cx.update(|cx| {
+        use crate::app::{APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT};
 
-    for (prefix, platform) in [("cmd", "cmd"), ("ctrl", "super")] {
-        let keymap = gpui::Keymap::new(
-            super::registry_for_platform(prefix)
-                .into_iter()
-                .flat_map(super::Command::into_bindings)
-                .collect(),
-        );
-        for number in 0..=9 {
-            for context in [APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT] {
-                let contexts =
-                    [gpui::KeyContext::parse(context).expect("test operation should succeed")];
-                let (bindings, _) = keymap.bindings_for_input(
-                    &[gpui::Keystroke::parse(&format!("{platform}-{number}"))
+        for (prefix, platform) in [("cmd", "cmd"), ("ctrl", "super")] {
+            let keymap = gpui::Keymap::new(
+                super::registry_for_platform(prefix)
+                    .into_iter()
+                    .flat_map(|command| command.into_bindings(cx))
+                    .collect(),
+            );
+            for number in 0..=9 {
+                for context in [APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT] {
+                    let contexts = [
+                        gpui::KeyContext::parse(context).expect("test operation should succeed")
+                    ];
+                    let (bindings, _) = keymap.bindings_for_input(
+                        &[gpui::Keystroke::parse_with_os(
+                            &format!("{platform}-{number}"),
+                            cx.platform_info().os,
+                        )
                         .expect("test operation should succeed")],
-                    &contexts,
-                );
-                assert_eq!(bindings.len(), 1, "{platform}-{number} in {context}");
-                let action = bindings[0].action().name();
-                assert!(action.ends_with(&format!("SwitchSession{number}")));
-                let (aliases, _) = keymap.bindings_for_input(
-                    &[gpui::Keystroke::parse(&format!("ctrl-{number}"))
+                        &contexts,
+                    );
+                    assert_eq!(bindings.len(), 1, "{platform}-{number} in {context}");
+                    let action = bindings[0].action().name();
+                    assert!(action.ends_with(&format!("SwitchSession{number}")));
+                    let (aliases, _) = keymap.bindings_for_input(
+                        &[gpui::Keystroke::parse_with_os(
+                            &format!("ctrl-{number}"),
+                            cx.platform_info().os,
+                        )
                         .expect("test operation should succeed")],
-                    &contexts,
-                );
-                if context == APP_INPUT_CONTEXT {
-                    assert_eq!(aliases.len(), 1);
-                    assert_eq!(aliases[0].action().name(), action);
-                } else {
-                    assert!(aliases.is_empty(), "ctrl-{number} in {context}");
+                        &contexts,
+                    );
+                    if context == APP_INPUT_CONTEXT {
+                        assert_eq!(aliases.len(), 1);
+                        assert_eq!(aliases[0].action().name(), action);
+                    } else {
+                        assert!(aliases.is_empty(), "ctrl-{number} in {context}");
+                    }
                 }
             }
         }
-    }
+    });
 }
 
-#[test]
-fn root_focus_traversal_is_unbound() {
-    let bindings = bindings();
-    let root_context = gpui::KeyBindingContextPredicate::Identifier("Root".into());
-    for (keystroke, target) in [("tab", "root::Tab"), ("shift-tab", "root::TabPrev")] {
-        assert!(bindings.iter().any(|binding| {
-            binding
-                .action()
-                .as_any()
-                .downcast_ref::<gpui::Unbind>()
-                .is_some_and(|unbind| unbind.0.as_ref() == target)
-                && binding
-                    .match_keystrokes(&[gpui::Keystroke::parse(keystroke).expect("test keystroke")])
-                    == Some(false)
-                && binding.predicate().as_deref() == Some(&root_context)
-        }));
-    }
-}
-
-#[test]
-fn application_and_picker_shortcuts_route_only_in_their_owned_contexts() {
-    use super::registry_for_platform;
-    use crate::app::{
-        APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT, RestoreSession, SetRuntime, SetSandbox,
-    };
-
-    for (platform, prefix) in [("cmd", "cmd"), ("ctrl", "ctrl"), ("ctrl", "super")] {
-        let keymap = gpui::Keymap::new(
-            registry_for_platform(platform)
-                .into_iter()
-                .flat_map(super::Command::into_bindings)
-                .collect(),
-        );
-        for (suffix, action) in [
-            (
-                "q",
-                Box::new(crate::app::QuitApplication) as Box<dyn gpui::Action>,
-            ),
-            ("n", Box::new(crate::app::NewSession)),
-            ("w", Box::new(crate::app::CloseCurrent)),
-            ("/", Box::new(crate::app::FocusSessionSearch)),
-            ("shift-/", Box::new(crate::app::ShowKeybindings)),
-            ("?", Box::new(crate::app::ShowKeybindings)),
-            ("shift-s", Box::new(SetSandbox) as Box<dyn gpui::Action>),
-            ("shift-m", Box::new(SetRuntime) as Box<dyn gpui::Action>),
-            (
-                "shift-h",
-                Box::new(crate::app::SetHarness) as Box<dyn gpui::Action>,
-            ),
-            ("shift-a", Box::new(RestoreSession) as Box<dyn gpui::Action>),
-            (
-                "shift-p",
-                Box::new(crate::app::ShowActionPicker) as Box<dyn gpui::Action>,
-            ),
-            ("-", Box::new(crate::app::DecreaseTranscriptFontSize)),
-            ("=", Box::new(crate::app::IncreaseTranscriptFontSize)),
-            ("+", Box::new(crate::app::IncreaseTranscriptFontSize)),
-        ] {
-            let stroke = gpui::Keystroke::parse(&format!("{prefix}-{suffix}"))
-                .expect("test operation should succeed");
-            let (bindings, _) = keymap.bindings_for_input(
-                std::slice::from_ref(&stroke),
-                &[gpui::KeyContext::parse(APP_INPUT_CONTEXT)
-                    .expect("test operation should succeed")],
-            );
-            assert_eq!(
-                bindings
-                    .first()
-                    .expect("test operation should succeed")
-                    .action()
-                    .name(),
-                action.name()
-            );
-            let (bindings, _) = keymap.bindings_for_input(
-                &[stroke],
-                &[gpui::KeyContext::parse(NATIVE_INPUT_CONTEXT)
-                    .expect("test operation should succeed")],
-            );
-            assert_eq!(
-                bindings.first().map(|binding| binding.action().name()),
-                (prefix != "ctrl").then(|| action.name()),
-                "{prefix}-{suffix} in native input"
-            );
-        }
-        for suffix in ["m", "l"] {
-            let key = format!("{prefix}-{suffix}");
-            let (bindings, _) = keymap.bindings_for_input(
-                &[gpui::Keystroke::parse(&key).expect("test operation should succeed")],
-                &[gpui::KeyContext::parse(APP_INPUT_CONTEXT)
-                    .expect("test operation should succeed")],
-            );
-            assert!(bindings.is_empty(), "{key} must remain unbound");
-        }
-        for (context, expected) in [
-            ("Picker", true),
-            (APP_INPUT_CONTEXT, false),
-            (NATIVE_INPUT_CONTEXT, false),
-        ] {
-            let (bindings, _) = keymap.bindings_for_input(
-                &[gpui::Keystroke::parse("alt-left").expect("test operation should succeed")],
-                &[
-                    gpui::KeyContext::parse(context).expect("test operation should succeed"),
-                    gpui::KeyContext::parse("Input").expect("test operation should succeed"),
-                ],
-            );
-            assert_eq!(
-                bindings.first().is_some_and(|binding| binding
+#[gpui::test]
+fn root_focus_traversal_is_unbound(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        let bindings = bindings(cx);
+        let root_context = gpui::KeyBindingContextPredicate::Identifier("Root".into());
+        for (keystroke, target) in [("tab", "root::Tab"), ("shift-tab", "root::TabPrev")] {
+            assert!(bindings.iter().any(|binding| {
+                binding
                     .action()
                     .as_any()
-                    .is::<crate::app::PickerNavigateBack>()),
-                expected
-            );
+                    .downcast_ref::<gpui::Unbind>()
+                    .is_some_and(|unbind| unbind.0.as_ref() == target)
+                    && binding.match_keystrokes(&[gpui::Keystroke::parse_with_os(
+                        keystroke,
+                        cx.platform_info().os,
+                    )
+                    .expect("test keystroke")])
+                        == Some(false)
+                    && binding.predicate().as_deref() == Some(&root_context)
+            }));
         }
-    }
+    });
 }
 
-#[test]
-fn picker_navigation_stays_in_picker_input() {
-    let keymap = gpui::Keymap::new(bindings());
-    for (key, action) in [
-        ("tab", &super::SelectDown as &dyn gpui::Action),
-        ("shift-tab", &super::SelectUp as &dyn gpui::Action),
-        ("ctrl-n", &super::SelectDown as &dyn gpui::Action),
-        ("ctrl-p", &super::SelectUp as &dyn gpui::Action),
-    ] {
-        for context in [
-            "Picker",
-            "FarcasterComposer",
-            crate::app::NATIVE_INPUT_CONTEXT,
-        ] {
-            let (bindings, _) = keymap.bindings_for_input(
-                &[gpui::Keystroke::parse(key).expect("test operation should succeed")],
-                &[
-                    gpui::KeyContext::parse("Root").expect("test operation should succeed"),
-                    gpui::KeyContext::parse(context).expect("test operation should succeed"),
-                    gpui::KeyContext::parse("Input").expect("test operation should succeed"),
-                ],
+#[gpui::test]
+fn application_and_picker_shortcuts_route_only_in_their_owned_contexts(
+    cx: &mut gpui::TestAppContext,
+) {
+    cx.update(|cx| {
+        use super::registry_for_platform;
+        use crate::app::{
+            APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT, RestoreSession, SetRuntime, SetSandbox,
+        };
+
+        for (platform, prefix) in [("cmd", "cmd"), ("ctrl", "ctrl"), ("ctrl", "super")] {
+            let keymap = gpui::Keymap::new(
+                registry_for_platform(platform)
+                    .into_iter()
+                    .flat_map(|command| command.into_bindings(cx))
+                    .collect(),
             );
-            assert_eq!(
-                bindings
-                    .first()
-                    .is_some_and(|binding| binding.action().name() == action.name()),
-                context == "Picker",
-                "{key} in {context}",
-            );
-        }
-    }
-}
-
-#[test]
-fn composer_completion_keys_require_visible_suggestions() {
-    use super::registry_for_platform;
-    use crate::app::{
-        ComposerCompletionNext, ComposerCompletionPrevious, NewSession, SubmitFollowUp,
-    };
-    use gpui::Action as _;
-
-    let keymap = gpui::Keymap::new(
-        registry_for_platform("ctrl")
-            .into_iter()
-            .flat_map(super::Command::into_bindings)
-            .collect(),
-    );
-    for open in [false, true] {
-        let contexts = [
-            gpui::KeyContext::parse(crate::app::APP_INPUT_CONTEXT)
-                .expect("test operation should succeed"),
-            gpui::KeyContext::parse(if open {
-                "FarcasterComposer Completions"
-            } else {
-                "FarcasterComposer"
-            })
-            .expect("test operation should succeed"),
-            gpui::KeyContext::parse("Input").expect("test operation should succeed"),
-        ];
-        for (key, completion) in [
-            ("ctrl-n", ComposerCompletionNext.name()),
-            ("ctrl-p", ComposerCompletionPrevious.name()),
-            ("tab", ComposerCompletionNext.name()),
-            ("shift-tab", ComposerCompletionPrevious.name()),
-        ] {
-            let (bindings, _) = keymap.bindings_for_input(
-                &[gpui::Keystroke::parse(key).expect("test operation should succeed")],
-                &contexts,
-            );
-            let expected = if open {
-                Some(completion)
-            } else if key == "ctrl-n" {
-                Some(NewSession.name())
-            } else if key == "tab" {
-                Some(SubmitFollowUp.name())
-            } else {
-                None
-            };
-            assert_eq!(
-                bindings.first().map(|binding| binding.action().name()),
-                expected,
-                "{key}, suggestions open: {open}"
-            );
-        }
-    }
-}
-
-#[test]
-fn send_to_chat_keys_are_control_only_and_dialog_scoped() {
-    use gpui::Action as _;
-
-    let outside = [
-        crate::app::APP_INPUT_CONTEXT,
-        crate::app::OVERLAY_KEY_CONTEXT,
-        "Input",
-    ]
-    .map(|context| gpui::KeyContext::parse(context).expect("key context"));
-    let mut inside = outside.to_vec();
-    inside.insert(
-        1,
-        gpui::KeyContext::parse("FarcasterSendToChat").expect("send-to-chat context"),
-    );
-    for platform in ["ctrl", "cmd"] {
-        let keymap = gpui::Keymap::new(
-            super::registry_for_platform(platform)
-                .into_iter()
-                .flat_map(super::Command::into_bindings)
-                .collect(),
-        );
-        for (key, action) in [
-            ("ctrl-n", super::NextCodeDestination.name()),
-            ("ctrl-p", super::PreviousCodeDestination.name()),
-            ("cmd-n", super::NextCodeDestination.name()),
-            ("cmd-p", super::PreviousCodeDestination.name()),
-        ] {
-            let strokes = [gpui::Keystroke::parse(key).expect("fixture keystroke")];
-            let (baseline, _) = keymap.bindings_for_input(&strokes, &outside);
-            let baseline = baseline.first().map(|binding| binding.action().name());
-            assert_ne!(baseline, Some(action));
-            let (matched, _) = keymap.bindings_for_input(&strokes, &inside);
-            assert_eq!(
-                matched.first().map(|binding| binding.action().name()),
-                if key.starts_with("ctrl-") {
-                    Some(action)
-                } else {
-                    baseline
-                },
-                "{platform}: {key}"
-            );
-        }
-    }
-}
-
-#[test]
-fn workspace_shortcuts_route_by_context_on_both_platforms() {
-    use crate::app::{APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT};
-    use gpui::Action;
-
-    for platform in ["cmd", "ctrl"] {
-        let keymap = gpui::Keymap::new(
-            super::registry_for_platform(platform)
-                .into_iter()
-                .flat_map(super::Command::into_bindings)
-                .collect(),
-        );
-        for context in [APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT, "Input"] {
-            let app = context == APP_INPUT_CONTEXT;
-            let workspace = app || context == NATIVE_INPUT_CONTEXT;
-            for (key, expected) in [
-                ("f1", app.then_some(super::FocusComposer.name())),
-                ("f2", app.then_some(super::ShowEditor.name())),
-                ("f3", app.then_some(super::ShowTerminal.name())),
-                ("f4", app.then_some(super::ShowActionPicker.name())),
+            for (suffix, action) in [
                 (
-                    "ctrl-tab",
-                    workspace.then_some(super::CycleWorkspaceForward.name()),
+                    "q",
+                    Box::new(crate::app::QuitApplication) as Box<dyn gpui::Action>,
                 ),
+                ("n", Box::new(crate::app::NewSession)),
+                ("w", Box::new(crate::app::CloseCurrent)),
+                ("/", Box::new(crate::app::FocusSessionSearch)),
+                ("shift-/", Box::new(crate::app::ShowKeybindings)),
+                ("?", Box::new(crate::app::ShowKeybindings)),
+                ("shift-s", Box::new(SetSandbox) as Box<dyn gpui::Action>),
+                ("shift-m", Box::new(SetRuntime) as Box<dyn gpui::Action>),
                 (
-                    "ctrl-shift-tab",
-                    workspace.then_some(super::CycleWorkspaceBackward.name()),
+                    "shift-h",
+                    Box::new(crate::app::SetHarness) as Box<dyn gpui::Action>,
                 ),
-                ("cmd-g", None),
-                ("ctrl-e", None),
-                ("cmd-e", None),
-                ("super-e", None),
-                ("ctrl-t", None),
-                ("cmd-t", None),
-                ("super-t", None),
+                ("shift-a", Box::new(RestoreSession) as Box<dyn gpui::Action>),
+                (
+                    "shift-p",
+                    Box::new(crate::app::ShowActionPicker) as Box<dyn gpui::Action>,
+                ),
+                ("-", Box::new(crate::app::DecreaseTranscriptFontSize)),
+                ("=", Box::new(crate::app::IncreaseTranscriptFontSize)),
+                ("+", Box::new(crate::app::IncreaseTranscriptFontSize)),
             ] {
+                let stroke = gpui::Keystroke::parse_with_os(
+                    &format!("{prefix}-{suffix}"),
+                    cx.platform_info().os,
+                )
+                .expect("test operation should succeed");
                 let (bindings, _) = keymap.bindings_for_input(
-                    &[gpui::Keystroke::parse(key).expect("test keystroke")],
-                    &[gpui::KeyContext::parse(context).expect("test context")],
+                    std::slice::from_ref(&stroke),
+                    &[gpui::KeyContext::parse(APP_INPUT_CONTEXT)
+                        .expect("test operation should succeed")],
                 );
                 assert_eq!(
-                    bindings.len(),
-                    usize::from(expected.is_some()),
-                    "{platform}: {key} in {context}"
+                    bindings
+                        .first()
+                        .expect("test operation should succeed")
+                        .action()
+                        .name(),
+                    action.name()
+                );
+                let (bindings, _) = keymap.bindings_for_input(
+                    &[stroke],
+                    &[gpui::KeyContext::parse(NATIVE_INPUT_CONTEXT)
+                        .expect("test operation should succeed")],
                 );
                 assert_eq!(
                     bindings.first().map(|binding| binding.action().name()),
-                    expected,
-                    "{platform}: {key} in {context}"
+                    (prefix != "ctrl").then(|| action.name()),
+                    "{prefix}-{suffix} in native input"
+                );
+            }
+            for suffix in ["m", "l"] {
+                let key = format!("{prefix}-{suffix}");
+                let (bindings, _) = keymap.bindings_for_input(
+                    &[gpui::Keystroke::parse_with_os(&key, cx.platform_info().os)
+                        .expect("test operation should succeed")],
+                    &[gpui::KeyContext::parse(APP_INPUT_CONTEXT)
+                        .expect("test operation should succeed")],
+                );
+                assert!(bindings.is_empty(), "{key} must remain unbound");
+            }
+            for (context, expected) in [
+                ("Picker", true),
+                (APP_INPUT_CONTEXT, false),
+                (NATIVE_INPUT_CONTEXT, false),
+            ] {
+                let (bindings, _) = keymap.bindings_for_input(
+                    &[gpui::Keystroke::parse("alt-left").expect("test operation should succeed")],
+                    &[
+                        gpui::KeyContext::parse(context).expect("test operation should succeed"),
+                        gpui::KeyContext::parse("Input").expect("test operation should succeed"),
+                    ],
+                );
+                assert_eq!(
+                    bindings.first().is_some_and(|binding| binding
+                        .action()
+                        .as_any()
+                        .is::<crate::app::PickerNavigateBack>()),
+                    expected
                 );
             }
         }
-    }
+    });
 }
 
-#[test]
-fn modified_jk_respects_chat_and_native_input() {
-    use crate::app::{APP_INPUT_CONTEXT, CHAT_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT};
-    let keymap = gpui::Keymap::new(bindings());
-    let contexts = |names: &[&str]| {
-        names
-            .iter()
-            .map(|name| gpui::KeyContext::parse(name).expect("key context"))
-            .collect::<Vec<_>>()
-    };
-    for modifier in ["ctrl", "cmd", "super"] {
+#[gpui::test]
+fn picker_navigation_stays_in_picker_input(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        let keymap = gpui::Keymap::new(bindings(cx));
         for (key, action) in [
-            (
-                "j",
-                Box::new(crate::app::NextTranscriptSession) as Box<dyn gpui::Action>,
-            ),
-            (
-                "k",
-                Box::new(crate::app::PreviousTranscriptSession) as Box<dyn gpui::Action>,
-            ),
-            (
-                "shift-j",
-                Box::new(crate::app::NextWorker) as Box<dyn gpui::Action>,
-            ),
-            (
-                "shift-k",
-                Box::new(crate::app::PreviousWorker) as Box<dyn gpui::Action>,
-            ),
+            ("tab", &super::SelectDown as &dyn gpui::Action),
+            ("shift-tab", &super::SelectUp as &dyn gpui::Action),
+            ("ctrl-n", &super::SelectDown as &dyn gpui::Action),
+            ("ctrl-p", &super::SelectUp as &dyn gpui::Action),
         ] {
-            let stroke =
-                gpui::Keystroke::parse(&format!("{modifier}-{key}")).expect("fixture keystroke");
-            for (names, enabled) in [
-                (vec![CHAT_INPUT_CONTEXT], true),
-                (vec![CHAT_INPUT_CONTEXT, "FarcasterComposer", "Input"], true),
-                (vec![APP_INPUT_CONTEXT], false),
-                (vec![APP_INPUT_CONTEXT, "FarcasterComposer", "Input"], false),
-                (vec![APP_INPUT_CONTEXT, "Picker", "Input"], false),
-                (vec![NATIVE_INPUT_CONTEXT], modifier != "ctrl"),
+            for context in [
+                "Picker",
+                "FarcasterComposer",
+                crate::app::NATIVE_INPUT_CONTEXT,
             ] {
-                let (matched, _) =
-                    keymap.bindings_for_input(std::slice::from_ref(&stroke), &contexts(&names));
+                let (bindings, _) = keymap.bindings_for_input(
+                    &[gpui::Keystroke::parse_with_os(key, cx.platform_info().os)
+                        .expect("test operation should succeed")],
+                    &[
+                        gpui::KeyContext::parse("Root").expect("test operation should succeed"),
+                        gpui::KeyContext::parse(context).expect("test operation should succeed"),
+                        gpui::KeyContext::parse("Input").expect("test operation should succeed"),
+                    ],
+                );
+                assert_eq!(
+                    bindings
+                        .first()
+                        .is_some_and(|binding| binding.action().name() == action.name()),
+                    context == "Picker",
+                    "{key} in {context}",
+                );
+            }
+        }
+    });
+}
+
+#[gpui::test]
+fn composer_completion_keys_require_visible_suggestions(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        use super::registry_for_platform;
+        use crate::app::{
+            ComposerCompletionNext, ComposerCompletionPrevious, NewSession, SubmitFollowUp,
+        };
+        use gpui::Action as _;
+
+        let keymap = gpui::Keymap::new(
+            registry_for_platform("ctrl")
+                .into_iter()
+                .flat_map(|command| command.into_bindings(cx))
+                .collect(),
+        );
+        for open in [false, true] {
+            let contexts = [
+                gpui::KeyContext::parse(crate::app::APP_INPUT_CONTEXT)
+                    .expect("test operation should succeed"),
+                gpui::KeyContext::parse(if open {
+                    "FarcasterComposer Completions"
+                } else {
+                    "FarcasterComposer"
+                })
+                .expect("test operation should succeed"),
+                gpui::KeyContext::parse("Input").expect("test operation should succeed"),
+            ];
+            for (key, completion) in [
+                ("ctrl-n", ComposerCompletionNext.name()),
+                ("ctrl-p", ComposerCompletionPrevious.name()),
+                ("tab", ComposerCompletionNext.name()),
+                ("shift-tab", ComposerCompletionPrevious.name()),
+            ] {
+                let (bindings, _) = keymap.bindings_for_input(
+                    &[gpui::Keystroke::parse_with_os(key, cx.platform_info().os)
+                        .expect("test operation should succeed")],
+                    &contexts,
+                );
+                let expected = if open {
+                    Some(completion)
+                } else if key == "ctrl-n" {
+                    Some(NewSession.name())
+                } else if key == "tab" {
+                    Some(SubmitFollowUp.name())
+                } else {
+                    None
+                };
+                assert_eq!(
+                    bindings.first().map(|binding| binding.action().name()),
+                    expected,
+                    "{key}, suggestions open: {open}"
+                );
+            }
+        }
+    });
+}
+
+#[gpui::test]
+fn send_to_chat_keys_are_control_only_and_dialog_scoped(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        use gpui::Action as _;
+
+        let outside = [
+            crate::app::APP_INPUT_CONTEXT,
+            crate::app::OVERLAY_KEY_CONTEXT,
+            "Input",
+        ]
+        .map(|context| gpui::KeyContext::parse(context).expect("key context"));
+        let mut inside = outside.to_vec();
+        inside.insert(
+            1,
+            gpui::KeyContext::parse("FarcasterSendToChat").expect("send-to-chat context"),
+        );
+        for platform in ["ctrl", "cmd"] {
+            let keymap = gpui::Keymap::new(
+                super::registry_for_platform(platform)
+                    .into_iter()
+                    .flat_map(|command| command.into_bindings(cx))
+                    .collect(),
+            );
+            for (key, action) in [
+                ("ctrl-n", super::NextCodeDestination.name()),
+                ("ctrl-p", super::PreviousCodeDestination.name()),
+                ("cmd-n", super::NextCodeDestination.name()),
+                ("cmd-p", super::PreviousCodeDestination.name()),
+            ] {
+                let strokes = [gpui::Keystroke::parse_with_os(key, cx.platform_info().os)
+                    .expect("fixture keystroke")];
+                let (baseline, _) = keymap.bindings_for_input(&strokes, &outside);
+                let baseline = baseline.first().map(|binding| binding.action().name());
+                assert_ne!(baseline, Some(action));
+                let (matched, _) = keymap.bindings_for_input(&strokes, &inside);
                 assert_eq!(
                     matched.first().map(|binding| binding.action().name()),
-                    enabled.then(|| action.name()),
-                    "{modifier}-{key} in {names:?}"
+                    if key.starts_with("ctrl-") {
+                        Some(action)
+                    } else {
+                        baseline
+                    },
+                    "{platform}: {key}"
                 );
             }
         }
-    }
+    });
 }
 
-#[test]
-fn workgraph_backspace_does_not_navigate_from_inputs() {
-    let keymap = gpui::Keymap::new(bindings());
-    let stroke = gpui::Keystroke::parse("backspace").expect("test operation should succeed");
-    let board = gpui::KeyContext::parse(crate::app::WORKGRAPH_KEY_CONTEXT)
-        .expect("test operation should succeed");
-    let (matches, _) =
-        keymap.bindings_for_input(std::slice::from_ref(&stroke), std::slice::from_ref(&board));
-    assert!(!matches.is_empty());
-    let (matches, _) = keymap.bindings_for_input(
-        &[stroke],
-        &[
-            board,
-            gpui::KeyContext::parse("Input").expect("test operation should succeed"),
-        ],
-    );
-    assert!(matches.is_empty());
+#[gpui::test]
+fn workspace_shortcuts_route_by_context_on_both_platforms(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        use crate::app::{APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT};
+        use gpui::Action;
+
+        for platform in ["cmd", "ctrl"] {
+            let keymap = gpui::Keymap::new(
+                super::registry_for_platform(platform)
+                    .into_iter()
+                    .flat_map(|command| command.into_bindings(cx))
+                    .collect(),
+            );
+            for context in [APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT, "Input"] {
+                let app = context == APP_INPUT_CONTEXT;
+                let workspace = app || context == NATIVE_INPUT_CONTEXT;
+                for (key, expected) in [
+                    ("f1", app.then_some(super::FocusComposer.name())),
+                    ("f2", app.then_some(super::ShowEditor.name())),
+                    ("f3", app.then_some(super::ShowTerminal.name())),
+                    ("f4", app.then_some(super::ShowActionPicker.name())),
+                    (
+                        "ctrl-tab",
+                        workspace.then_some(super::CycleWorkspaceForward.name()),
+                    ),
+                    (
+                        "ctrl-shift-tab",
+                        workspace.then_some(super::CycleWorkspaceBackward.name()),
+                    ),
+                    ("cmd-g", None),
+                    ("ctrl-e", None),
+                    ("cmd-e", None),
+                    ("super-e", None),
+                    ("ctrl-t", None),
+                    ("cmd-t", None),
+                    ("super-t", None),
+                ] {
+                    let (bindings, _) = keymap.bindings_for_input(
+                        &[gpui::Keystroke::parse_with_os(key, cx.platform_info().os)
+                            .expect("test keystroke")],
+                        &[gpui::KeyContext::parse(context).expect("test context")],
+                    );
+                    assert_eq!(
+                        bindings.len(),
+                        usize::from(expected.is_some()),
+                        "{platform}: {key} in {context}"
+                    );
+                    assert_eq!(
+                        bindings.first().map(|binding| binding.action().name()),
+                        expected,
+                        "{platform}: {key} in {context}"
+                    );
+                }
+            }
+        }
+    });
 }
 
-#[test]
-fn copy_shortcuts_route_through_one_command_in_both_contexts() {
-    use gpui::Action as _;
-    let mut commands = registry()
-        .into_iter()
-        .filter(|command| command.action.name() == super::CopySelection.name());
-    let command = commands.next().expect("copy command");
-    assert!(commands.next().is_none(), "copy is defined once");
-    let keymap = gpui::Keymap::new(command.into_bindings().collect());
-    let key = gpui::Keystroke::parse(&super::application_key("c")).expect("copy key");
-    for names in [
-        vec![crate::app::TRANSCRIPT_SELECTION_KEY_CONTEXT],
-        vec![crate::app::COMPOSER_KEY_CONTEXT, "Input"],
-    ] {
-        let contexts = names
-            .iter()
-            .map(|name| gpui::KeyContext::parse(name).expect("context"))
-            .collect::<Vec<_>>();
-        let (matched, _) = keymap.bindings_for_input(std::slice::from_ref(&key), &contexts);
-        assert_eq!(matched.len(), 1);
-        assert_eq!(matched[0].action().name(), super::CopySelection.name());
-    }
+#[gpui::test]
+fn modified_jk_respects_chat_and_native_input(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        use crate::app::{APP_INPUT_CONTEXT, CHAT_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT};
+        let keymap = gpui::Keymap::new(bindings(cx));
+        let contexts = |names: &[&str]| {
+            names
+                .iter()
+                .map(|name| gpui::KeyContext::parse(name).expect("key context"))
+                .collect::<Vec<_>>()
+        };
+        for modifier in ["ctrl", "cmd", "super"] {
+            for (key, action) in [
+                (
+                    "j",
+                    Box::new(crate::app::NextTranscriptSession) as Box<dyn gpui::Action>,
+                ),
+                (
+                    "k",
+                    Box::new(crate::app::PreviousTranscriptSession) as Box<dyn gpui::Action>,
+                ),
+                (
+                    "shift-j",
+                    Box::new(crate::app::NextWorker) as Box<dyn gpui::Action>,
+                ),
+                (
+                    "shift-k",
+                    Box::new(crate::app::PreviousWorker) as Box<dyn gpui::Action>,
+                ),
+            ] {
+                let stroke = gpui::Keystroke::parse_with_os(
+                    &format!("{modifier}-{key}"),
+                    cx.platform_info().os,
+                )
+                .expect("fixture keystroke");
+                for (names, enabled) in [
+                    (vec![CHAT_INPUT_CONTEXT], true),
+                    (vec![CHAT_INPUT_CONTEXT, "FarcasterComposer", "Input"], true),
+                    (vec![APP_INPUT_CONTEXT], false),
+                    (vec![APP_INPUT_CONTEXT, "FarcasterComposer", "Input"], false),
+                    (vec![APP_INPUT_CONTEXT, "Picker", "Input"], false),
+                    (vec![NATIVE_INPUT_CONTEXT], modifier != "ctrl"),
+                ] {
+                    let (matched, _) =
+                        keymap.bindings_for_input(std::slice::from_ref(&stroke), &contexts(&names));
+                    assert_eq!(
+                        matched.first().map(|binding| binding.action().name()),
+                        enabled.then(|| action.name()),
+                        "{modifier}-{key} in {names:?}"
+                    );
+                }
+            }
+        }
+    });
+}
+
+#[gpui::test]
+fn workgraph_backspace_does_not_navigate_from_inputs(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        let keymap = gpui::Keymap::new(bindings(cx));
+        let stroke = gpui::Keystroke::parse("backspace").expect("test operation should succeed");
+        let board = gpui::KeyContext::parse(crate::app::WORKGRAPH_KEY_CONTEXT)
+            .expect("test operation should succeed");
+        let (matches, _) =
+            keymap.bindings_for_input(std::slice::from_ref(&stroke), std::slice::from_ref(&board));
+        assert!(!matches.is_empty());
+        let (matches, _) = keymap.bindings_for_input(
+            &[stroke],
+            &[
+                board,
+                gpui::KeyContext::parse("Input").expect("test operation should succeed"),
+            ],
+        );
+        assert!(matches.is_empty());
+    });
+}
+
+#[gpui::test]
+fn copy_shortcuts_route_through_one_command_in_both_contexts(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        use gpui::Action as _;
+        let mut commands = registry()
+            .into_iter()
+            .filter(|command| command.action.name() == super::CopySelection.name());
+        let command = commands.next().expect("copy command");
+        assert!(commands.next().is_none(), "copy is defined once");
+        let keymap = gpui::Keymap::new(command.into_bindings(cx).collect());
+        let key =
+            gpui::Keystroke::parse_with_os(&super::application_key("c"), cx.platform_info().os)
+                .expect("copy key");
+        for names in [
+            vec![crate::app::TRANSCRIPT_SELECTION_KEY_CONTEXT],
+            vec![crate::app::COMPOSER_KEY_CONTEXT, "Input"],
+        ] {
+            let contexts = names
+                .iter()
+                .map(|name| gpui::KeyContext::parse(name).expect("context"))
+                .collect::<Vec<_>>();
+            let (matched, _) = keymap.bindings_for_input(std::slice::from_ref(&key), &contexts);
+            assert_eq!(matched.len(), 1);
+            assert_eq!(matched[0].action().name(), super::CopySelection.name());
+        }
+    });
 }
 
 #[test]

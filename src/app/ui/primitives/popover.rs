@@ -176,7 +176,7 @@ impl RenderOnce for Popover {
                     }));
                 div()
                     .size_full()
-                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                    .on_scroll(|_, _, cx| cx.stop_propagation())
                     .on_mouse_down(gpui::MouseButton::Left, {
                         let dismiss = backdrop_dismiss.clone();
                         move |_, window, cx| {
