@@ -15,9 +15,16 @@ pub(super) fn migrate(tx: &Transaction<'_>) -> Result<(), String> {
     }
     let candidates = tx
         .prepare(
-            "SELECT s.id,s.harness,s.locator,
-                    COALESCE(parent.backend_id,s.parent_backend_id)
+            "WITH RECURSIVE family_archive(id,archived_at) AS (
+                SELECT id,archived_at FROM sessions WHERE parent_id IS NULL
+                UNION
+                SELECT child.id,parent.archived_at FROM sessions child
+                  JOIN family_archive parent ON child.parent_id=parent.id
+             )
+             SELECT s.id,s.harness,s.locator,
+                    COALESCE(parent.backend_id,s.parent_backend_id),family_archive.archived_at
                FROM sessions s LEFT JOIN sessions parent ON parent.id=s.parent_id
+               LEFT JOIN family_archive ON family_archive.id=s.id
               WHERE s.locator IS NOT NULL AND s.forked_from_backend_id IS NULL
                 AND (s.parent_id IS NOT NULL OR s.parent_backend_id IS NOT NULL)
                 AND NOT EXISTS(SELECT 1 FROM worker_families WHERE child_id=s.id)",
@@ -29,12 +36,13 @@ pub(super) fn migrate(tx: &Transaction<'_>) -> Result<(), String> {
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<i64>>(4)?,
             ))
         })
         .map_err(|error| error.to_string())?
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(|error| error.to_string())?;
-    for (id, harness, locator, parent) in candidates {
+    for (id, harness, locator, parent, archived_at) in candidates {
         let Ok(harness) = harness.parse() else {
             continue;
         };
@@ -45,9 +53,11 @@ pub(super) fn migrate(tx: &Transaction<'_>) -> Result<(), String> {
             continue;
         }
         tx.execute(
+            // Keep the old family's archive visibility when making the fork a root.
             "UPDATE sessions SET forked_from_backend_id=?2,
+               archived_at=COALESCE(archived_at,?3),
                parent_id=NULL,parent_backend_id=NULL WHERE id=?1",
-            params![id, source],
+            params![id, source, archived_at],
         )
         .map_err(|error| format!("separate saved fork ancestry: {error}"))?;
     }
