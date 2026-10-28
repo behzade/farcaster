@@ -31,6 +31,13 @@ const AGENT_SOURCE_KINDS: &[&str] = &[
 ];
 const EPHEMERAL_MODELS: &[&str] = &["codex-auto-review"];
 
+pub(super) fn ordinary_source(source: &Value) -> bool {
+    matches!(
+        source.as_str(),
+        Some("cli" | "vscode" | "exec" | "appServer")
+    )
+}
+
 pub fn discover(locator_root: &Path, query: &str) -> Result<Vec<DiscoveredSession>, String> {
     with_connection_and_home(|connection, home| {
         discover_with_client(connection, home, locator_root, query)
@@ -512,10 +519,7 @@ fn summary(
         })
         .unwrap_or_default();
     let native_parent = string(thread, &["parentThreadId", "parent_thread_id"]);
-    let ordinary_fork = matches!(
-        thread.get("source").and_then(Value::as_str),
-        Some("cli" | "vscode" | "exec" | "appServer")
-    );
+    let ordinary_fork = ordinary_source(&thread["source"]);
     let parent_session = crate::core::CallerRegistry::shared()
         .session_parent(Backend::Codex, id)
         .or_else(|| native_parent.filter(|_| !ordinary_fork).map(str::to_owned));

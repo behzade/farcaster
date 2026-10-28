@@ -83,7 +83,15 @@ pub(super) fn bind_locator(
 
 pub(super) fn clear_fork_parent(tx: &Transaction<'_>, id: i64) -> Result<(), String> {
     tx.execute(
-        "UPDATE sessions SET parent_id=NULL,parent_backend_id=NULL
+        "WITH RECURSIVE ancestors(id,parent_id,archived_at) AS (
+             SELECT id,parent_id,archived_at FROM sessions WHERE id=?1
+             UNION
+             SELECT parent.id,parent.parent_id,parent.archived_at FROM sessions parent
+               JOIN ancestors child ON child.parent_id=parent.id
+         )
+         UPDATE sessions SET archived_at=COALESCE(archived_at,
+             (SELECT archived_at FROM ancestors WHERE parent_id IS NULL)),
+             parent_id=NULL,parent_backend_id=NULL
           WHERE id=?1 AND forked_from_backend_id IS NOT NULL
             AND NOT EXISTS(SELECT 1 FROM worker_families WHERE child_id=?1)",
         [id],
@@ -168,7 +176,13 @@ pub(super) fn merge_session(tx: &Transaction<'_>, keep: i64, other: i64) -> Resu
            rail_order=CASE WHEN rail_order=0
              THEN (SELECT rail_order FROM sessions WHERE id=?2) ELSE rail_order END,
            created_ms=MIN(created_ms,(SELECT created_ms FROM sessions WHERE id=?2)),
-           parent_id=COALESCE(parent_id,(SELECT parent_id FROM sessions WHERE id=?2))
+           parent_id=CASE
+             WHEN EXISTS(SELECT 1 FROM worker_families WHERE child_id IN (?1,?2))
+               THEN COALESCE(parent_id,(SELECT parent_id FROM sessions WHERE id=?2))
+             WHEN forked_from_backend_id IS NOT NULL THEN parent_id
+             WHEN (SELECT forked_from_backend_id FROM sessions WHERE id=?2) IS NOT NULL
+               THEN (SELECT parent_id FROM sessions WHERE id=?2)
+             ELSE COALESCE(parent_id,(SELECT parent_id FROM sessions WHERE id=?2)) END
          WHERE id=?1",
         "INSERT INTO composer_sessions(session_id, text, cursor, selection_start, selection_end, history_json, updated_ms, attachments_json)
          SELECT ?1, text, cursor, selection_start, selection_end, history_json, updated_ms, attachments_json

@@ -182,7 +182,7 @@ impl BackendAdapter for PiAdapter {
     ) -> Result<Vec<SessionSummary>, String> {
         super::session_files::discover(query).map(|result| result.sessions)
     }
-    fn fork_source(&self, path: &Path) -> Option<String> {
+    fn fork_source(&self, path: &Path, _profile: Option<&crate::HarnessProfile>) -> Option<String> {
         super::session_files::fork_source(path)
     }
     fn move_family(

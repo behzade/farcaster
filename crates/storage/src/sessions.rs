@@ -191,8 +191,11 @@ impl StateStore {
                first_user_message=CASE WHEN first_user_message='' THEN COALESCE(?6,'') ELSE first_user_message END,
                forked_from_backend_id=COALESCE(?13,forked_from_backend_id),
                parent_backend_id=COALESCE(?7,parent_backend_id),
-               parent_id=COALESCE(parent_id,(SELECT id FROM sessions
-                 WHERE harness=?8 AND project_id=?2 AND profile_id IS ?12 AND backend_id=?7 LIMIT 1)),
+               parent_id=CASE WHEN forked_from_backend_id IS NULL
+                 OR EXISTS(SELECT 1 FROM worker_families WHERE child_id=?1)
+                 THEN COALESCE(parent_id,(SELECT id FROM sessions
+                   WHERE harness=?8 AND project_id=?2 AND profile_id IS ?12 AND backend_id=?7 LIMIT 1))
+                 ELSE parent_id END,
                 message_count=COALESCE(?9,message_count), modified_ms=?10,
                 access_mode=COALESCE(?11,access_mode)
               WHERE id=?1",

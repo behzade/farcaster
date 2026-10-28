@@ -188,8 +188,12 @@ pub fn discover_sessions_for_profile(
     for_backend(harness).discover_sessions_for_profile(config, root.as_deref(), query)
 }
 
-pub fn session_fork_source(harness: Backend, path: &Path) -> Option<String> {
-    for_backend(harness).fork_source(path)
+pub fn session_fork_source(
+    harness: Backend,
+    path: &Path,
+    profile: Option<&crate::HarnessProfile>,
+) -> Option<String> {
+    for_backend(harness).fork_source(path, profile)
 }
 
 pub(super) fn import_session(session: crate::DiscoveredSession) -> SessionSummary {

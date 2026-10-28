@@ -1,6 +1,18 @@
 use super::*;
 
 pub(super) fn migrate(tx: &Transaction<'_>) -> Result<(), String> {
+    let profiles: Vec<agents::HarnessProfile> = tx
+        .query_row(
+            "SELECT value FROM meta WHERE key='harness_profiles'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .map(|json| serde_json::from_str(&json))
+        .transpose()
+        .map_err(|error| format!("read fork migration profiles: {error}"))?
+        .unwrap_or_default();
     let has_fork_source = tx
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_table_info('sessions')
@@ -22,7 +34,7 @@ pub(super) fn migrate(tx: &Transaction<'_>) -> Result<(), String> {
                   JOIN family_archive parent ON child.parent_id=parent.id
              )
              SELECT s.id,s.harness,s.locator,
-                    COALESCE(parent.backend_id,s.parent_backend_id),family_archive.archived_at
+                    COALESCE(parent.backend_id,s.parent_backend_id),family_archive.archived_at,s.profile_id
                FROM sessions s LEFT JOIN sessions parent ON parent.id=s.parent_id
                LEFT JOIN family_archive ON family_archive.id=s.id
               WHERE s.locator IS NOT NULL AND s.forked_from_backend_id IS NULL
@@ -37,16 +49,38 @@ pub(super) fn migrate(tx: &Transaction<'_>) -> Result<(), String> {
                 row.get::<_, String>(2)?,
                 row.get::<_, Option<String>>(3)?,
                 row.get::<_, Option<i64>>(4)?,
+                row.get::<_, Option<String>>(5)?,
             ))
         })
         .map_err(|error| error.to_string())?
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(|error| error.to_string())?;
-    for (id, harness, locator, parent, archived_at) in candidates {
+    for (id, harness, locator, parent, archived_at, profile_id) in candidates {
         let Ok(harness) = harness.parse() else {
             continue;
         };
-        let Some(source) = agents::session_fork_source(harness, Path::new(&locator)) else {
+        let locator = Path::new(&locator);
+        let locator_profile = agents::profile_id_from_locator(locator);
+        if profile_id
+            .as_ref()
+            .zip(locator_profile.as_ref())
+            .is_some_and(|(stored, locator)| stored != locator)
+        {
+            continue;
+        }
+        let profile_id = profile_id.or(locator_profile);
+        let profile = if let Some(profile_id) = profile_id {
+            let Some(profile) = profiles
+                .iter()
+                .find(|profile| profile.id == profile_id && profile.backend == harness)
+            else {
+                continue;
+            };
+            Some(profile)
+        } else {
+            None
+        };
+        let Some(source) = agents::session_fork_source(harness, locator, profile) else {
             continue;
         };
         if parent.as_deref() != Some(source.as_str()) {

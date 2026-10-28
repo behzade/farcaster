@@ -26,7 +26,11 @@ mod tests;
 
 pub(super) trait BackendAdapter: Sync {
     /// Return locally verifiable fork ancestry for repairing older catalog rows.
-    fn fork_source(&self, _path: &Path) -> Option<String> {
+    fn fork_source(
+        &self,
+        _path: &Path,
+        _profile: Option<&crate::HarnessProfile>,
+    ) -> Option<String> {
         None
     }
     fn sign_in_required(&self, _config: &AgentLaunchConfig) -> bool {

@@ -26,6 +26,97 @@ fn metadata(id: &str) -> crate::agents::SessionMetadata {
 }
 
 #[test]
+fn detaching_discovered_forks_preserves_archive_visibility()
+-> Result<(), Box<dyn std::error::Error>> {
+    for archived in [false, true] {
+        for discovery in [false, true] {
+            let temp = tempfile::tempdir()?;
+            let database = temp.path().join("state.sqlite3");
+            let mut store = StateStore::open_at(&database)?;
+            let source = store.update_session_metadata(&metadata("source"))?;
+            let mut updates = ["fork", "nested", "own-archive", "worker", "unknown"].map(|id| {
+                let mut update = metadata(id);
+                update.parent_session = Some(if id == "nested" { "fork" } else { "source" }.into());
+                update
+            });
+            for update in &updates {
+                store.update_session_metadata(update)?;
+            }
+            store.connection.execute(
+                "UPDATE sessions SET archived_at=?1 WHERE backend_id='source'",
+                [archived.then_some(123_i64)],
+            )?;
+            store.connection.execute_batch(
+                "UPDATE sessions SET archived_at=456 WHERE backend_id='own-archive';
+                 INSERT INTO worker_families(child_id) SELECT id FROM sessions WHERE backend_id='worker';
+                 ALTER TABLE sessions DROP COLUMN forked_from_backend_id;
+                 UPDATE meta SET value='21' WHERE key='schema_version';",
+            )?;
+            drop(store);
+            let mut store = StateStore::open_at(&database)?;
+            // No native evidence: migration must retain these links until discovery verifies them.
+            let stale = store.cached_sessions("")?;
+            assert!(
+                stale
+                    .iter()
+                    .filter(|s| s.id != "source")
+                    .all(|s| s.parent_app_session_id.is_some())
+            );
+            for update in &mut updates[..4] {
+                update.forked_from = update.parent_session.take();
+                if discovery {
+                    let mut summary = stale
+                        .iter()
+                        .find(|s| s.id == update.id)
+                        .expect("session")
+                        .clone();
+                    summary.parent_session = None;
+                    summary.forked_from = update.forked_from.clone();
+                    store.index_sessions(&[summary], false)?;
+                } else {
+                    store.update_session_metadata(update)?;
+                }
+            }
+            let saved_archive: i64 = store.connection.query_row(
+                "SELECT archived_at FROM sessions WHERE backend_id='own-archive'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(saved_archive, 456);
+            drop(store);
+            let mut store = StateStore::open_at(&database)?;
+            let cached = store.cached_sessions("")?;
+            for id in ["fork", "nested"] {
+                let fork = cached.iter().find(|s| s.id == id).expect("session");
+                assert_eq!(fork.archived, archived, "{id}, discovery={discovery}");
+                assert!(fork.parent_app_session_id.is_none());
+                assert!(fork.parent_session.is_none());
+            }
+            for id in ["worker", "unknown"] {
+                let worker = cached.iter().find(|s| s.id == id).expect("session");
+                assert_eq!(worker.parent_app_session_id, Some(source.app_session_id));
+            }
+            // Once independent, a stale parent must not change archive visibility again.
+            store.connection.execute_batch(
+                "UPDATE sessions SET archived_at=NULL WHERE backend_id='fork';
+                 UPDATE sessions SET archived_at=789 WHERE backend_id='source';",
+            )?;
+            let mut stale_update = metadata("fork");
+            stale_update.parent_session = Some("source".into());
+            store.update_session_metadata(&stale_update)?;
+            let fork = store
+                .cached_sessions("")?
+                .into_iter()
+                .find(|s| s.id == "fork")
+                .expect("session");
+            assert!(!fork.archived);
+            assert!(fork.parent_app_session_id.is_none());
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn fork_ancestry_stays_separate_after_stale_discovery_and_reopen() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
@@ -61,6 +152,11 @@ fn fork_ancestry_stays_separate_after_stale_discovery_and_reopen() -> Result<(),
     // Binding a duplicate record must not restore its stale parent either.
     let tx = store.connection.transaction().map_err(|e| e.to_string())?;
     tx.execute(
+        "UPDATE sessions SET archived_at=123 WHERE backend_id='source'",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute(
         "INSERT INTO sessions(project_id,harness,locator,backend_id,parent_id,parent_backend_id,modified_ms,created_ms)
          SELECT project_id,harness,'/stale-fork',backend_id,?2,'source',modified_ms,created_ms
            FROM sessions WHERE id=?1",
@@ -73,6 +169,10 @@ fn fork_ancestry_stays_separate_after_stale_discovery_and_reopen() -> Result<(),
     let mut store = StateStore::open_at(&database)?;
     let cached = store.cached_sessions("")?;
     let fork = cached.iter().find(|s| s.id == "fork").expect("fork");
+    assert!(
+        !fork.archived,
+        "a stale duplicate must not inherit the old parent's archive state"
+    );
     assert_eq!(fork.forked_from.as_deref(), Some("source"));
     assert!(fork.parent_session.is_none());
     assert!(fork.parent_app_session_id.is_none());
@@ -96,6 +196,45 @@ fn fork_ancestry_stays_separate_after_stale_discovery_and_reopen() -> Result<(),
             .collect::<Vec<_>>(),
         ["fork"]
     );
+    Ok(())
+}
+
+#[test]
+fn merging_stale_fork_duplicates_preserves_independence_in_either_order()
+-> Result<(), Box<dyn std::error::Error>> {
+    for keep_stale in [false, true] {
+        let temp = tempfile::tempdir()?;
+        let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+        let source = store.update_session_metadata(&metadata("source"))?;
+        let mut update = metadata("fork");
+        update.forked_from = Some(source.id.clone());
+        let fork = store.update_session_metadata(&update)?;
+        let tx = store.connection.transaction()?;
+        tx.execute(
+            "UPDATE sessions SET archived_at=123 WHERE id=?1",
+            [source.app_session_id],
+        )?;
+        tx.execute(
+            "INSERT INTO sessions(project_id,harness,locator,backend_id,parent_id,parent_backend_id,modified_ms,created_ms)
+             SELECT project_id,harness,'/stale-fork',backend_id,?2,'source',modified_ms,created_ms
+               FROM sessions WHERE id=?1",
+            params![fork.app_session_id, source.app_session_id],
+        )?;
+        let stale = tx.last_insert_rowid();
+        let (keep, other) = if keep_stale {
+            (stale, fork.app_session_id)
+        } else {
+            (fork.app_session_id, stale)
+        };
+        super::super::identity::merge_session(&tx, keep, other)?;
+        tx.commit()?;
+        let cached = store.cached_sessions("")?;
+        let fork = cached.iter().find(|s| s.id == "fork").expect("merged fork");
+        assert_eq!(fork.forked_from.as_deref(), Some("source"));
+        assert!(fork.parent_app_session_id.is_none());
+        assert!(fork.parent_session.is_none());
+        assert!(!fork.archived, "keep_stale={keep_stale}");
+    }
     Ok(())
 }
 
