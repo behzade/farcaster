@@ -1807,6 +1807,7 @@ dependencies = [
  "gpui-pre-sum-tree",
  "gpui-pre-zlog",
  "image",
+ "markdown",
  "notify 7.0.0",
  "nucleo-matcher",
  "objc2 0.6.4",
