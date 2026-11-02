@@ -799,6 +799,7 @@ fn test_session() -> CodexWorkerSession {
         peer_messages: VecDeque::new(),
         events: VecDeque::new(),
         turn_error: None,
+        retrying: false,
     }
 }
 
@@ -3781,3 +3782,81 @@ fn peer_steer_during_codex_stream_preserves_arrival_order() {
 
 #[path = "worker_handoff_tests.rs"]
 mod handoff_recovery;
+
+#[test]
+fn retry_errors_reach_shared_status_without_becoming_turn_failures() {
+    let mut session = test_session();
+    for thread in ["other-thread", "thread-1"] {
+        session
+            .queued_inbound
+            .push_back(Ok(CodexInbound::Notification {
+                method: "error".into(),
+                params: json!({"threadId":thread, "turnId":"turn-1", "willRetry":true,
+                "error":{"message":"Reconnecting... 2/5", "codexErrorInfo":"usageLimitExceeded"}}),
+            }));
+    }
+    assert_eq!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::RetryStarted {
+            message: "Reconnecting... 2/5".into(),
+        }))
+    );
+    assert!(session.turn_error.is_none());
+    assert_eq!(session.poll(), None);
+    assert!(session.retrying);
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "item/agentMessage/delta".into(),
+            params: json!({"threadId":"thread-1", "delta":"recovered"}),
+        }));
+    assert_eq!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::RetryFinished))
+    );
+    assert_eq!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::TextDelta {
+            content_index: 0,
+            delta: "recovered".into(),
+        }))
+    );
+    assert!(!session.retrying);
+    session.close().expect("close fixture");
+}
+
+#[test]
+fn retry_status_clears_on_failure_or_settlement_without_output() {
+    for terminal in [
+        WorkerEvent::Failed("failed".into()),
+        WorkerEvent::Settled {
+            output: String::new(),
+        },
+    ] {
+        let mut session = test_session();
+        session.retrying = true;
+        session.events.push_back(terminal.clone());
+        assert_eq!(session.poll(), Some(terminal));
+        assert!(!session.retrying);
+        session.close().expect("close fixture");
+    }
+}
+
+#[test]
+fn terminal_error_is_kept_for_failed_turn_without_entering_retry() {
+    let mut session = test_session();
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "error".into(),
+            params: json!({"threadId":"thread-1", "willRetry":false,
+            "error":{"message":"Selected model is at capacity"}}),
+        }));
+    assert_eq!(session.poll(), None);
+    assert!(!session.retrying);
+    assert_eq!(
+        session.turn_error.as_deref(),
+        Some("Selected model is at capacity")
+    );
+    session.close().expect("close fixture");
+}

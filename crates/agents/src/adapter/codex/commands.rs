@@ -210,6 +210,12 @@ impl CodexWorkerSession {
             return;
         }
         if let Some(id) = submission {
+            if outcome.is_ok() {
+                self.events
+                    .push_back(WorkerEvent::Activity(WorkerActivity::CommandCompleted {
+                        submission_id: id.clone(),
+                    }));
+            }
             self.prompt_acks.record(
                 id,
                 outcome

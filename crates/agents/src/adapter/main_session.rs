@@ -411,9 +411,19 @@ impl WorkerSessionTransport {
         }
         self.prompt_deliveries
             .retain(|delivery| !(delivery.acknowledged && delivery.delivered));
-        matched
+        let submission_id = matched
             .map(|(id, ..)| id)
-            .or_else(|| submission_id.map(str::to_owned))
+            .or_else(|| submission_id.map(str::to_owned));
+        if let Some(id) = submission_id.as_deref()
+            && self
+                .pending_prompts
+                .get(id)
+                .is_some_and(|prompt| prompt.state == PendingPromptState::Admitted)
+            && let Some(PendingPrompt { requested_mode, .. }) = self.pending_prompts.remove(id)
+        {
+            self.finish_prompt_success(id, requested_mode);
+        }
+        submission_id
     }
 
     fn remove_queued_message(&mut self, mode: PromptMode, message: &str, id: Option<&str>) {
@@ -521,6 +531,24 @@ impl WorkerSessionTransport {
 
     fn enqueue_activity(&mut self, worker_activity: WorkerActivity) {
         let event = match worker_activity {
+            WorkerActivity::CommandCompleted { submission_id } => {
+                if self
+                    .prompt_deliveries
+                    .iter()
+                    .any(|delivery| delivery.request_id == submission_id && !delivery.delivered)
+                {
+                    self.acknowledge_delivery(Some(&submission_id), WorkerSendMode::Prompt, "");
+                    self.pending.push_back(SessionEvent::Activity(
+                        crate::contract::PromptDelivery {
+                            submission_id,
+                            status: DeliveryStatus::Delivered,
+                            message: None,
+                        }
+                        .into(),
+                    ));
+                }
+                return;
+            }
             WorkerActivity::InputDelivered {
                 submission_id,
                 mode,
@@ -764,6 +792,11 @@ impl WorkerSessionTransport {
                 "type": "session_goal_changed",
                 "goal": goal,
             }),
+            WorkerActivity::RetryStarted { message } => json!({
+                "type": "auto_retry_start",
+                "message": message,
+            }),
+            WorkerActivity::RetryFinished => json!({"type": "auto_retry_end"}),
             WorkerActivity::CompactionStarted => json!({
                 "type": "compaction_start",
                 "reason": "manual",
@@ -786,15 +819,6 @@ impl WorkerSessionTransport {
         content: Value,
     ) {
         let submission_id = self.acknowledge_delivery(submission_id, mode, text);
-        if let Some(id) = submission_id.as_deref()
-            && self
-                .pending_prompts
-                .get(id)
-                .is_some_and(|prompt| prompt.state == PendingPromptState::Admitted)
-            && let Some(PendingPrompt { requested_mode, .. }) = self.pending_prompts.remove(id)
-        {
-            self.finish_prompt_success(id, requested_mode);
-        }
         self.finish_assistant_message(None);
         if let Some(id) = submission_id {
             self.pending.push_back(SessionEvent::Activity(

@@ -180,6 +180,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             peer_messages: VecDeque::new(),
             events: VecDeque::from([WorkerEvent::SessionChanged { locator: thread_id }]),
             turn_error: None,
+            retrying: false,
         }))
     }
 }
@@ -357,6 +358,7 @@ pub fn spawn_main(
         peer_messages: VecDeque::new(),
         events: VecDeque::new(),
         turn_error: None,
+        retrying: false,
     };
     let goal_request =
         session.request("thread/goal/get", json!({"threadId": thread_id.clone()}))?;
@@ -814,6 +816,7 @@ struct CodexWorkerSession {
     peer_messages: VecDeque<PeerMessage>,
     events: VecDeque<WorkerEvent>,
     turn_error: Option<String>,
+    retrying: bool,
 }
 
 impl WorkerSession for CodexWorkerSession {
@@ -1092,6 +1095,26 @@ impl WorkerSession for CodexWorkerSession {
     fn poll(&mut self) -> Option<WorkerEvent> {
         loop {
             let event = self.poll_event()?;
+            if self.retrying
+                && matches!(
+                    &event,
+                    WorkerEvent::Activity(
+                        WorkerActivity::TextDelta { .. }
+                            | WorkerActivity::ThinkingStarted { .. }
+                            | WorkerActivity::ThinkingDelta { .. }
+                            | WorkerActivity::ToolStarted { .. }
+                            | WorkerActivity::ToolUpdated { .. }
+                            | WorkerActivity::ToolFinished { .. }
+                    )
+                )
+            {
+                self.retrying = false;
+                self.events.push_front(event);
+                return Some(WorkerEvent::Activity(WorkerActivity::RetryFinished));
+            }
+            if matches!(&event, WorkerEvent::Settled { .. } | WorkerEvent::Failed(_)) {
+                self.retrying = false;
+            }
             match &event {
                 WorkerEvent::Activity(WorkerActivity::InputDelivered { submission_id, .. })
                     if submission_id
@@ -2008,6 +2031,13 @@ impl CodexWorkerSession {
                             self.reasoning_started = true;
                         }
                         CodexMethod::Error => {
+                            if params["willRetry"].as_bool() == Some(true) {
+                                self.retrying = true;
+                                return Some(WorkerEvent::Activity(WorkerActivity::RetryStarted {
+                                    message: codex_error_message(&params)
+                                        .unwrap_or_else(|| "Retrying request".into()),
+                                }));
+                            }
                             if let Some(message) = codex_error_message(&params) {
                                 self.turn_error = Some(message);
                             }

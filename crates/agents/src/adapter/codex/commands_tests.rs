@@ -193,3 +193,118 @@ fn status_reports_usage_and_review_completion_retains_native_output() {
         })
     );
 }
+
+#[test]
+fn local_commands_settle_submissions_without_a_model_message() {
+    use crate::adapter::main_session::{MainSessionMetadata, WorkerSessionTransport};
+    use crate::extensions::PromptMode;
+    use crate::{DeliveryStatus, SessionCommand, SessionEvent, SessionTransport};
+
+    for command in [
+        "/model",
+        "/model chosen high",
+        "/permissions restricted",
+        "/status",
+    ] {
+        let (mut session, mut sent) = writable_test_session();
+        let (sender, incoming) = std::sync::mpsc::channel();
+        session.incoming = incoming;
+        let mut transport = WorkerSessionTransport::new(
+            std::path::Path::new("/locators"),
+            Backend::Codex,
+            "thread-1".into(),
+            Box::new(session),
+            MainSessionMetadata::default(),
+            None,
+        )
+        .expect("transport");
+        let id = transport
+            .send(SessionCommand::Prompt {
+                mode: PromptMode::Normal,
+                message: command.into(),
+                images: Vec::new(),
+            })
+            .expect("submit local command");
+        let request = read(&mut sent);
+        let result = match command {
+            "/permissions restricted" => json!({"data":[{"id":"restricted","allowed":true}]}),
+            "/status" => json!({"rateLimits":{}}),
+            _ => {
+                json!({"data":[{"id":"chosen","displayName":"Chosen","supportedReasoningEfforts":[{"reasoningEffort":"high"}]}]})
+            }
+        };
+        sender
+            .send(Ok(CodexInbound::Response {
+                id: serde_json::from_value(request["id"].clone()).unwrap(),
+                result,
+            }))
+            .unwrap();
+        let mut events: Vec<_> = std::iter::from_fn(|| transport.poll()).collect();
+        if matches!(command, "/model chosen high" | "/permissions restricted") {
+            assert!(events.iter().all(|event| !matches!(event, SessionEvent::Activity(event) if event.value()["type"] == "prompt_delivery")), "{command} must wait for settings update");
+            let update = read(&mut sent);
+            assert_eq!(update["method"], "thread/settings/update");
+            sender
+                .send(Ok(CodexInbound::Response {
+                    id: serde_json::from_value(update["id"].clone()).unwrap(),
+                    result: json!({}),
+                }))
+                .unwrap();
+            events.extend(std::iter::from_fn(|| transport.poll()));
+        }
+        let deliveries: Vec<_> = events
+            .iter()
+            .filter_map(|event| {
+                let SessionEvent::Activity(event) = event else {
+                    return None;
+                };
+                serde_json::from_value::<crate::contract::PromptDelivery>(event.value().clone())
+                    .ok()
+            })
+            .filter(|receipt| {
+                receipt.submission_id == id && receipt.status == DeliveryStatus::Delivered
+            })
+            .collect();
+        assert_eq!(
+            deliveries.len(),
+            1,
+            "{command} must settle the exact submission"
+        );
+        assert!(
+            deliveries[0].message.is_none(),
+            "local completion must not invent a model user-message echo"
+        );
+        assert_eq!(events.iter().filter(|event| matches!(event, SessionEvent::Response(response) if response.id.as_deref() == Some(&id) && response.result.is_ok())).count(), 1);
+
+        let prompt = transport
+            .send(SessionCommand::Prompt {
+                mode: PromptMode::Normal,
+                message: "real prompt".into(),
+                images: Vec::new(),
+            })
+            .expect("submit model prompt after command");
+        let turn = read(&mut sent);
+        assert_eq!(turn["method"], "turn/start");
+        sender
+            .send(Ok(CodexInbound::Response {
+                id: serde_json::from_value(turn["id"].clone()).unwrap(),
+                result: json!({"turn":{"id":"real-turn","status":"inProgress"}}),
+            }))
+            .unwrap();
+        let events: Vec<_> = std::iter::from_fn(|| transport.poll()).collect();
+        assert!(
+            events.iter().all(|event| {
+                let SessionEvent::Activity(event) = event else {
+                    return true;
+                };
+                let Ok(receipt) = serde_json::from_value::<crate::contract::PromptDelivery>(
+                    event.value().clone(),
+                ) else {
+                    return true;
+                };
+                receipt.submission_id != prompt || receipt.status != DeliveryStatus::Delivered
+            }),
+            "ordinary model admission must still wait for native delivery"
+        );
+    }
+}

@@ -2665,3 +2665,41 @@ fn synchronous_prompt_rejections_preserve_reason_and_unclassified_retry_path() {
         assert!(transport.prompt_deliveries.is_empty());
     }
 }
+
+#[test]
+fn retry_activity_projects_to_shared_conversation_status() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "retry-session".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    let mut conversation = farcaster_conversation::ConversationState::default();
+    transport.enqueue_activity(WorkerActivity::RetryStarted {
+        message: "Rate limit reached; retrying".into(),
+    });
+    transport.enqueue_activity(WorkerActivity::RetryFinished);
+    let mut states = Vec::new();
+    while let Some(event) = transport.poll() {
+        if let SessionEvent::Activity(event) = event {
+            conversation.reduce(event.value());
+            states.push(conversation.retrying);
+        }
+    }
+    assert_eq!(states, [true, false]);
+    assert!(
+        conversation
+            .items
+            .iter()
+            .any(|item| item.text == "Rate limit reached; retrying")
+    );
+    assert!(
+        conversation
+            .items
+            .iter()
+            .any(|item| item.text == "Retry finished")
+    );
+}

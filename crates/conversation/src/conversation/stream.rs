@@ -537,7 +537,16 @@ fn cache_usage(message: &Value) -> Option<(u64, u64)> {
 }
 
 fn retry_notice(event: &Value) -> String {
-    let kind = text_field(event, "type");
+    if let Some(message) = event.get("message").and_then(Value::as_str)
+        && !message.trim().is_empty()
+    {
+        return message.to_owned();
+    }
+    let kind = match text_field(event, "type").as_str() {
+        "auto_retry_start" => "Retrying request".to_owned(),
+        "auto_retry_end" => "Retry finished".to_owned(),
+        other => other.to_owned(),
+    };
     let attempt = event.get("attempt").and_then(Value::as_u64);
     attempt.map_or(kind.clone(), |attempt| {
         format!("{kind} · attempt {attempt}")

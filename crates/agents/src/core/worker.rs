@@ -125,6 +125,10 @@ impl ChildSessionOutcome {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorkerActivity {
+    /// A local command completed without a model user-message echo.
+    CommandCompleted {
+        submission_id: String,
+    },
     InputDelivered {
         submission_id: Option<String>,
         mode: WorkerSendMode,
@@ -207,6 +211,10 @@ pub enum WorkerActivity {
         outcome: Option<ChildSessionOutcome>,
         execution: Option<WorkerModelSelection>,
     },
+    RetryStarted {
+        message: String,
+    },
+    RetryFinished,
     CompactionStarted,
     CompactionFinished {
         aborted: bool,

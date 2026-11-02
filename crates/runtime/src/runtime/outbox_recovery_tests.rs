@@ -1683,3 +1683,67 @@ fn delivered_prompt_keeps_its_identity_until_receipt_storage_recovers() -> Resul
     }
     Ok(())
 }
+
+#[test]
+fn local_command_receipt_settles_outbox_and_composer_without_an_echo() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let (mut owner, _) = ready_owner(temp.path(), &database)?;
+    let (events, received) = std::sync::mpsc::channel();
+    owner.event_tx.sender = events;
+    owner.send_prompt_for_submission(
+        "composer-model".into(),
+        "session:model".into(),
+        PromptMode::Normal,
+        "/model".into(),
+        Vec::new(),
+        false,
+    );
+    let id = owner
+        .pending_request_id()
+        .expect("command request")
+        .to_owned();
+    owner.apply_response(prompt_response(&id, PromptMode::Normal, true));
+    assert_eq!(
+        outbox_rows(&database)?,
+        [("/model".into(), "pending".into())]
+    );
+    let users = owner
+        .snapshot
+        .conversation
+        .items
+        .iter()
+        .filter(|item| item.kind == crate::conversation::TranscriptKind::User)
+        .count();
+    for _ in 0..2 {
+        owner.apply_process_item(SessionEvent::Activity(
+            json!({
+                "type":"prompt_delivery", "submissionId":id, "status":"delivered",
+            })
+            .into(),
+        ));
+    }
+    owner.apply_process_item(SessionEvent::Activity(
+        json!({"type":"agent_settled"}).into(),
+    ));
+    assert_eq!(outbox_rows(&database)?, [("/model".into(), "acked".into())]);
+    assert!(owner.pending_request_id().is_none());
+    assert!(!owner.normal_prompt_in_flight);
+    assert!(!owner.snapshot.conversation.running);
+    assert!(owner.snapshot.conversation.pending_receipts().is_empty());
+    assert_eq!(
+        owner
+            .snapshot
+            .conversation
+            .items
+            .iter()
+            .filter(|item| item.kind == crate::conversation::TranscriptKind::User)
+            .count(),
+        users
+    );
+    assert_eq!(received.try_iter().filter(|event| matches!(event,
+        RuntimeEvent::PromptResult { submission_id:Some(id), outcome:agents::PromptOutcome::Accepted, .. }
+            if id == "composer-model"
+    )).count(), 1, "completion must release the composer submission once");
+    Ok(())
+}
