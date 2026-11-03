@@ -3,11 +3,7 @@ use gpui::{Context, Keystroke, Window};
 use crate::app::{FarcasterApp, workspace::SettingsTab};
 
 const RIGHT_SHIFT: &str = "right-shift";
-const DEFAULT_SHORTCUT: &str = if cfg!(target_os = "macos") {
-    RIGHT_SHIFT
-} else {
-    "ctrl-shift-space"
-};
+const DEFAULT_SHORTCUT: &str = "ctrl-'";
 
 fn validate(stroke: &Keystroke, cx: &gpui::App) -> Result<(), String> {
     let function_key = stroke
@@ -107,7 +103,7 @@ impl FarcasterApp {
                 && self.overlays.view.settings
                 && self.settings.tab == SettingsTab::General
             {
-                self.save_voice_shortcut(None, cx);
+                self.save_voice_shortcut(Some(RIGHT_SHIFT.into()), cx);
             }
             if self.workspace.voice.key_down.as_deref() == Some(RIGHT_SHIFT) {
                 self.release_voice_shortcut(window, cx);

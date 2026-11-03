@@ -155,7 +155,6 @@ fn chat_voice_arms_and_sends_without_editor_context(cx: &mut gpui::TestAppContex
     );
 }
 
-#[cfg(target_os = "macos")]
 #[gpui::test]
 fn unavailable_or_disabled_voice_preserves_the_navigation_prefix(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
@@ -173,9 +172,12 @@ fn unavailable_or_disabled_voice_preserves_the_navigation_prefix(cx: &mut gpui::
                         app.settings.voice_enabled = enabled;
                         app.navigation.chat.activation.clear();
                         app.chat_composer_focus(cx).focus(window, cx);
-                        app.voice_right_shift_changed(true, false, window, cx);
+                        assert!(!app.voice_key_down(
+                            &gpui::Keystroke::parse("ctrl-'").unwrap(),
+                            window,
+                            cx,
+                        ));
                         assert!(app.workspace.voice.key_down.is_none());
-                        app.voice_right_shift_changed(false, false, window, cx);
                     });
                     window.draw(cx).clear(cx);
                     window.dispatch_keystroke(gpui::Keystroke::parse("ctrl-g").unwrap(), cx);
@@ -287,14 +289,11 @@ fn prepare_voice_editor(cx: &mut gpui::VisualTestContext, app: &gpui::Entity<Far
 
 fn default_shortcut(
     cx: &mut gpui::VisualTestContext,
-    app: &gpui::Entity<FarcasterApp>,
+    _app: &gpui::Entity<FarcasterApp>,
     down: bool,
 ) {
-    if !cfg!(target_os = "macos") {
-        chord(cx, "ctrl-shift-space", down);
-        return;
-    }
-    right_shift(cx, app, down);
+    // Releasing Control first must still finish when the apostrophe key comes up.
+    chord(cx, if down { "ctrl-'" } else { "'" }, down);
 }
 
 fn right_shift(cx: &mut gpui::VisualTestContext, app: &gpui::Entity<FarcasterApp>, down: bool) {
@@ -587,6 +586,7 @@ fn voice_right_shift_ignores_left_shift_and_modifier_combinations(cx: &mut gpui:
                 app.update(cx, |app, cx| {
                     app.workspace.surface = AppSurface::Editor;
                     app.workspace.voice.available = true;
+                    app.settings.voice_shortcut = Some("right-shift".into());
                     for (down, other) in [
                         (false, true),
                         (false, false),
@@ -646,15 +646,19 @@ fn voice_shortcut_capture_accepts_right_shift_but_not_shift_used_for_typing(
             cx.update(|_, cx| {
                 assert!(!app.read(cx).workspace.voice.capturing_shortcut);
                 assert!(app.read(cx).workspace.voice.settings_error.is_none());
-                assert!(app.read(cx).settings.voice_shortcut.is_none());
+                assert_eq!(
+                    app.read(cx).settings.voice_shortcut.as_deref(),
+                    Some("right-shift")
+                );
                 assert_eq!(app.read(cx).voice_shortcut_label(cx), "Right Shift");
             });
-            assert!(
+            assert_eq!(
                 crate::app::persistence::open()
                     .unwrap()
                     .load_voice_shortcut()
                     .unwrap()
-                    .is_none()
+                    .as_deref(),
+                Some("right-shift")
             );
         },
     );
@@ -672,28 +676,34 @@ fn voice_default_and_saved_shortcuts_work_on_each_platform(cx: &mut gpui::TestAp
             prepare_voice_editor(cx, app);
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
-                    let default = if cfg!(target_os = "macos") {
-                        "right-shift"
-                    } else {
-                        "ctrl-shift-space"
-                    };
+                    let default = "ctrl-'";
                     assert_eq!(app.voice_shortcut(), default);
+                    app.voice_right_shift_changed(true, false, window, cx);
+                    assert!(
+                        app.workspace.voice.key_down.is_none(),
+                        "typing with Shift must not arm voice"
+                    );
+                    app.voice_right_shift_changed(false, false, window, cx);
                     app.settings.voice_shortcut = Some("right-shift".into());
                     assert_eq!(
                         app.voice_shortcut(),
-                        default,
-                        "Mac-only saved shortcuts must work on Linux"
+                        if cfg!(target_os = "macos") {
+                            "right-shift"
+                        } else {
+                            default
+                        },
+                        "explicit Right Shift stays on macOS and falls back on Linux"
                     );
-                    // Check the Linux default against the app's shortcut conflict validator,
-                    // even when running this test on macOS.
+                    app.settings.voice_shortcut = Some("ctrl-shift-space".into());
+                    assert_eq!(app.voice_shortcut(), "ctrl-shift-space");
+                    // Capture the new default through the shortcut conflict validator.
                     app.open_settings(window, cx);
                     app.begin_voice_shortcut_capture(cx);
                     let key =
-                        gpui::Keystroke::parse_with_os("ctrl-shift-space", cx.platform_info().os)
-                            .unwrap();
+                        gpui::Keystroke::parse_with_os(default, cx.platform_info().os).unwrap();
                     assert!(app.voice_key_down(&key, window, cx));
                     assert!(app.workspace.voice.settings_error.is_none());
-                    assert_eq!(app.voice_shortcut(), "ctrl-shift-space");
+                    assert_eq!(app.voice_shortcut(), default);
                     app.reset_voice_shortcut(cx);
                     assert_eq!(app.voice_shortcut(), default);
                 });
