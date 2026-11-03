@@ -45,6 +45,87 @@ fn family_session_id(
     })
 }
 
+pub(super) fn save_worker_family_in(
+    transaction: &Transaction<'_>,
+    image_directory: &Path,
+    link: &crate::agents::WorkerFamilyLink,
+) -> Result<(), String> {
+    let project_id = ensure_project(transaction, &link.project, u64_to_i64(now_ms()))?;
+    let locator_root = image_directory
+        .parent()
+        .ok_or("state image directory has no parent")?
+        .join("session-locators");
+    let locator_root = super::identity::family_locator_root(&locator_root, &link.project);
+    let parent_id = family_session_id(
+        transaction,
+        link.parent_key.as_ref(),
+        link.parent_backend,
+        &link.parent_session,
+        project_id,
+        &locator_root,
+    )?;
+    let child_id = family_session_id(
+        transaction,
+        link.child_key.as_ref(),
+        link.child_backend,
+        &link.child_session,
+        project_id,
+        &locator_root,
+    )?;
+    transaction
+        .execute(
+            "UPDATE sessions SET parent_id=?2 WHERE id=?1",
+            params![child_id, parent_id],
+        )
+        .map_err(|error| error.to_string())?;
+    let execution = serde_json::to_string(&link.execution).map_err(|error| error.to_string())?;
+    let routing = link
+        .routing
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    if let Some(routing) = &link.routing {
+        transaction
+            .execute(
+                "UPDATE worker_families SET routing_json=NULL
+                   WHERE child_id != ?1
+                     AND child_id IN (SELECT id FROM sessions WHERE parent_id=?2)
+                     AND json_valid(routing_json)
+                     AND lower(json_extract(routing_json, '$.name'))=lower(?3)",
+                params![child_id, parent_id, routing.name],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    transaction
+        .execute(
+            "INSERT INTO worker_families(child_id, execution_json, routing_json)
+             VALUES(?1, ?2, ?3)
+             ON CONFLICT(child_id) DO UPDATE SET
+               execution_json=excluded.execution_json,
+               routing_json=excluded.routing_json",
+            params![child_id, execution, routing],
+        )
+        .map_err(|error| error.to_string())?;
+    if let Some(execution) = &link.execution {
+        transaction
+            .execute(
+                "INSERT INTO session_models(session_id, provider, model, effort)
+                 VALUES(?1, ?2, ?3, ?4)
+                 ON CONFLICT(session_id) DO UPDATE SET
+                   provider=excluded.provider, model=excluded.model, effort=excluded.effort",
+                params![
+                    child_id,
+                    execution.provider,
+                    execution.model,
+                    execution.effort
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 fn stored_family_identity(
     locator_root: &Path,
     project: &Path,
@@ -285,81 +366,7 @@ impl StateStore {
             .connection
             .unchecked_transaction()
             .map_err(|error| error.to_string())?;
-        let project_id = ensure_project(&transaction, &link.project, u64_to_i64(now_ms()))?;
-        let locator_root = self
-            .image_directory
-            .parent()
-            .ok_or("state image directory has no parent")?
-            .join("session-locators");
-        let locator_root = super::identity::family_locator_root(&locator_root, &link.project);
-        let parent_id = family_session_id(
-            &transaction,
-            link.parent_key.as_ref(),
-            link.parent_backend,
-            &link.parent_session,
-            project_id,
-            &locator_root,
-        )?;
-        let child_id = family_session_id(
-            &transaction,
-            link.child_key.as_ref(),
-            link.child_backend,
-            &link.child_session,
-            project_id,
-            &locator_root,
-        )?;
-        transaction
-            .execute(
-                "UPDATE sessions SET parent_id=?2 WHERE id=?1",
-                params![child_id, parent_id],
-            )
-            .map_err(|error| error.to_string())?;
-        let execution =
-            serde_json::to_string(&link.execution).map_err(|error| error.to_string())?;
-        let routing = link
-            .routing
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()
-            .map_err(|error| error.to_string())?;
-        if let Some(routing) = &link.routing {
-            transaction
-                .execute(
-                    "UPDATE worker_families SET routing_json=NULL
-                       WHERE child_id != ?1
-                         AND child_id IN (SELECT id FROM sessions WHERE parent_id=?2)
-                         AND json_valid(routing_json)
-                         AND lower(json_extract(routing_json, '$.name'))=lower(?3)",
-                    params![child_id, parent_id, routing.name],
-                )
-                .map_err(|error| error.to_string())?;
-        }
-        transaction
-            .execute(
-                "INSERT INTO worker_families(child_id, execution_json, routing_json)
-                 VALUES(?1, ?2, ?3)
-                 ON CONFLICT(child_id) DO UPDATE SET
-                   execution_json=excluded.execution_json,
-                   routing_json=excluded.routing_json",
-                params![child_id, execution, routing],
-            )
-            .map_err(|error| error.to_string())?;
-        if let Some(execution) = &link.execution {
-            transaction
-                .execute(
-                    "INSERT INTO session_models(session_id, provider, model, effort)
-                     VALUES(?1, ?2, ?3, ?4)
-                     ON CONFLICT(session_id) DO UPDATE SET
-                       provider=excluded.provider, model=excluded.model, effort=excluded.effort",
-                    params![
-                        child_id,
-                        execution.provider,
-                        execution.model,
-                        execution.effort
-                    ],
-                )
-                .map_err(|error| error.to_string())?;
-        }
+        save_worker_family_in(&transaction, &self.image_directory, link)?;
         transaction.commit().map_err(|error| error.to_string())
     }
 

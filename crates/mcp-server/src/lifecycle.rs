@@ -98,14 +98,14 @@ pub fn start(
     let binding_store = store.clone();
     let execution_store = store;
     crate::agents::CallerRegistry::shared().set_execution_sinks(
-        Some(Arc::new(move |caller| {
+        Some(Arc::new(move |caller, family| {
             super::with_store(&binding_store, |store| {
-                store.register_caller_session(caller)
+                store.register_caller_session(caller, family)
             })
         })),
-        Some(Arc::new(move |caller, execution| {
+        Some(Arc::new(move |caller, execution, family| {
             super::with_store(&execution_store, |store| {
-                store.register_execution_for_caller(caller, execution)
+                store.register_execution_for_caller(caller, execution, family)
             })
         })),
     );

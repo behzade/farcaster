@@ -54,9 +54,13 @@ pub struct ExecutionBinding {
     pub prompt_id: Option<String>,
 }
 
-pub type SessionRecordSink = Arc<dyn Fn(&CallerContext) -> Result<i64, String> + Send + Sync>;
-pub type ExecutionSink =
-    Arc<dyn Fn(&CallerContext, &ExecutionBinding) -> Result<i64, String> + Send + Sync>;
+pub type SessionRecordSink =
+    Arc<dyn Fn(&CallerContext, Option<&WorkerFamilyLink>) -> Result<i64, String> + Send + Sync>;
+pub type ExecutionSink = Arc<
+    dyn Fn(&CallerContext, &ExecutionBinding, Option<&WorkerFamilyLink>) -> Result<i64, String>
+        + Send
+        + Sync,
+>;
 
 #[derive(Clone, Default)]
 pub struct CallerRegistry {
@@ -235,7 +239,7 @@ impl CallerRegistry {
     }
 
     fn try_bind_record(&self, token: &str) -> Result<(), String> {
-        let context = {
+        let binding = {
             let callers = self
                 .callers
                 .lock()
@@ -243,17 +247,26 @@ impl CallerRegistry {
             callers
                 .get(token)
                 .filter(|caller| caller.persist_session)
-                .and_then(RegisteredCaller::context)
+                .and_then(|caller| {
+                    // Only a new binding publishes family state. Refreshes must
+                    // preserve parent IDs that storage may have merged already.
+                    let family = if caller.session_record.is_none() {
+                        caller.family_link()
+                    } else {
+                        None
+                    };
+                    Some((caller.context()?, family))
+                })
         };
         let sink = self
             .session_sink
             .lock()
             .map_err(|_| "caller session sink unavailable")?
             .clone();
-        let (Some(context), Some(sink)) = (context, sink) else {
+        let (Some((context, family)), Some(sink)) = (binding, sink) else {
             return Ok(());
         };
-        let record = sink(&context)?;
+        let record = sink(&context, family.as_ref())?;
         if let Some(caller) = self
             .callers
             .lock()
@@ -398,38 +411,24 @@ impl CallerRegistry {
         }
     }
 
+    fn has_session_sink(&self) -> bool {
+        self.session_sink.lock().is_ok_and(|sink| sink.is_some())
+    }
+
     fn persist_family(&self, token: &str) {
-        let link = (|| {
-            let callers = self.callers.lock().ok()?;
-            let child = callers.get(token)?;
-            if !child.persist_session {
-                return None;
-            }
-            let parent = child.parent_session.as_ref()?;
-            Some(WorkerFamilyLink {
-                project: child.project.clone(),
-                child_backend: child.backend,
-                child_session: child.session.clone()?,
-                parent_backend: parent.native.harness,
-                parent_session: parent.native.id.clone(),
-                parent_key: parent.key.clone(),
-                child_key: child.session_key().and_then(|session| session.key),
-                execution: child.provider.as_ref().zip(child.model.as_ref()).map(
-                    |(provider, model)| super::WorkerExecution {
-                        harness: child.backend,
-                        provider: provider.clone(),
-                        model: model.clone(),
-                        effort: child.effort.clone(),
-                        service_tier: None,
-                    },
-                ),
-                routing: child.assignment.clone().map(|assignment| WorkerRouting {
-                    name: child.worker_name.clone(),
-                    assignment,
-                    access_mode: child.access_mode,
-                }),
-            })
-        })();
+        // Retry deferred children before an explicit family update. A failed
+        // registration must not fall back to publishing an unparented row.
+        if self.has_session_sink()
+            && let Err(error) = self.try_bind_record(token)
+        {
+            zlog::warn!("Register worker family session: {error}");
+            return;
+        }
+        let link = self
+            .callers
+            .lock()
+            .ok()
+            .and_then(|callers| callers.get(token).and_then(RegisteredCaller::family_link));
         let sink = self.family_sink.lock().ok().and_then(|sink| sink.clone());
         if let (Some(link), Some(sink)) = (link, sink)
             && let Err(error) = sink(&link)
@@ -804,6 +803,38 @@ impl CallerRegistry {
 }
 
 impl RegisteredCaller {
+    fn family_link(&self) -> Option<WorkerFamilyLink> {
+        if !self.persist_session {
+            return None;
+        }
+        let parent = self.parent_session.as_ref()?;
+        Some(WorkerFamilyLink {
+            project: self.project.clone(),
+            child_backend: self.backend,
+            child_session: self.session.clone()?,
+            parent_backend: parent.native.harness,
+            parent_session: parent.native.id.clone(),
+            parent_key: parent.key.clone(),
+            child_key: self.session_key().and_then(|session| session.key),
+            execution: self
+                .provider
+                .as_ref()
+                .zip(self.model.as_ref())
+                .map(|(provider, model)| super::WorkerExecution {
+                    harness: self.backend,
+                    provider: provider.clone(),
+                    model: model.clone(),
+                    effort: self.effort.clone(),
+                    service_tier: None,
+                }),
+            routing: self.assignment.clone().map(|assignment| WorkerRouting {
+                name: self.worker_name.clone(),
+                assignment,
+                access_mode: self.access_mode,
+            }),
+        })
+    }
+
     fn context(&self) -> Option<CallerContext> {
         Some(CallerContext {
             worker_id: self.worker_id.clone(),
@@ -930,7 +961,9 @@ impl CallerIdentity {
             .ok()
             .and_then(|sink| sink.clone());
         if let Some(sink) = sink {
-            match sink(&context, &binding) {
+            // bind_record has already attached the family. A turn registration
+            // only resolves identity, including any merge since that binding.
+            match sink(&context, &binding, None) {
                 Ok(session_record) => binding.session_record = session_record,
                 Err(error) => {
                     zlog::error!("Register execution turn: {error}");
@@ -1013,7 +1046,7 @@ impl CallerIdentity {
                 .get(&self.token)
                 .and_then(RegisteredCaller::session_key)
         });
-        if before != after {
+        if before != after && !self.registry.has_session_sink() {
             self.registry.persist_family(&self.token);
         }
     }

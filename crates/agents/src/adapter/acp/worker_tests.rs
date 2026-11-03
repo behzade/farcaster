@@ -957,8 +957,8 @@ fn track_inert_submission(session: &mut AcpWorkerSession, id: &str) {
 fn queued_acp_admission_does_not_replace_the_executing_review_turn() {
     let registry = crate::CallerRegistry::default();
     registry.set_execution_sinks(
-        Some(std::sync::Arc::new(|_| Ok(1))),
-        Some(std::sync::Arc::new(|_, turn| Ok(turn.session_record))),
+        Some(std::sync::Arc::new(|_, _| Ok(1))),
+        Some(std::sync::Arc::new(|_, turn, _| Ok(turn.session_record))),
     );
     let identity = registry.issue(
         std::path::Path::new("/project"),

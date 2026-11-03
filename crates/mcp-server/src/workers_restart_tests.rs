@@ -123,7 +123,7 @@ fn assert_persisted_child_reuse(profile: &str) -> Result<(), String> {
     parent.bind("saved-parent-session");
     let context = CallerRegistry::shared().resolve(parent.token())?;
     let session_record =
-        crate::storage::StateStore::open_at(&database)?.register_caller_session(&context)?;
+        crate::storage::StateStore::open_at(&database)?.register_caller_session(&context, None)?;
     parent.bind_execution_for_test(crate::agents::ExecutionBinding {
         session_record,
         turn_id: "restored-parent".into(),

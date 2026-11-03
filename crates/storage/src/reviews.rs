@@ -16,10 +16,11 @@ impl StateStore {
     pub fn register_caller_session(
         &self,
         caller: &crate::agents::CallerContext,
+        family: Option<&crate::agents::WorkerFamilyLink>,
     ) -> Result<i64, String> {
         let tx = Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)
             .map_err(|e| format!("register caller session: {e}"))?;
-        let id = register_caller_session_in(&tx, &self.image_directory, caller)?;
+        let id = register_caller_binding_in(&tx, &self.image_directory, caller, family)?;
         tx.commit()
             .map_err(|e| format!("commit caller session: {e}"))?;
         Ok(id)
@@ -29,10 +30,11 @@ impl StateStore {
         &self,
         caller: &crate::agents::CallerContext,
         execution: &crate::agents::ExecutionBinding,
+        family: Option<&crate::agents::WorkerFamilyLink>,
     ) -> Result<i64, String> {
         let tx = Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)
             .map_err(|e| format!("register execution turn: {e}"))?;
-        let session_id = register_caller_session_in(&tx, &self.image_directory, caller)?;
+        let session_id = register_caller_binding_in(&tx, &self.image_directory, caller, family)?;
         tx.execute(
             "INSERT INTO session_turns(id,session_id,prompt_id,started_ms) VALUES(?1,?2,?3,?4)",
             params![execution.turn_id, session_id, execution.prompt_id, now_ms()],
@@ -198,6 +200,47 @@ fn find_caller_session_id(
     } else {
         Ok(None)
     }
+}
+
+fn register_caller_binding_in(
+    tx: &Transaction<'_>,
+    image_directory: &Path,
+    caller: &crate::agents::CallerContext,
+    family: Option<&crate::agents::WorkerFamilyLink>,
+) -> Result<i64, String> {
+    if let Some(family) = family
+        && (crate::sessions::normalize_session_path(&family.project)
+            != crate::sessions::normalize_session_path(&caller.project)
+            || family.child_backend != caller.backend
+            || family.child_session != caller.session)
+    {
+        return Err("worker family does not match its caller session".into());
+    }
+    let id = register_caller_session_in(tx, image_directory, caller)?;
+    if caller.parent_worker_id.is_some() && family.is_none() {
+        let linked: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sessions s JOIN worker_families f ON f.child_id=s.id
+              WHERE s.id=?1 AND s.parent_id IS NOT NULL)",
+                [id],
+                |row| row.get(0),
+            )
+            .map_err(|error| format!("read caller family: {error}"))?;
+        // Ordinary refreshes preserve the stored family, including a parent ID
+        // replaced by a merge. A new child still needs an atomic attachment.
+        if !linked {
+            return Err("worker parent session is not bound yet".into());
+        }
+    }
+    if let Some(family) = family {
+        // The canonical child ID is only known after registration. Both writes
+        // must commit together so catalog readers never see an unparented child.
+        let mut family = family.clone();
+        family.child_key =
+            crate::sessions::AppSessionId::new(id).map(crate::sessions::SessionKey::App);
+        super::settings::save_worker_family_in(tx, image_directory, &family)?;
+    }
+    Ok(id)
 }
 
 fn register_caller_session_in(

@@ -45,7 +45,7 @@ fn transient_identity_keeps_its_locator_without_persisting_a_session() {
     let registrations = Arc::new(Mutex::new(0));
     let captured = registrations.clone();
     registry.set_execution_sinks(
-        Some(Arc::new(move |_| {
+        Some(Arc::new(move |_, _| {
             *captured.lock().expect("registrations") += 1;
             Ok(42)
         })),
@@ -76,8 +76,8 @@ fn execution_binding_is_captured_before_later_turns_and_cleared_on_rebind() {
     let turns = Arc::new(Mutex::new(Vec::new()));
     let captured = turns.clone();
     registry.set_execution_sinks(
-        Some(Arc::new(|_| Ok(42))),
-        Some(Arc::new(move |_, turn| {
+        Some(Arc::new(|_, _| Ok(42))),
+        Some(Arc::new(move |_, turn, _| {
             captured.lock().expect("turns").push(turn.clone());
             Ok(84)
         })),
@@ -597,7 +597,7 @@ fn binding_promotes_early_children_and_shared_handles_after_app_id_merge() -> Re
     let record = Arc::new(AtomicI64::new(41));
     let current = record.clone();
     registry.set_execution_sinks(
-        Some(Arc::new(move |caller| {
+        Some(Arc::new(move |caller, _| {
             Ok(if caller.worker_id == parent_id {
                 current.load(Ordering::SeqCst)
             } else {
@@ -643,7 +643,7 @@ fn binding_promotes_early_children_and_shared_handles_after_app_id_merge() -> Re
     );
     drop(parent);
     let replacement = identity(&registry, Path::new("/project"), Backend::Pi);
-    registry.set_execution_sinks(Some(Arc::new(|_| Ok(84))), None);
+    registry.set_execution_sinks(Some(Arc::new(|_, _| Ok(84))), None);
     replacement.bind("/sessions/parent.jsonl");
     registry.send(early.token(), "parent", "after merge".into())?;
     assert_eq!(
@@ -661,7 +661,7 @@ fn retained_report_binding_follows_replacement_then_merge_but_not_another_sessio
     let record = Arc::new(AtomicI64::new(41));
     let current = record.clone();
     registry.set_execution_sinks(
-        Some(Arc::new(move |caller| {
+        Some(Arc::new(move |caller, _| {
             Ok(if caller.session == "/sessions/a.jsonl" {
                 current.load(Ordering::SeqCst)
             } else {
@@ -755,7 +755,7 @@ fn family_stop_refreshes_merged_bindings_before_the_next_caller_send() {
     let record = Arc::new(std::sync::atomic::AtomicI64::new(41));
     let record_for_sink = record.clone();
     registry.set_execution_sinks(
-        Some(Arc::new(move |_| {
+        Some(Arc::new(move |_, _| {
             Ok(record_for_sink.load(std::sync::atomic::Ordering::SeqCst))
         })),
         None,
@@ -775,7 +775,10 @@ fn family_stop_refreshes_merged_bindings_before_the_next_caller_send() {
         binding.lock().unwrap().as_ref().unwrap().key,
         AppSessionId::new(84).map(SessionKey::App)
     );
-    registry.set_execution_sinks(Some(Arc::new(|_| Err("storage unavailable".into()))), None);
+    registry.set_execution_sinks(
+        Some(Arc::new(|_, _| Err("storage unavailable".into()))),
+        None,
+    );
     assert_eq!(
         registry.refresh_session_bindings(project),
         Err("storage unavailable".into())
