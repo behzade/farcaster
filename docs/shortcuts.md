@@ -69,6 +69,16 @@ Close dismisses a dialog or surface first; from chat, it discards the draft or a
 
 Cmd+0–9 on macOS and Super+0–9 on Linux also work inside the terminal/Neovim. The Ctrl+G leader works on both.
 
+## Voice
+
+Enable [Voice](../README.md#voice) in Settings → General. Works in chat and the editor, including Neovim.
+
+The default is Ctrl+' on both platforms, with Cmd+' also supported on macOS. Change the binding in Settings → General → Voice shortcut; Right Shift is macOS-only.
+
+- Hold to record; release to transcribe and send.
+- Double-tap to lock recording; press again to transcribe and send.
+- Esc cancels recording or pending transcription, or stops playback.
+
 ## Composer and local keys
 
 These keys require focus in the composer:
