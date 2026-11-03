@@ -123,10 +123,14 @@ impl FarcasterApp {
 
     pub(super) fn matches_voice_shortcut(&self, stroke: &Keystroke, cx: &gpui::App) -> bool {
         let key = self.voice_shortcut();
-        key != RIGHT_SHIFT
-            && Keystroke::parse_with_os(key, cx.platform_info().os).is_ok_and(|binding| {
+        let matches = |key| {
+            Keystroke::parse_with_os(key, cx.platform_info().os).is_ok_and(|binding| {
                 binding.key == stroke.key && binding.modifiers == stroke.modifiers
             })
+        };
+        key != RIGHT_SHIFT
+            && (matches(key)
+                || (cfg!(target_os = "macos") && key == DEFAULT_SHORTCUT && matches("cmd-'")))
     }
 
     pub(in crate::app) fn voice_shortcut_label(&self, cx: &gpui::App) -> String {

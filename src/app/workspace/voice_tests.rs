@@ -711,3 +711,65 @@ fn voice_default_and_saved_shortcuts_work_on_each_platform(cx: &mut gpui::TestAp
         },
     );
 }
+
+#[cfg(target_os = "macos")]
+#[gpui::test]
+fn voice_command_alias_holds_locks_and_respects_custom_shortcuts(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::voice_command_alias_holds_locks_and_respects_custom_shortcuts"
+        ),
+        cx,
+        |cx, app, _, project| {
+            prepare_voice_editor(cx, app);
+            chord(cx, "cmd-'", true);
+            cx.run_until_parked();
+            cx.executor()
+                .advance_clock(HOLD_DELAY + Duration::from_millis(1));
+            cx.run_until_parked();
+            let (recorder, finished) = hex::Dictation::stub_with_finish();
+            cx.update(|_, cx| {
+                app.update(cx, |app, _| {
+                    assert!(matches!(app.workspace.voice.gesture, Gesture::Holding));
+                    app.workspace.voice.input = Some(Input {
+                        recorder,
+                        ..input(&project, "current")
+                    });
+                });
+            });
+            // Releasing Command first must not prevent release from finishing.
+            chord(cx, "'", false);
+            assert!(finished());
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| app.cancel_voice(cx));
+            });
+            // Both spellings share the same double-tap gesture.
+            for key in ["ctrl-'", "cmd-'"] {
+                chord(cx, key, true);
+                chord(cx, "'", false);
+            }
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    assert!(matches!(app.workspace.voice.gesture, Gesture::Locked));
+                    app.cancel_voice(cx);
+                    for key in ["'", "shift-cmd-'", "ctrl-cmd-'"] {
+                        assert!(
+                            !app.matches_voice_shortcut(&gpui::Keystroke::parse(key).unwrap(), cx)
+                        );
+                    }
+                    app.settings.voice_shortcut = Some("ctrl-alt-v".into());
+                    for key in ["ctrl-'", "cmd-'"] {
+                        assert!(
+                            !app.matches_voice_shortcut(&gpui::Keystroke::parse(key).unwrap(), cx)
+                        );
+                    }
+                    app.reset_voice_shortcut(cx);
+                    assert!(
+                        app.matches_voice_shortcut(&gpui::Keystroke::parse("cmd-'").unwrap(), cx)
+                    );
+                });
+            });
+        },
+    );
+}
