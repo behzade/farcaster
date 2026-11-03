@@ -71,6 +71,22 @@ If macOS blocks the app because it is not notarized and you trust the download, 
 
 You'll also need the agent harness you want to use installed and signed in, and your chosen editor or its command-line launcher available in your environment.
 
+### Nix (Linux)
+
+On x86_64 or aarch64 Linux with Nix flakes enabled, install Farcaster into your user profile:
+
+```sh
+nix profile install github:behzade/farcaster
+```
+
+Or run it without installing:
+
+```sh
+nix run github:behzade/farcaster
+```
+
+The Nix package builds from source unless a prebuilt result is available from a configured binary cache.
+
 ## Development
 
 Found a bug, needed a platform-specific fix, or want to extend Farcaster? Bug reports and focused pull requests are welcome. For larger features, open an issue first. See [CONTRIBUTING.md](CONTRIBUTING.md).
