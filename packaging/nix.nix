@@ -19,6 +19,7 @@
   vulkan-loader,
   git,
   neovim,
+  espeak-ng,
   cacert,
 }:
 let
@@ -105,6 +106,7 @@ rustPlatform.buildRustPackage {
         lib.makeBinPath [
           git
           neovim
+          espeak-ng
         ]
       }"
   '';

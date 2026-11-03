@@ -16,9 +16,6 @@ pub(super) enum Event {
 }
 
 pub(super) fn available() -> bool {
-    if !cfg!(target_os = "macos") {
-        return false;
-    }
     Endpoint::discover()
         .and_then(|endpoint| endpoint.request("GET", "/capabilities", None, Value::Null))
         .is_ok_and(|capabilities| capabilities["serviceCapture"] == true)
@@ -83,12 +80,12 @@ impl Endpoint {
     fn discover() -> Result<Self, String> {
         let directory = match std::env::var_os("HEX_APPLICATION_SUPPORT_DIR") {
             Some(path) => PathBuf::from(path),
-            None => PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?)
-                .join("Library/Application Support/hex"),
+            None => dirs::data_dir()
+                .ok_or("Cannot find the Hex data directory")?
+                .join("hex"),
         };
-        let bytes = std::fs::read(directory.join("local-api.json")).map_err(|_| {
-            "Open the Rust version of Hex to use voice. The older Swift Hex app does not support dictation requests.".to_owned()
-        })?;
+        let bytes = std::fs::read(directory.join("local-api.json"))
+            .map_err(|_| "Install and open Hex to use voice (3.3 or later on Linux).".to_owned())?;
         let endpoint: Self = serde_json::from_slice(&bytes)
             .map_err(|error| format!("Read Hex connection: {error}"))?;
         if endpoint.api_version != "2" {
@@ -188,7 +185,7 @@ fn record_with_endpoint(
     let capabilities = endpoint.request("GET", "/capabilities", None, Value::Null)?;
     if capabilities["serviceCapture"] != true {
         return Err(
-            "This Hex instance does not support microphone capture. Open Hex desktop.".into(),
+            "This Hex instance does not support microphone capture. Open Hex desktop (3.3 or later on Linux).".into(),
         );
     }
     let started = endpoint.request("POST", "/dictations", None, json!({"source": "Farcaster"}))?;

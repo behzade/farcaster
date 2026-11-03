@@ -50,6 +50,6 @@ dependencies=$(
 )
 dependencies=${dependencies#shlibs:Depends=}
 dependencies="$dependencies, libegl1, libgl1, libvulkan1, libwayland-client0, libwayland-egl1, libxkbcommon0, libxkbcommon-x11-0, libxcb1, fontconfig, git, ca-certificates"
-printf 'Package: farcaster\nVersion: %s\nArchitecture: %s\nMaintainer: Farcaster contributors <noreply@github.com>\nSection: devel\nPriority: optional\nDepends: %s\nRecommends: neovim\nHomepage: https://github.com/behzade/farcaster\nDescription: Native desktop client for coding agents\n' \
+printf 'Package: farcaster\nVersion: %s\nArchitecture: %s\nMaintainer: Farcaster contributors <noreply@github.com>\nSection: devel\nPriority: optional\nDepends: %s\nRecommends: neovim, espeak-ng\nHomepage: https://github.com/behzade/farcaster\nDescription: Native desktop client for coding agents\n' \
     "$version" "$arch" "$dependencies" > "$package_root/DEBIAN/control"
 dpkg-deb --root-owner-group --build "$package_root" "$out/farcaster_${version}_${arch}.deb"

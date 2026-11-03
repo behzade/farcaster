@@ -19,7 +19,6 @@ fn input(project: &Path, target: &str) -> Input {
     }
 }
 
-#[cfg(target_os = "macos")]
 #[gpui::test]
 fn voice_availability_checks_hex_capture_support(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
@@ -32,8 +31,7 @@ fn voice_availability_checks_hex_capture_support(cx: &mut gpui::TestAppContext) 
             use std::io::{BufRead, Read, Write};
             cx.run_until_parked();
             assert!(!hex::available(), "Hex is absent in the isolated test home");
-            let directory = PathBuf::from(std::env::var_os("HOME").unwrap())
-                .join("Library/Application Support/hex");
+            let directory = dirs::data_dir().unwrap().join("hex");
             std::fs::create_dir_all(&directory).unwrap();
             let discovery = directory.join("local-api.json");
             for capture in [false, true] {
@@ -85,7 +83,6 @@ fn voice_availability_checks_hex_capture_support(cx: &mut gpui::TestAppContext) 
     );
 }
 
-#[cfg(target_os = "macos")]
 #[gpui::test]
 fn chat_voice_arms_and_sends_without_editor_context(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
@@ -104,15 +101,15 @@ fn chat_voice_arms_and_sends_without_editor_context(cx: &mut gpui::TestAppContex
                     assert!(app.workspace.editor.view.is_none());
                 });
                 window.draw(cx).clear(cx);
-                app.update(cx, |app, cx| {
-                    app.voice_right_shift_changed(true, false, window, cx);
-                });
+            });
+            default_shortcut(cx, app, true);
+            cx.update(|_, cx| {
                 assert!(matches!(
                     app.read(cx).workspace.voice.gesture,
                     Gesture::Pressed { .. }
                 ));
             });
-            right_shift(cx, app, false);
+            default_shortcut(cx, app, false);
             while runtime.try_recv_command().is_some() {}
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
@@ -288,6 +285,18 @@ fn prepare_voice_editor(cx: &mut gpui::VisualTestContext, app: &gpui::Entity<Far
     });
 }
 
+fn default_shortcut(
+    cx: &mut gpui::VisualTestContext,
+    app: &gpui::Entity<FarcasterApp>,
+    down: bool,
+) {
+    if !cfg!(target_os = "macos") {
+        chord(cx, "ctrl-shift-space", down);
+        return;
+    }
+    right_shift(cx, app, down);
+}
+
 fn right_shift(cx: &mut gpui::VisualTestContext, app: &gpui::Entity<FarcasterApp>, down: bool) {
     // Match GPUI's modifier-only keystroke before the native release callback.
     if !down {
@@ -323,7 +332,7 @@ fn holding_shortcut_shows_confirmed_recording_in_every_navbar(cx: &mut gpui::Tes
         cx,
         |cx, app, _, project| {
             prepare_voice_editor(cx, app);
-            right_shift(cx, app, true);
+            default_shortcut(cx, app, true);
             cx.run_until_parked();
             cx.executor()
                 .advance_clock(HOLD_DELAY + Duration::from_millis(1));
@@ -358,7 +367,7 @@ fn holding_shortcut_shows_confirmed_recording_in_every_navbar(cx: &mut gpui::Tes
                     app.workspace.voice.input.as_mut().unwrap().recorder = recorder;
                 })
             });
-            right_shift(cx, app, false);
+            default_shortcut(cx, app, false);
             assert!(finished(), "release finishes the recording");
             cx.update(|window, cx| {
                 assert!(!app.read(cx).workspace.voice.recording());
@@ -385,8 +394,8 @@ fn double_tap_locks_until_the_next_shortcut_press(cx: &mut gpui::TestAppContext)
                         Gesture::Tapped(Instant::now() - DOUBLE_TAP - Duration::from_millis(1));
                 })
             });
-            right_shift(cx, app, true);
-            right_shift(cx, app, false);
+            default_shortcut(cx, app, true);
+            default_shortcut(cx, app, false);
             cx.update(|_, cx| {
                 app.update(cx, |app, _| {
                     assert!(matches!(app.workspace.voice.gesture, Gesture::Tapped(_)));
@@ -394,8 +403,8 @@ fn double_tap_locks_until_the_next_shortcut_press(cx: &mut gpui::TestAppContext)
                 })
             });
             for _ in 0..2 {
-                right_shift(cx, app, true);
-                right_shift(cx, app, false);
+                default_shortcut(cx, app, true);
+                default_shortcut(cx, app, false);
             }
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
@@ -416,9 +425,9 @@ fn double_tap_locks_until_the_next_shortcut_press(cx: &mut gpui::TestAppContext)
                     app.workspace.voice.input.as_mut().unwrap().recorder = recorder;
                 })
             });
-            right_shift(cx, app, false);
+            default_shortcut(cx, app, false);
             assert!(!finished(), "locked recording continues after release");
-            right_shift(cx, app, true);
+            default_shortcut(cx, app, true);
             assert!(finished(), "the next press finishes locked recording");
             cx.update(|_, cx| {
                 assert!(!app.read(cx).workspace.voice.recording());
@@ -427,7 +436,7 @@ fn double_tap_locks_until_the_next_shortcut_press(cx: &mut gpui::TestAppContext)
                     "keep input while Hex transcribes"
                 );
             });
-            right_shift(cx, app, false);
+            default_shortcut(cx, app, false);
             cx.run_until_parked();
             cx.executor()
                 .advance_clock(HOLD_DELAY + Duration::from_millis(1));
@@ -452,7 +461,7 @@ fn unrelated_keys_and_escape_cancel_without_consuming_typing(cx: &mut gpui::Test
         cx,
         |cx, app, runtime, project| {
             prepare_voice_editor(cx, app);
-            right_shift(cx, app, true);
+            default_shortcut(cx, app, true);
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
                     assert!(!app.voice_key_down(
@@ -462,14 +471,14 @@ fn unrelated_keys_and_escape_cancel_without_consuming_typing(cx: &mut gpui::Test
                     ))
                 })
             });
-            right_shift(cx, app, false);
+            default_shortcut(cx, app, false);
             cx.run_until_parked();
             cx.executor()
                 .advance_clock(HOLD_DELAY + Duration::from_millis(1));
             cx.run_until_parked();
             cx.update(|_, cx| assert!(app.read(cx).workspace.voice.input.is_none()));
             for key in ["A", "escape"] {
-                right_shift(cx, app, true);
+                default_shortcut(cx, app, true);
                 cx.update(|window, cx| {
                     app.update(cx, |app, cx| {
                         app.workspace.voice.gesture = Gesture::Holding;
@@ -487,7 +496,7 @@ fn unrelated_keys_and_escape_cancel_without_consuming_typing(cx: &mut gpui::Test
                     });
                     window.draw(cx).clear(cx);
                 });
-                right_shift(cx, app, false);
+                default_shortcut(cx, app, false);
             }
             assert!(runtime.try_recv_signal().is_none());
             cx.update(|window, cx| {
@@ -563,6 +572,7 @@ fn voice_custom_shortcut_ignores_repeat_and_releases_without_modifiers(
     );
 }
 
+#[cfg(target_os = "macos")]
 #[gpui::test]
 fn voice_right_shift_ignores_left_shift_and_modifier_combinations(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
@@ -602,6 +612,7 @@ fn voice_right_shift_ignores_left_shift_and_modifier_combinations(cx: &mut gpui:
     );
 }
 
+#[cfg(target_os = "macos")]
 #[gpui::test]
 fn voice_shortcut_capture_accepts_right_shift_but_not_shift_used_for_typing(
     cx: &mut gpui::TestAppContext,
@@ -645,6 +656,48 @@ fn voice_shortcut_capture_accepts_right_shift_but_not_shift_used_for_typing(
                     .unwrap()
                     .is_none()
             );
+        },
+    );
+}
+
+#[gpui::test]
+fn voice_default_and_saved_shortcuts_work_on_each_platform(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::voice_default_and_saved_shortcuts_work_on_each_platform"
+        ),
+        cx,
+        |cx, app, _, _| {
+            prepare_voice_editor(cx, app);
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let default = if cfg!(target_os = "macos") {
+                        "right-shift"
+                    } else {
+                        "ctrl-shift-space"
+                    };
+                    assert_eq!(app.voice_shortcut(), default);
+                    app.settings.voice_shortcut = Some("right-shift".into());
+                    assert_eq!(
+                        app.voice_shortcut(),
+                        default,
+                        "Mac-only saved shortcuts must work on Linux"
+                    );
+                    // Check the Linux default against the app's shortcut conflict validator,
+                    // even when running this test on macOS.
+                    app.open_settings(window, cx);
+                    app.begin_voice_shortcut_capture(cx);
+                    let key =
+                        gpui::Keystroke::parse_with_os("ctrl-shift-space", cx.platform_info().os)
+                            .unwrap();
+                    assert!(app.voice_key_down(&key, window, cx));
+                    assert!(app.workspace.voice.settings_error.is_none());
+                    assert_eq!(app.voice_shortcut(), "ctrl-shift-space");
+                    app.reset_voice_shortcut(cx);
+                    assert_eq!(app.voice_shortcut(), default);
+                });
+            });
         },
     );
 }

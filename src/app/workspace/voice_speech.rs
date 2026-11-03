@@ -34,13 +34,27 @@ fn play(text: String, stop: mpsc::Receiver<()>) -> Result<(), String> {
     if stop.try_recv().is_ok() {
         return Ok(());
     }
-    let mut child = Command::new("/usr/bin/say")
-        .args(["-f", "-"])
+    let mut command = if cfg!(target_os = "macos") {
+        let mut command = Command::new("/usr/bin/say");
+        command.args(["-f", "-"]);
+        command
+    } else {
+        let mut command = Command::new("espeak-ng");
+        command.arg("--stdin");
+        command
+    };
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|error| format!("Start macOS speech: {error}"))?;
+        .map_err(|error| {
+            if cfg!(target_os = "macos") {
+                format!("Start macOS speech: {error}")
+            } else {
+                format!("Start speech: {error}. Install espeak-ng for spoken replies.")
+            }
+        })?;
     let result = (|| {
         child
             .stdin

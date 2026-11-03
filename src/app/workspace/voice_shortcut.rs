@@ -3,6 +3,11 @@ use gpui::{Context, Keystroke, Window};
 use crate::app::{FarcasterApp, workspace::SettingsTab};
 
 const RIGHT_SHIFT: &str = "right-shift";
+const DEFAULT_SHORTCUT: &str = if cfg!(target_os = "macos") {
+    RIGHT_SHIFT
+} else {
+    "ctrl-shift-space"
+};
 
 fn validate(stroke: &Keystroke, cx: &gpui::App) -> Result<(), String> {
     let function_key = stroke
@@ -15,7 +20,12 @@ fn validate(stroke: &Keystroke, cx: &gpui::App) -> Result<(), String> {
         && !stroke.modifiers.alt
         && !stroke.modifiers.platform
     {
-        return Err("Use Right Shift, a modifier with a key, or a function key.".into());
+        return Err(if cfg!(target_os = "macos") {
+            "Use Right Shift, a modifier with a key, or a function key."
+        } else {
+            "Use a modifier with a key, or a function key."
+        }
+        .into());
     }
     if crate::app::ui::navigation::is_prefix_chord(&stroke.key, stroke.modifiers) {
         return Err("Ctrl+G is used for app navigation.".into());
@@ -109,7 +119,10 @@ impl FarcasterApp {
         self.settings
             .voice_shortcut
             .as_deref()
-            .unwrap_or(RIGHT_SHIFT)
+            // Right Shift needs AppKit's device-side flags. Use a key chord on Linux,
+            // including when settings came from a Mac.
+            .filter(|key| cfg!(target_os = "macos") || *key != RIGHT_SHIFT)
+            .unwrap_or(DEFAULT_SHORTCUT)
     }
 
     pub(super) fn matches_voice_shortcut(&self, stroke: &Keystroke, cx: &gpui::App) -> bool {

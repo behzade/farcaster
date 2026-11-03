@@ -254,10 +254,8 @@ fn voice_setting(
 ) -> AnyElement {
     let available = app.workspace.voice.available;
     let enabled = app.voice_enabled();
-    let description = if !cfg!(target_os = "macos") {
-        "Voice requires Hex on macOS."
-    } else if !available {
-        "Install and open Hex to enable voice."
+    let description = if !available {
+        "Install and open Hex to enable voice (3.3 or later on Linux)."
     } else {
         "Hold to speak; release to send. Double-tap to lock; press again to send. Replies are read aloud outside chat."
     };

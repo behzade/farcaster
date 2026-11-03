@@ -1793,6 +1793,7 @@ dependencies = [
  "async-channel",
  "base64 0.23.1",
  "block2 0.6.2",
+ "dirs",
  "farcaster-access",
  "farcaster-agent-protocol",
  "farcaster-agents",
