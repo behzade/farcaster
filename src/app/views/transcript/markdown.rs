@@ -3,6 +3,8 @@ use std::{borrow::Cow, cell::RefCell, collections::HashMap, hash::Hash, rc::Rc};
 use gpui::{AppContext as _, Entity};
 use gpui_component::text::TextViewState;
 
+mod user_message;
+
 const MAX_CACHED_MARKDOWN_ROWS: usize = 256;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -88,7 +90,7 @@ impl<K: Copy + Eq + Hash, V: Clone> RecentCache<K, V> {
 
 #[derive(Clone)]
 pub(crate) struct TranscriptMarkdownCache {
-    states: Rc<RefCell<RecentCache<MarkdownStateKey, Entity<TextViewState>>>>,
+    states: Rc<RefCell<RecentCache<(MarkdownStateKey, bool), Entity<TextViewState>>>>,
 }
 
 impl Default for TranscriptMarkdownCache {
@@ -104,25 +106,35 @@ impl TranscriptMarkdownCache {
         &self,
         key: MarkdownStateKey,
         text: &str,
+        user_message: bool,
         cx: &mut gpui::App,
     ) -> Entity<TextViewState> {
-        self.state_with(key, || Cow::Borrowed(text), cx)
+        self.state_with(key, || Cow::Borrowed(text), user_message, cx)
     }
 
     pub(crate) fn state_with<'a>(
         &self,
         key: MarkdownStateKey,
         text: impl FnOnce() -> Cow<'a, str>,
+        user_message: bool,
         cx: &mut gpui::App,
     ) -> Entity<TextViewState> {
-        let (state, hit) = self.states.borrow_mut().get_or_insert_with(key, || {
-            let text = text();
-            let _timing = crate::app::infrastructure::performance::OperationTiming::new(
-                crate::app::infrastructure::performance::OperationKind::MarkdownParse,
-                text.len(),
-            );
-            cx.new(|cx| TextViewState::markdown(&text, cx))
-        });
+        let (state, hit) = self
+            .states
+            .borrow_mut()
+            .get_or_insert_with((key, user_message), || {
+                let text = text();
+                let _timing = crate::app::infrastructure::performance::OperationTiming::new(
+                    crate::app::infrastructure::performance::OperationKind::MarkdownParse,
+                    text.len(),
+                );
+                let rendered = if user_message {
+                    user_message::markdown(&text)
+                } else {
+                    Cow::Borrowed(text.as_ref())
+                };
+                cx.new(|cx| TextViewState::markdown(&rendered, cx))
+            });
         if hit {
             crate::app::infrastructure::performance::count_markdown_cache_hit();
         }

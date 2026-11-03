@@ -62,6 +62,7 @@ gpui-base = "=0.8.1"
 gpui-component = "=0.8.1"
 gpui-libghostty = "0.3.1"
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
+markdown = "1.0.0"
 notify = "7.0.0"
 nucleo-matcher = "0.3.1"
 path-clean = "1.0.1"

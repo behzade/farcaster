@@ -33,7 +33,7 @@ fn voice_availability_checks_hex_capture_support(cx: &mut gpui::TestAppContext) 
             cx.run_until_parked();
             assert!(!hex::available(), "Hex is absent in the isolated test home");
             let directory = PathBuf::from(std::env::var_os("HOME").unwrap())
-                .join("Library/Application Support/voice-control");
+                .join("Library/Application Support/hex");
             std::fs::create_dir_all(&directory).unwrap();
             let discovery = directory.join("local-api.json");
             for capture in [false, true] {

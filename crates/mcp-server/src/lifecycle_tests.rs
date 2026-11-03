@@ -104,6 +104,19 @@ fn check_claude_tool_listing(sdk: Option<&std::path::Path>) {
         }
     }
     assert!(tools.iter().any(|tool| tool["name"] == "worker_send"));
+    caller.bind("claude-protocol-session");
+    let response = request(serde_json::json!({
+        "jsonrpc":"2.0", "id":3, "method":"tools/call",
+        "params":{"name":"worker_notices", "arguments":{"action":"read"}},
+    }));
+    assert!(response["error"].is_null(), "{response}");
+    assert_ne!(response["result"]["isError"], true, "{response}");
+    assert!(response["result"].get("resultType").is_none(), "{response}");
+    assert_eq!(
+        response["result"]["structuredContent"]["notices"],
+        serde_json::json!([]),
+        "{response}"
+    );
     if let Some(sdk) = sdk {
         let script = r#"
 import assert from 'node:assert/strict';

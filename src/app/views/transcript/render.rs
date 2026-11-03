@@ -538,6 +538,7 @@ fn render_row(
             markdown_cache.state_with(
                 MarkdownStateKey::message_chunk(index, block, revision),
                 || markdown_chunk_text(&items[index].text, MarkdownChunk { start, end, fence }),
+                items[index].kind == TranscriptKind::User,
                 cx,
             ),
             entity.clone(),
@@ -564,6 +565,7 @@ fn render_row(
                 markdown_cache.state(
                     MarkdownStateKey::stream_chunk(index, chunk, revision),
                     text,
+                    items[index].kind == TranscriptKind::User,
                     cx,
                 ),
                 entity.clone(),
@@ -584,7 +586,12 @@ fn render_row(
                 key,
                 &items[index],
                 follows_tool,
-                Some(markdown_cache.state(MarkdownStateKey::item(index, revision), &markdown, cx)),
+                Some(markdown_cache.state(
+                    MarkdownStateKey::item(index, revision),
+                    &markdown,
+                    items[index].kind == TranscriptKind::User,
+                    cx,
+                )),
                 Some(invocation_transcript_markdown_style(resolved)),
                 entity.clone(),
             )
@@ -605,6 +612,7 @@ fn render_row(
                 markdown_cache.state(
                     MarkdownStateKey::item(index, revision),
                     &items[index].text,
+                    false,
                     cx,
                 )
             });
@@ -629,6 +637,7 @@ fn render_row(
                 markdown_cache.state(
                     MarkdownStateKey::item(index, revision),
                     &items[index].text,
+                    items[index].kind == TranscriptKind::User,
                     cx,
                 )
             });
