@@ -533,6 +533,7 @@ fn setup_main_connection(
         }
     };
     metadata.session_name = thread.name.clone();
+    metadata.startup_notice = super::updates::notice(&codex_home, &initialized.user_agent);
     let selection = connection.thread_selection();
     let (reader, writer, queued, next_id) = connection.into_parts();
     Ok((
