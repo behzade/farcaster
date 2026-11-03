@@ -3,6 +3,31 @@ use crate::agents::Backend;
 use crate::protocol::PromptMode;
 
 #[test]
+fn stored_images_keep_sha256_file_names() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let store = StateStore::open_at(&directory.path().join("state.sqlite3"))?;
+    for (data, expected) in [
+        (
+            "YWJj",
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        ),
+        (
+            "Zml4dHVyZS0yMTg=",
+            "0034f3bb06d637f920f1a12edd47a3532a3d2486bad2fc715916ba90a1628d38",
+        ),
+    ] {
+        let image = PromptImage::new(data.into(), "image/png".into());
+        let stored = store.store_prompt_images(&[image])?;
+        assert_eq!(
+            stored[0].path.as_ref().and_then(|path| path.file_name()),
+            Some(std::ffi::OsStr::new(expected))
+        );
+        assert_eq!(store.store_prompt_images(&stored)?, stored);
+    }
+    Ok(())
+}
+
+#[test]
 fn queued_images_use_portable_deduplicated_files() -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let root = directory.path().join("original");

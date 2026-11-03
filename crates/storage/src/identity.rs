@@ -237,7 +237,8 @@ pub(super) fn family_locator_root(locator_root: &Path, project: &Path) -> PathBu
 
     let project = crate::sessions::normalize_session_path(project);
     let digest = Sha256::digest(project.to_string_lossy().as_bytes());
-    locator_root.join(format!("{digest:x}"))
+    let hash: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    locator_root.join(hash)
 }
 
 pub(super) fn repair_profiled_caller_placeholders(
@@ -605,3 +606,7 @@ pub(super) fn legacy_session_id_for_locator(
         )),
     }
 }
+
+#[cfg(test)]
+#[path = "identity_tests.rs"]
+mod tests;
