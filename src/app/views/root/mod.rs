@@ -91,9 +91,6 @@ impl Render for FarcasterApp {
                 this.voice_key_up(event, window, cx);
                 this.navigation_key_up(event, cx);
             }))
-            .on_modifiers_changed(cx.listener(|this, event, window, cx| {
-                this.voice_modifiers_changed(event, window, cx);
-            }))
             .on_key_down(cx.listener(|this, event, window, cx| {
                 if this.extensions.active.dialog.is_some()
                     && this.extensions.dialog_focus.contains_focused(window, cx)

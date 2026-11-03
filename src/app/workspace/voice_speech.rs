@@ -8,6 +8,11 @@ use std::{
 pub(super) struct Speech(mpsc::Sender<()>);
 
 impl Speech {
+    #[cfg(test)]
+    pub(super) fn stub() -> Self {
+        Self(mpsc::channel().0)
+    }
+
     pub(super) fn start(
         text: String,
     ) -> Result<(Self, async_channel::Receiver<Result<(), String>>), String> {

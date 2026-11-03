@@ -77,7 +77,6 @@ The default is Ctrl+' on both platforms, with Cmd+' also supported on macOS. Cha
 
 - Hold to record; release to transcribe and send.
 - Double-tap to lock recording; press again to transcribe and send.
-- Esc cancels recording or pending transcription, or stops playback.
 
 ## Composer and local keys
 
