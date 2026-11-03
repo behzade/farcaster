@@ -38,8 +38,6 @@ pub(in crate::app) struct VoiceState {
     pub(in crate::app) settings_error: Option<String>,
     availability_check: Option<gpui::Task<()>>,
     key_down: Option<String>,
-    right_shift_down: bool,
-    capture_right_shift: bool,
     pub(in crate::app) capturing_shortcut: bool,
     gesture: Gesture,
     press: u64,
@@ -64,8 +62,6 @@ struct Input {
 impl VoiceState {
     pub(in crate::app) fn release_keys(&mut self) {
         self.key_down = None;
-        self.right_shift_down = false;
-        self.capture_right_shift = false;
         self.capturing_shortcut = false;
     }
 
@@ -140,23 +136,16 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        // GPUI synthesizes a modifier-only keystroke just before its release event.
-        // The modifier handler owns Right Shift's press and release.
-        if stroke.key == "shift" {
+        // Leave Escape to normal navigation and editor handling, even during voice.
+        // Modifier-only Shift events must not arm voice or shortcut capture.
+        if stroke.key == "escape" || stroke.key == "shift" {
             return false;
         }
-        self.workspace.voice.capture_right_shift = false;
         if self.workspace.voice.key_down.as_deref() == Some(&stroke.key) {
             return true; // Ignore autorepeat, including after recording a new shortcut.
         }
         if self.capture_voice_shortcut(stroke, cx) {
             self.workspace.voice.key_down = Some(stroke.key.clone());
-            return true;
-        }
-        if stroke.key == "escape"
-            && (self.workspace.voice.input.is_some() || self.workspace.voice.speech.is_some())
-        {
-            self.cancel_voice(cx);
             return true;
         }
         if !self.matches_voice_shortcut(stroke, cx) {
@@ -209,7 +198,6 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn interrupt_voice_gesture(&mut self, cx: &mut Context<Self>) {
-        self.workspace.voice.capture_right_shift = false;
         match self.workspace.voice.gesture {
             Gesture::Holding => {
                 self.workspace.voice.input.take();

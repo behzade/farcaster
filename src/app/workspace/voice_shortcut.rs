@@ -2,7 +2,6 @@ use gpui::{Context, Keystroke, Window};
 
 use crate::app::{FarcasterApp, workspace::SettingsTab};
 
-const RIGHT_SHIFT: &str = "right-shift";
 const DEFAULT_SHORTCUT: &str = "ctrl-'";
 
 fn validate(stroke: &Keystroke, cx: &gpui::App) -> Result<(), String> {
@@ -16,12 +15,7 @@ fn validate(stroke: &Keystroke, cx: &gpui::App) -> Result<(), String> {
         && !stroke.modifiers.alt
         && !stroke.modifiers.platform
     {
-        return Err(if cfg!(target_os = "macos") {
-            "Use Right Shift, a modifier with a key, or a function key."
-        } else {
-            "Use a modifier with a key, or a function key."
-        }
-        .into());
+        return Err("Use a modifier with a key, or a function key.".into());
     }
     if crate::app::ui::navigation::is_prefix_chord(&stroke.key, stroke.modifiers) {
         return Err("Ctrl+G is used for app navigation.".into());
@@ -45,79 +39,12 @@ fn validate(stroke: &Keystroke, cx: &gpui::App) -> Result<(), String> {
 }
 
 impl FarcasterApp {
-    pub(in crate::app) fn voice_modifiers_changed(
-        &mut self,
-        _event: &gpui::ModifiersChangedEvent,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) {
-        #[cfg(target_os = "macos")]
-        {
-            let Some(main) = objc2::MainThreadMarker::new() else {
-                return;
-            };
-            let Some(native) = objc2_app_kit::NSApplication::sharedApplication(main).currentEvent()
-            else {
-                return;
-            };
-            // GPUI merges both Shift keys; AppKit retains the device-side flags.
-            // NX_DEVICELSHIFTKEYMASK / NX_DEVICERSHIFTKEYMASK from IOLLEvent.h.
-            let flags = native.modifierFlags().0;
-            let modifiers = _event.modifiers;
-            self.voice_right_shift_changed(
-                modifiers.shift && flags & 0x4 != 0,
-                flags & 0x2 != 0
-                    || modifiers.control
-                    || modifiers.alt
-                    || modifiers.platform
-                    || modifiers.function,
-                _window,
-                _cx,
-            );
-        }
-    }
-
-    pub(super) fn voice_right_shift_changed(
-        &mut self,
-        down: bool,
-        other_modifiers: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let was_down = std::mem::replace(&mut self.workspace.voice.right_shift_down, down);
-        if !self.workspace.voice.capturing_shortcut && self.voice_shortcut() != RIGHT_SHIFT {
-            return;
-        }
-        if other_modifiers {
-            self.interrupt_voice_gesture(cx);
-        }
-        if down && !was_down && !other_modifiers {
-            if self.workspace.voice.capturing_shortcut {
-                self.workspace.voice.capture_right_shift = true;
-            } else {
-                self.press_voice_shortcut(RIGHT_SHIFT, window, cx);
-            }
-        } else if !down && was_down {
-            if std::mem::take(&mut self.workspace.voice.capture_right_shift)
-                && self.workspace.voice.capturing_shortcut
-                && self.overlays.view.settings
-                && self.settings.tab == SettingsTab::General
-            {
-                self.save_voice_shortcut(Some(RIGHT_SHIFT.into()), cx);
-            }
-            if self.workspace.voice.key_down.as_deref() == Some(RIGHT_SHIFT) {
-                self.release_voice_shortcut(window, cx);
-            }
-        }
-    }
-
     pub(in crate::app) fn voice_shortcut(&self) -> &str {
         self.settings
             .voice_shortcut
             .as_deref()
-            // Right Shift needs AppKit's device-side flags. Use a key chord on Linux,
-            // including when settings came from a Mac.
-            .filter(|key| cfg!(target_os = "macos") || *key != RIGHT_SHIFT)
+            // Retire the old modifier-only binding on every platform.
+            .filter(|key| *key != "right-shift")
             .unwrap_or(DEFAULT_SHORTCUT)
     }
 
@@ -128,16 +55,11 @@ impl FarcasterApp {
                 binding.key == stroke.key && binding.modifiers == stroke.modifiers
             })
         };
-        key != RIGHT_SHIFT
-            && (matches(key)
-                || (cfg!(target_os = "macos") && key == DEFAULT_SHORTCUT && matches("cmd-'")))
+        matches(key) || (cfg!(target_os = "macos") && key == DEFAULT_SHORTCUT && matches("cmd-'"))
     }
 
     pub(in crate::app) fn voice_shortcut_label(&self, cx: &gpui::App) -> String {
         let key = self.voice_shortcut();
-        if key == RIGHT_SHIFT {
-            return "Right Shift".into();
-        }
         Keystroke::parse_with_os(key, cx.platform_info().os)
             .map(|key| key.display(cx.platform_info().os).to_string())
             .unwrap_or_else(|_| key.to_owned())
@@ -145,7 +67,6 @@ impl FarcasterApp {
 
     pub(in crate::app) fn begin_voice_shortcut_capture(&mut self, cx: &mut Context<Self>) {
         self.cancel_voice(cx);
-        self.workspace.voice.capture_right_shift = false;
         self.workspace.voice.capturing_shortcut = !self.workspace.voice.capturing_shortcut;
         self.workspace.voice.settings_error = None;
         cx.notify();
@@ -181,11 +102,7 @@ impl FarcasterApp {
             self.workspace.voice.capturing_shortcut = false;
             return false;
         }
-        if stroke.key == "escape" {
-            self.workspace.voice.capturing_shortcut = false;
-            self.workspace.voice.settings_error = None;
-            cx.notify();
-        } else if let Err(error) = validate(stroke, cx) {
+        if let Err(error) = validate(stroke, cx) {
             self.workspace.voice.settings_error = Some(error);
             cx.notify();
         } else {

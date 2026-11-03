@@ -87,6 +87,16 @@ nix run github:behzade/farcaster
 
 The Nix package builds from source unless a prebuilt result is available from a configured binary cache.
 
+## Voice
+
+Voice uses Hex to send spoken prompts from chat or the editor, including code context from the editor. Enable it in Settings → General.
+
+- Keep Hex desktop running with its local API available. Linux requires Hex 3.3+; macOS requires the Rust version of Hex.
+- Spoken replies use `espeak-ng` on Linux and the built-in `say` on macOS. Install `espeak-ng` separately for AppImage or Arch; Debian recommends it and Nix includes it.
+- If Voice is unavailable, open Hex and reopen Settings. If replies are silent, check `espeak-ng` is on Farcaster's `PATH`; replies are only read aloud outside chat.
+
+See [voice shortcuts](docs/shortcuts.md#voice) for controls.
+
 ## Development
 
 Found a bug, needed a platform-specific fix, or want to extend Farcaster? Bug reports and focused pull requests are welcome. For larger features, open an issue first. See [CONTRIBUTING.md](CONTRIBUTING.md).

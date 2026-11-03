@@ -146,9 +146,6 @@ fn shortcut_row(keystrokes: &[String], label: &str, cx: &gpui::App) -> impl Into
                 .gap(theme().space.xs)
                 .when(index > 0, |row| row.child("or"))
                 .children(keystroke.split_whitespace().map(|key| {
-                    if key == "right-shift" {
-                        return div().child("Right Shift").into_any_element();
-                    }
                     Kbd::new(
                         gpui::Keystroke::parse_with_os(key, cx.platform_info().os)
                             .expect("registered shortcut must parse"),

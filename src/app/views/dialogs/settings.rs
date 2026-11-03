@@ -298,7 +298,7 @@ fn voice_setting(
                 .child(setting_label(
                     "Voice shortcut",
                     if recording {
-                        "Press a shortcut. Escape cancels."
+                        "Press a shortcut. Click again to cancel."
                     } else {
                         "Click to record a new shortcut."
                     },
