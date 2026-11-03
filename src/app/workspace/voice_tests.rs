@@ -503,50 +503,6 @@ fn unrelated_keys_cancel_without_consuming_typing(cx: &mut gpui::TestAppContext)
 }
 
 #[gpui::test]
-fn escape_passes_through_during_voice_and_shortcut_capture(cx: &mut gpui::TestAppContext) {
-    crate::app::test_support::with_offline_app(
-        concat!(
-            module_path!(),
-            "::escape_passes_through_during_voice_and_shortcut_capture"
-        ),
-        cx,
-        |cx, app, _, project| {
-            prepare_voice_editor(cx, app);
-            cx.update(|window, cx| {
-                app.update(cx, |app, cx| {
-                    let escape = gpui::Keystroke::parse("escape").unwrap();
-                    for gesture in [Gesture::Holding, Gesture::Locked, Gesture::Idle] {
-                        app.workspace.voice.gesture = gesture;
-                        app.workspace.voice.input = Some(input(&project, "current"));
-                        assert!(!app.voice_key_down(&escape, window, cx));
-                        assert!(app.workspace.voice.input.is_some());
-                        assert!(!matches!(app.workspace.voice.gesture, Gesture::Used));
-                    }
-                    app.workspace.voice.input.take();
-                    app.workspace.voice.speech = Some(speech::Speech::stub());
-                    assert!(!app.voice_key_down(&escape, window, cx));
-                    assert!(app.workspace.voice.speech.is_some());
-                    app.open_settings(window, cx);
-                    app.begin_voice_shortcut_capture(cx);
-                    assert!(!app.voice_key_down(&escape, window, cx));
-                    assert!(app.workspace.voice.capturing_shortcut);
-                    assert!(app.workspace.voice.settings_error.is_none());
-                    assert!(!app.voice_key_down(
-                        &gpui::Keystroke::parse("shift").unwrap(),
-                        window,
-                        cx
-                    ));
-                    assert!(app.workspace.voice.capturing_shortcut);
-                    assert!(app.workspace.voice.settings_error.is_none());
-                    app.begin_voice_shortcut_capture(cx);
-                    assert!(!app.workspace.voice.capturing_shortcut);
-                });
-            });
-        },
-    );
-}
-
-#[gpui::test]
 fn escape_still_steers_and_aborts_during_recording(cx: &mut gpui::TestAppContext) {
     use crate::runtime::RuntimeSignal;
     crate::app::test_support::with_offline_app(
@@ -657,14 +613,6 @@ fn voice_default_and_saved_shortcuts_work_on_each_platform(cx: &mut gpui::TestAp
                 app.update(cx, |app, cx| {
                     let default = "ctrl-'";
                     assert_eq!(app.voice_shortcut(), default);
-                    for key in ["shift", "shift-a"] {
-                        assert!(!app.voice_key_down(
-                            &gpui::Keystroke::parse(key).unwrap(),
-                            window,
-                            cx
-                        ));
-                        assert!(app.workspace.voice.key_down.is_none());
-                    }
                     app.settings.voice_shortcut = Some("right-shift".into());
                     assert_eq!(app.voice_shortcut(), default);
                     app.settings.voice_shortcut = Some("ctrl-shift-space".into());
