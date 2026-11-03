@@ -6,12 +6,17 @@
     url = "github:oxalica/rust-overlay";
     inputs.nixpkgs.follows = "nixpkgs";
   };
+  inputs.zig-overlay = {
+    url = "github:mitchellh/zig-overlay";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
 
   outputs =
     {
       self,
       nixpkgs,
       rust-overlay,
+      zig-overlay,
       ...
     }:
     let
@@ -124,7 +129,7 @@
               neovim
               pkg-config
               rustPlatform.bindgenHook
-              zig_0_16
+              zig-overlay.packages.${system}."0.17.0"
             ];
             shellHook = pkgs.lib.optionalString pkgs.stdenv.isLinux ''
               export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath nativeRuntimeLibraries}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
