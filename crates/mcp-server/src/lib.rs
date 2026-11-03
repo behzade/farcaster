@@ -356,7 +356,7 @@ fn tools_for_role(child: bool, tasks: &crate::agents::WorkerProfiles) -> Vec<rmc
 )]
 impl ServerHandler for FarcasterMcp {
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
-        Cow::Borrowed(&[ProtocolVersion::V_2026_07_28])
+        Cow::Borrowed(&[ProtocolVersion::V_2025_11_25, ProtocolVersion::V_2026_07_28])
     }
 
     async fn list_tools(

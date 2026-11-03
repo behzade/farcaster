@@ -163,7 +163,12 @@ fn read_image(
             .map_err(|error| format!("write image: {error}"))?;
         length += count;
     }
-    Ok((format!("{:x}", hash.finalize()), length))
+    let hash = hash
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    Ok((hash, length))
 }
 
 #[cfg(test)]

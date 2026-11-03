@@ -94,6 +94,53 @@ fn composer_remains_plain_text_and_restores_highlights_after_draft_replacement(
 }
 
 #[gpui::test]
+fn composer_paste_preserves_markdown_code_and_selection(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::composer_paste_preserves_markdown_code_and_selection"
+        ),
+        cx,
+        |cx, app, _, _| {
+            let samples = [
+                "upstream/ghostty/    # unchanged files\npatches/ghostty/     # our changes\nshim/               # C adapters\nsrc/                # Rust code",
+                "fn collect<T: Clone>(items: &[T]) -> Vec<Option<T>> {\n\titems.iter().cloned().map(Some).collect()\n}",
+                "# Heading\n\n```rust\nlet x: Vec<T> = vec![];\n```\n\n**bold** & <tag> فارسی",
+            ];
+            let input = cx.update(|window, cx| {
+                window.activate_window();
+                let input = app.read(cx).composer.input.clone();
+                input.read(cx).focus_handle(cx).focus(window, cx);
+                input
+            });
+            for sample in samples {
+                cx.update(|window, cx| {
+                    input.update(cx, |input, cx| {
+                        input.set_value("before REPLACE after", window, cx);
+                        input.set_selected_range(7..14, cx);
+                    });
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(sample.to_owned()));
+                    window.draw(cx).clear(cx);
+                });
+                cx.simulate_keystrokes(&crate::app::ui::keybindings::application_key("v"));
+                cx.update(|window, cx| {
+                    window.draw(cx).clear(cx);
+                    assert_eq!(
+                        input.read(cx).value().as_ref(),
+                        format!("before {sample} after")
+                    );
+                    assert!(app.read(cx).current_composer_pastes().is_empty());
+                });
+                cx.simulate_keystrokes(&crate::app::ui::keybindings::application_key("z"));
+                cx.update(|_, cx| {
+                    assert_eq!(input.read(cx).value().as_ref(), "before REPLACE after");
+                });
+            }
+        },
+    );
+}
+
+#[gpui::test]
 fn composer_grows_with_wrapping_and_caps_at_eight_rows(cx: &mut gpui::TestAppContext) {
     let cx = cx.add_empty_window();
     cx.update(|window, _| {

@@ -84,7 +84,7 @@ impl Endpoint {
         let directory = match std::env::var_os("HEX_APPLICATION_SUPPORT_DIR") {
             Some(path) => PathBuf::from(path),
             None => PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?)
-                .join("Library/Application Support/voice-control"),
+                .join("Library/Application Support/hex"),
         };
         let bytes = std::fs::read(directory.join("local-api.json")).map_err(|_| {
             "Open the Rust version of Hex to use voice. The older Swift Hex app does not support dictation requests.".to_owned()

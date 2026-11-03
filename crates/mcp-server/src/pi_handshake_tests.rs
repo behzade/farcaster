@@ -5,7 +5,7 @@ use std::net::TcpStream;
 use std::time::Duration;
 
 #[test]
-fn steering_client_sequence_handshakes() {
+fn current_protocol_calls_tools_without_initialize_and_negotiates_legacy_handshakes() {
     let project = tempfile::tempdir().expect("project");
     let caller = crate::agents::CallerRegistry::shared().issue(
         project.path(),
@@ -30,9 +30,10 @@ fn steering_client_sequence_handshakes() {
         updates,
         notices::NoticeBoard::default(),
     );
-    let address: std::net::SocketAddr = "127.0.0.1:18766".parse().expect("probe address");
-    let mut server =
-        ServerState::new(service, true, &address.to_string()).expect("server should start");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("reserve test port");
+    let address = listener.local_addr().expect("test address");
+    let mut server = ServerState::with_listener(service, true, BIND_ADDRESS, Some(listener))
+        .expect("server should start");
     let request = |body: String, extra_headers: &[(&str, &str)]| -> (u16, String) {
         let mut stream = TcpStream::connect(address).expect("connect");
         stream
@@ -65,25 +66,21 @@ fn steering_client_sequence_handshakes() {
         "io.modelcontextprotocol/clientCapabilities": {}
     });
 
-    let initialize = serde_json::json!({
-        "jsonrpc": "2.0", "id": 1, "method": "initialize",
-        "params": {
-            "protocolVersion": "2026-07-28",
-            "capabilities": {},
-            "clientInfo": {"name": "farcaster-pi", "version": "0.1.0"}
-        }
-    })
-    .to_string();
-    let (status, response) = request(initialize, &[]);
-    assert_eq!(status, 200, "initialize failed: {response}");
-
     let (status, response) = request(
-        serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"}).to_string(),
-        &[("Mcp-Method", "notifications/initialized")],
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "server/discover",
+            "params": {"_meta": request_meta}
+        })
+        .to_string(),
+        &[("Mcp-Method", "server/discover")],
     );
-    assert!(
-        status == 202 || status == 200,
-        "notification failed: {response}"
+    assert_eq!(status, 200, "server/discover failed: {response}");
+    let payload: serde_json::Value =
+        serde_json::from_str(response.split_once("\r\n\r\n").expect("body").1).expect("json");
+    assert_eq!(
+        payload["result"]["supportedVersions"],
+        serde_json::json!(["2025-11-25", "2026-07-28"]),
+        "{payload}"
     );
 
     let (status, response) = request(
@@ -99,22 +96,48 @@ fn steering_client_sequence_handshakes() {
         serde_json::from_str(response.split_once("\r\n\r\n").expect("body").1).expect("json");
     assert!(payload["result"]["tools"].as_array().expect("tools").len() >= 6);
 
+    caller.bind("current-protocol-session");
     let (status, response) = request(
         serde_json::json!({
             "jsonrpc": "2.0", "id": 3, "method": "tools/call",
             "params": {
-                "name": "workgraph_search",
-                "arguments": {},
+                "name": "worker_notices",
+                "arguments": {"action": "read"},
                 "_meta": request_meta
             }
         })
         .to_string(),
-        &[
-            ("Mcp-Method", "tools/call"),
-            ("Mcp-Name", "workgraph_search"),
-        ],
+        &[("Mcp-Method", "tools/call"), ("Mcp-Name", "worker_notices")],
     );
     assert_eq!(status, 200, "tools/call failed: {response}");
+    let payload: serde_json::Value =
+        serde_json::from_str(response.split_once("\r\n\r\n").expect("body").1).expect("json");
+    assert!(payload["error"].is_null(), "{payload}");
+    assert_ne!(payload["result"]["isError"], true, "{payload}");
+    assert_eq!(payload["result"]["resultType"], "complete", "{payload}");
+    assert_eq!(
+        payload["result"]["structuredContent"]["notices"],
+        serde_json::json!([]),
+        "{payload}"
+    );
+
+    let initialize = serde_json::json!({
+        "jsonrpc": "2.0", "id": 4, "method": "initialize",
+        "params": {
+            "protocolVersion": "2026-07-28",
+            "capabilities": {},
+            "clientInfo": {"name": "farcaster-pi", "version": "0.1.0"}
+        }
+    })
+    .to_string();
+    let (status, response) = request(initialize, &[]);
+    assert_eq!(status, 200, "initialize failed: {response}");
+    let payload: serde_json::Value =
+        serde_json::from_str(response.split_once("\r\n\r\n").expect("body").1).expect("json");
+    assert_eq!(
+        payload["result"]["protocolVersion"], "2025-11-25",
+        "{payload}"
+    );
     server.disable();
 }
 
