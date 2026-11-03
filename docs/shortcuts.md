@@ -73,7 +73,7 @@ Cmd+0–9 on macOS and Super+0–9 on Linux also work inside the terminal/Neovim
 
 Enable [Voice](../README.md#voice) in Settings → General. Works in chat and the editor, including Neovim.
 
-The default is Ctrl+' on both platforms, with Cmd+' also supported on macOS. Change the binding in Settings → General → Voice shortcut; Right Shift is macOS-only.
+The default is Ctrl+' on both platforms, with Cmd+' also supported on macOS. Change the binding in Settings → General → Voice shortcut.
 
 - Hold to record; release to transcribe and send.
 - Double-tap to lock recording; press again to transcribe and send.
