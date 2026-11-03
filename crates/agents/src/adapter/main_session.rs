@@ -22,6 +22,7 @@ use crate::{
 #[derive(Default)]
 pub(super) struct MainSessionMetadata {
     pub session_name: Option<String>,
+    pub startup_notice: Option<String>,
     pub service_tier: Option<String>,
     pub service_tiers: Vec<String>,
     pub models: Vec<Value>,
@@ -116,7 +117,7 @@ impl WorkerSessionTransport {
         harness: Backend,
         locator: String,
         worker: Box<dyn WorkerSession>,
-        metadata: MainSessionMetadata,
+        mut metadata: MainSessionMetadata,
         history: Option<crate::DiscoveredHistory>,
     ) -> Result<Self, String> {
         let path = external_session_path(locator_root, harness, &locator);
@@ -161,12 +162,20 @@ impl WorkerSessionTransport {
         let (history, history_prompt_deliveries) = history.map_or((None, None), |history| {
             (Some(history.messages), history.prompt_deliveries)
         });
+        let mut pending = VecDeque::new();
+        if let Some(message) = metadata.startup_notice.take() {
+            pending.push_back(SessionEvent::Interaction(ExtensionUiRequest::Notify {
+                id: uuid::Uuid::new_v4().to_string(),
+                message,
+                tone: crate::extensions::NotifyTone::Info,
+            }));
+        }
         Ok(Self {
             harness,
             locator,
             path,
             worker,
-            pending: VecDeque::new(),
+            pending,
             next_id: 0,
             request_namespace: uuid::Uuid::new_v4(),
             pending_prompts: BTreeMap::new(),

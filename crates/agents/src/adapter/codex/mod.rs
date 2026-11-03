@@ -12,6 +12,7 @@ mod skills;
 mod subagents;
 mod tool;
 mod transfer;
+mod updates;
 mod wire;
 mod worker;
 
