@@ -1,5 +1,8 @@
 use super::*;
 
+// A mock transport failure instead of an HTTP response.
+const RESET_CONNECTION: u16 = 0;
+
 #[test]
 fn hex_busy_and_missing_capture_are_errors_not_empty_dictations() {
     for code in [
@@ -90,6 +93,14 @@ impl MockHex {
                         serde_json::from_slice::<Value>(&body).unwrap()["source"],
                         "Farcaster"
                     );
+                }
+                if status == RESET_CONNECTION {
+                    socket2::SockRef::from(reader.get_ref())
+                        .set_linger(Some(Duration::ZERO))
+                        .unwrap();
+                    drop(reader);
+                    let _ = send.send(path);
+                    continue;
                 }
                 let body = if status == 204 {
                     String::new()
@@ -219,4 +230,126 @@ fn unavailable_capture_never_starts_a_dictation() {
     );
     assert!(receiver.try_recv().is_err());
     mock.server.join().unwrap();
+}
+
+#[test]
+fn heartbeat_reset_retries_and_keeps_the_recording_until_finish() {
+    let mut replies = capture_start();
+    replies.extend([
+        (
+            "POST /dictations/7/heartbeat",
+            RESET_CONNECTION,
+            Value::Null,
+        ),
+        ("POST /dictations/7/heartbeat", 204, Value::Null),
+        (
+            "POST /dictations/7/finish",
+            200,
+            json!({"transcript": "kept recording"}),
+        ),
+        ("POST /dictations/7/cancel", 204, Value::Null),
+    ]);
+    let mock = MockHex::start(replies);
+    let (send, commands) = mpsc::channel();
+    let (updates, receiver) = async_channel::unbounded();
+    let worker =
+        std::thread::spawn(move || record_with_endpoint(&mock.endpoint, commands, &updates));
+    for expected in [
+        "GET /capabilities",
+        "POST /dictations",
+        "POST /dictations/7/heartbeat",
+        "POST /dictations/7/heartbeat",
+    ] {
+        assert_eq!(
+            mock.requests.recv_timeout(Duration::from_secs(10)).unwrap(),
+            expected
+        );
+    }
+    send.send(Control::Finish).unwrap();
+    worker.join().unwrap().unwrap();
+    mock.server.join().unwrap();
+    assert!(matches!(receiver.try_recv().unwrap(), Event::Recording));
+    assert!(
+        matches!(receiver.try_recv().unwrap(), Event::Transcript(text) if text == "kept recording")
+    );
+    assert!(receiver.try_recv().is_err());
+}
+
+#[test]
+fn second_heartbeat_reset_fails_with_context_and_releases_recording() {
+    let mut replies = capture_start();
+    replies.extend([
+        (
+            "POST /dictations/7/heartbeat",
+            RESET_CONNECTION,
+            Value::Null,
+        ),
+        (
+            "POST /dictations/7/heartbeat",
+            RESET_CONNECTION,
+            Value::Null,
+        ),
+        ("POST /dictations/7/cancel", 204, Value::Null),
+    ]);
+    let mock = MockHex::start(replies);
+    let (_send, commands) = mpsc::channel();
+    let (updates, receiver) = async_channel::unbounded();
+    let error = record_with_endpoint(&mock.endpoint, commands, &updates).unwrap_err();
+    assert!(error.contains("POST /dictations/7/heartbeat"), "{error}");
+    assert!(!error.contains("recording-token"));
+    assert!(!error.contains("test-token"));
+    mock.server.join().unwrap();
+    assert!(matches!(receiver.try_recv().unwrap(), Event::Recording));
+    assert!(receiver.try_recv().is_err());
+}
+
+#[test]
+fn heartbeat_http_rejections_are_not_retried() {
+    for status in [401, 409, 500] {
+        let mock = MockHex::start(vec![(
+            "POST /dictations/7/heartbeat",
+            status,
+            json!({"code": "rejected"}),
+        )]);
+        let error = mock
+            .endpoint
+            .request(
+                "POST",
+                "/dictations/7/heartbeat",
+                Some("recording-token"),
+                Value::Null,
+            )
+            .unwrap_err();
+        assert!(error.contains(&format!("HTTP {status}")), "{error}");
+        mock.server.join().unwrap();
+        assert_eq!(mock.requests.try_iter().count(), 1);
+    }
+}
+
+#[test]
+fn start_and_finish_connection_resets_are_not_retried() {
+    for (method_path, path, body) in [
+        (
+            "POST /dictations",
+            "/dictations",
+            json!({"source": "Farcaster"}),
+        ),
+        (
+            "POST /dictations/7/finish",
+            "/dictations/7/finish",
+            Value::Null,
+        ),
+    ] {
+        let mock = MockHex::start(vec![(method_path, RESET_CONNECTION, Value::Null)]);
+        let error = mock
+            .endpoint
+            .request("POST", path, Some("recording-token"), body)
+            .unwrap_err();
+        assert!(error.contains(method_path), "{error}");
+        // A retry would connect to the now-closed listener and replace the reset
+        // with a connect failure.
+        assert!(error.contains("Read response"), "{error}");
+        mock.server.join().unwrap();
+        assert_eq!(mock.requests.try_iter().count(), 1);
+    }
 }

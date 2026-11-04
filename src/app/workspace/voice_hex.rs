@@ -76,6 +76,23 @@ struct Endpoint {
     api_version: String,
 }
 
+#[derive(Debug, thiserror::Error)]
+enum RequestError {
+    #[error("{0}: {1}")]
+    Io(&'static str, std::io::Error),
+    #[error("{0}")]
+    Response(String),
+}
+
+impl RequestError {
+    fn broken_connection(&self) -> bool {
+        matches!(self, Self::Io(_, error) if matches!(error.kind(),
+            std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe))
+    }
+}
+
 impl Endpoint {
     fn discover() -> Result<Self, String> {
         let directory = match std::env::var_os("HEX_APPLICATION_SUPPORT_DIR") {
@@ -101,41 +118,74 @@ impl Endpoint {
         owner: Option<&str>,
         body: Value,
     ) -> Result<Value, String> {
+        let result = self.request_once(method, path, owner, &body);
+        // Heartbeats only renew our existing recording, so replaying one is safe.
+        // Do not replay start/finish, HTTP rejections, or timeouts that may have
+        // already used up the recording lease.
+        let result = match result {
+            Err(error)
+                if method == "POST"
+                    && path.ends_with("/heartbeat")
+                    && error.broken_connection() =>
+            {
+                zlog::warn!("Hex {method} {path}: {error}; retrying heartbeat once");
+                self.request_once(method, path, owner, &body)
+            }
+            result => result,
+        };
+        result.map_err(|error| {
+            let message = format!("Hex {method} {path}: {error}");
+            zlog::warn!("{message}");
+            message
+        })
+    }
+
+    fn request_once(
+        &self,
+        method: &str,
+        path: &str,
+        owner: Option<&str>,
+        body: &Value,
+    ) -> Result<Value, RequestError> {
         let address = SocketAddr::from((Ipv4Addr::LOCALHOST, self.port));
         let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(2))
-            .map_err(|error| format!("Connect to Hex: {error}"))?;
+            .map_err(|error| RequestError::Io("Connect", error))?;
         stream
             .set_read_timeout(Some(Duration::from_secs(if path.ends_with("/finish") {
                 125
             } else {
                 5
             })))
-            .map_err(|e| e.to_string())?;
+            .map_err(|error| RequestError::Io("Set read timeout", error))?;
         stream
             .set_write_timeout(Some(Duration::from_secs(2)))
-            .map_err(|e| e.to_string())?;
+            .map_err(|error| RequestError::Io("Set write timeout", error))?;
         // Tokens come from Hex's discovery/start responses, never from a shell command.
         if [self.token.as_str(), owner.unwrap_or("")]
             .iter()
             .any(|token| token.contains(['\r', '\n']))
         {
-            return Err("Invalid Hex connection token".into());
+            return Err(RequestError::Response(
+                "Invalid Hex connection token".into(),
+            ));
         }
-        let body = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
-        write!(stream, "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n", self.port, self.token, body.len()).map_err(|e| e.to_string())?;
+        let body =
+            serde_json::to_vec(body).map_err(|error| RequestError::Response(error.to_string()))?;
+        write!(stream, "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n", self.port, self.token, body.len()).map_err(|error| RequestError::Io("Write headers", error))?;
         if let Some(owner) = owner {
-            write!(stream, "X-Hex-Dictation-Token: {owner}\r\n").map_err(|e| e.to_string())?;
+            write!(stream, "X-Hex-Dictation-Token: {owner}\r\n")
+                .map_err(|error| RequestError::Io("Write owner header", error))?;
         }
         stream
             .write_all(b"\r\n")
             .and_then(|_| stream.write_all(&body))
-            .map_err(|e| e.to_string())?;
+            .map_err(|error| RequestError::Io("Write body", error))?;
         let mut response = Vec::new();
         stream
             .take(1024 * 1024 + 1)
             .read_to_end(&mut response)
-            .map_err(|e| format!("Read Hex response: {e}"))?;
-        parse_response(&response)
+            .map_err(|error| RequestError::Io("Read response", error))?;
+        parse_response(&response).map_err(RequestError::Response)
     }
 }
 
