@@ -5,12 +5,35 @@ use gpui::{
     Styled as _, UniformListDecoration, UniformListScrollHandle, Window, div, point, px,
 };
 
+#[derive(Clone)]
+pub(super) struct WorkerRow {
+    pub activity: crate::agent_activity::AgentActivity,
+    pub depth: usize,
+    pub session: crate::sessions::SessionSummary,
+    pub activity_key: String,
+    pub session_key: crate::sessions::SessionKey,
+    pub focus: Option<FocusHandle>,
+}
+
+pub(in crate::app::views) struct PreparedWorkers {
+    pub(super) root: Option<std::path::PathBuf>,
+    pub(super) generation: u64,
+    pub(super) rows: Vec<Rc<WorkerRow>>,
+    pub(super) visible: Rc<Vec<Rc<WorkerRow>>>,
+    pub(super) keys: Rc<Vec<(String, FocusHandle)>>,
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(super) static PREPARATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 pub(super) type RenderRow = Rc<dyn Fn(usize, &mut App) -> AnyElement>;
 
 // Keep a keyboard-focused row in the dispatch tree even when the uniform list
 // stops rendering it. The list's content mask clips it at its actual row position.
 pub(super) struct FocusedRow {
-    pub handles: Vec<FocusHandle>,
+    pub handles: Rc<Vec<(String, FocusHandle)>>,
     pub render: RenderRow,
 }
 
@@ -28,7 +51,7 @@ impl UniformListDecoration for FocusedRow {
         let focused = self
             .handles
             .iter()
-            .position(|handle| handle.contains_focused(window, cx));
+            .position(|(_, handle)| handle.contains_focused(window, cx));
         let Some(index) = focused.filter(|index| !visible.contains(index)) else {
             return div().into_any_element();
         };

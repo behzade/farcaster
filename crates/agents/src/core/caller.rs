@@ -651,13 +651,48 @@ impl CallerRegistry {
     }
 
     pub fn session_caller(&self, key: &SessionKey) -> Option<(String, CallerProfile)> {
+        self.session_presentation(key)
+            .map(|(name, profile, _)| (name, profile))
+    }
+
+    /// Resolve the UI name, execution profile and worker profile in one scan.
+    pub fn session_presentation(
+        &self,
+        key: &SessionKey,
+    ) -> Option<(String, CallerProfile, Option<String>)> {
         let callers = self.callers.lock().ok()?;
+        Self::presentation_for(&callers, key)
+    }
+
+    /// UI frames use persisted session metadata if backend registry updates hold the lock.
+    pub fn try_session_presentation(
+        &self,
+        key: &SessionKey,
+    ) -> Option<(String, CallerProfile, Option<String>)> {
+        let callers = self.callers.try_lock().ok()?;
+        Self::presentation_for(&callers, key)
+    }
+
+    fn presentation_for(
+        callers: &HashMap<String, RegisteredCaller>,
+        key: &SessionKey,
+    ) -> Option<(String, CallerProfile, Option<String>)> {
         let caller = unique_caller(callers.values().filter(|caller| {
-            caller
-                .session_key()
-                .and_then(|session| session.key)
-                .as_ref()
-                == Some(key)
+            // Stored session IDs need no context allocation or filesystem lookup.
+            // Keep locator matching unchanged for sessions not yet in the store.
+            match key {
+                SessionKey::App(id) => {
+                    caller.session.is_some()
+                        && caller.session_record.and_then(AppSessionId::new).as_ref() == Some(id)
+                }
+                _ => {
+                    caller
+                        .session_key()
+                        .and_then(|session| session.key)
+                        .as_ref()
+                        == Some(key)
+                }
+            }
         }))?;
         Some((
             caller.worker_name.clone(),
@@ -667,21 +702,16 @@ impl CallerRegistry {
                 model: caller.model.clone(),
                 effort: caller.effort.clone(),
             },
+            caller
+                .assignment
+                .as_ref()
+                .map(|assignment| assignment.profile.clone()),
         ))
     }
 
     pub fn session_worker_profile(&self, key: &SessionKey) -> Option<String> {
-        let callers = self.callers.lock().ok()?;
-        unique_caller(callers.values().filter(|caller| {
-            caller
-                .session_key()
-                .and_then(|session| session.key)
-                .as_ref()
-                == Some(key)
-        }))?
-        .assignment
-        .as_ref()
-        .map(|assignment| assignment.profile.clone())
+        self.session_presentation(key)
+            .and_then(|(_, _, profile)| profile)
     }
 
     pub fn session_parent(&self, backend: Backend, session: &str) -> Option<String> {

@@ -787,3 +787,72 @@ fn family_stop_refreshes_merged_bindings_before_the_next_caller_send() {
 
 #[path = "caller/inbox_tests.rs"]
 mod retained_inbox_tests;
+
+#[test]
+fn stored_session_presentation_matches_context_lookup_without_rebuilding_contexts() {
+    let registry = CallerRegistry::default();
+    let identities: Vec<_> = (1..=512)
+        .map(|record| {
+            let caller = identity(&registry, Path::new("/project"), Backend::Codex);
+            {
+                let mut callers = registry.callers.lock().unwrap();
+                let registered = callers.get_mut(caller.token()).unwrap();
+                registered.session = Some(format!("native-{record}"));
+                registered.session_record = Some(record);
+            }
+            caller
+        })
+        .collect();
+    let key = SessionKey::App(AppSessionId::new(500).unwrap());
+    let baseline_started = std::time::Instant::now();
+    for _ in 0..200 {
+        let callers = registry.callers.lock().unwrap();
+        let found = unique_caller(callers.values().filter(|caller| {
+            caller
+                .session_key()
+                .and_then(|session| session.key)
+                .as_ref()
+                == Some(&key)
+        }))
+        .unwrap();
+        assert_eq!(found.session_record, Some(500));
+    }
+    let baseline = baseline_started.elapsed();
+    let started = std::time::Instant::now();
+    for _ in 0..200 {
+        assert_eq!(
+            registry.session_presentation(&key).unwrap().0,
+            identities[499].worker_identity().unwrap().1
+        );
+    }
+    eprintln!(
+        "512 callers, 200 lookups: context scan={baseline:?}, presentation scan={:?}",
+        started.elapsed()
+    );
+    // Ambiguous stored identities must still produce no presentation.
+    registry
+        .callers
+        .lock()
+        .unwrap()
+        .get_mut(identities[0].token())
+        .unwrap()
+        .session_record = Some(500);
+    assert!(registry.session_presentation(&key).is_none());
+    // A record without a bound session must not count as a matching caller.
+    registry
+        .callers
+        .lock()
+        .unwrap()
+        .get_mut(identities[0].token())
+        .unwrap()
+        .session = None;
+    assert!(registry.session_presentation(&key).is_some());
+}
+
+#[test]
+fn ui_session_presentation_does_not_wait_for_registry_updates() {
+    let registry = CallerRegistry::default();
+    let key = SessionKey::App(AppSessionId::new(1).unwrap());
+    let _updating = registry.callers.lock().unwrap();
+    assert!(registry.try_session_presentation(&key).is_none());
+}

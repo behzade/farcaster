@@ -48,7 +48,10 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn notify_run_panel(&self, cx: &mut Context<Self>) {
-        Self::notify_region(&self.views.run_panel, cx);
+        self.views.run_panel.update(cx, |view, cx| {
+            view.invalidate_workers();
+            cx.notify();
+        });
     }
 
     pub(in crate::app) fn notify_appearance(&self, cx: &mut Context<Self>) {

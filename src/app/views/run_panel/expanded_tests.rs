@@ -319,6 +319,7 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
                 .into_boxed_str(),
             );
             let before_scroll = cx.debug_bounds(distance_selector).unwrap();
+            super::worker_list::PREPARATIONS.with(|count| count.set(0));
             // Exercise the actual wheel path, not just programmatic selection.
             super::agents::CARD_BUILDS.with(|count| count.set(0));
             let pointer = cx.debug_bounds("run-panel-main-agent").unwrap().center();
@@ -334,6 +335,11 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
             });
             let built = super::agents::CARD_BUILDS.with(|count| count.get());
             assert!(built < 100, "wheel scroll built {built} cards");
+            assert_eq!(
+                super::worker_list::PREPARATIONS.with(|count| count.get()),
+                0,
+                "wheel input must reuse preparation without filesystem work for all workers"
+            );
             assert!(cx.debug_bounds("run-panel-main-agent").is_none());
             let after_scroll = cx.debug_bounds(distance_selector).unwrap();
             assert!(
@@ -354,6 +360,21 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
                 "selected worker must scroll into view"
             );
             assert!(cx.debug_bounds("run-panel-main-agent").is_none());
+
+            assert_eq!(
+                super::worker_list::PREPARATIONS.with(|count| count.get()),
+                0,
+                "selection in the same family must reuse prepared workers"
+            );
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| app.notify_run_panel(cx));
+            });
+            draw(cx);
+            assert_eq!(
+                super::worker_list::PREPARATIONS.with(|count| count.get()),
+                1,
+                "application updates must invalidate the worker snapshot"
+            );
 
             // An unrelated panel redraw must retain the scroll position.
             cx.update(|_, cx| {

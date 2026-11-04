@@ -8,7 +8,7 @@ use super::super::super::FarcasterApp;
 use super::super::session_rail::{session_hover_details, session_tooltip_content};
 use super::WorkerProfileNames;
 use crate::{
-    agent_activity::{AgentActivity, AgentLifecycle, AgentOutcome},
+    agent_activity::{AgentLifecycle, AgentOutcome},
     app::ui::assets::AppIcon,
     app::ui::primitives::{AppIconSize, AppTooltip as _, activates_button, app_icon},
     app::ui::theme::theme,
@@ -66,9 +66,7 @@ impl FarcasterApp {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn agent_card(
         &self,
-        activity: &AgentActivity,
-        session: &crate::sessions::SessionSummary,
-        depth: usize,
+        row: &super::worker_list::WorkerRow,
         selected: bool,
         anchor: &ScrollAnchor,
         saved_profiles: &WorkerProfileNames,
@@ -76,8 +74,11 @@ impl FarcasterApp {
     ) -> Option<AnyElement> {
         #[cfg(test)]
         CARD_BUILDS.with(|count| count.set(count.get() + 1));
-        let activity_key = crate::agent_activity::agent_activity_key(&session.path);
-        let focus = self.activity.row_focus.get(&activity_key)?.clone();
+        let activity = &row.activity;
+        let session = &row.session;
+        let depth = row.depth;
+        let activity_key = row.activity_key.clone();
+        let focus = row.focus.clone()?;
         let path = session.path.clone();
         let project = session.project.clone();
         let key_path = path.clone();
@@ -87,12 +88,16 @@ impl FarcasterApp {
         let (icon, color) = agent_lifecycle_visual(activity.lifecycle);
         let role = activity.role.clone();
         let registry = crate::agents::CallerRegistry::shared();
-        let key = session.key();
-        let caller = registry.session_caller(&key);
+        let key = &row.session_key;
+        let presentation = registry.try_session_presentation(key);
+        let caller = presentation
+            .as_ref()
+            .map(|(name, profile, _)| (name, profile));
         let mut hover_details = session_hover_details(session, state, "", 0);
-        let profile_name = registry
-            .session_worker_profile(&key)
-            .or_else(|| saved_profiles.get(&key).cloned());
+        let profile_name = presentation
+            .as_ref()
+            .and_then(|(_, _, profile)| profile.clone())
+            .or_else(|| saved_profiles.get(key).cloned());
         if let Some(profile) = &profile_name {
             hover_details
                 .rows
@@ -104,17 +109,17 @@ impl FarcasterApp {
                 "Name".into(),
                 caller
                     .as_ref()
-                    .map(|(name, _)| name.clone())
+                    .map(|(name, _)| (*name).clone())
                     .unwrap_or_else(|| role.clone()),
             ),
         );
         let execution = execution_label(
-            caller.as_ref().map(|(_, profile)| profile),
+            caller.as_ref().map(|(_, profile)| *profile),
             session.model.as_ref(),
             session.thinking_level.as_deref(),
         );
         let identity = profile_name
-            .or_else(|| caller.as_ref().map(|(name, _)| name.clone()))
+            .or_else(|| caller.as_ref().map(|(name, _)| (*name).clone()))
             .unwrap_or_else(|| role.clone());
         let card = conversation_row(format!("agent-card-{activity_key}"), selected)
             .anchor_scroll(selected.then(|| anchor.clone()))

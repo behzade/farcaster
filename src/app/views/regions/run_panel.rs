@@ -20,6 +20,9 @@ pub(crate) struct RunPanelView {
     worker_list: gpui::UniformListScrollHandle,
     worker_rows: std::cell::RefCell<Vec<(String, gpui::FocusHandle)>>,
     main_agent_focus: Option<gpui::FocusHandle>,
+    prepared_workers: std::cell::RefCell<
+        Option<std::rc::Rc<super::super::run_panel::worker_list::PreparedWorkers>>,
+    >,
     activity_anchor: ScrollAnchor,
     review_scroll: ScrollHandle,
     pub(crate) review_tree: super::super::run_panel::change_tree::ChangeTreeState,
@@ -48,6 +51,7 @@ impl RunPanelView {
             worker_list: gpui::UniformListScrollHandle::new(),
             worker_rows: Default::default(),
             main_agent_focus: None,
+            prepared_workers: Default::default(),
             review_scroll: ScrollHandle::new(),
             review_tree: Default::default(),
             review_id: None,
@@ -57,6 +61,10 @@ impl RunPanelView {
             worker_profiles_generation: None,
             saved_worker_profiles: Default::default(),
         }
+    }
+
+    pub(in crate::app) fn invalidate_workers(&self) {
+        self.prepared_workers.borrow_mut().take();
     }
 
     pub(crate) fn width(&self) -> Pixels {
@@ -226,6 +234,7 @@ impl Render for RunPanelView {
                     anchor: &self.activity_anchor,
                     saved_profiles: &self.saved_worker_profiles,
                     expanded: self.expanded_workers_root.is_some(),
+                    prepared: &self.prepared_workers,
                     list: &self.worker_list,
                     rows: &self.worker_rows,
                     main_focus: &main_agent_focus,

@@ -13,7 +13,7 @@ mod resize;
 pub(super) mod review;
 #[cfg(test)]
 mod tests;
-mod worker_list;
+pub(in crate::app::views) mod worker_list;
 
 use gpui::{
     InteractiveElement as _, IntoElement, ParentElement as _, ScrollAnchor, ScrollHandle,
@@ -47,6 +47,7 @@ pub(super) struct WorkerListView<'a> {
     pub anchor: &'a ScrollAnchor,
     pub saved_profiles: &'a WorkerProfileNames,
     pub expanded: bool,
+    pub prepared: &'a std::cell::RefCell<Option<std::rc::Rc<worker_list::PreparedWorkers>>>,
     pub list: &'a gpui::UniformListScrollHandle,
     pub rows: &'a std::cell::RefCell<Vec<(String, gpui::FocusHandle)>>,
     pub main_focus: &'a gpui::FocusHandle,
@@ -193,12 +194,7 @@ impl FarcasterApp {
 
     fn expanded_worker_list(
         &self,
-        workers: &[(
-            AgentActivity,
-            usize,
-            &crate::sessions::SessionSummary,
-            AgentSection,
-        )],
+        prepared: &worker_list::PreparedWorkers,
         root: Option<&crate::sessions::SessionSummary>,
         selected: Option<&std::path::Path>,
         entity: WeakEntity<Self>,
@@ -206,32 +202,8 @@ impl FarcasterApp {
         view: &WorkerListView<'_>,
     ) -> gpui::AnyElement {
         let root = root.cloned();
-        let rows: Vec<_> = workers
-            .iter()
-            .filter(|(_, _, session, _)| {
-                self.activity
-                    .row_focus
-                    .contains_key(&crate::agent_activity::agent_activity_key(&session.path))
-            })
-            .map(|(activity, depth, session, _)| (activity.clone(), *depth, (*session).clone()))
-            .collect();
-        let keys: Vec<_> = root
-            .iter()
-            .map(|session| {
-                (
-                    super::session_rail::session_row_identity(session),
-                    view.main_focus.clone(),
-                )
-            })
-            .chain(rows.iter().map(|(_, _, session)| {
-                (
-                    super::session_rail::session_row_identity(session),
-                    self.activity.row_focus
-                        [&crate::agent_activity::agent_activity_key(&session.path)]
-                        .clone(),
-                )
-            }))
-            .collect();
+        let rows = prepared.visible.clone();
+        let keys = prepared.keys.clone();
         // Main row padding (8px), focus borders, and the 7px gap fit in every slot.
         let row_height = theme().type_scale.line_body.max(theme().icons.inline)
             + theme().size(15.0)
@@ -241,7 +213,7 @@ impl FarcasterApp {
             let index = root
                 .iter()
                 .map(|session| &session.path)
-                .chain(rows.iter().map(|(_, _, session)| &session.path))
+                .chain(rows.iter().map(|row| &row.session.path))
                 .position(|path| Some(path.as_path()) == selected);
             if let Some(index) = index {
                 view.list
@@ -265,8 +237,7 @@ impl FarcasterApp {
                     run_panel.clone(),
                 )
             } else {
-                let Some((activity, depth, session)) = rows.get(index - usize::from(has_root))
-                else {
+                let Some(row) = rows.get(index - usize::from(has_root)) else {
                     return div().into_any_element();
                 };
                 let Some(app) = entity.upgrade() else {
@@ -274,10 +245,8 @@ impl FarcasterApp {
                 };
                 app.read(cx)
                     .agent_card(
-                        activity,
-                        session,
-                        *depth,
-                        selected.as_deref() == Some(session.path.as_path()),
+                        row,
+                        selected.as_deref() == Some(row.session.path.as_path()),
                         &anchor,
                         &profiles,
                         entity.clone(),
@@ -292,13 +261,24 @@ impl FarcasterApp {
         });
         let visible_render = render.clone();
         uniform_list("expanded-worker-rows", count, move |range, _, cx| {
-            range
+            let count = range.len();
+            let started = std::time::Instant::now();
+            let rows = range
                 .map(|index| visible_render(index, cx))
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            let elapsed = started.elapsed();
+            if elapsed.as_millis() >= 16 {
+                zlog::warn!(
+                    "PERF operation=worker_rows.build count={} elapsed_ms={:.2}",
+                    count,
+                    elapsed.as_secs_f64() * 1000.0
+                );
+            }
+            rows
         })
         .track_scroll(view.list)
         .with_decoration(worker_list::FocusedRow {
-            handles: keys.into_iter().map(|(_, focus)| focus).collect(),
+            handles: keys,
             render,
         })
         .size_full()
@@ -320,19 +300,78 @@ impl FarcasterApp {
             .map(|(path, _)| path.as_path())
             .or(self.snapshot.selected_session.as_deref());
         let root = self.sessions.all.root_for_path(selected);
-        let workers = ordered_worker_rows(&self.sessions.all, &self.activity.agents, selected);
+        let root_path = root.map(|session| session.path.clone());
+        let mut cache = worker_view.prepared.borrow_mut();
+        if cache.as_ref().is_none_or(|cache| {
+            cache.root != root_path || cache.generation != self.sessions.generation
+        }) {
+            #[cfg(test)]
+            worker_list::PREPARATIONS.with(|count| count.set(count.get() + 1));
+            let started = std::time::Instant::now();
+            let rows: Vec<_> =
+                ordered_worker_rows(&self.sessions.all, &self.activity.agents, selected)
+                    .into_iter()
+                    .map(|(activity, depth, session, _)| {
+                        let activity_key = crate::agent_activity::agent_activity_key(&session.path);
+                        std::rc::Rc::new(worker_list::WorkerRow {
+                            activity,
+                            depth,
+                            session: session.clone(),
+                            focus: self.activity.row_focus.get(&activity_key).cloned(),
+                            activity_key,
+                            session_key: session.key(),
+                        })
+                    })
+                    .collect();
+            let visible: Vec<_> = rows
+                .iter()
+                .filter(|row| row.focus.is_some())
+                .cloned()
+                .collect();
+            let keys = root
+                .iter()
+                .map(|session| {
+                    (
+                        super::session_rail::session_row_identity(session),
+                        worker_view.main_focus.clone(),
+                    )
+                })
+                .chain(visible.iter().map(|row| {
+                    (
+                        format!("session:{:?}", row.session_key),
+                        row.focus.clone().unwrap(),
+                    )
+                }))
+                .collect();
+            *cache = Some(std::rc::Rc::new(worker_list::PreparedWorkers {
+                root: root_path.clone(),
+                generation: self.sessions.generation,
+                rows,
+                visible: std::rc::Rc::new(visible),
+                keys: std::rc::Rc::new(keys),
+            }));
+            let elapsed = started.elapsed();
+            if elapsed.as_millis() >= 16 {
+                zlog::warn!(
+                    "PERF operation=worker_rows.prepare elapsed_ms={:.2}",
+                    elapsed.as_secs_f64() * 1000.0
+                );
+            }
+        }
+        let prepared = cache.as_ref().unwrap().clone();
+        drop(cache);
+        let workers = &prepared.rows;
         let selected_is_older = workers
             .iter()
             .skip(RECENT_WORKERS)
-            .any(|(_, _, session, _)| selected == Some(session.path.as_path()));
+            .any(|row| selected == Some(row.session.path.as_path()));
         let hidden_count = workers
             .len()
             .saturating_sub(RECENT_WORKERS + usize::from(selected_is_older));
-        let root_path = root.map(|session| session.path.clone());
         let expand_panel = run_panel.clone();
         let conversation = if expanded {
             self.expanded_worker_list(
-                &workers,
+                &prepared,
                 root,
                 selected,
                 entity.clone(),
@@ -355,17 +394,13 @@ impl FarcasterApp {
                     workers
                         .iter()
                         .enumerate()
-                        .filter(|(index, (_, _, session, _))| {
-                            expanded
-                                || *index < RECENT_WORKERS
-                                || selected == Some(session.path.as_path())
+                        .filter(|(index, row)| {
+                            *index < RECENT_WORKERS || selected == Some(row.session.path.as_path())
                         })
-                        .filter_map(|(_, (activity, depth, session, _))| {
+                        .filter_map(|(_, row)| {
                             self.agent_card(
-                                activity,
-                                session,
-                                *depth,
-                                selected == Some(session.path.as_path()),
+                                row,
+                                selected == Some(row.session.path.as_path()),
                                 worker_view.anchor,
                                 worker_view.saved_profiles,
                                 entity.clone(),
