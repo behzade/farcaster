@@ -57,6 +57,11 @@ pub(super) fn conversation_row(id: impl Into<ElementId>, selected: bool) -> gpui
         .cursor_pointer()
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(super) static CARD_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl FarcasterApp {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn agent_card(
@@ -69,6 +74,8 @@ impl FarcasterApp {
         saved_profiles: &WorkerProfileNames,
         entity: WeakEntity<Self>,
     ) -> Option<AnyElement> {
+        #[cfg(test)]
+        CARD_BUILDS.with(|count| count.set(count.get() + 1));
         let activity_key = crate::agent_activity::agent_activity_key(&session.path);
         let focus = self.activity.row_focus.get(&activity_key)?.clone();
         let path = session.path.clone();

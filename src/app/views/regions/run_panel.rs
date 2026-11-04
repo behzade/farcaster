@@ -17,6 +17,9 @@ pub(crate) struct RunPanelView {
     resize_start: Option<(Pixels, Pixels)>,
     scroll: ScrollHandle,
     activity_scroll: ScrollHandle,
+    worker_list: gpui::UniformListScrollHandle,
+    worker_rows: std::cell::RefCell<Vec<(String, gpui::FocusHandle)>>,
+    main_agent_focus: Option<gpui::FocusHandle>,
     activity_anchor: ScrollAnchor,
     review_scroll: ScrollHandle,
     pub(crate) review_tree: super::super::run_panel::change_tree::ChangeTreeState,
@@ -42,6 +45,9 @@ impl RunPanelView {
             scroll: ScrollHandle::new(),
             activity_anchor: ScrollAnchor::for_handle(activity_scroll.clone()),
             activity_scroll,
+            worker_list: gpui::UniformListScrollHandle::new(),
+            worker_rows: Default::default(),
+            main_agent_focus: None,
             review_scroll: ScrollHandle::new(),
             review_tree: Default::default(),
             review_id: None,
@@ -85,6 +91,9 @@ impl RunPanelView {
     }
 
     pub(crate) fn expand_workers(&mut self, root: std::path::PathBuf) {
+        self.worker_list
+            .scroll_to_item(0, gpui::ScrollStrategy::Top);
+        self.worker_rows.borrow_mut().clear();
         self.expanded_workers_root = Some(root);
         self.reveal_selected = false;
     }
@@ -109,6 +118,10 @@ impl Render for RunPanelView {
         let Some(app) = self.app.upgrade() else {
             return gpui::div().into_any_element();
         };
+        let main_agent_focus = self
+            .main_agent_focus
+            .get_or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
         let generation = app.read(cx).sessions.generation;
         if self.worker_profiles_generation != Some(generation) {
             self.worker_profiles_generation = Some(generation);
@@ -158,10 +171,14 @@ impl Render for RunPanelView {
         {
             self.expanded_workers_root = None;
         }
-        if self.last_selected != selected || self.reveal_selected {
+        let reveal_worker = self.last_selected != selected || self.reveal_selected;
+        if reveal_worker {
             self.last_selected = selected;
             self.reveal_selected = false;
-            if root.is_some() && self.last_selected.is_some() {
+            if self.expanded_workers_root.is_none()
+                && root.is_some()
+                && self.last_selected.is_some()
+            {
                 self.activity_anchor.scroll_to(window, cx);
             }
         }
@@ -209,6 +226,10 @@ impl Render for RunPanelView {
                     anchor: &self.activity_anchor,
                     saved_profiles: &self.saved_worker_profiles,
                     expanded: self.expanded_workers_root.is_some(),
+                    list: &self.worker_list,
+                    rows: &self.worker_rows,
+                    main_focus: &main_agent_focus,
+                    reveal_selected: reveal_worker,
                 },
                 &super::super::run_panel::RepositoryView {
                     state: &self.changes,
