@@ -93,6 +93,8 @@ impl MockHex {
                         serde_json::from_slice::<Value>(&body).unwrap()["source"],
                         "Farcaster"
                     );
+                } else {
+                    assert!(body.is_empty(), "{path} must not send an unused body");
                 }
                 if status == RESET_CONNECTION {
                     socket2::SockRef::from(reader.get_ref())
@@ -190,7 +192,7 @@ fn release_before_hex_starts_still_finishes_and_returns_raw_text() {
             200,
             json!({"transcript": "  Explain this\n", "durationMs": 250}),
         ),
-        ("POST /dictations/7/cancel", 204, Value::Null),
+        ("GET /capabilities", 200, json!({"serviceCapture": true})),
     ]);
     let mock = MockHex::start(replies);
     let (send, commands) = mpsc::channel();
@@ -201,6 +203,74 @@ fn release_before_hex_starts_still_finishes_and_returns_raw_text() {
     assert!(
         matches!(receiver.try_recv().unwrap(), Event::Transcript(text) if text == "  Explain this\n")
     );
+    // Keep the server open after finish so a redundant cancel fails the test.
+    mock.endpoint
+        .request("GET", "/capabilities", None, Value::Null)
+        .unwrap();
+    mock.server.join().unwrap();
+}
+
+#[test]
+fn capabilities_reset_retries_before_starting_a_recording() {
+    let mut replies = vec![("GET /capabilities", RESET_CONNECTION, Value::Null)];
+    replies.extend(capture_start());
+    replies.push(("POST /dictations/7/cancel", 204, Value::Null));
+    let mock = MockHex::start(replies);
+    let (send, commands) = mpsc::channel();
+    let (updates, receiver) = async_channel::unbounded();
+    send.send(Control::Cancel).unwrap();
+    record_with_endpoint(&mock.endpoint, commands, &updates).unwrap();
+    mock.server.join().unwrap();
+    assert!(matches!(receiver.try_recv().unwrap(), Event::Recording));
+    assert!(receiver.try_recv().is_err());
+    assert_eq!(
+        mock.requests.try_iter().collect::<Vec<_>>(),
+        [
+            "GET /capabilities",
+            "GET /capabilities",
+            "POST /dictations",
+            "POST /dictations/7/cancel",
+        ]
+    );
+}
+
+#[test]
+fn second_capabilities_reset_fails_without_starting_a_recording() {
+    let mock = MockHex::start(vec![
+        ("GET /capabilities", RESET_CONNECTION, Value::Null);
+        2
+    ]);
+    let (_send, commands) = mpsc::channel();
+    let (updates, receiver) = async_channel::unbounded();
+    let error = record_with_endpoint(&mock.endpoint, commands, &updates).unwrap_err();
+    assert!(
+        error.contains("GET /capabilities: Read response"),
+        "{error}"
+    );
+    assert!(!error.contains("test-token"));
+    assert!(receiver.try_recv().is_err());
+    mock.server.join().unwrap();
+    assert_eq!(mock.requests.try_iter().count(), 2);
+}
+
+#[test]
+fn finished_recording_without_a_transcript_is_not_cancelled() {
+    let mut replies = capture_start();
+    replies.extend([
+        ("POST /dictations/7/finish", 200, json!({})),
+        ("GET /capabilities", 200, json!({"serviceCapture": true})),
+    ]);
+    let mock = MockHex::start(replies);
+    let (send, commands) = mpsc::channel();
+    let (updates, receiver) = async_channel::unbounded();
+    send.send(Control::Finish).unwrap();
+    let error = record_with_endpoint(&mock.endpoint, commands, &updates).unwrap_err();
+    assert!(error.contains("did not return a transcript"), "{error}");
+    assert!(matches!(receiver.try_recv().unwrap(), Event::Recording));
+    assert!(receiver.try_recv().is_err());
+    mock.endpoint
+        .request("GET", "/capabilities", None, Value::Null)
+        .unwrap();
     mock.server.join().unwrap();
 }
 
@@ -298,7 +368,6 @@ fn heartbeat_reset_retries_and_keeps_the_recording_until_finish() {
             200,
             json!({"transcript": "kept recording"}),
         ),
-        ("POST /dictations/7/cancel", 204, Value::Null),
     ]);
     let mock = MockHex::start(replies);
     let (send, commands) = mpsc::channel();
@@ -355,25 +424,25 @@ fn second_heartbeat_reset_fails_with_context_and_releases_recording() {
 }
 
 #[test]
-fn heartbeat_http_rejections_are_not_retried() {
-    for status in [401, 409, 500] {
-        let mock = MockHex::start(vec![(
+fn safe_request_http_rejections_are_not_retried() {
+    for (method, path, method_path) in [
+        (
+            "POST",
+            "/dictations/7/heartbeat",
             "POST /dictations/7/heartbeat",
-            status,
-            json!({"code": "rejected"}),
-        )]);
-        let error = mock
-            .endpoint
-            .request(
-                "POST",
-                "/dictations/7/heartbeat",
-                Some("recording-token"),
-                Value::Null,
-            )
-            .unwrap_err();
-        assert!(error.contains(&format!("HTTP {status}")), "{error}");
-        mock.server.join().unwrap();
-        assert_eq!(mock.requests.try_iter().count(), 1);
+        ),
+        ("GET", "/capabilities", "GET /capabilities"),
+    ] {
+        for status in [401, 409, 500] {
+            let mock = MockHex::start(vec![(method_path, status, json!({"code": "rejected"}))]);
+            let error = mock
+                .endpoint
+                .request(method, path, Some("recording-token"), Value::Null)
+                .unwrap_err();
+            assert!(error.contains(&format!("HTTP {status}")), "{error}");
+            mock.server.join().unwrap();
+            assert_eq!(mock.requests.try_iter().count(), 1);
+        }
     }
 }
 

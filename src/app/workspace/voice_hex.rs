@@ -119,16 +119,16 @@ impl Endpoint {
         body: Value,
     ) -> Result<Value, String> {
         let result = self.request_once(method, path, owner, &body);
-        // Heartbeats only renew our existing recording, so replaying one is safe.
+        // Capability reads and renewing our recording are safe to replay.
         // Do not replay start/finish, HTTP rejections, or timeouts that may have
         // already used up the recording lease.
         let result = match result {
             Err(error)
-                if method == "POST"
-                    && path.ends_with("/heartbeat")
+                if ((method == "GET" && path == "/capabilities")
+                    || (method == "POST" && path.ends_with("/heartbeat")))
                     && error.broken_connection() =>
             {
-                zlog::warn!("Hex {method} {path}: {error}; retrying heartbeat once");
+                zlog::warn!("Hex {method} {path}: {error}; retrying once");
                 self.request_once(method, path, owner, &body)
             }
             result => result,
@@ -169,8 +169,13 @@ impl Endpoint {
                 "Invalid Hex connection token".into(),
             ));
         }
-        let body =
-            serde_json::to_vec(body).map_err(|error| RequestError::Response(error.to_string()))?;
+        // Hex reads bodies only for endpoints that accept JSON. Sending "null"
+        // to the others can leave unread bytes when it closes, resetting TCP.
+        let body = if body.is_null() {
+            Vec::new()
+        } else {
+            serde_json::to_vec(body).map_err(|error| RequestError::Response(error.to_string()))?
+        };
         write!(stream, "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n", self.port, self.token, body.len()).map_err(|error| RequestError::Io("Write headers", error))?;
         if let Some(owner) = owner {
             write!(stream, "X-Hex-Dictation-Token: {owner}\r\n")
@@ -258,17 +263,21 @@ fn record_with_endpoint(
     let result = loop {
         match commands.recv_timeout(Duration::from_secs(3)) {
             Ok(Control::Finish) => {
-                let result = endpoint
-                    .request("POST", &format!("{path}/finish"), Some(owner), Value::Null)
-                    .and_then(|reply| {
-                        reply["transcript"]
-                            .as_str()
-                            .map(str::to_owned)
-                            .ok_or("Hex did not return a transcript".into())
-                    });
-                break result.map(|text| {
-                    let _ = updates.send_blocking(Event::Transcript(text));
-                });
+                let reply = match endpoint.request(
+                    "POST",
+                    &format!("{path}/finish"),
+                    Some(owner),
+                    Value::Null,
+                ) {
+                    Ok(reply) => reply,
+                    Err(error) => break Err(error),
+                };
+                // Hex has ended the recording; cancelling it now returns 409.
+                let text = reply["transcript"]
+                    .as_str()
+                    .ok_or("Hex did not return a transcript")?;
+                let _ = updates.send_blocking(Event::Transcript(text.to_owned()));
+                return Ok(());
             }
             Ok(Control::Cancel) | Err(RecvTimeoutError::Disconnected) => break Ok(()),
             Err(RecvTimeoutError::Timeout) => {
