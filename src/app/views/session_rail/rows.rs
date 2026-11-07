@@ -727,7 +727,7 @@ pub(super) fn session_status_icon(identity: &str, status: Option<RunStatus>) -> 
 pub(super) fn run_status_visual(status: RunStatus) -> Option<(AppIcon, Rgba)> {
     match status {
         RunStatus::Invalid => None,
-        RunStatus::Done => Some((AppIcon::CheckCircle, theme().colors.indicator)),
+        RunStatus::Done => Some((AppIcon::CheckCircle, theme().colors.success)),
         RunStatus::NeedsInput => Some((AppIcon::WarningCircle, theme().colors.warning)),
         RunStatus::Waiting => Some((AppIcon::Hourglass, theme().colors.indicator)),
         RunStatus::Failed => Some((AppIcon::XCircle, theme().colors.error)),
