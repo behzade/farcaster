@@ -692,6 +692,130 @@ fn invalid_permission_request_is_rejected_without_a_prompt() {
     session.close().expect("close fixture");
 }
 
+fn mcp_confirmation_request() -> CodexInbound {
+    CodexInbound::ServerRequest {
+        id: CodexRequestId::String("mcp-approval".into()),
+        method: "mcpServer/elicitation/request".into(),
+        params: json!({"threadId":"thread-1", "turnId":"turn-1", "serverName":"node_repl",
+            "mode":"form", "message":"Allow Computer Use to use Farcaster?",
+            "requestedSchema":{"type":"object","properties":{}},
+            "_meta":{"tool_name":"get_app_state","tool_params":{"app":"io.github.behzade.farcaster.dev"}}}),
+    }
+}
+
+#[test]
+fn mcp_confirmation_waits_for_a_user_choice_and_preserves_native_replies() {
+    use std::io::BufRead as _;
+    let (mut session, mut sent) = writable_test_session();
+    for (value, cancel, action) in [
+        (Some("Allow"), false, "accept"),
+        (Some("Decline"), false, "decline"),
+        (Some("Allow"), true, "cancel"),
+        (None, false, "decline"),
+    ] {
+        session
+            .queued_inbound
+            .push_back(Ok(mcp_confirmation_request()));
+        let Some(WorkerEvent::NeedsInput(input)) = session.poll() else {
+            panic!("missing MCP prompt")
+        };
+        assert!(
+            input
+                .prompt
+                .contains("Allow Computer Use to use Farcaster?")
+        );
+        assert!(input.prompt.contains("io.github.behzade.farcaster.dev"));
+        assert_eq!(session.pending_inputs.len(), 1);
+        session
+            .respond(WorkerInputResponse {
+                id: input.id,
+                value: value.map(str::to_owned),
+                cancel,
+            })
+            .expect("reply");
+        let mut line = String::new();
+        sent.read_line(&mut line).expect("native reply");
+        let reply: Value = serde_json::from_str(&line).expect("JSON reply");
+        assert_eq!(
+            reply,
+            json!({"id":"mcp-approval","result":{
+                "action":action,"content":if action == "accept" { json!({}) } else { Value::Null }
+            }})
+        );
+        assert!(session.pending_inputs.is_empty());
+        assert!(matches!(
+            session.poll(),
+            Some(WorkerEvent::InputResolved { .. })
+        ));
+    }
+    session.close().expect("close fixture");
+}
+
+#[test]
+fn mcp_confirmation_rejects_other_threads_and_forms_that_need_values() {
+    use std::io::BufRead as _;
+    let (mut session, mut sent) = writable_test_session();
+    for other_thread in [false, true] {
+        let CodexInbound::ServerRequest {
+            id,
+            method,
+            mut params,
+        } = mcp_confirmation_request()
+        else {
+            unreachable!()
+        };
+        if other_thread {
+            params["threadId"] = json!("other-thread");
+        } else {
+            params["requestedSchema"]["properties"] = json!({"name":{"type":"string"}});
+        }
+        session
+            .queued_inbound
+            .push_back(Ok(CodexInbound::ServerRequest { id, method, params }));
+        assert_eq!(session.poll(), None);
+        assert!(session.pending_inputs.is_empty());
+        let mut line = String::new();
+        sent.read_line(&mut line).expect("rejection");
+        let response: Value = serde_json::from_str(&line).expect("native error");
+        assert_eq!(response["error"]["code"], -32602);
+        assert!(response.get("result").is_none());
+    }
+    session.close().expect("close fixture");
+}
+
+#[test]
+fn mcp_confirmation_sends_nothing_before_a_choice_or_after_resolution() {
+    use std::io::Read as _;
+    let (mut session, mut sent) = writable_test_session();
+    session
+        .queued_inbound
+        .push_back(Ok(mcp_confirmation_request()));
+    let Some(WorkerEvent::NeedsInput(input)) = session.poll() else {
+        panic!("missing MCP prompt")
+    };
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "serverRequest/resolved".into(),
+            params: json!({"threadId":"thread-1","requestId":"mcp-approval"}),
+        }));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::InputResolved { .. })
+    ));
+    session
+        .respond(WorkerInputResponse {
+            id: input.id,
+            value: Some("Allow".into()),
+            cancel: false,
+        })
+        .expect("ignore stale answer");
+    session.close().expect("close fixture");
+    let mut output = String::new();
+    sent.read_to_string(&mut output).expect("read transport");
+    assert!(output.is_empty(), "unexpected approval: {output}");
+}
+
 #[test]
 fn approval_replies_preserve_numeric_and_string_request_ids() {
     use std::io::BufRead as _;

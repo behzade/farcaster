@@ -7,6 +7,98 @@ const FIXTURES: &str =
     include_str!("../../../../../crates/claude-sdk-types/fixtures/protocol.json");
 const TEST_SESSION_ID: &str = "00000000-0000-4000-8000-000000000001";
 
+fn mcp_confirmation_frame() -> Value {
+    json!({"type":"control_request","request_id":"mcp-confirmation","request":{
+        "subtype":"elicitation","mcp_server_name":"desktop-tools",
+        "message":"Allow Computer Use to use Farcaster?", "mode":"form",
+        "requested_schema":{"type":"object","properties":{}}
+    }})
+}
+
+#[test]
+fn mcp_confirmation_round_trip_requires_the_user_and_keeps_each_outcome() {
+    for (value, cancel, action) in [
+        (Some("Allow"), false, "accept"),
+        (Some("Decline"), false, "decline"),
+        (Some("Allow"), true, "cancel"),
+    ] {
+        let (directory, command) = setup();
+        let mut session = session(&command, directory.path());
+        session
+            .receive(decode(mcp_confirmation_frame()).expect("native elicitation"))
+            .expect("receive");
+        let events = until(&mut session, |event| {
+            matches!(event, WorkerEvent::NeedsInput(_))
+        });
+        let Some(WorkerEvent::NeedsInput(input)) = events.last() else {
+            panic!("missing MCP approval")
+        };
+        assert!(
+            input
+                .prompt
+                .contains("Allow Computer Use to use Farcaster?")
+        );
+        assert!(input.prompt.contains("desktop-tools"));
+        let path = directory.path().join("claude-fixture.requests");
+        assert!(
+            !std::fs::read_to_string(&path)
+                .expect("requests")
+                .contains("mcp-confirmation")
+        );
+        session
+            .respond(WorkerInputResponse {
+                id: input.id.clone(),
+                value: value.map(str::to_owned),
+                cancel,
+            })
+            .expect("user reply");
+        let requests = requests_until(&path, "mcp-confirmation");
+        let reply = requests
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .find(|frame| frame["response"]["request_id"] == "mcp-confirmation")
+            .expect("native response");
+        assert_eq!(
+            reply["response"]["response"],
+            json!({
+                "action":action,"content":if action == "accept" { json!({}) } else { Value::Null }
+            })
+        );
+        assert!(session.permissions.is_empty());
+        session.close().expect("close fixture");
+    }
+}
+
+#[test]
+fn mcp_confirmation_cancellation_removes_the_dialog_and_ignores_late_answers() {
+    let (directory, command) = setup();
+    let mut session = session(&command, directory.path());
+    session
+        .receive(decode(mcp_confirmation_frame()).expect("native elicitation"))
+        .expect("receive");
+    until(&mut session, |event| {
+        matches!(event, WorkerEvent::NeedsInput(_))
+    });
+    session
+        .receive(
+            decode(json!({"type":"control_cancel_request","request_id":"mcp-confirmation"}))
+                .expect("native cancel"),
+        )
+        .expect("cancel");
+    assert!(
+        matches!(session.poll(),Some(WorkerEvent::InputResolved {id}) if id == "mcp-confirmation")
+    );
+    session.process.close().expect("close transport");
+    session
+        .respond(WorkerInputResponse {
+            id: "mcp-confirmation".into(),
+            value: Some("Allow".into()),
+            cancel: false,
+        })
+        .expect("ignore stale answer");
+    session.close().expect("close fixture");
+}
+
 #[test]
 fn closed_session_still_observes_native_process_exit() {
     let (directory, command) = setup();

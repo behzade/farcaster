@@ -509,6 +509,28 @@ impl ClaudeSession {
         let id = string(frame, "request_id");
         let request = &frame["request"];
         match string(request,"subtype") {
+            "elicitation" => {
+                let prompt = super::super::mcp_confirmation::prompt(
+                    string(request, "mcp_server_name"),
+                    string(request, "message"),
+                    request["mode"].as_str().unwrap_or("form"),
+                    &request["requested_schema"],
+                    &request["_meta"],
+                );
+                match prompt {
+                    Ok(prompt) => {
+                        self.permissions.insert(id.into(), request.clone());
+                        self.events.pending.push_back(WorkerEvent::NeedsInput(WorkerInput {
+                            id: id.into(), prompt,
+                            options: vec!["Decline".into(), "Allow".into()], secret: false,
+                        }));
+                        Ok(())
+                    }
+                    Err(error) => self.process.reply(decode(json!({"type":"control_response", "response":{
+                        "subtype":"error", "request_id":id, "error":error,
+                    }}))?),
+                }
+            }
             "can_use_tool" => {
                 if request["requires_user_interaction"] == true || request["tool_name"] == "AskUserQuestion" {
                     return self.permission(id, request, false);
@@ -555,7 +577,12 @@ impl ClaudeSession {
         match string(&frame, "type") {
             "control_request" => self.control(&frame)?,
             "control_cancel_request" => {
-                self.permissions.remove(string(&frame, "request_id"));
+                let id = string(&frame, "request_id");
+                if self.permissions.remove(id).is_some() {
+                    self.events
+                        .pending
+                        .push_back(WorkerEvent::InputResolved { id: id.into() });
+                }
             }
             "control_response" => {
                 let response = &frame["response"];
@@ -778,17 +805,22 @@ impl WorkerSession for ClaudeSession {
         )
     }
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String> {
-        let request = self
-            .permissions
-            .get(&response.id)
-            .ok_or("Claude permission request expired")?
-            .clone();
-        self.permission(
-            &response.id,
-            &request,
-            !response.cancel && response.value.as_deref() == Some("Allow"),
-        )?;
+        let Some(request) = self.permissions.get(&response.id).cloned() else {
+            return Ok(());
+        };
+        let accepted = !response.cancel && response.value.as_deref() == Some("Allow");
+        if request["subtype"] == "elicitation" {
+            self.reply(
+                &response.id,
+                super::super::mcp_confirmation::reply(accepted, response.cancel),
+            )?;
+        } else {
+            self.permission(&response.id, &request, accepted)?;
+        }
         self.permissions.remove(&response.id);
+        self.events
+            .pending
+            .push_back(WorkerEvent::InputResolved { id: response.id });
         Ok(())
     }
     fn abort(&mut self) -> Result<(), String> {

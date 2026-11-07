@@ -764,9 +764,15 @@ struct Handoff {
 
 struct PendingApproval {
     id: CodexRequestId,
-    permissions: Option<Value>,
+    reply: ApprovalReply,
     thread_id: String,
     turn_id: Option<String>,
+}
+
+enum ApprovalReply {
+    Decision,
+    Permissions(Value),
+    McpConfirmation,
 }
 
 struct CodexWorkerSession {
@@ -930,12 +936,17 @@ impl WorkerSession for CodexWorkerSession {
                     "yes" | "true" | "allow" | "accept" | "accepted"
                 )
             });
-        let result = match &approval.permissions {
-            Some(permissions) => json!({
+        let result = match &approval.reply {
+            ApprovalReply::Permissions(permissions) => json!({
                 "permissions": if accepted { permissions.clone() } else { json!({}) },
                 "scope": "turn",
             }),
-            None => json!({"decision": if accepted { "accept" } else { "decline" }}),
+            ApprovalReply::Decision => {
+                json!({"decision": if accepted { "accept" } else { "decline" }})
+            }
+            ApprovalReply::McpConfirmation => {
+                super::super::mcp_confirmation::reply(accepted, response.cancel)
+            }
         };
         let encoded = encode_response(&approval.id, result)?;
         let writer = self
@@ -2091,6 +2102,7 @@ impl CodexWorkerSession {
                         | CodexMethod::CommandApproval
                         | CodexMethod::FileChangeApproval
                         | CodexMethod::PermissionsApproval
+                        | CodexMethod::McpElicitation
                         | CodexMethod::RequestUserInput => log_bad_codex_notification(
                             method_name,
                             &params,
@@ -2118,7 +2130,7 @@ impl CodexWorkerSession {
                             }
                         }
                     }
-                    if !method.is_approval_request() {
+                    if method != CodexMethod::McpElicitation && !method.is_approval_request() {
                         zlog::warn!(
                             "Unsupported Codex server request was not mapped: id={id:?} method={} params={params}",
                             method_name,
@@ -2131,28 +2143,23 @@ impl CodexWorkerSession {
                         }
                         continue;
                     }
-                    let permissions = if method == CodexMethod::PermissionsApproval {
-                        let Some(permissions) = params.get("permissions").filter(|p| p.is_object())
-                        else {
-                            if let Err(error) = self.reject_server_request(
-                                &id,
-                                -32602,
-                                "Codex permission request is missing a permissions object",
-                            ) {
-                                return Some(WorkerEvent::Failed(error));
+                    let (prompt, reply) =
+                        match approval_request(method_name, &params, &self.thread_id) {
+                            Ok(approval) => approval,
+                            Err(message) => {
+                                if let Err(error) = self.reject_server_request(&id, -32602, message)
+                                {
+                                    return Some(WorkerEvent::Failed(error));
+                                }
+                                continue;
                             }
-                            continue;
                         };
-                        Some(permissions.clone())
-                    } else {
-                        None
-                    };
                     let input_id = input_id(&id);
                     self.pending_inputs.insert(
                         input_id.clone(),
                         PendingApproval {
                             id,
-                            permissions,
+                            reply,
                             thread_id: params["threadId"]
                                 .as_str()
                                 .unwrap_or(&self.thread_id)
@@ -2162,7 +2169,7 @@ impl CodexWorkerSession {
                     );
                     return Some(WorkerEvent::NeedsInput(WorkerInput {
                         id: input_id,
-                        prompt: approval_prompt(method_name, &params),
+                        prompt,
                         options: vec!["Allow".into(), "Decline".into()],
                         secret: false,
                     }));
@@ -3322,21 +3329,46 @@ fn codex_tool_end(params: &Value) -> Option<WorkerActivity> {
     })
 }
 
-fn approval_prompt(method: &str, params: &Value) -> String {
+fn approval_request(
+    method: &str,
+    params: &Value,
+    thread_id: &str,
+) -> Result<(String, ApprovalReply), &'static str> {
+    if CodexMethod::parse(method) == CodexMethod::McpElicitation {
+        if params["threadId"].as_str() != Some(thread_id) {
+            return Err("MCP confirmation belongs to another thread");
+        }
+        let prompt = super::super::mcp_confirmation::prompt(
+            params["serverName"].as_str().unwrap_or_default(),
+            params["message"].as_str().unwrap_or_default(),
+            params["mode"].as_str().unwrap_or_default(),
+            &params["requestedSchema"],
+            &params["_meta"],
+        )?;
+        return Ok((prompt, ApprovalReply::McpConfirmation));
+    }
     if CodexMethod::parse(method) == CodexMethod::PermissionsApproval {
+        let permissions = params
+            .get("permissions")
+            .filter(|p| p.is_object())
+            .ok_or("Codex permission request is missing a permissions object")?;
         let reason = params["reason"]
             .as_str()
             .unwrap_or("Additional access requested");
         let cwd = params["cwd"].as_str().unwrap_or("unknown directory");
-        return format!(
-            "{reason}\nWorking directory: {cwd}\nRequested permissions (this turn only):\n{:#}",
-            params["permissions"]
-        );
+        return Ok((
+            format!(
+                "{reason}\nWorking directory: {cwd}\nRequested permissions (this turn only):\n{:#}",
+                permissions
+            ),
+            ApprovalReply::Permissions(permissions.clone()),
+        ));
     }
-    params["command"]
+    let prompt = params["command"]
         .as_str()
         .or_else(|| params["reason"].as_str())
-        .map_or_else(|| method.to_owned(), |detail| format!("{method}\n{detail}"))
+        .map_or_else(|| method.to_owned(), |detail| format!("{method}\n{detail}"));
+    Ok((prompt, ApprovalReply::Decision))
 }
 
 #[cfg(test)]

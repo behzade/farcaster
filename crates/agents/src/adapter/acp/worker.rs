@@ -461,6 +461,7 @@ struct Handoff {
 }
 
 enum PendingInputKind {
+    McpConfirmation,
     Permission {
         option_ids: HashMap<String, String>,
         allow_option: Option<String>,
@@ -894,6 +895,34 @@ impl AcpWorkerSession {
         }))
     }
 
+    fn mcp_confirmation(&mut self, id: &AcpRequestId, params: &Value) -> Option<WorkerEvent> {
+        if params["sessionId"].as_str() != Some(&self.session_id) {
+            return None;
+        }
+        let prompt = super::super::mcp_confirmation::prompt(
+            self.profile.name,
+            params["message"].as_str()?,
+            params["mode"].as_str()?,
+            &params["requestedSchema"],
+            &params["_meta"],
+        )
+        .ok()?;
+        let input_id = id.to_string();
+        self.pending_inputs.insert(
+            input_id.clone(),
+            PendingInput {
+                request: id.clone(),
+                kind: PendingInputKind::McpConfirmation,
+            },
+        );
+        Some(WorkerEvent::NeedsInput(WorkerInput {
+            id: input_id,
+            prompt,
+            options: vec!["Decline".into(), "Allow".into()],
+            secret: false,
+        }))
+    }
+
     fn cursor_request(
         &mut self,
         id: &AcpRequestId,
@@ -1226,6 +1255,10 @@ impl WorkerSession for AcpWorkerSession {
             .ok_or_else(|| format!("unknown ACP interaction: {}", response.id))?;
         let PendingInput { request, kind } = pending;
         let result = match kind {
+            PendingInputKind::McpConfirmation => super::super::mcp_confirmation::reply(
+                response.value.as_deref() == Some("Allow"),
+                response.cancel,
+            ),
             PendingInputKind::Permission {
                 option_ids,
                 allow_option,
@@ -1612,6 +1645,12 @@ impl WorkerSession for AcpWorkerSession {
                     }
                 }
                 Ok(AcpInbound::AgentRequest { id, method, params }) => {
+                    if method == "elicitation/create"
+                        && let Some(event) = self.mcp_confirmation(&id, &params)
+                    {
+                        self.acknowledge_current_prompt_started();
+                        return Some(event);
+                    }
                     if method == "session/request_permission"
                         && let Some(event) = self.permission_request(&id, &params)
                     {

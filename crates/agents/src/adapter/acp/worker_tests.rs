@@ -2580,6 +2580,49 @@ fn acp_permission_request_proves_prompt_admission() {
     assert_eq!(session.poll_prompt_ack(), Some(("prompt".into(), Ok(()))));
 }
 
+#[cfg(unix)]
+#[test]
+fn mcp_confirmation_is_shown_and_keeps_the_request_pending() {
+    let mut session = inert_session();
+    track_inert_submission(&mut session, "prompt");
+    session
+        .connection
+        .restore_queued(VecDeque::from([AcpInbound::AgentRequest {
+            id: AcpRequestId::Number(2),
+            method: "elicitation/create".into(),
+            params: json!({"sessionId":"one","mode":"form","message":"Allow desktop access?",
+            "requestedSchema":{"type":"object","properties":{}}}),
+        }]));
+    let Some(WorkerEvent::NeedsInput(input)) = session.poll() else {
+        panic!("missing MCP prompt")
+    };
+    assert!(input.prompt.contains("Allow desktop access?"));
+    assert_eq!(input.options, ["Decline", "Allow"]);
+    assert!(matches!(
+        session.pending_inputs[&input.id].kind,
+        PendingInputKind::McpConfirmation
+    ));
+    assert_eq!(session.poll_prompt_ack(), Some(("prompt".into(), Ok(()))));
+}
+
+#[cfg(unix)]
+#[test]
+fn mcp_confirmation_does_not_bind_a_different_acp_session() {
+    let mut session = inert_session();
+    assert!(
+        session
+            .mcp_confirmation(
+                &AcpRequestId::Number(2),
+                &json!({
+                    "sessionId":"other", "mode":"form","message":"Allow?",
+                    "requestedSchema":{"type":"object","properties":{}}
+                })
+            )
+            .is_none()
+    );
+    assert!(session.pending_inputs.is_empty());
+}
+
 #[test]
 fn acp_pre_execution_rejection_is_request_local() {
     let mut session = inert_session();

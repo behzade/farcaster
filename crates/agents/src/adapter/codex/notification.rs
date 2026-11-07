@@ -44,6 +44,7 @@ pub(super) enum CodexMethod<'a> {
     CommandApproval,
     FileChangeApproval,
     PermissionsApproval,
+    McpElicitation,
     RequestUserInput,
     Unknown(&'a str),
 }
@@ -91,6 +92,7 @@ impl<'a> CodexMethod<'a> {
             }
             "item/fileChange/requestApproval" | "applyPatchApproval" => Self::FileChangeApproval,
             "item/permissions/requestApproval" => Self::PermissionsApproval,
+            "mcpServer/elicitation/request" => Self::McpElicitation,
             "item/tool/requestUserInput" => Self::RequestUserInput,
             _ => Self::Unknown(method),
         }

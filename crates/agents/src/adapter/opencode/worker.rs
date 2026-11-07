@@ -591,6 +591,7 @@ impl ActiveOpenCodeTool {
 }
 
 enum PendingOpenCodeInput {
+    Confirmation,
     Permission {
         session_id: String,
     },
@@ -1407,6 +1408,23 @@ impl OpenCodeWorkerSession {
                         log_bad_opencode_event(&event, "form has no fields");
                         continue;
                     };
+                    if fields.is_empty() {
+                        if form["title"]
+                            .as_str()
+                            .is_none_or(|title| title.trim().is_empty())
+                        {
+                            log_bad_opencode_event(&event, "confirmation is missing its prompt");
+                            continue;
+                        }
+                        self.pending_inputs
+                            .insert(id.clone(), PendingOpenCodeInput::Confirmation);
+                        return Some(WorkerEvent::NeedsInput(WorkerInput {
+                            id,
+                            prompt: opencode_form_prompt(form, form),
+                            options: vec!["Decline".into(), "Allow".into()],
+                            secret: false,
+                        }));
+                    }
                     let Some(field) = fields.first() else {
                         log_bad_opencode_event(&event, "form has no fields");
                         continue;
@@ -1580,6 +1598,13 @@ impl WorkerSession for OpenCodeWorkerSession {
             .ok_or_else(|| format!("unknown OpenCode interaction: {}", response.id))?;
         let mut client = self.server.client();
         match pending {
+            PendingOpenCodeInput::Confirmation => {
+                if response.cancel || response.value.as_deref() != Some("Allow") {
+                    client.cancel_form(&self.session_id, &response.id)
+                } else {
+                    client.reply_form(&self.session_id, &response.id, json!({}))
+                }
+            }
             PendingOpenCodeInput::Permission { session_id } => {
                 let reply = opencode_permission_reply(response.value.as_deref(), response.cancel)?;
                 client.reply_permission(&session_id, &response.id, reply)

@@ -20,6 +20,7 @@ mod live_input_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod live_tests;
 mod main_session;
+mod mcp_confirmation;
 #[allow(dead_code)]
 mod opencode;
 mod pi;

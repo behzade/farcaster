@@ -3,6 +3,156 @@ use crate::Backend;
 use serde_json::json;
 
 #[test]
+fn empty_native_form_waits_for_a_choice_even_in_full_access_mode() -> Result<(), String> {
+    use std::{
+        io::{Read as _, Write as _},
+        net::TcpListener,
+        thread,
+    };
+    for (value, cancel, endpoint) in [
+        (Some("Allow"), false, "reply"),
+        (Some("Decline"), false, "cancel"),
+        (Some("Allow"), true, "cancel"),
+        (None, false, "cancel"),
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
+        let address = listener.local_addr().map_err(|error| error.to_string())?;
+        let child = std::process::Command::new("sh")
+            .args([
+                "-c",
+                &format!("printf '{{\"url\":\"http://{address}\"}}\\n'; cat"),
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        let server = OpenCodeServerProcess::attach(child, "opencode", "test-password")?;
+        let (sender, incoming) = mpsc::channel();
+        let caller_identity = crate::CallerRegistry::shared().issue(
+            std::path::Path::new("/project"),
+            crate::core::CallerProfile {
+                backend: Backend::OpenCode,
+                provider: None,
+                model: None,
+                effort: None,
+            },
+            None,
+        );
+        let mut worker = OpenCodeWorkerSession {
+            catalog_directory: None,
+            caller_identity,
+            server,
+            session_id: "session-1".into(),
+            provider: None,
+            model: None,
+            effort: None,
+            effort_catalog: HashMap::new(),
+            commands: HashSet::new(),
+            access_mode: crate::HarnessAccessMode::Full,
+            incoming,
+            reasoning_started: false,
+            text_streams: HashMap::new(),
+            reasoning_streams: HashMap::new(),
+            usage: OpenCodeUsageTracker::default(),
+            context_window: 0,
+            pending_inputs: HashMap::new(),
+            context_windows: HashMap::new(),
+            pending_deliveries: HashMap::new(),
+            delivered_awaiting_execution: HashSet::new(),
+            active_tools: HashMap::new(),
+            generation: 0,
+            completions: None,
+            turn_active: false,
+            steering_interrupts: 0,
+            ignore_execution_events: false,
+            abort_waiting_for_start: false,
+            wake: None,
+            pending: VecDeque::new(),
+        };
+        sender
+            .send(Ok(super::super::contract::OpenCodeEvent {
+                id: None,
+                event: Some("form.created".into()),
+                data: json!({"sessionID":"session-1","form":{
+                    "id":"desktop-approval","title":"Allow desktop access?",
+                    "description":"Read the Farcaster window","fields":[]
+                }}),
+            }))
+            .map_err(|error| error.to_string())?;
+        let Some(WorkerEvent::NeedsInput(input)) = worker.poll_native_event() else {
+            panic!("confirmation was dropped")
+        };
+        assert_eq!(
+            input.prompt,
+            "Allow desktop access?\n\nRead the Farcaster window"
+        );
+        assert_eq!(input.options, ["Decline", "Allow"]);
+        listener
+            .set_nonblocking(true)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            listener
+                .accept()
+                .expect_err("no automatic approval request")
+                .kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        listener
+            .set_nonblocking(false)
+            .map_err(|error| error.to_string())?;
+        let peer = thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("native reply");
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                .expect("timeout");
+            use std::io::BufRead as _;
+            let mut reader = std::io::BufReader::new(stream);
+            let mut request = String::new();
+            while !request.ends_with("\r\n\r\n") {
+                assert!(reader.read_line(&mut request).expect("headers") > 0);
+            }
+            let headers = request;
+            assert!(
+                headers.starts_with(&format!(
+                    "POST /api/session/session-1/form/desktop-approval/{endpoint} "
+                )),
+                "{headers}"
+            );
+            let length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().expect("length"))
+                })
+                .unwrap_or(0);
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body).expect("body");
+            if endpoint == "reply" {
+                assert_eq!(
+                    serde_json::from_slice::<Value>(&body).expect("JSON body"),
+                    json!({"answer":{}})
+                );
+            }
+            reader
+                .get_mut()
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+                .expect("reply");
+        });
+        worker.respond(WorkerInputResponse {
+            id: input.id,
+            value: value.map(str::to_owned),
+            cancel,
+        })?;
+        peer.join().expect("native peer");
+        assert!(worker.pending_inputs.is_empty());
+        worker.server.terminate()?;
+    }
+    Ok(())
+}
+
+#[test]
 fn shared_queue_plugin_preserves_existing_plugins_and_configuration() {
     let mut command = std::process::Command::new("opencode");
     command.env(

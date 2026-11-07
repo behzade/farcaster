@@ -106,6 +106,10 @@ mod exchange {
             let request = self.read();
             assert_eq!(request["method"], "initialize");
             assert_eq!(request["params"]["clientCapabilities"]["terminal"], false);
+            assert_eq!(
+                request["params"]["clientCapabilities"]["elicitation"],
+                json!({"form":{}})
+            );
             self.reply(
                 &request,
                 json!({
@@ -185,6 +189,65 @@ mod exchange {
             .notify("session/cancel", json!({"sessionId":"one"}))
             .expect("test operation should succeed");
         peer.join().expect("test operation should succeed");
+    }
+
+    #[test]
+    fn mcp_confirmation_native_transport_preserves_all_choices() {
+        for (accepted, cancel, action) in [
+            (true, false, "accept"),
+            (false, false, "decline"),
+            (true, true, "cancel"),
+        ] {
+            let (finish, finished) = mpsc::channel();
+            let (connection, peer) = connect(move |mut peer| {
+                peer.initialize();
+                let prompt = peer.read();
+                peer.write(json!({"jsonrpc":"2.0","id":"desktop-approval","method":"elicitation/create","params":{
+                    "sessionId":"one","mode":"form","message":"Allow desktop access?",
+                    "requestedSchema":{"type":"object","properties":{}}
+                }}));
+                let answer = peer.read();
+                assert_eq!(answer["id"], "desktop-approval");
+                assert_eq!(answer["result"]["action"], action);
+                assert_eq!(
+                    answer["result"]["content"],
+                    if action == "accept" {
+                        json!({})
+                    } else {
+                        Value::Null
+                    }
+                );
+                peer.reply(&prompt, json!({"stopReason":"end_turn"}));
+                finished
+                    .recv_timeout(Duration::from_secs(3))
+                    .expect("release test peer");
+            });
+            connection.initialize(&PROFILE).expect("initialize");
+            let prompt = connection
+                .send_request("session/prompt", json!({"sessionId":"one","prompt":[]}))
+                .expect("prompt");
+            let AcpInbound::AgentRequest { id, method, params } =
+                next(&connection).expect("request")
+            else {
+                panic!("missing native confirmation")
+            };
+            assert_eq!(method, "elicitation/create");
+            assert_eq!(
+                params["requestedSchema"],
+                json!({"type":"object","properties":{}})
+            );
+            connection
+                .respond(
+                    &id,
+                    crate::adapter::mcp_confirmation::reply(accepted, cancel),
+                )
+                .expect("reply");
+            assert!(
+                matches!(next(&connection).expect("result"),AcpInbound::Response {id,..} if id == prompt)
+            );
+            finish.send(()).expect("finish");
+            peer.join().expect("native peer");
+        }
     }
 
     #[test]

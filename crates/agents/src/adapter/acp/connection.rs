@@ -143,6 +143,7 @@ impl AcpConnection {
                 "_meta": {"parameterizedModelPicker": profile.backend == Backend::Cursor},
                 "fs": {"readTextFile": false, "writeTextFile": false},
                 "terminal": false,
+                "elicitation": {"form": {}},
             },
             "clientInfo": {"name": "farcaster", "title": "Farcaster", "version": env!("CARGO_PKG_VERSION")},
         }))?;
