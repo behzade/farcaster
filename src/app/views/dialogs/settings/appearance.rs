@@ -119,7 +119,7 @@ fn theme_list(themes: &ThemeSettings, entity: WeakEntity<FarcasterApp>) -> AnyEl
                         .when(!active, |row| {
                             row.hover(|row| row.bg(theme().colors.surface))
                         })
-                        .focus_visible(|row| row.border_color(theme().colors.accent))
+                        .focus_visible(|row| row.border_color(theme().colors.focus_border))
                         .on_click(move |_, window, cx| {
                             if !active {
                                 let _ = select.update(cx, |this, cx| {

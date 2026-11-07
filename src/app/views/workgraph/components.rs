@@ -142,7 +142,7 @@ fn render_plan_row(
         .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.select_node(number, cx)))
         .border_l(theme().size(2.0))
         .border_color(if is_selected {
-            theme().colors.accent
+            theme().colors.indicator
         } else {
             theme().colors.panel
         })
@@ -168,7 +168,7 @@ fn render_plan_row(
                 .text_color(if row.reached {
                     theme().colors.success
                 } else if row.current {
-                    theme().colors.accent
+                    theme().colors.indicator
                 } else {
                     theme().colors.subtle
                 })
@@ -211,7 +211,7 @@ fn render_plan_row(
                         .text_size(theme().type_scale.caption)
                         .text_color(theme().colors.subtle)
                         .when(row.current, |meta| {
-                            meta.child(div().text_color(theme().colors.accent).child("Current"))
+                            meta.child(div().text_color(theme().colors.indicator).child("Current"))
                         })
                         .when(row.detached, |meta| meta.child("Detached"))
                         .when(!row.node.files.is_empty(), |meta| {

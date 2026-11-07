@@ -99,7 +99,7 @@ fn worker_notice_control(count: usize, entity: WeakEntity<FarcasterApp>) -> impl
         .focus_visible(|control| {
             control
                 .border(theme().border)
-                .border_color(theme().colors.accent)
+                .border_color(theme().colors.focus_border)
                 .text_color(theme().colors.text)
         })
         .child(app_icon(IconName::Inbox, AppIconSize::Control))

@@ -93,6 +93,8 @@ impl RenderOnce for QueueMessageRow {
                             .flex_1()
                             .min_w_0()
                             .min_h(theme().layout.status_row_height)
+                            .border_l(theme().border)
+                            .border_color(gpui::rgba(0x00000000))
                             .flex()
                             .items_center()
                             .when(expandable, |preview| {
@@ -103,7 +105,10 @@ impl RenderOnce for QueueMessageRow {
                                     .tab_index(0)
                                     .cursor_pointer()
                                     .hover(|row| row.text_color(theme().colors.text))
-                                    .focus_visible(|row| row.bg(theme().colors.highlight))
+                                    .focus_visible(|row| {
+                                        row.bg(theme().colors.highlight)
+                                            .border_color(theme().colors.focus_border)
+                                    })
                                     .on_mouse_down(MouseButton::Left, preserve_pointer_focus)
                                     .on_click(move |_, _, cx| {
                                         cx.stop_propagation();

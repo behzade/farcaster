@@ -47,12 +47,12 @@ pub(super) fn conversation_row(id: impl Into<ElementId>, selected: bool) -> gpui
                     .top(theme().space.xs)
                     .bottom(theme().space.xs)
                     .w(theme().size(2.0))
-                    .bg(theme().colors.accent),
+                    .bg(theme().colors.indicator),
             )
         })
         .focus(|row| {
             row.border(theme().border)
-                .border_color(theme().colors.accent)
+                .border_color(theme().colors.focus_border)
         })
         .cursor_pointer()
 }
@@ -135,7 +135,12 @@ impl FarcasterApp {
             .py(theme().size(3.0))
             .flex()
             .items_stretch()
-            .focus(|card| card.bg(theme().colors.highlight))
+            .border_l(theme().border)
+            .border_color(gpui::rgba(0x00000000))
+            .focus(|card| {
+                card.bg(theme().colors.highlight)
+                    .border_color(theme().colors.focus_border)
+            })
             .cursor_pointer()
             .on_click(move |_, window, cx| {
                 let _ = entity.update(cx, |this, cx| {

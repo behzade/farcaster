@@ -300,12 +300,12 @@ fn candidate_row(
                     .top(theme().space.xs)
                     .bottom(theme().space.xs)
                     .w(theme().size(2.0))
-                    .bg(theme().colors.accent),
+                    .bg(theme().colors.indicator),
             )
         })
         .focus(|row| {
             row.border(theme().border)
-                .border_color(theme().colors.accent)
+                .border_color(theme().colors.focus_border)
         })
         .cursor(CursorStyle::PointingHand)
         .on_click(move |_, _, cx| {
@@ -420,7 +420,7 @@ fn selection_checkbox(
                 .when(selected, |checkbox| {
                     checkbox.bg(theme().colors.accent).child(
                         app_icon(AppIcon::Check, AppIconSize::Inline)
-                            .text_color(theme().colors.surface),
+                            .text_color(theme().colors.canvas),
                     )
                 }),
         )

@@ -320,12 +320,17 @@ impl FarcasterApp {
                 .h(theme().size(24.0))
                 .px(theme().space.xs)
                 .rounded(theme().radius)
+                .border_l(theme().border)
+                .border_color(gpui::rgba(0x00000000))
                 .flex()
                 .items_center()
                 .gap(theme().space.xs)
                 .hover(|row| row.bg(theme().colors.highlight))
                 .when(selected, |row| row.bg(theme().colors.highlight))
-                .focus(|row| row.bg(theme().colors.highlight))
+                .focus(|row| {
+                    row.bg(theme().colors.highlight)
+                        .border_color(theme().colors.focus_border)
+                })
                 .cursor_pointer()
                 .on_click(move |event, window, cx| {
                     let _ = click_entity.update(cx, |this, cx| {
@@ -387,7 +392,7 @@ impl FarcasterApp {
                             .when(selected, |checkbox| {
                                 checkbox.bg(theme().colors.accent).child(
                                     app_icon(AppIcon::Check, AppIconSize::Inline)
-                                        .text_color(theme().colors.surface),
+                                        .text_color(theme().colors.canvas),
                                 )
                             }),
                     ),

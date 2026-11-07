@@ -58,7 +58,7 @@ impl RenderOnce for SearchField {
             .pl(theme().size(10.0))
             .border_b(theme().border)
             .border_color(if focused {
-                theme().colors.border
+                theme().colors.focus_border
             } else {
                 gpui::rgba(0x00000000)
             })

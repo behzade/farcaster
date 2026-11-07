@@ -245,11 +245,16 @@ fn location_button(
         .role(gpui::Role::Button)
         .aria_label(label)
         .tab_index(0)
+        .border_l(theme().border)
+        .border_color(gpui::rgba(0x00000000))
         .when(available, |row| {
             row.cursor_pointer()
                 .hover(|row| row.bg(theme().colors.highlight))
         })
-        .focus_visible(|row| row.bg(theme().colors.highlight))
+        .focus_visible(|row| {
+            row.bg(theme().colors.highlight)
+                .border_color(theme().colors.focus_border)
+        })
         .on_mouse_down(gpui::MouseButton::Left, preserve_pointer_focus)
         .on_click(move |_, window, cx| {
             if available {

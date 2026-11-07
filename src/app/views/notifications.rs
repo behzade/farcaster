@@ -108,7 +108,7 @@ impl FarcasterApp {
             .text_color(theme().colors.text)
             .shadow_md()
             .hover(|style| style.bg(theme().colors.highlight))
-            .focus_visible(|style| style.border_color(theme().colors.accent))
+            .focus_visible(|style| style.border_color(theme().colors.focus_border))
             .child(
                 div()
                     .min_w_0()

@@ -85,7 +85,7 @@ fn background_job_icon(state: BackgroundJobState) -> AppIcon {
 
 fn background_job_color(state: BackgroundJobState) -> gpui::Rgba {
     match state {
-        BackgroundJobState::Starting | BackgroundJobState::Running => theme().colors.accent,
+        BackgroundJobState::Starting | BackgroundJobState::Running => theme().colors.indicator,
         BackgroundJobState::Completed => theme().colors.success,
         BackgroundJobState::Exited | BackgroundJobState::Failed => theme().colors.error,
     }

@@ -29,7 +29,7 @@ pub(crate) fn feedback(
             accesskit::Live::Assertive,
             theme().colors.warning,
         ),
-        FeedbackTone::Info => (Role::Status, accesskit::Live::Polite, theme().colors.accent),
+        FeedbackTone::Info => (Role::Status, accesskit::Live::Polite, theme().colors.link),
     };
     div()
         .id(id)

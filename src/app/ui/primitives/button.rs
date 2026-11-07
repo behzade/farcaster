@@ -141,7 +141,7 @@ fn tone_icon_control(control: Stateful<Div>, tone: ButtonTone) -> Stateful<Div> 
             .hover(|control| control.bg(theme().colors.highlight))
             .active(|control| control.bg(theme().colors.highlight)),
         ButtonTone::Danger => control
-            .bg(theme().colors.error)
+            .bg(theme().colors.danger)
             .text_color(theme().colors.canvas),
     }
 }

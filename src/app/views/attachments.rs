@@ -98,7 +98,7 @@ pub(super) fn open_card(
                 )
                 .role(gpui::Role::Button)
                 .aria_label(format!("Open {name}"))
-                .focus_visible(|control| control.border_color(theme().colors.accent))
+                .focus_visible(|control| control.border_color(theme().colors.focus_border))
                 .child(content(name, detail, image))
                 .on_click(move |_, window, cx| click(window, cx))
                 .on_key_down(move |event, window, cx| {

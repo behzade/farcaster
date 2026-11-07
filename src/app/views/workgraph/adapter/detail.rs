@@ -90,7 +90,7 @@ fn render_outcome(
         .p(theme().space.sm)
         .border_l(theme().size(2.0))
         .border_color(if current {
-            theme().colors.accent
+            theme().colors.indicator
         } else {
             theme().colors.border
         })

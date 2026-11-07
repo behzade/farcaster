@@ -372,7 +372,8 @@ impl ToolStatus {
         match self {
             Self::Reviewing | Self::Rejected => theme().colors.warning,
             Self::Failed => theme().colors.error,
-            Self::Running | Self::Succeeded => theme().colors.muted,
+            Self::Running => theme().colors.indicator,
+            Self::Succeeded => theme().colors.success,
         }
     }
     fn icon(self) -> AppIcon {

@@ -304,7 +304,7 @@ fn render_sidebar_row(row: PlanRow, app: WeakEntity<FarcasterApp>) -> impl IntoE
                 .text_color(if row.reached {
                     theme().colors.success
                 } else if row.current {
-                    theme().colors.accent
+                    theme().colors.indicator
                 } else {
                     theme().colors.subtle
                 })

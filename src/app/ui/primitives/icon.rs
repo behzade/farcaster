@@ -48,7 +48,7 @@ pub(crate) fn icon_control(
         .focus_visible(|control| {
             control
                 .border(theme().border)
-                .border_color(theme().colors.accent)
+                .border_color(theme().colors.focus_border)
         })
         .cursor(CursorStyle::PointingHand)
         .on_mouse_down(MouseButton::Left, super::preserve_pointer_focus)

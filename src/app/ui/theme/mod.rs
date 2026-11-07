@@ -3,7 +3,7 @@ use std::sync::{Arc, LazyLock, PoisonError, RwLock};
 use gpui::{App, Font, FontFallbacks, Pixels, Rgba, px};
 use gpui_component::{
     highlighter::HighlightTheme,
-    theme::{Theme as ComponentTheme, ThemeTokens},
+    theme::{Theme as ComponentTheme, ThemeColor, ThemeTokens},
 };
 use gpui_libghostty::{TerminalColor, TerminalTheme};
 use serde::{Deserialize, Serialize};
@@ -677,76 +677,149 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     component.radius = theme.radius;
     component.radius_lg = theme.radius;
     component.shadow = true;
-    let component_colors = &mut component.colors;
-    component_colors.background = colors.canvas.into();
-    component_colors.foreground = colors.text.into();
-    component_colors.accent = colors.highlight.into();
-    component_colors.accent_foreground = colors.text.into();
-    component_colors.list = colors.panel.into();
-    component_colors.list_hover = colors.highlight.into();
-    component_colors.list_active = colors.highlight.into();
-    component_colors.list_active_border = colors.focus_border.into();
-    component_colors.table = colors.panel.into();
-    component_colors.table_hover = colors.highlight.into();
-    component_colors.table_active = colors.highlight.into();
-    component_colors.sidebar = colors.panel.into();
-    component_colors.sidebar_accent = colors.highlight.into();
-    component_colors.sidebar_primary = colors.highlight.into();
-    component_colors.tab_bar = colors.panel.into();
-    component_colors.tab_active = colors.highlight.into();
-    component_colors.link = colors.link.into();
-    component_colors.link_active = colors.link.into();
-    component_colors.link_hover = colors.link.into();
-    component_colors.border = colors.border.into();
-    // Input boundaries need more contrast than decorative panel separators.
-    component_colors.input = colors.focus_border.into();
-    component_colors.muted = colors.panel.into();
-    component_colors.muted_foreground = colors.muted.into();
-    component_colors.popover = colors.panel.into();
-    component_colors.popover_foreground = colors.text.into();
-    component_colors.primary = colors.surface.into();
-    component_colors.primary_hover = colors.highlight.into();
-    component_colors.primary_active = colors.highlight.into();
-    component_colors.primary_foreground = colors.text.into();
-    component_colors.secondary = colors.surface.into();
-    component_colors.secondary_hover = colors.highlight.into();
-    component_colors.secondary_active = colors.highlight.into();
-    component_colors.secondary_foreground = colors.text.into();
-    component_colors.button_secondary = colors.surface.into();
-    component_colors.button_secondary_hover = colors.highlight.into();
-    component_colors.button_secondary_active = colors.highlight.into();
-    component_colors.button_secondary_foreground = colors.text.into();
-    component_colors.button = colors.surface.into();
-    component_colors.button_hover = colors.highlight.into();
-    component_colors.button_active = colors.highlight.into();
-    component_colors.button_foreground = colors.text.into();
-    component_colors.button_primary = colors.accent.into();
-    component_colors.button_primary_hover = colors.accent_hover.into();
-    component_colors.button_primary_active = colors.accent_active.into();
-    component_colors.button_primary_foreground = colors.canvas.into();
-    component_colors.danger = colors.danger.into();
-    component_colors.danger_foreground = colors.canvas.into();
-    // Buttons keep their own tokens; changing the semantic color alone leaves
-    // the component preset's translucent fills and foregrounds in place.
-    component_colors.button_danger = colors.danger.into();
-    component_colors.button_danger_hover = colors.danger.into();
-    component_colors.button_danger_active = colors.danger.into();
-    component_colors.button_danger_foreground = colors.canvas.into();
-    component_colors.warning = colors.warning.into();
-    component_colors.warning_foreground = colors.canvas.into();
-    component_colors.button_warning = colors.warning.into();
-    component_colors.button_warning_hover = colors.warning.into();
-    component_colors.button_warning_active = colors.warning.into();
-    component_colors.button_warning_foreground = colors.canvas.into();
-    component_colors.success = colors.success.into();
-    component_colors.success_foreground = colors.canvas.into();
-    component_colors.button_success = colors.success.into();
-    component_colors.button_success_hover = colors.success.into();
-    component_colors.button_success_active = colors.success.into();
-    component_colors.button_success_foreground = colors.canvas.into();
-    component_colors.ring = colors.accent.into();
-    component_colors.caret = colors.text.into();
-    component_colors.selection = colors.highlight.into();
+    // Resolve every component color here so no state inherits the library preset.
+    // Buttons own their fills; primary also colors checked controls.
+    component.colors = ThemeColor {
+        accent: colors.highlight.into(),
+        accent_foreground: colors.text.into(),
+        accordion: colors.panel.into(),
+        background: colors.canvas.into(),
+        border: colors.border.into(),
+        button: colors.surface.into(),
+        button_active: colors.highlight.into(),
+        button_foreground: colors.text.into(),
+        button_hover: colors.highlight.into(),
+        button_danger: colors.danger.into(),
+        button_danger_active: colors.danger.into(),
+        button_danger_foreground: colors.canvas.into(),
+        button_danger_hover: colors.danger.into(),
+        button_info: colors.link.into(),
+        button_info_active: colors.link.into(),
+        button_info_foreground: colors.canvas.into(),
+        button_info_hover: colors.link.into(),
+        button_primary: colors.accent.into(),
+        button_primary_active: colors.accent_active.into(),
+        button_primary_foreground: colors.canvas.into(),
+        button_primary_hover: colors.accent_hover.into(),
+        button_secondary: colors.surface.into(),
+        button_secondary_active: colors.highlight.into(),
+        button_secondary_foreground: colors.text.into(),
+        button_secondary_hover: colors.highlight.into(),
+        button_success: colors.success.into(),
+        button_success_active: colors.success.into(),
+        button_success_foreground: colors.canvas.into(),
+        button_success_hover: colors.success.into(),
+        button_warning: colors.warning.into(),
+        button_warning_active: colors.warning.into(),
+        button_warning_foreground: colors.canvas.into(),
+        button_warning_hover: colors.warning.into(),
+        group_box: colors.panel.into(),
+        group_box_foreground: colors.text.into(),
+        caret: colors.text.into(),
+        chart_1: colors.link.into(),
+        chart_2: colors.error.into(),
+        chart_3: colors.skill.into(),
+        chart_4: colors.file.into(),
+        chart_5: colors.code.into(),
+        chart_bullish: colors.success.into(),
+        chart_bearish: colors.error.into(),
+        chart_grid: colors.border.into(),
+        danger: colors.danger.into(),
+        danger_active: colors.danger.into(),
+        danger_foreground: colors.canvas.into(),
+        danger_hover: colors.danger.into(),
+        description_list_label: colors.panel.into(),
+        description_list_label_foreground: colors.text.into(),
+        drag_border: colors.indicator.into(),
+        drop_target: colors.highlight.into(),
+        foreground: colors.text.into(),
+        info: colors.link.into(),
+        info_active: colors.link.into(),
+        info_foreground: colors.canvas.into(),
+        info_hover: colors.link.into(),
+        input: colors.focus_border.into(),
+        link: colors.link.into(),
+        link_active: colors.link.into(),
+        link_hover: colors.link.into(),
+        list: colors.panel.into(),
+        list_active: colors.highlight.into(),
+        list_active_border: colors.focus_border.into(),
+        list_even: colors.surface.into(),
+        list_head: colors.panel.into(),
+        list_hover: colors.highlight.into(),
+        muted: colors.panel.into(),
+        muted_foreground: colors.muted.into(),
+        popover: colors.panel.into(),
+        popover_foreground: colors.text.into(),
+        primary: colors.accent.into(),
+        primary_active: colors.accent_active.into(),
+        primary_foreground: colors.canvas.into(),
+        primary_hover: colors.accent_hover.into(),
+        progress_bar: colors.indicator.into(),
+        ring: colors.focus_border.into(),
+        scrollbar: component.transparent,
+        scrollbar_thumb: colors.focus_border.into(),
+        scrollbar_thumb_hover: colors.muted.into(),
+        secondary: colors.surface.into(),
+        secondary_active: colors.highlight.into(),
+        secondary_foreground: colors.text.into(),
+        secondary_hover: colors.highlight.into(),
+        selection: colors.highlight.into(),
+        sidebar: colors.panel.into(),
+        sidebar_accent: colors.highlight.into(),
+        sidebar_accent_foreground: colors.text.into(),
+        sidebar_border: colors.border.into(),
+        sidebar_foreground: colors.text.into(),
+        sidebar_primary: colors.highlight.into(),
+        sidebar_primary_foreground: colors.text.into(),
+        skeleton: colors.surface.into(),
+        slider_bar: colors.indicator.into(),
+        slider_thumb: colors.canvas.into(),
+        success: colors.success.into(),
+        success_foreground: colors.canvas.into(),
+        success_hover: colors.success.into(),
+        success_active: colors.success.into(),
+        switch: colors.focus_border.into(),
+        switch_thumb: colors.canvas.into(),
+        tab: colors.surface.into(),
+        tab_active: colors.highlight.into(),
+        tab_active_foreground: colors.text.into(),
+        tab_bar: colors.panel.into(),
+        tab_bar_segmented: colors.panel.into(),
+        tab_foreground: colors.text.into(),
+        table: colors.panel.into(),
+        table_active: colors.highlight.into(),
+        table_active_border: colors.focus_border.into(),
+        table_even: colors.surface.into(),
+        table_head: colors.panel.into(),
+        table_head_foreground: colors.text.into(),
+        table_foot: colors.panel.into(),
+        table_foot_foreground: colors.text.into(),
+        table_hover: colors.highlight.into(),
+        table_row_border: colors.border.into(),
+        title_bar: colors.panel.into(),
+        title_bar_border: colors.border.into(),
+        status_bar: colors.panel.into(),
+        status_bar_border: colors.border.into(),
+        warning: colors.warning.into(),
+        warning_active: colors.warning.into(),
+        warning_hover: colors.warning.into(),
+        warning_foreground: colors.canvas.into(),
+        overlay: colors.backdrop.into(),
+        window_border: colors.border.into(),
+        red: colors.error.into(),
+        red_light: colors.error.into(),
+        green: colors.success.into(),
+        green_light: colors.success.into(),
+        blue: colors.link.into(),
+        blue_light: colors.link.into(),
+        yellow: colors.warning.into(),
+        yellow_light: colors.warning.into(),
+        magenta: colors.skill.into(),
+        magenta_light: colors.skill.into(),
+        cyan: colors.file.into(),
+        cyan_light: colors.file.into(),
+    };
     component.tokens = ThemeTokens::from(component.colors);
     ComponentTheme::sync_base(cx);
     install_scrollbar_theme(theme, cx);
