@@ -153,7 +153,12 @@ impl FarcasterApp {
         let state = &mut self.workspace.voice.modifier_shortcut;
         let previous = state.modifiers;
         state.modifiers = held;
-        if !held.modified() && state.keys.is_empty() {
+        // Key-up can be missing for Command shortcuts or have a different
+        // character after Shift changes. Do not carry stale keys into a new chord.
+        if !held.modified() || (cfg!(target_os = "macos") && previous.platform && !held.platform) {
+            state.keys.clear();
+        }
+        if !held.modified() {
             state.capture_blocked = false;
         }
         if self.workspace.voice.capturing_shortcut {

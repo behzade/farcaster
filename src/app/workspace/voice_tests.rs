@@ -750,6 +750,60 @@ fn modifier_shortcuts_finish_and_rearm_on_either_key(cx: &mut gpui::TestAppConte
 }
 
 #[gpui::test]
+fn modifier_shortcut_recovers_after_a_missing_or_changed_key_release(
+    cx: &mut gpui::TestAppContext,
+) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::modifier_shortcut_recovers_after_a_missing_or_changed_key_release"
+        ),
+        cx,
+        |cx, app, _, _| {
+            prepare_voice_editor(cx, app);
+            let both = shortcut::modifier_binding(shortcut::DEFAULT_SHORTCUT).unwrap();
+            for (pressed, released) in [("cmd-c", None), ("!", Some("1")), ("ctrl-cmd-c", None)] {
+                let held = if released.is_none() {
+                    gpui::Modifiers {
+                        platform: true,
+                        control: pressed == "ctrl-cmd-c",
+                        ..Default::default()
+                    }
+                } else {
+                    gpui::Modifiers {
+                        shift: true,
+                        ..Default::default()
+                    }
+                };
+                modifiers(cx, held);
+                chord(cx, pressed, true);
+                modifiers(
+                    cx,
+                    gpui::Modifiers {
+                        control: cfg!(target_os = "macos") && held.control,
+                        ..Default::default()
+                    },
+                );
+                if let Some(key) = released {
+                    chord(cx, key, false);
+                }
+                modifiers(cx, both);
+                cx.update(|_, cx| {
+                    assert!(
+                        matches!(
+                            app.read(cx).workspace.voice.gesture,
+                            Gesture::Pressed { .. }
+                        ),
+                        "{pressed}: an old key must not block a new modifier gesture"
+                    );
+                });
+                modifiers(cx, gpui::Modifiers::default());
+            }
+        },
+    );
+}
+
+#[gpui::test]
 fn modifier_shortcut_tracks_current_modifiers_and_cancels_on_focus_loss(
     cx: &mut gpui::TestAppContext,
 ) {
