@@ -199,12 +199,11 @@ pub(crate) fn run(
                 )
             });
             drop(placement_timing);
-            let owned_window = !isolation::is_isolated() || cfg!(target_os = "linux");
             let window_options = WindowOptions {
                 window_bounds: Some(window_bounds),
                 display_id,
-                focus: owned_window,
-                show: owned_window,
+                focus: !isolation::is_isolated(),
+                show: true,
                 titlebar: Some(TitlebarOptions {
                     title: Some(isolation::window_title("Farcaster").into()),
                     appears_transparent: cfg!(target_os = "macos"),
@@ -253,7 +252,7 @@ pub(crate) fn run(
                 quit_after_start(cx);
                 return;
             }
-            if owned_window {
+            if !isolation::is_isolated() {
                 cx.activate(true);
             }
             drop(launch_timing);
