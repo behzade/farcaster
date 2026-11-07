@@ -15,7 +15,7 @@ fn input(project: &Path, target: &str) -> Input {
         capturing_context: false,
         transcript: None,
         recorder: hex::Dictation::stub(),
-        recording: false,
+        recording: None,
     }
 }
 
@@ -103,12 +103,23 @@ fn chat_voice_arms_and_sends_without_editor_context(cx: &mut gpui::TestAppContex
                 });
                 window.draw(cx).clear(cx);
             });
-            default_shortcut(cx, app, true);
-            cx.update(|_, cx| {
-                assert!(matches!(
-                    app.read(cx).workspace.voice.gesture,
-                    Gesture::Pressed { .. }
-                ));
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let event = gpui::ModifiersChangedEvent {
+                        modifiers: shortcut::modifier_binding(app.voice_shortcut()).unwrap(),
+                        ..Default::default()
+                    };
+                    app.voice_modifiers_changed(&event, window, cx);
+                    assert!(
+                        app.workspace.voice.input.is_some(),
+                        "start without a timer tick"
+                    );
+                    app.release_voice_shortcut(cx);
+                    assert!(
+                        app.workspace.voice.input.is_none(),
+                        "discard the short capture"
+                    );
+                });
             });
             default_shortcut(cx, app, false);
             while runtime.try_recv_command().is_some() {}
@@ -340,13 +351,12 @@ fn holding_shortcut_shows_confirmed_recording_in_every_navbar(cx: &mut gpui::Tes
         |cx, app, _, project| {
             prepare_voice_editor(cx, app);
             default_shortcut(cx, app, true);
-            cx.run_until_parked();
-            cx.executor()
-                .advance_clock(HOLD_DELAY + Duration::from_millis(1));
-            cx.run_until_parked();
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
-                    assert!(matches!(app.workspace.voice.gesture, Gesture::Holding));
+                    assert!(matches!(
+                        app.workspace.voice.gesture,
+                        Gesture::Pressed { .. }
+                    ));
                     assert!(app.navigation.chat.activation.hint().is_none());
                     app.workspace.voice.input = Some(input(&project, "current"));
                     cx.notify();
@@ -357,7 +367,8 @@ fn holding_shortcut_shows_confirmed_recording_in_every_navbar(cx: &mut gpui::Tes
             for surface in [AppSurface::Chat, AppSurface::Editor, AppSurface::Terminal] {
                 cx.update(|window, cx| {
                     app.update(cx, |app, cx| {
-                        app.workspace.voice.input.as_mut().unwrap().recording = true;
+                        app.workspace.voice.input.as_mut().unwrap().recording =
+                            Some(Instant::now() - MIN_RECORDING);
                         app.workspace.surface = surface;
                         cx.notify();
                     });
@@ -368,6 +379,10 @@ fn holding_shortcut_shows_confirmed_recording_in_every_navbar(cx: &mut gpui::Tes
                 assert!(icon.top() >= bar.top() && icon.bottom() <= bar.bottom());
                 assert!((icon.center().x - bar.center().x).abs() <= gpui::px(1.0));
             }
+            cx.run_until_parked();
+            cx.executor()
+                .advance_clock(MIN_RECORDING + Duration::from_millis(1));
+            cx.run_until_parked();
             let (recorder, finished) = hex::Dictation::stub_with_finish();
             cx.update(|_, cx| {
                 app.update(cx, |app, _| {
@@ -381,6 +396,42 @@ fn holding_shortcut_shows_confirmed_recording_in_every_navbar(cx: &mut gpui::Tes
                 window.draw(cx).clear(cx);
             });
             assert!(cx.debug_bounds("voice-recording").is_none());
+        },
+    );
+}
+
+#[gpui::test]
+fn finishing_voice_discards_unstarted_and_short_captures(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::finishing_voice_discards_unstarted_and_short_captures"
+        ),
+        cx,
+        |cx, app, _, project| {
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    for (recording, keep) in [
+                        (None, false),
+                        (Some(Instant::now()), false),
+                        (Some(Instant::now() - MIN_RECORDING), true),
+                    ] {
+                        let (recorder, finished) = hex::Dictation::stub_with_finish();
+                        app.workspace.voice.input = Some(Input {
+                            recorder,
+                            recording,
+                            ..input(&project, "current")
+                        });
+                        app.finish_voice(cx);
+                        assert_eq!(
+                            finished(),
+                            keep,
+                            "short captures must never request transcription"
+                        );
+                        assert_eq!(app.workspace.voice.input.is_some(), keep);
+                    }
+                })
+            });
         },
     );
 }
@@ -413,20 +464,17 @@ fn double_tap_locks_until_the_next_shortcut_press(cx: &mut gpui::TestAppContext)
                 default_shortcut(cx, app, true);
                 default_shortcut(cx, app, false);
             }
-            cx.update(|window, cx| {
-                app.update(cx, |app, cx| {
+            cx.update(|_, cx| {
+                app.update(cx, |app, _| {
                     assert!(matches!(app.workspace.voice.gesture, Gesture::Locked));
                     assert!(app.workspace.voice.key_down.is_none());
                     app.workspace.voice.input = Some(Input {
-                        recording: true,
+                        recording: Some(Instant::now() - MIN_RECORDING),
                         ..input(&project, "current")
                     });
                     assert!(app.workspace.voice.recording());
-                    assert!(!app.voice_key_down(&gpui::Keystroke::parse("a").unwrap(), window, cx));
-                    assert!(app.workspace.voice.recording());
                 })
             });
-            chord(cx, "a", false);
             let (recorder, finished) = hex::Dictation::stub_with_finish();
             cx.update(|_, cx| {
                 app.update(cx, |app, _| {
@@ -447,7 +495,7 @@ fn double_tap_locks_until_the_next_shortcut_press(cx: &mut gpui::TestAppContext)
             default_shortcut(cx, app, false);
             cx.run_until_parked();
             cx.executor()
-                .advance_clock(HOLD_DELAY + Duration::from_millis(1));
+                .advance_clock(MIN_RECORDING + Duration::from_millis(1));
             cx.run_until_parked();
             cx.update(|_, cx| {
                 assert!(matches!(
@@ -483,16 +531,20 @@ fn unrelated_keys_cancel_without_consuming_typing(cx: &mut gpui::TestAppContext)
             default_shortcut(cx, app, false);
             cx.run_until_parked();
             cx.executor()
-                .advance_clock(HOLD_DELAY + Duration::from_millis(1));
+                .advance_clock(MIN_RECORDING + Duration::from_millis(1));
             cx.run_until_parked();
             cx.update(|_, cx| assert!(app.read(cx).workspace.voice.input.is_none()));
-            for key in ["A", "shift-a"] {
+            for (key, gesture) in [
+                ("A", Gesture::Pressed { second_tap: false }),
+                ("shift-a", Gesture::Holding),
+                ("a", Gesture::Locked),
+            ] {
                 default_shortcut(cx, app, true);
                 cx.update(|window, cx| {
                     app.update(cx, |app, cx| {
-                        app.workspace.voice.gesture = Gesture::Holding;
+                        app.workspace.voice.gesture = gesture;
                         app.workspace.voice.input = Some(Input {
-                            recording: true,
+                            recording: Some(Instant::now() - MIN_RECORDING),
                             ..input(&project, "current")
                         });
                         assert!(!app.voice_key_down(
@@ -542,7 +594,7 @@ fn escape_still_steers_and_aborts_during_recording(cx: &mut gpui::TestAppContext
                     app.workspace.voice.available = true;
                     app.workspace.voice.gesture = Gesture::Locked;
                     app.workspace.voice.input = Some(Input {
-                        recording: true,
+                        recording: Some(Instant::now() - MIN_RECORDING),
                         ..input(&project, "current")
                     });
                     app.chat_composer_focus(cx).focus(window, cx);
@@ -626,26 +678,29 @@ fn voice_custom_shortcut_ignores_repeat_and_releases_without_modifiers(
 }
 
 #[gpui::test]
-fn modifier_shortcuts_finish_on_either_release_and_require_all_keys_up(
-    cx: &mut gpui::TestAppContext,
-) {
+fn modifier_shortcuts_finish_and_rearm_on_either_key(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
         concat!(
             module_path!(),
-            "::modifier_shortcuts_finish_on_either_release_and_require_all_keys_up"
+            "::modifier_shortcuts_finish_and_rearm_on_either_key"
         ),
         cx,
         |cx, app, _, project| {
             prepare_voice_editor(cx, app);
-            for key in ["cmd-alt", "ctrl-alt"] {
+            for key in ["ctrl-cmd", "ctrl-super", "cmd-alt", "ctrl-alt"] {
                 let both = shortcut::modifier_binding(key).unwrap();
-                let alt = gpui::Modifiers {
-                    alt: true,
+                let first_modifier = gpui::Modifiers {
+                    control: both.control,
+                    alt: !both.control,
                     ..Default::default()
                 };
-                let partner = gpui::Modifiers { alt: false, ..both };
-                for first in [alt, partner] {
-                    for remaining in [alt, partner] {
+                let partner = gpui::Modifiers {
+                    control: false,
+                    alt: both.alt && !first_modifier.alt,
+                    ..both
+                };
+                for first in [first_modifier, partner] {
+                    for remaining in [first_modifier, partner] {
                         cx.update(|_, cx| {
                             app.update(cx, |app, _| {
                                 app.settings.voice_shortcut = Some(key.into());
@@ -666,7 +721,7 @@ fn modifier_shortcuts_finish_on_either_release_and_require_all_keys_up(
                             assert_eq!(app.read(cx).workspace.voice.press, generation)
                         });
                         cx.executor()
-                            .advance_clock(HOLD_DELAY + Duration::from_millis(1));
+                            .advance_clock(MIN_RECORDING + Duration::from_millis(1));
                         cx.run_until_parked();
                         let (recorder, finished) = hex::Dictation::stub_with_finish();
                         cx.update(|_, cx| {
@@ -674,6 +729,7 @@ fn modifier_shortcuts_finish_on_either_release_and_require_all_keys_up(
                                 assert!(matches!(app.workspace.voice.gesture, Gesture::Holding));
                                 app.workspace.voice.input = Some(Input {
                                     recorder,
+                                    recording: Some(Instant::now() - MIN_RECORDING),
                                     ..input(&project, "current")
                                 });
                             })
@@ -682,7 +738,7 @@ fn modifier_shortcuts_finish_on_either_release_and_require_all_keys_up(
                         assert!(finished(), "{key}: lifting either modifier finishes");
                         modifiers(cx, both);
                         cx.update(|_, cx| {
-                            assert_eq!(app.read(cx).workspace.voice.press, generation)
+                            assert_eq!(app.read(cx).workspace.voice.press, generation + 1)
                         });
                         modifiers(cx, gpui::Modifiers::default());
                         assert!(!finished(), "finish must be sent only once");
@@ -694,13 +750,13 @@ fn modifier_shortcuts_finish_on_either_release_and_require_all_keys_up(
 }
 
 #[gpui::test]
-fn modifier_shortcut_cannot_arm_during_another_chord_or_after_focus_loss(
+fn modifier_shortcut_tracks_current_modifiers_and_cancels_on_focus_loss(
     cx: &mut gpui::TestAppContext,
 ) {
     crate::app::test_support::with_offline_app(
         concat!(
             module_path!(),
-            "::modifier_shortcut_cannot_arm_during_another_chord_or_after_focus_loss"
+            "::modifier_shortcut_tracks_current_modifiers_and_cancels_on_focus_loss"
         ),
         cx,
         |cx, app, _, project| {
@@ -721,13 +777,13 @@ fn modifier_shortcut_cannot_arm_during_another_chord_or_after_focus_loss(
                 ))
             });
             modifiers(cx, gpui::Modifiers::default());
-            // Releasing an extra modifier must not turn a longer chord into voice.
+            // Only the current combination matters, not how we reached it.
             modifiers(cx, extra);
             modifiers(cx, both);
             cx.update(|_, cx| {
                 assert!(matches!(
                     app.read(cx).workspace.voice.gesture,
-                    Gesture::Idle
+                    Gesture::Pressed { .. }
                 ))
             });
             modifiers(cx, gpui::Modifiers::default());
@@ -752,12 +808,19 @@ fn modifier_shortcut_cannot_arm_during_another_chord_or_after_focus_loss(
             modifiers(cx, both);
             cx.deactivate_window();
             cx.executor()
-                .advance_clock(HOLD_DELAY + Duration::from_millis(1));
+                .advance_clock(MIN_RECORDING + Duration::from_millis(1));
             cx.run_until_parked();
             cx.update(|_, cx| assert!(app.read(cx).workspace.voice.input.is_none()));
             cx.update(|window, _| window.activate_window());
             cx.run_until_parked();
-            cx.update(|_, cx| app.update(cx, |app, _| app.workspace.voice.available = true));
+            cx.update(|_, cx| {
+                app.update(cx, |app, _| {
+                    app.workspace.voice.available = true;
+                    // The test platform reports no modifiers on activation; model
+                    // the native snapshot when the chord remains held instead.
+                    app.workspace.voice.release_keys(both);
+                })
+            });
             modifiers(cx, both);
             cx.update(|_, cx| {
                 assert!(!matches!(
@@ -774,6 +837,18 @@ fn modifier_shortcut_cannot_arm_during_another_chord_or_after_focus_loss(
                 ))
             });
             modifiers(cx, gpui::Modifiers::default());
+            // Returning with no keys held must accept the first chord.
+            cx.deactivate_window();
+            cx.update(|window, _| window.activate_window());
+            cx.run_until_parked();
+            cx.update(|_, cx| app.update(cx, |app, _| app.workspace.voice.available = true));
+            modifiers(cx, both);
+            cx.update(|_, cx| {
+                assert!(matches!(
+                    app.read(cx).workspace.voice.gesture,
+                    Gesture::Pressed { .. }
+                ))
+            });
         },
     );
 }

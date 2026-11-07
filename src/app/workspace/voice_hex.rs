@@ -223,6 +223,14 @@ fn record(
     commands: mpsc::Receiver<Control>,
     updates: &async_channel::Sender<Event>,
 ) -> Result<(), String> {
+    // A new press must wait for the previous recording's cancel/finish to
+    // release Hex's microphone, rather than racing it and getting "busy".
+    static RECORDING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _recording = RECORDING.lock().unwrap_or_else(|error| error.into_inner());
+    // A recording released before it even acquires the microphone is too short.
+    if !matches!(commands.try_recv(), Err(mpsc::TryRecvError::Empty)) {
+        return Ok(());
+    }
     let endpoint = Endpoint::discover()?;
     record_with_endpoint(&endpoint, commands, updates)
 }

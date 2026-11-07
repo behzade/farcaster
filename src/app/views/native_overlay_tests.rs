@@ -52,7 +52,13 @@ fn settings_voice_shortcuts(name: &'static str, wayland: bool, cx: &mut gpui::Te
         });
         cx.run_until_parked();
         let input_cx = if wayland { cx } else { popup_cx };
-        for key in ["cmd-alt", "ctrl-alt-v", "ctrl-alt"] {
+        let default_shortcut = input_cx.update(|_, cx| app.read(cx).voice_shortcut().to_owned());
+        for key in [
+            default_shortcut.as_str(),
+            "cmd-alt",
+            "ctrl-alt-v",
+            "ctrl-alt",
+        ] {
             input_cx.update(|window, cx| {
                 app.update(cx, |app, cx| app.begin_voice_shortcut_capture(cx));
                 window.draw(cx).clear(cx);
@@ -60,8 +66,8 @@ fn settings_voice_shortcuts(name: &'static str, wayland: bool, cx: &mut gpui::Te
             input_cx.simulate_event(gpui::ModifiersChangedEvent {
                 modifiers: gpui::Modifiers {
                     control: key != "cmd-alt",
-                    platform: key == "cmd-alt",
-                    alt: true,
+                    platform: key == default_shortcut || key == "cmd-alt",
+                    alt: key != default_shortcut,
                     ..Default::default()
                 },
                 ..Default::default()
@@ -69,13 +75,14 @@ fn settings_voice_shortcuts(name: &'static str, wayland: bool, cx: &mut gpui::Te
             if key == "ctrl-alt-v" {
                 input_cx.simulate_keystrokes(key);
                 input_cx.simulate_event(gpui::KeyUpEvent {
-                    keystroke: gpui::Keystroke::parse(key).unwrap(),
+                    keystroke: gpui::Keystroke::parse("ctrl-alt-v").unwrap(),
                 });
             }
             // Commit on the first release, then lift the remaining modifier.
             input_cx.simulate_event(gpui::ModifiersChangedEvent {
                 modifiers: gpui::Modifiers {
-                    alt: true,
+                    control: key == default_shortcut,
+                    alt: key != default_shortcut,
                     ..Default::default()
                 },
                 ..Default::default()

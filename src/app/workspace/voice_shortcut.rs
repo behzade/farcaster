@@ -3,12 +3,17 @@ use gpui::{Context, Keystroke, Modifiers, Window};
 use crate::app::{FarcasterApp, workspace::SettingsTab};
 
 #[cfg(target_os = "macos")]
-pub(super) const DEFAULT_SHORTCUT: &str = "cmd-alt";
+pub(super) const DEFAULT_SHORTCUT: &str = "ctrl-cmd";
 #[cfg(not(target_os = "macos"))]
-pub(super) const DEFAULT_SHORTCUT: &str = "ctrl-alt";
+pub(super) const DEFAULT_SHORTCUT: &str = "ctrl-super";
 
 pub(super) fn modifier_binding(key: &str) -> Option<Modifiers> {
     match key {
+        "ctrl-cmd" | "ctrl-super" => Some(Modifiers {
+            control: true,
+            platform: true,
+            ..Default::default()
+        }),
         "cmd-alt" => Some(Modifiers {
             platform: true,
             alt: true,
@@ -27,29 +32,29 @@ pub(super) fn modifier_binding(key: &str) -> Option<Modifiers> {
 pub(super) struct ModifierShortcut {
     modifiers: Modifiers,
     keys: std::collections::HashSet<String>,
-    blocked: bool,
-    pressed: bool,
+    capture_blocked: bool,
     capture: Option<&'static str>,
 }
 
 impl ModifierShortcut {
-    pub(super) fn reset(&mut self) {
+    pub(super) fn reset(&mut self, modifiers: Modifiers) {
         *self = Self {
-            blocked: true,
+            modifiers,
+            capture_blocked: modifiers.modified(),
             ..Default::default()
         };
     }
 
     pub(super) fn key_down(&mut self, key: &str) {
         self.keys.insert(key.to_owned());
-        self.blocked = true;
+        self.capture_blocked = true;
         self.capture = None;
     }
 
     pub(super) fn key_up(&mut self, key: &str) {
         self.keys.remove(key);
         if self.keys.is_empty() && !self.modifiers.modified() {
-            self.blocked = false;
+            self.capture_blocked = false;
         }
     }
 
@@ -61,11 +66,11 @@ impl ModifierShortcut {
                 return None;
             }
             self.capture = None;
-            self.blocked = self.modifiers.modified();
+            self.capture_blocked = self.modifiers.modified();
             return self.modifiers.is_subset_of(&required).then_some(key);
         }
-        if !self.blocked && self.keys.is_empty() {
-            self.capture = ["cmd-alt", "ctrl-alt"]
+        if !self.capture_blocked && self.keys.is_empty() {
+            self.capture = [DEFAULT_SHORTCUT, "cmd-alt", "ctrl-alt"]
                 .into_iter()
                 .find(|key| modifier_binding(key) == Some(self.modifiers));
         }
@@ -141,7 +146,7 @@ impl FarcasterApp {
         let held = event.modifiers;
         if !window.is_window_active() {
             self.cancel_voice(cx);
-            self.workspace.voice.release_keys();
+            self.workspace.voice.release_keys(held);
             return;
         }
         let binding = modifier_binding(self.voice_shortcut());
@@ -149,7 +154,7 @@ impl FarcasterApp {
         let previous = state.modifiers;
         state.modifiers = held;
         if !held.modified() && state.keys.is_empty() {
-            state.blocked = false;
+            state.capture_blocked = false;
         }
         if self.workspace.voice.capturing_shortcut {
             if !self.overlays.view.settings || self.settings.tab != SettingsTab::General {
@@ -165,27 +170,21 @@ impl FarcasterApp {
         let Some(required) = binding else {
             return;
         };
-        if state.pressed && held != required {
-            state.pressed = false;
-            // Once released or interrupted, require all modifiers to lift.
-            state.blocked = held.modified() || !state.keys.is_empty();
-            if held.is_subset_of(&required) {
-                self.release_voice_shortcut(window, cx);
-            } else {
-                self.interrupt_voice_gesture(cx);
-                self.workspace.voice.key_down = None;
+        let was_down = previous == required;
+        let is_down = held == required;
+        if is_down == was_down {
+            return;
+        }
+        if is_down {
+            if state.keys.is_empty() {
+                let key = self.voice_shortcut().to_owned();
+                self.press_voice_shortcut(&key, window, cx);
             }
-        } else if !state.pressed
-            && !state.blocked
-            && state.keys.is_empty()
-            && held == required
-            && previous != required
-        {
-            state.pressed = true;
-            let key = self.voice_shortcut().to_owned();
-            self.press_voice_shortcut(&key, window, cx);
-        } else if !held.is_subset_of(&required) {
-            state.blocked = true;
+        } else if held.is_subset_of(&required) {
+            self.release_voice_shortcut(cx);
+        } else {
+            self.interrupt_voice_gesture(cx);
+            self.workspace.voice.key_down = None;
         }
     }
 
@@ -193,7 +192,7 @@ impl FarcasterApp {
         self.cancel_voice(cx);
         let state = &mut self.workspace.voice.modifier_shortcut;
         state.capture = None;
-        state.blocked = state.modifiers.modified() || !state.keys.is_empty();
+        state.capture_blocked = state.modifiers.modified() || !state.keys.is_empty();
         self.workspace.voice.capturing_shortcut = !self.workspace.voice.capturing_shortcut;
         self.workspace.voice.settings_error = None;
         cx.notify();

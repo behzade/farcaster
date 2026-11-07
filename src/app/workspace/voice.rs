@@ -16,7 +16,7 @@ mod shortcut;
 #[path = "voice_speech.rs"]
 mod speech;
 
-const HOLD_DELAY: Duration = Duration::from_millis(300);
+const MIN_RECORDING: Duration = Duration::from_millis(300);
 const DOUBLE_TAP: Duration = Duration::from_millis(350);
 
 #[derive(Default)]
@@ -57,19 +57,24 @@ struct Input {
     capturing_context: bool,
     transcript: Option<String>,
     recorder: hex::Dictation,
-    recording: bool,
+    recording: Option<Instant>,
 }
 
 impl VoiceState {
-    pub(in crate::app) fn release_keys(&mut self) {
+    pub(in crate::app) fn release_keys(&mut self, modifiers: gpui::Modifiers) {
         self.key_down = None;
         self.capturing_shortcut = false;
-        self.modifier_shortcut.reset();
+        self.modifier_shortcut.reset(modifiers);
     }
 
     pub(in crate::app) fn recording(&self) -> bool {
-        matches!(self.gesture, Gesture::Holding | Gesture::Locked)
-            && self.input.as_ref().is_some_and(|input| input.recording)
+        matches!(
+            self.gesture,
+            Gesture::Pressed { .. } | Gesture::Holding | Gesture::Locked
+        ) && self
+            .input
+            .as_ref()
+            .is_some_and(|input| input.recording.is_some())
     }
 
     pub(in crate::app) fn submission_result(
@@ -200,17 +205,19 @@ impl FarcasterApp {
         }
         let second_tap = matches!(self.workspace.voice.gesture, Gesture::Tapped(at) if at.elapsed() <= DOUBLE_TAP);
         self.workspace.voice.gesture = Gesture::Pressed { second_tap };
+        self.start_voice(window, cx);
+        // Capture was requested above; this timer only distinguishes a tap from a hold.
         self.workspace.voice.press = self.workspace.voice.press.wrapping_add(1);
         let press = self.workspace.voice.press;
         cx.spawn_in(window, async move |weak, cx| {
-            cx.background_executor().timer(HOLD_DELAY).await;
+            cx.background_executor().timer(MIN_RECORDING).await;
             let _ = weak.update_in(cx, |this, window, cx| {
                 if this.workspace.voice.press == press
                     && matches!(this.workspace.voice.gesture, Gesture::Pressed { .. })
                     && this.voice_window_ready(window, cx)
                 {
                     this.workspace.voice.gesture = Gesture::Holding;
-                    this.start_voice(window, cx);
+                    cx.notify();
                 }
             });
         })
@@ -220,14 +227,12 @@ impl FarcasterApp {
 
     pub(in crate::app) fn interrupt_voice_gesture(&mut self, cx: &mut Context<Self>) {
         match self.workspace.voice.gesture {
-            Gesture::Holding => {
+            Gesture::Pressed { .. } | Gesture::Holding | Gesture::Locked => {
                 self.workspace.voice.input.take();
                 self.workspace.voice.gesture = Gesture::Used;
                 cx.notify();
             }
-            Gesture::Pressed { .. } | Gesture::Tapped(_) => {
-                self.workspace.voice.gesture = Gesture::Used
-            }
+            Gesture::Tapped(_) => self.workspace.voice.gesture = Gesture::Used,
             _ => {}
         }
     }
@@ -247,18 +252,20 @@ impl FarcasterApp {
         }
         window.prevent_default();
         cx.stop_propagation();
-        self.release_voice_shortcut(window, cx);
+        self.release_voice_shortcut(cx);
     }
 
-    fn release_voice_shortcut(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn release_voice_shortcut(&mut self, cx: &mut Context<Self>) {
         self.workspace.voice.key_down = None;
         match std::mem::take(&mut self.workspace.voice.gesture) {
             Gesture::Pressed { second_tap: true } => {
                 self.workspace.voice.gesture = Gesture::Locked;
-                self.start_voice(window, cx);
+                cx.notify();
             }
             Gesture::Pressed { second_tap: false } => {
-                self.workspace.voice.gesture = Gesture::Tapped(Instant::now())
+                self.workspace.voice.input.take();
+                self.workspace.voice.gesture = Gesture::Tapped(Instant::now());
+                cx.notify();
             }
             Gesture::Holding => self.finish_voice(cx),
             Gesture::Locked => self.workspace.voice.gesture = Gesture::Locked,
@@ -267,8 +274,14 @@ impl FarcasterApp {
     }
 
     fn finish_voice(&mut self, cx: &mut Context<Self>) {
-        if let Some(input) = &self.workspace.voice.input {
+        if let Some(input) = &self.workspace.voice.input
+            && input
+                .recording
+                .is_some_and(|at| at.elapsed() >= MIN_RECORDING)
+        {
             input.recorder.finish();
+        } else {
+            self.workspace.voice.input.take();
         }
         cx.notify();
     }
@@ -344,7 +357,7 @@ impl FarcasterApp {
             capturing_context: capture.is_some(),
             transcript: None,
             recorder,
-            recording: false,
+            recording: None,
         });
         if let Some(capture) = capture {
             let capture_id = id.clone();
@@ -389,7 +402,7 @@ impl FarcasterApp {
                             return false;
                         };
                         match event {
-                            hex::Event::Recording => input.recording = true,
+                            hex::Event::Recording => input.recording = Some(Instant::now()),
                             hex::Event::Transcript(text) => input.transcript = Some(text),
                             hex::Event::Failed(error) => {
                                 this.voice_failed(error, cx);

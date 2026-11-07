@@ -130,6 +130,57 @@ fn capture_start() -> Vec<(&'static str, u16, Value)> {
     ]
 }
 
+#[gpui::test]
+fn rapid_restart_waits_for_the_previous_recording_to_cancel(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::rapid_restart_waits_for_the_previous_recording_to_cancel"
+        ),
+        cx,
+        |cx, _, _, _| {
+            cx.run_until_parked();
+            let mut replies = capture_start();
+            replies.push(("POST /dictations/7/cancel", 204, Value::Null));
+            replies.extend(capture_start());
+            replies.push(("POST /dictations/7/cancel", 204, Value::Null));
+            let mock = MockHex::start(replies);
+            let directory = dirs::data_dir().unwrap().join("hex");
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                directory.join("local-api.json"),
+                json!({
+                    "port": mock.endpoint.port, "token": "test-token", "apiVersion": "2"
+                })
+                .to_string(),
+            )
+            .unwrap();
+            let expect = |path| {
+                assert_eq!(
+                    mock.requests.recv_timeout(Duration::from_secs(10)).unwrap(),
+                    path
+                )
+            };
+            let (first, _) = Dictation::start().unwrap();
+            expect("GET /capabilities");
+            expect("POST /dictations");
+            let (second, _) = Dictation::start().unwrap();
+            assert!(
+                mock.requests
+                    .recv_timeout(Duration::from_millis(30))
+                    .is_err()
+            );
+            drop(first);
+            expect("POST /dictations/7/cancel");
+            expect("GET /capabilities");
+            expect("POST /dictations");
+            drop(second);
+            expect("POST /dictations/7/cancel");
+            mock.server.join().unwrap();
+        },
+    );
+}
+
 #[test]
 fn release_before_hex_starts_still_finishes_and_returns_raw_text() {
     let mut replies = capture_start();

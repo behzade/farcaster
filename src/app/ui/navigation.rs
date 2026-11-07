@@ -229,11 +229,11 @@ impl FarcasterApp {
                 }
             }));
         cx.observe_window_activation(window, |this, window, cx| {
+            this.workspace.voice.release_keys(window.modifiers());
             if window.is_window_active() {
                 this.refresh_voice_availability(cx);
             } else {
                 this.cancel_voice(cx);
-                this.workspace.voice.release_keys();
                 this.navigation.chat.activation.clear();
                 this.notify_composer(cx);
             }
