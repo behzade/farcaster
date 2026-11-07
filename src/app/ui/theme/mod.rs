@@ -14,6 +14,9 @@ mod library;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod accessibility_tests;
+
 pub(crate) use crate::app::ui::primitives::{SyntaxKey, highlight};
 pub(crate) use library::{
     Appearance, ThemeDefinition, ThemeLibrary, color_hex, length_label, parse_hex,
@@ -75,6 +78,7 @@ pub(crate) struct Colors {
     pub success: Rgba,
     pub backdrop: Rgba,
     pub indicator: Rgba,
+    pub terminal_green: Rgba,
 }
 
 macro_rules! color_keys {
@@ -183,12 +187,14 @@ color_keys!(
     danger,
     success,
     backdrop;
-    indicator
+    indicator,
+    terminal_green
 );
 
 pub(crate) fn default_optional_color(colors: Colors, key: ColorKey) -> Rgba {
     match key {
         ColorKey::indicator => colors.accent,
+        ColorKey::terminal_green => colors.success,
         _ => colors.text,
     }
 }
@@ -624,14 +630,17 @@ pub(crate) fn set_active(theme: Theme, appearance: Appearance, tokens: Vec<(Them
 }
 
 pub(crate) fn terminal_theme() -> TerminalTheme {
-    let colors = theme().colors;
+    terminal_theme_for(theme().colors)
+}
+
+fn terminal_theme_for(colors: Colors) -> TerminalTheme {
     TerminalTheme::new(
         terminal_color(colors.canvas),
         terminal_color(colors.text),
         [
             terminal_color(colors.panel),
             terminal_color(colors.error),
-            terminal_color(colors.success),
+            terminal_color(colors.terminal_green),
             terminal_color(colors.code),
             terminal_color(colors.file),
             terminal_color(colors.skill),
@@ -639,7 +648,7 @@ pub(crate) fn terminal_theme() -> TerminalTheme {
             terminal_color(colors.muted),
             terminal_color(colors.subtle),
             terminal_color(colors.error),
-            terminal_color(colors.success),
+            terminal_color(colors.terminal_green),
             terminal_color(colors.warning),
             terminal_color(colors.link),
             terminal_color(colors.skill),
@@ -689,7 +698,8 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     component_colors.link_active = colors.link.into();
     component_colors.link_hover = colors.link.into();
     component_colors.border = colors.border.into();
-    component_colors.input = colors.border.into();
+    // Input boundaries need more contrast than decorative panel separators.
+    component_colors.input = colors.focus_border.into();
     component_colors.muted = colors.panel.into();
     component_colors.muted_foreground = colors.muted.into();
     component_colors.popover = colors.panel.into();
@@ -702,6 +712,10 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     component_colors.secondary_hover = colors.highlight.into();
     component_colors.secondary_active = colors.highlight.into();
     component_colors.secondary_foreground = colors.text.into();
+    component_colors.button_secondary = colors.surface.into();
+    component_colors.button_secondary_hover = colors.highlight.into();
+    component_colors.button_secondary_active = colors.highlight.into();
+    component_colors.button_secondary_foreground = colors.text.into();
     component_colors.button = colors.surface.into();
     component_colors.button_hover = colors.highlight.into();
     component_colors.button_active = colors.highlight.into();
@@ -712,10 +726,24 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     component_colors.button_primary_foreground = colors.canvas.into();
     component_colors.danger = colors.danger.into();
     component_colors.danger_foreground = colors.canvas.into();
+    // Buttons keep their own tokens; changing the semantic color alone leaves
+    // the component preset's translucent fills and foregrounds in place.
+    component_colors.button_danger = colors.danger.into();
+    component_colors.button_danger_hover = colors.danger.into();
+    component_colors.button_danger_active = colors.danger.into();
+    component_colors.button_danger_foreground = colors.canvas.into();
     component_colors.warning = colors.warning.into();
     component_colors.warning_foreground = colors.canvas.into();
+    component_colors.button_warning = colors.warning.into();
+    component_colors.button_warning_hover = colors.warning.into();
+    component_colors.button_warning_active = colors.warning.into();
+    component_colors.button_warning_foreground = colors.canvas.into();
     component_colors.success = colors.success.into();
     component_colors.success_foreground = colors.canvas.into();
+    component_colors.button_success = colors.success.into();
+    component_colors.button_success_hover = colors.success.into();
+    component_colors.button_success_active = colors.success.into();
+    component_colors.button_success_foreground = colors.canvas.into();
     component_colors.ring = colors.accent.into();
     component_colors.caret = colors.text.into();
     component_colors.selection = colors.highlight.into();
