@@ -319,10 +319,21 @@ fn open(
                 // The app's Escape prefix interceptor only belongs to its main window.
                 // Resolve modal Escape before the global sequence matcher buffers it.
                 subscriptions.push(cx.intercept_keystrokes(move |event, window, cx| {
-                    if window.window_handle().window_id() == window_id
-                        && event.keystroke.key == "escape"
-                        && !event.keystroke.modifiers.modified()
+                    if window.window_handle().window_id() != window_id {
+                        return;
+                    }
+                    if event_owner
+                        .update(cx, |app, cx| {
+                            app.workspace.voice.capturing_shortcut
+                                && app.voice_key_down(&event.keystroke, window, cx)
+                        })
+                        .unwrap_or(false)
                     {
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if event.keystroke.key == "escape" && !event.keystroke.modifiers.modified() {
                         let _ = event_owner.update(cx, |app, cx| app.dismiss_surface(window, cx));
                         cx.stop_propagation();
                     }
@@ -404,6 +415,12 @@ impl Render for ModalWindow {
                 .font(ui_font())
                 .text_color(theme().colors.text)
                 .text_size(theme().type_scale.body)
+                .on_modifiers_changed(cx.listener(|app, event, window, cx| {
+                    app.voice_modifiers_changed(event, window, cx);
+                }))
+                .capture_key_up(cx.listener(|app, event, window, cx| {
+                    app.voice_key_up(event, window, cx);
+                }))
                 .key_context(APP_INPUT_CONTEXT);
             let owner = cx.entity().downgrade();
             let picker = app.render_picker(owner.clone(), cx);

@@ -38,6 +38,7 @@ pub(in crate::app) struct VoiceState {
     pub(in crate::app) settings_error: Option<String>,
     availability_check: Option<gpui::Task<()>>,
     key_down: Option<String>,
+    modifier_shortcut: shortcut::ModifierShortcut,
     pub(in crate::app) capturing_shortcut: bool,
     gesture: Gesture,
     press: u64,
@@ -63,6 +64,7 @@ impl VoiceState {
     pub(in crate::app) fn release_keys(&mut self) {
         self.key_down = None;
         self.capturing_shortcut = false;
+        self.modifier_shortcut.reset();
     }
 
     pub(in crate::app) fn recording(&self) -> bool {
@@ -136,9 +138,35 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        // Leave Escape to normal navigation and editor handling, even during voice.
-        // Modifier-only Shift events must not arm voice or shortcut capture.
-        if stroke.key == "escape" || stroke.key == "shift" {
+        // Modifier-only shortcuts use ModifiersChanged, never synthetic key presses.
+        if matches!(
+            stroke.key.as_str(),
+            "shift"
+                | "control"
+                | "ctrl"
+                | "alt"
+                | "option"
+                | "cmd"
+                | "super"
+                | "platform"
+                | "fn"
+                | "function"
+        ) {
+            return false;
+        }
+        self.workspace.voice.modifier_shortcut.key_down(&stroke.key);
+        // Keep Escape's navigation behavior, but don't arm voice while it is held.
+        if stroke.key == "escape" {
+            if self.workspace.voice.capturing_shortcut {
+                self.workspace.voice.capturing_shortcut = false;
+                self.workspace.voice.settings_error = None;
+                self.workspace.voice.key_down = Some(stroke.key.clone());
+                cx.notify();
+                return true;
+            }
+            if shortcut::modifier_binding(self.voice_shortcut()).is_some() {
+                self.interrupt_voice_gesture(cx);
+            }
             return false;
         }
         if self.workspace.voice.key_down.as_deref() == Some(&stroke.key) {
@@ -161,23 +189,15 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if !self.voice_enabled() {
+        if !self.can_start_voice(window, cx) {
             return false;
         }
+        self.workspace.voice.key_down = Some(key.into());
         if matches!(self.workspace.voice.gesture, Gesture::Locked) {
-            self.workspace.voice.key_down = Some(key.into());
             self.workspace.voice.gesture = Gesture::Used;
             self.finish_voice(cx);
             return true;
         }
-        if !matches!(
-            self.workspace.surface,
-            AppSurface::Chat | AppSurface::Editor
-        ) || self.native_workspace_covered_by_overlay()
-        {
-            return false;
-        }
-        self.workspace.voice.key_down = Some(key.into());
         let second_tap = matches!(self.workspace.voice.gesture, Gesture::Tapped(at) if at.elapsed() <= DOUBLE_TAP);
         self.workspace.voice.gesture = Gesture::Pressed { second_tap };
         self.workspace.voice.press = self.workspace.voice.press.wrapping_add(1);
@@ -187,6 +207,7 @@ impl FarcasterApp {
             let _ = weak.update_in(cx, |this, window, cx| {
                 if this.workspace.voice.press == press
                     && matches!(this.workspace.voice.gesture, Gesture::Pressed { .. })
+                    && this.voice_window_ready(window, cx)
                 {
                     this.workspace.voice.gesture = Gesture::Holding;
                     this.start_voice(window, cx);
@@ -217,6 +238,10 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.workspace
+            .voice
+            .modifier_shortcut
+            .key_up(&event.keystroke.key);
         if self.workspace.voice.key_down.as_deref() != Some(&event.keystroke.key) {
             return;
         }
@@ -255,17 +280,26 @@ impl FarcasterApp {
         cx.notify();
     }
 
+    fn voice_window_ready(&self, window: &Window, cx: &gpui::App) -> bool {
+        window.is_window_active()
+            && !self.native_workspace_covered_by_overlay()
+            && self.keyboard_overlay_focus(window, cx).is_none()
+    }
+
+    fn can_start_voice(&self, window: &Window, cx: &gpui::App) -> bool {
+        self.voice_enabled()
+            && matches!(
+                self.workspace.surface,
+                AppSurface::Chat | AppSurface::Editor
+            )
+            && self.voice_window_ready(window, cx)
+    }
+
     fn start_voice(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.workspace.voice.speech.take();
         // A second recording can replace a transcription that has not been sent yet.
         self.workspace.voice.input.take();
-        if !self.voice_enabled()
-            || !matches!(
-                self.workspace.surface,
-                AppSurface::Chat | AppSurface::Editor
-            )
-            || self.native_workspace_covered_by_overlay()
-        {
+        if !self.can_start_voice(window, cx) {
             return;
         }
         let editor = if self.workspace.surface == AppSurface::Editor {

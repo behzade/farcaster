@@ -2,6 +2,93 @@ use super::*;
 use crate::protocol::ExtensionUiRequest;
 use gpui::Focusable as _;
 
+#[gpui::test]
+fn native_settings_capture_modifier_and_key_voice_shortcuts(cx: &mut gpui::TestAppContext) {
+    settings_voice_shortcuts(
+        concat!(
+            module_path!(),
+            "::native_settings_capture_modifier_and_key_voice_shortcuts"
+        ),
+        false,
+        cx,
+    );
+}
+
+#[gpui::test]
+fn wayland_settings_capture_modifier_and_key_voice_shortcuts(cx: &mut gpui::TestAppContext) {
+    settings_voice_shortcuts(
+        concat!(
+            module_path!(),
+            "::wayland_settings_capture_modifier_and_key_voice_shortcuts"
+        ),
+        true,
+        cx,
+    );
+}
+
+fn settings_voice_shortcuts(name: &'static str, wayland: bool, cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(name, cx, |cx, app, _, _| {
+        cx.update(|window, cx| {
+            cx.set_global(native::TestHost(if wayland {
+                NativeHost::TestWayland
+            } else {
+                NativeHost::Test
+            }));
+            window.activate_window();
+            app.update(cx, |app, cx| {
+                app.workspace.surface = AppSurface::Editor;
+                app.open_settings(window, cx);
+            });
+            window.draw(cx).clear(cx);
+        });
+        cx.run_until_parked();
+        let popup = cx.update(|_, cx| app.read(cx).overlays.modal.window.expect("settings panel"));
+        let popup_cx = gpui::VisualTestContext::from_window(popup.into(), cx).into_mut();
+        popup_cx.update(|window, cx| {
+            if !wayland {
+                window.activate_window();
+            }
+            window.draw(cx).clear(cx);
+        });
+        cx.run_until_parked();
+        let input_cx = if wayland { cx } else { popup_cx };
+        for key in ["cmd-alt", "ctrl-alt-v", "ctrl-alt"] {
+            input_cx.update(|window, cx| {
+                app.update(cx, |app, cx| app.begin_voice_shortcut_capture(cx));
+                window.draw(cx).clear(cx);
+            });
+            input_cx.simulate_event(gpui::ModifiersChangedEvent {
+                modifiers: gpui::Modifiers {
+                    control: key != "cmd-alt",
+                    platform: key == "cmd-alt",
+                    alt: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+            if key == "ctrl-alt-v" {
+                input_cx.simulate_keystrokes(key);
+                input_cx.simulate_event(gpui::KeyUpEvent {
+                    keystroke: gpui::Keystroke::parse(key).unwrap(),
+                });
+            }
+            // Commit on the first release, then lift the remaining modifier.
+            input_cx.simulate_event(gpui::ModifiersChangedEvent {
+                modifiers: gpui::Modifiers {
+                    alt: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+            input_cx.simulate_event(gpui::ModifiersChangedEvent::default());
+            input_cx.update(|_, cx| {
+                assert_eq!(app.read(cx).voice_shortcut(), key);
+                assert!(!app.read(cx).workspace.voice.capturing_shortcut);
+            });
+        }
+    });
+}
+
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[gpui::test]
 fn terminal_picker_keeps_search_focus_in_its_panel(cx: &mut gpui::TestAppContext) {

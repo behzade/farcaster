@@ -92,6 +92,7 @@ fn chat_voice_arms_and_sends_without_editor_context(cx: &mut gpui::TestAppContex
         ),
         cx,
         |cx, app, runtime, project| {
+            cx.update(|window, _| window.activate_window());
             cx.run_until_parked();
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
@@ -275,6 +276,7 @@ fn failed_or_stopped_submissions_do_not_speak_a_later_reply() {
 }
 
 fn prepare_voice_editor(cx: &mut gpui::VisualTestContext, app: &gpui::Entity<FarcasterApp>) {
+    cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update(|window, cx| {
         app.update(cx, |app, cx| {
@@ -289,11 +291,29 @@ fn prepare_voice_editor(cx: &mut gpui::VisualTestContext, app: &gpui::Entity<Far
 
 fn default_shortcut(
     cx: &mut gpui::VisualTestContext,
-    _app: &gpui::Entity<FarcasterApp>,
+    app: &gpui::Entity<FarcasterApp>,
     down: bool,
 ) {
-    // Releasing Control first must still finish when the apostrophe key comes up.
-    chord(cx, if down { "ctrl-'" } else { "'" }, down);
+    let binding =
+        cx.update(|_, cx| shortcut::modifier_binding(app.read(cx).voice_shortcut()).unwrap());
+    modifiers(
+        cx,
+        if down {
+            binding
+        } else {
+            gpui::Modifiers::default()
+        },
+    );
+}
+
+fn modifiers(cx: &mut gpui::VisualTestContext, modifiers: gpui::Modifiers) {
+    cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+    cx.simulate_event(gpui::ModifiersChangedEvent {
+        modifiers,
+        ..Default::default()
+    });
 }
 
 fn chord(cx: &mut gpui::VisualTestContext, key: &str, down: bool) {
@@ -406,6 +426,7 @@ fn double_tap_locks_until_the_next_shortcut_press(cx: &mut gpui::TestAppContext)
                     assert!(app.workspace.voice.recording());
                 })
             });
+            chord(cx, "a", false);
             let (recorder, finished) = hex::Dictation::stub_with_finish();
             cx.update(|_, cx| {
                 app.update(cx, |app, _| {
@@ -458,6 +479,7 @@ fn unrelated_keys_cancel_without_consuming_typing(cx: &mut gpui::TestAppContext)
                     ))
                 })
             });
+            chord(cx, "a", false);
             default_shortcut(cx, app, false);
             cx.run_until_parked();
             cx.executor()
@@ -484,6 +506,7 @@ fn unrelated_keys_cancel_without_consuming_typing(cx: &mut gpui::TestAppContext)
                     });
                     window.draw(cx).clear(cx);
                 });
+                chord(cx, if key == "A" { "A" } else { "a" }, false);
                 default_shortcut(cx, app, false);
             }
             assert!(runtime.try_recv_signal().is_none());
@@ -563,6 +586,9 @@ fn voice_custom_shortcut_ignores_repeat_and_releases_without_modifiers(
             prepare_voice_editor(cx, app);
             cx.update(|_, cx| {
                 app.update(cx, |app, _| {
+                    assert_eq!(app.voice_shortcut(), shortcut::DEFAULT_SHORTCUT);
+                    app.settings.voice_shortcut = Some("right-shift".into());
+                    assert_eq!(app.voice_shortcut(), shortcut::DEFAULT_SHORTCUT);
                     app.settings.voice_shortcut = Some("ctrl-alt-v".into());
                 });
             });
@@ -600,97 +626,154 @@ fn voice_custom_shortcut_ignores_repeat_and_releases_without_modifiers(
 }
 
 #[gpui::test]
-fn voice_default_and_saved_shortcuts_work_on_each_platform(cx: &mut gpui::TestAppContext) {
+fn modifier_shortcuts_finish_on_either_release_and_require_all_keys_up(
+    cx: &mut gpui::TestAppContext,
+) {
     crate::app::test_support::with_offline_app(
         concat!(
             module_path!(),
-            "::voice_default_and_saved_shortcuts_work_on_each_platform"
-        ),
-        cx,
-        |cx, app, _, _| {
-            prepare_voice_editor(cx, app);
-            cx.update(|window, cx| {
-                app.update(cx, |app, cx| {
-                    let default = "ctrl-'";
-                    assert_eq!(app.voice_shortcut(), default);
-                    app.settings.voice_shortcut = Some("right-shift".into());
-                    assert_eq!(app.voice_shortcut(), default);
-                    app.settings.voice_shortcut = Some("ctrl-shift-space".into());
-                    assert_eq!(app.voice_shortcut(), "ctrl-shift-space");
-                    // Capture the new default through the shortcut conflict validator.
-                    app.open_settings(window, cx);
-                    app.begin_voice_shortcut_capture(cx);
-                    let key =
-                        gpui::Keystroke::parse_with_os(default, cx.platform_info().os).unwrap();
-                    assert!(app.voice_key_down(&key, window, cx));
-                    assert!(app.workspace.voice.settings_error.is_none());
-                    assert_eq!(app.voice_shortcut(), default);
-                    app.reset_voice_shortcut(cx);
-                    assert_eq!(app.voice_shortcut(), default);
-                });
-            });
-        },
-    );
-}
-
-#[cfg(target_os = "macos")]
-#[gpui::test]
-fn voice_command_alias_holds_locks_and_respects_custom_shortcuts(cx: &mut gpui::TestAppContext) {
-    crate::app::test_support::with_offline_app(
-        concat!(
-            module_path!(),
-            "::voice_command_alias_holds_locks_and_respects_custom_shortcuts"
+            "::modifier_shortcuts_finish_on_either_release_and_require_all_keys_up"
         ),
         cx,
         |cx, app, _, project| {
             prepare_voice_editor(cx, app);
-            chord(cx, "cmd-'", true);
-            cx.run_until_parked();
-            cx.executor()
-                .advance_clock(HOLD_DELAY + Duration::from_millis(1));
-            cx.run_until_parked();
+            for key in ["cmd-alt", "ctrl-alt"] {
+                let both = shortcut::modifier_binding(key).unwrap();
+                let alt = gpui::Modifiers {
+                    alt: true,
+                    ..Default::default()
+                };
+                let partner = gpui::Modifiers { alt: false, ..both };
+                for first in [alt, partner] {
+                    for remaining in [alt, partner] {
+                        cx.update(|_, cx| {
+                            app.update(cx, |app, _| {
+                                app.settings.voice_shortcut = Some(key.into());
+                                app.workspace.voice.gesture = Gesture::Idle;
+                            })
+                        });
+                        modifiers(cx, first);
+                        cx.update(|_, cx| {
+                            assert!(matches!(
+                                app.read(cx).workspace.voice.gesture,
+                                Gesture::Idle
+                            ))
+                        });
+                        modifiers(cx, both);
+                        let generation = cx.update(|_, cx| app.read(cx).workspace.voice.press);
+                        modifiers(cx, both);
+                        cx.update(|_, cx| {
+                            assert_eq!(app.read(cx).workspace.voice.press, generation)
+                        });
+                        cx.executor()
+                            .advance_clock(HOLD_DELAY + Duration::from_millis(1));
+                        cx.run_until_parked();
+                        let (recorder, finished) = hex::Dictation::stub_with_finish();
+                        cx.update(|_, cx| {
+                            app.update(cx, |app, _| {
+                                assert!(matches!(app.workspace.voice.gesture, Gesture::Holding));
+                                app.workspace.voice.input = Some(Input {
+                                    recorder,
+                                    ..input(&project, "current")
+                                });
+                            })
+                        });
+                        modifiers(cx, remaining);
+                        assert!(finished(), "{key}: lifting either modifier finishes");
+                        modifiers(cx, both);
+                        cx.update(|_, cx| {
+                            assert_eq!(app.read(cx).workspace.voice.press, generation)
+                        });
+                        modifiers(cx, gpui::Modifiers::default());
+                        assert!(!finished(), "finish must be sent only once");
+                    }
+                }
+            }
+        },
+    );
+}
+
+#[gpui::test]
+fn modifier_shortcut_cannot_arm_during_another_chord_or_after_focus_loss(
+    cx: &mut gpui::TestAppContext,
+) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::modifier_shortcut_cannot_arm_during_another_chord_or_after_focus_loss"
+        ),
+        cx,
+        |cx, app, _, project| {
+            prepare_voice_editor(cx, app);
+            let both = shortcut::modifier_binding(shortcut::DEFAULT_SHORTCUT).unwrap();
+            let extra = gpui::Modifiers {
+                shift: true,
+                ..both
+            };
+            // A key held before the modifiers must not become a voice gesture.
+            chord(cx, "x", true);
+            modifiers(cx, both);
+            chord(cx, "x", false);
+            cx.update(|_, cx| {
+                assert!(matches!(
+                    app.read(cx).workspace.voice.gesture,
+                    Gesture::Idle
+                ))
+            });
+            modifiers(cx, gpui::Modifiers::default());
+            // Releasing an extra modifier must not turn a longer chord into voice.
+            modifiers(cx, extra);
+            modifiers(cx, both);
+            cx.update(|_, cx| {
+                assert!(matches!(
+                    app.read(cx).workspace.voice.gesture,
+                    Gesture::Idle
+                ))
+            });
+            modifiers(cx, gpui::Modifiers::default());
+            // Adding a modifier while recording cancels, without submitting.
+            modifiers(cx, both);
             let (recorder, finished) = hex::Dictation::stub_with_finish();
             cx.update(|_, cx| {
                 app.update(cx, |app, _| {
-                    assert!(matches!(app.workspace.voice.gesture, Gesture::Holding));
+                    app.workspace.voice.gesture = Gesture::Holding;
                     app.workspace.voice.input = Some(Input {
                         recorder,
                         ..input(&project, "current")
                     });
-                });
+                })
             });
-            // Releasing Command first must not prevent release from finishing.
-            chord(cx, "'", false);
-            assert!(finished());
+            modifiers(cx, extra);
+            modifiers(cx, both);
+            modifiers(cx, gpui::Modifiers::default());
+            assert!(!finished());
+            cx.update(|_, cx| assert!(app.read(cx).workspace.voice.input.is_none()));
+            // Leaving the app while arming cancels the timer and requires release.
+            modifiers(cx, both);
+            cx.deactivate_window();
+            cx.executor()
+                .advance_clock(HOLD_DELAY + Duration::from_millis(1));
+            cx.run_until_parked();
+            cx.update(|_, cx| assert!(app.read(cx).workspace.voice.input.is_none()));
+            cx.update(|window, _| window.activate_window());
+            cx.run_until_parked();
+            cx.update(|_, cx| app.update(cx, |app, _| app.workspace.voice.available = true));
+            modifiers(cx, both);
             cx.update(|_, cx| {
-                app.update(cx, |app, cx| app.cancel_voice(cx));
+                assert!(!matches!(
+                    app.read(cx).workspace.voice.gesture,
+                    Gesture::Pressed { .. } | Gesture::Holding
+                ))
             });
-            // Both spellings share the same double-tap gesture.
-            for key in ["ctrl-'", "cmd-'"] {
-                chord(cx, key, true);
-                chord(cx, "'", false);
-            }
+            modifiers(cx, gpui::Modifiers::default());
+            modifiers(cx, both);
             cx.update(|_, cx| {
-                app.update(cx, |app, cx| {
-                    assert!(matches!(app.workspace.voice.gesture, Gesture::Locked));
-                    app.cancel_voice(cx);
-                    for key in ["'", "shift-cmd-'", "ctrl-cmd-'"] {
-                        assert!(
-                            !app.matches_voice_shortcut(&gpui::Keystroke::parse(key).unwrap(), cx)
-                        );
-                    }
-                    app.settings.voice_shortcut = Some("ctrl-alt-v".into());
-                    for key in ["ctrl-'", "cmd-'"] {
-                        assert!(
-                            !app.matches_voice_shortcut(&gpui::Keystroke::parse(key).unwrap(), cx)
-                        );
-                    }
-                    app.reset_voice_shortcut(cx);
-                    assert!(
-                        app.matches_voice_shortcut(&gpui::Keystroke::parse("cmd-'").unwrap(), cx)
-                    );
-                });
+                assert!(matches!(
+                    app.read(cx).workspace.voice.gesture,
+                    Gesture::Pressed { .. }
+                ))
             });
+            modifiers(cx, gpui::Modifiers::default());
         },
     );
 }

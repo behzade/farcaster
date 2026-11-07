@@ -1,8 +1,77 @@
-use gpui::{Context, Keystroke, Window};
+use gpui::{Context, Keystroke, Modifiers, Window};
 
 use crate::app::{FarcasterApp, workspace::SettingsTab};
 
-const DEFAULT_SHORTCUT: &str = "ctrl-'";
+#[cfg(target_os = "macos")]
+pub(super) const DEFAULT_SHORTCUT: &str = "cmd-alt";
+#[cfg(not(target_os = "macos"))]
+pub(super) const DEFAULT_SHORTCUT: &str = "ctrl-alt";
+
+pub(super) fn modifier_binding(key: &str) -> Option<Modifiers> {
+    match key {
+        "cmd-alt" => Some(Modifiers {
+            platform: true,
+            alt: true,
+            ..Default::default()
+        }),
+        "ctrl-alt" => Some(Modifiers {
+            control: true,
+            alt: true,
+            ..Default::default()
+        }),
+        _ => None,
+    }
+}
+
+#[derive(Default)]
+pub(super) struct ModifierShortcut {
+    modifiers: Modifiers,
+    keys: std::collections::HashSet<String>,
+    blocked: bool,
+    pressed: bool,
+    capture: Option<&'static str>,
+}
+
+impl ModifierShortcut {
+    pub(super) fn reset(&mut self) {
+        *self = Self {
+            blocked: true,
+            ..Default::default()
+        };
+    }
+
+    pub(super) fn key_down(&mut self, key: &str) {
+        self.keys.insert(key.to_owned());
+        self.blocked = true;
+        self.capture = None;
+    }
+
+    pub(super) fn key_up(&mut self, key: &str) {
+        self.keys.remove(key);
+        if self.keys.is_empty() && !self.modifiers.modified() {
+            self.blocked = false;
+        }
+    }
+
+    // Commit on release so a following key can still form Ctrl+Alt+V, etc.
+    fn capture(&mut self) -> Option<&'static str> {
+        if let Some(key) = self.capture {
+            let required = modifier_binding(key).unwrap();
+            if self.modifiers == required {
+                return None;
+            }
+            self.capture = None;
+            self.blocked = self.modifiers.modified();
+            return self.modifiers.is_subset_of(&required).then_some(key);
+        }
+        if !self.blocked && self.keys.is_empty() {
+            self.capture = ["cmd-alt", "ctrl-alt"]
+                .into_iter()
+                .find(|key| modifier_binding(key) == Some(self.modifiers));
+        }
+        None
+    }
+}
 
 fn validate(stroke: &Keystroke, cx: &gpui::App) -> Result<(), String> {
     let function_key = stroke
@@ -50,12 +119,10 @@ impl FarcasterApp {
 
     pub(super) fn matches_voice_shortcut(&self, stroke: &Keystroke, cx: &gpui::App) -> bool {
         let key = self.voice_shortcut();
-        let matches = |key| {
-            Keystroke::parse_with_os(key, cx.platform_info().os).is_ok_and(|binding| {
+        modifier_binding(key).is_none()
+            && Keystroke::parse_with_os(key, cx.platform_info().os).is_ok_and(|binding| {
                 binding.key == stroke.key && binding.modifiers == stroke.modifiers
             })
-        };
-        matches(key) || (cfg!(target_os = "macos") && key == DEFAULT_SHORTCUT && matches("cmd-'"))
     }
 
     pub(in crate::app) fn voice_shortcut_label(&self, cx: &gpui::App) -> String {
@@ -65,8 +132,68 @@ impl FarcasterApp {
             .unwrap_or_else(|_| key.to_owned())
     }
 
+    pub(in crate::app) fn voice_modifiers_changed(
+        &mut self,
+        event: &gpui::ModifiersChangedEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let held = event.modifiers;
+        if !window.is_window_active() {
+            self.cancel_voice(cx);
+            self.workspace.voice.release_keys();
+            return;
+        }
+        let binding = modifier_binding(self.voice_shortcut());
+        let state = &mut self.workspace.voice.modifier_shortcut;
+        let previous = state.modifiers;
+        state.modifiers = held;
+        if !held.modified() && state.keys.is_empty() {
+            state.blocked = false;
+        }
+        if self.workspace.voice.capturing_shortcut {
+            if !self.overlays.view.settings || self.settings.tab != SettingsTab::General {
+                self.workspace.voice.capturing_shortcut = false;
+                state.capture = None;
+                return;
+            }
+            if let Some(key) = state.capture() {
+                self.save_voice_shortcut(Some(key.into()), cx);
+            }
+            return;
+        }
+        let Some(required) = binding else {
+            return;
+        };
+        if state.pressed && held != required {
+            state.pressed = false;
+            // Once released or interrupted, require all modifiers to lift.
+            state.blocked = held.modified() || !state.keys.is_empty();
+            if held.is_subset_of(&required) {
+                self.release_voice_shortcut(window, cx);
+            } else {
+                self.interrupt_voice_gesture(cx);
+                self.workspace.voice.key_down = None;
+            }
+        } else if !state.pressed
+            && !state.blocked
+            && state.keys.is_empty()
+            && held == required
+            && previous != required
+        {
+            state.pressed = true;
+            let key = self.voice_shortcut().to_owned();
+            self.press_voice_shortcut(&key, window, cx);
+        } else if !held.is_subset_of(&required) {
+            state.blocked = true;
+        }
+    }
+
     pub(in crate::app) fn begin_voice_shortcut_capture(&mut self, cx: &mut Context<Self>) {
         self.cancel_voice(cx);
+        let state = &mut self.workspace.voice.modifier_shortcut;
+        state.capture = None;
+        state.blocked = state.modifiers.modified() || !state.keys.is_empty();
         self.workspace.voice.capturing_shortcut = !self.workspace.voice.capturing_shortcut;
         self.workspace.voice.settings_error = None;
         cx.notify();
