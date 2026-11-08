@@ -4,7 +4,7 @@ use std::rc::Rc;
 use gpui::{
     AnyElement, App, Div, ElementId, InteractiveElement as _, IntoElement, KeyDownEvent,
     ParentElement as _, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _,
-    Window,
+    Window, div,
 };
 use gpui_component::{
     Disableable as _, IconNamed, Sizable as _, Size,
@@ -38,8 +38,10 @@ pub(crate) fn button(
     enabled: bool,
     on_press: impl Fn(&mut Window, &mut App) + 'static,
 ) -> Button {
+    let label = label.into();
     let button = Button::new(id)
-        .label(label)
+        .accessibility_label(label.clone())
+        .child(button_content(label))
         .with_size(Size::Small)
         .disabled(!enabled)
         .on_click(move |_, window, cx| on_press(window, cx));
@@ -52,8 +54,10 @@ pub(crate) fn dropdown_button(
     tone: ButtonTone,
     enabled: bool,
 ) -> Button {
+    let label = label.into();
     let button = Button::new(id)
-        .label(label)
+        .accessibility_label(label.clone())
+        .child(button_content(label))
         .dropdown_caret(true)
         .with_size(Size::Small)
         .disabled(!enabled);
@@ -71,11 +75,21 @@ pub(crate) fn dropdown_content_button(
     let button = Button::new(id)
         .accessibility_label(accessible_label.clone())
         .app_tooltip(accessible_label)
-        .child(content)
+        .child(button_content(content))
         .dropdown_caret(true)
         .with_size(Size::Small)
         .disabled(!enabled);
     tone_button(button, tone)
+}
+
+fn button_content(content: impl IntoElement) -> Div {
+    div()
+        .min_w_0()
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .text_ellipsis()
+        .text_size(theme().type_scale.body)
+        .child(content)
 }
 
 pub(crate) fn icon_button(

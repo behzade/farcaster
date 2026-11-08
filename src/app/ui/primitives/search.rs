@@ -75,7 +75,13 @@ impl RenderOnce for SearchField {
                     .items_center()
                     .gap(theme().space.xs)
                     .child(app_icon(AppIcon::MagnifyingGlass, AppIconSize::Inline))
-                    .child(Input::new(&input).flex_1().min_w_0().appearance(false)),
+                    .child(
+                        Input::new(&input)
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(theme().type_scale.body)
+                            .appearance(false),
+                    ),
             )
             .children(trailing)
     }

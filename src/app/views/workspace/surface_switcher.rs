@@ -99,7 +99,7 @@ impl FarcasterApp {
                     .gap(theme().space.sm)
                     .overflow_hidden()
                     .whitespace_nowrap()
-                    .text_size(theme().type_scale.caption)
+                    .text_size(theme().type_scale.body)
                     .child(
                         app_icon(AppIcon::Folder, AppIconSize::Inline)
                             .text_color(theme().colors.subtle),
