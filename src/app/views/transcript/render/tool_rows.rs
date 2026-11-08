@@ -28,6 +28,9 @@ mod changed_files;
 mod tool_preview;
 use tool_preview::ToolPreview;
 
+#[path = "tool_detail.rs"]
+mod tool_detail;
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_activity_group(
     font_scale: f32,
@@ -192,7 +195,7 @@ pub(super) fn render_tool(
                             label
                                 .font_family(MONO_FONT_FAMILY)
                                 .line_height(theme().type_scale.line_code * font_scale)
-                                .line_clamp(4)
+                                .line_clamp(if expanded { 1 } else { 4 })
                                 .text_ellipsis()
                         })
                         .when(command.is_none(), |label| label.truncate())
@@ -209,8 +212,6 @@ pub(super) fn render_tool(
             tool.child(
                 disclosure_detail()
                     .id(("tool-detail-scroll", key))
-                    .max_h(theme().layout.tool_max_height)
-                    .overflow_y_scroll()
                     .children(file_links(
                         font_scale,
                         key,
@@ -511,14 +512,15 @@ fn expanded_tool_body(
     id: impl Into<gpui::ElementId>,
     item: &TranscriptItem,
 ) -> AnyElement {
-    selectable_text(font_scale, id, fenced_text(&tool_body_text(item)))
-        .font_family(MONO_FONT_FAMILY)
+    let text = tool_detail::markdown(item).unwrap_or_else(|| fenced_text(&tool_body_text(item)));
+    selectable_text(font_scale, id, text)
+        .style(
+            super::scaled_markdown_style(super::transcript_markdown_style(), font_scale)
+                .paragraph_gap(gpui::rems(0.5)),
+        )
         .text_size(theme().type_scale.body_small * font_scale)
-        .text_color(if item.is_error {
-            theme().colors.error
-        } else {
-            theme().colors.muted
-        })
+        .line_height(theme().type_scale.line_body * font_scale)
+        .text_color(theme().colors.text)
         .into_any_element()
 }
 
