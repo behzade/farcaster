@@ -33,9 +33,11 @@ pub(super) fn file_row(
     } else {
         label
     };
+    let tooltip = label.clone();
     activation_row(id, label, move |alt, window, cx| {
         on_press(diff_enabled && alt, window, cx)
     })
+    .app_tooltip(tooltip)
 }
 
 pub(super) fn activation_row(
@@ -45,7 +47,6 @@ pub(super) fn activation_row(
 ) -> Stateful<Div> {
     let press = Rc::new(on_press);
     let click = press.clone();
-    let tooltip = label.clone();
     div()
         .id(id)
         .w_full()
@@ -55,7 +56,6 @@ pub(super) fn activation_row(
         .rounded(theme().radius)
         .role(Role::Button)
         .aria_label(label)
-        .app_tooltip(tooltip.clone())
         .tab_index(0)
         .cursor_pointer()
         .hover(|row| row.bg(theme().colors.highlight))
