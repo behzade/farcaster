@@ -461,7 +461,7 @@ struct Handoff {
 }
 
 enum PendingInputKind {
-    McpConfirmation,
+    McpConfirmation(super::super::mcp_confirmation::Confirmation),
     Permission {
         option_ids: HashMap<String, String>,
         allow_option: Option<String>,
@@ -899,26 +899,22 @@ impl AcpWorkerSession {
         if params["sessionId"].as_str() != Some(&self.session_id) {
             return None;
         }
-        let prompt = super::super::mcp_confirmation::prompt(
-            self.profile.name,
-            params["message"].as_str()?,
-            params["mode"].as_str()?,
-            &params["requestedSchema"],
-            &params["_meta"],
-        )
-        .ok()?;
+        let confirmation =
+            super::super::mcp_confirmation::Confirmation::parse(self.profile.name, params).ok()?;
+        let options = confirmation.options();
+        let prompt = confirmation.prompt.clone();
         let input_id = id.to_string();
         self.pending_inputs.insert(
             input_id.clone(),
             PendingInput {
                 request: id.clone(),
-                kind: PendingInputKind::McpConfirmation,
+                kind: PendingInputKind::McpConfirmation(confirmation),
             },
         );
         Some(WorkerEvent::NeedsInput(WorkerInput {
             id: input_id,
             prompt,
-            options: vec!["Decline".into(), "Allow".into()],
+            options,
             secret: false,
         }))
     }
@@ -1255,10 +1251,9 @@ impl WorkerSession for AcpWorkerSession {
             .ok_or_else(|| format!("unknown ACP interaction: {}", response.id))?;
         let PendingInput { request, kind } = pending;
         let result = match kind {
-            PendingInputKind::McpConfirmation => super::super::mcp_confirmation::reply(
-                response.value.as_deref() == Some("Allow"),
-                response.cancel,
-            ),
+            PendingInputKind::McpConfirmation(confirmation) => {
+                confirmation.reply(response.value.as_deref(), response.cancel)
+            }
             PendingInputKind::Permission {
                 option_ids,
                 allow_option,

@@ -772,7 +772,7 @@ struct PendingApproval {
 enum ApprovalReply {
     Decision,
     Permissions(Value),
-    McpConfirmation,
+    McpConfirmation(super::super::mcp_confirmation::Confirmation),
 }
 
 struct CodexWorkerSession {
@@ -944,8 +944,8 @@ impl WorkerSession for CodexWorkerSession {
             ApprovalReply::Decision => {
                 json!({"decision": if accepted { "accept" } else { "decline" }})
             }
-            ApprovalReply::McpConfirmation => {
-                super::super::mcp_confirmation::reply(accepted, response.cancel)
+            ApprovalReply::McpConfirmation(confirmation) => {
+                confirmation.reply(response.value.as_deref(), response.cancel)
             }
         };
         let encoded = encode_response(&approval.id, result)?;
@@ -2154,6 +2154,10 @@ impl CodexWorkerSession {
                                 continue;
                             }
                         };
+                    let options = match &reply {
+                        ApprovalReply::McpConfirmation(confirmation) => confirmation.options(),
+                        _ => vec!["Allow".into(), "Decline".into()],
+                    };
                     let input_id = input_id(&id);
                     self.pending_inputs.insert(
                         input_id.clone(),
@@ -2170,7 +2174,7 @@ impl CodexWorkerSession {
                     return Some(WorkerEvent::NeedsInput(WorkerInput {
                         id: input_id,
                         prompt,
-                        options: vec!["Allow".into(), "Decline".into()],
+                        options,
                         secret: false,
                     }));
                 }
@@ -3338,14 +3342,14 @@ fn approval_request(
         if params["threadId"].as_str() != Some(thread_id) {
             return Err("MCP confirmation belongs to another thread");
         }
-        let prompt = super::super::mcp_confirmation::prompt(
+        let confirmation = super::super::mcp_confirmation::Confirmation::parse(
             params["serverName"].as_str().unwrap_or_default(),
-            params["message"].as_str().unwrap_or_default(),
-            params["mode"].as_str().unwrap_or_default(),
-            &params["requestedSchema"],
-            &params["_meta"],
+            params,
         )?;
-        return Ok((prompt, ApprovalReply::McpConfirmation));
+        return Ok((
+            confirmation.prompt.clone(),
+            ApprovalReply::McpConfirmation(confirmation),
+        ));
     }
     if CodexMethod::parse(method) == CodexMethod::PermissionsApproval {
         let permissions = params

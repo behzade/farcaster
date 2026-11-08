@@ -699,7 +699,8 @@ fn mcp_confirmation_request() -> CodexInbound {
         params: json!({"threadId":"thread-1", "turnId":"turn-1", "serverName":"node_repl",
             "mode":"form", "message":"Allow Computer Use to use Farcaster?",
             "requestedSchema":{"type":"object","properties":{}},
-            "_meta":{"tool_name":"get_app_state","tool_params":{"app":"io.github.behzade.farcaster.dev"}}}),
+            "_meta":{"persist":["session","always"],"tool_name":"get_app_state","tool_params":{"app":"io.github.behzade.farcaster.dev"},
+                "tool_params_display":[{"name":"app","display_name":"App","value":"Farcaster"}]}}),
     }
 }
 
@@ -707,11 +708,17 @@ fn mcp_confirmation_request() -> CodexInbound {
 fn mcp_confirmation_waits_for_a_user_choice_and_preserves_native_replies() {
     use std::io::BufRead as _;
     let (mut session, mut sent) = writable_test_session();
-    for (value, cancel, action) in [
-        (Some("Allow"), false, "accept"),
-        (Some("Decline"), false, "decline"),
-        (Some("Allow"), true, "cancel"),
-        (None, false, "decline"),
+    for (value, cancel, action, persistence) in [
+        (
+            Some("Allow for this session"),
+            false,
+            "accept",
+            Some("session"),
+        ),
+        (Some("Always allow"), false, "accept", Some("always")),
+        (Some("Decline"), false, "decline", None),
+        (Some("Always allow"), true, "cancel", None),
+        (None, false, "decline", None),
     ] {
         session
             .queued_inbound
@@ -724,7 +731,11 @@ fn mcp_confirmation_waits_for_a_user_choice_and_preserves_native_replies() {
                 .prompt
                 .contains("Allow Computer Use to use Farcaster?")
         );
-        assert!(input.prompt.contains("io.github.behzade.farcaster.dev"));
+        assert!(input.prompt.contains("App: Farcaster"));
+        assert_eq!(
+            input.options,
+            ["Decline", "Allow for this session", "Always allow"]
+        );
         assert_eq!(session.pending_inputs.len(), 1);
         session
             .respond(WorkerInputResponse {
@@ -736,12 +747,13 @@ fn mcp_confirmation_waits_for_a_user_choice_and_preserves_native_replies() {
         let mut line = String::new();
         sent.read_line(&mut line).expect("native reply");
         let reply: Value = serde_json::from_str(&line).expect("JSON reply");
-        assert_eq!(
-            reply,
-            json!({"id":"mcp-approval","result":{
-                "action":action,"content":if action == "accept" { json!({}) } else { Value::Null }
-            }})
-        );
+        let mut expected = json!({"id":"mcp-approval","result":{
+            "action":action,"content":if action == "accept" { json!({}) } else { Value::Null }
+        }});
+        if let Some(persistence) = persistence {
+            expected["result"]["_meta"] = json!({"persist":persistence});
+        }
+        assert_eq!(reply, expected);
         assert!(session.pending_inputs.is_empty());
         assert!(matches!(
             session.poll(),

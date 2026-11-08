@@ -2591,16 +2591,19 @@ fn mcp_confirmation_is_shown_and_keeps_the_request_pending() {
             id: AcpRequestId::Number(2),
             method: "elicitation/create".into(),
             params: json!({"sessionId":"one","mode":"form","message":"Allow desktop access?",
-            "requestedSchema":{"type":"object","properties":{}}}),
+            "requestedSchema":{"type":"object","properties":{}}, "_meta":{"persist":["session","always"]}}),
         }]));
     let Some(WorkerEvent::NeedsInput(input)) = session.poll() else {
         panic!("missing MCP prompt")
     };
     assert!(input.prompt.contains("Allow desktop access?"));
-    assert_eq!(input.options, ["Decline", "Allow"]);
+    assert_eq!(
+        input.options,
+        ["Decline", "Allow for this session", "Always allow"]
+    );
     assert!(matches!(
         session.pending_inputs[&input.id].kind,
-        PendingInputKind::McpConfirmation
+        PendingInputKind::McpConfirmation(_)
     ));
     assert_eq!(session.poll_prompt_ack(), Some(("prompt".into(), Ok(()))));
 }

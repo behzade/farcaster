@@ -510,19 +510,17 @@ impl ClaudeSession {
         let request = &frame["request"];
         match string(request,"subtype") {
             "elicitation" => {
-                let prompt = super::super::mcp_confirmation::prompt(
+                let confirmation = super::super::mcp_confirmation::Confirmation::parse(
                     string(request, "mcp_server_name"),
-                    string(request, "message"),
-                    request["mode"].as_str().unwrap_or("form"),
-                    &request["requested_schema"],
-                    &request["_meta"],
+                    request,
                 );
-                match prompt {
-                    Ok(prompt) => {
+                match confirmation {
+                    Ok(confirmation) => {
+                        let options = confirmation.options();
                         self.permissions.insert(id.into(), request.clone());
                         self.events.pending.push_back(WorkerEvent::NeedsInput(WorkerInput {
-                            id: id.into(), prompt,
-                            options: vec!["Decline".into(), "Allow".into()], secret: false,
+                            id: id.into(), prompt: confirmation.prompt,
+                            options, secret: false,
                         }));
                         Ok(())
                     }
@@ -812,7 +810,11 @@ impl WorkerSession for ClaudeSession {
         if request["subtype"] == "elicitation" {
             self.reply(
                 &response.id,
-                super::super::mcp_confirmation::reply(accepted, response.cancel),
+                super::super::mcp_confirmation::Confirmation::parse(
+                    string(&request, "mcp_server_name"),
+                    &request,
+                )?
+                .reply(response.value.as_deref(), response.cancel),
             )?;
         } else {
             self.permission(&response.id, &request, accepted)?;
