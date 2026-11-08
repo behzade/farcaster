@@ -47,6 +47,19 @@ fn command_and_output_are_separate_and_embedded_fences_stay_literal() {
 }
 
 #[test]
+fn expanded_command_shows_script_and_keeps_raw_arguments() {
+    let invocation = "/run/current-system/sw/bin/sh -lc 'cargo test --offline'";
+    let item = item(json!({"command": invocation}));
+    let rendered = markdown(&item).unwrap();
+    assert!(rendered.contains("```text\ncargo test --offline\n```"));
+    assert!(!rendered.contains("/run/current-system"));
+    assert_eq!(
+        item.tool_details.as_ref().unwrap().arguments["command"],
+        invocation
+    );
+}
+
+#[test]
 fn structured_preview_bounds_large_values_and_marks_omitted_fields() {
     let huge = "متن`".repeat(400_000);
     for arguments in [

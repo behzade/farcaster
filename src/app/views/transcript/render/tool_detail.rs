@@ -21,6 +21,7 @@ pub(super) fn markdown(item: &TranscriptItem) -> Option<String> {
         lines: 40,
         truncated: arguments.len() > MAX_FIELDS,
     };
+    let command = details.display_command();
     render_fields(
         &mut body,
         arguments
@@ -28,6 +29,7 @@ pub(super) fn markdown(item: &TranscriptItem) -> Option<String> {
             .take(MAX_FIELDS)
             .filter(|(_, value)| !nested(value)),
         &mut budget,
+        command.as_deref(),
     );
     if !item.tool_output.is_empty() {
         heading(
@@ -52,6 +54,7 @@ pub(super) fn markdown(item: &TranscriptItem) -> Option<String> {
             .take(MAX_FIELDS)
             .filter(|(_, value)| nested(value)),
         &mut budget,
+        command.as_deref(),
     );
     if let Some(review) = &item.tool_review {
         heading(&mut body, "Approval review");
@@ -82,6 +85,7 @@ fn render_fields<'a>(
     body: &mut String,
     fields: impl Iterator<Item = (&'a String, &'a Value)>,
     budget: &mut PreviewBudget,
+    command: Option<&str>,
 ) {
     for (key, value) in fields {
         if budget.exhausted() {
@@ -142,7 +146,11 @@ fn render_fields<'a>(
         } else {
             let mut preview = ToolPreview::default();
             if let Some(text) = value.as_str() {
-                preview.push_str(text);
+                preview.push_str(if key == "command" {
+                    command.unwrap_or(text)
+                } else {
+                    text
+                });
             } else {
                 let _ = serde_json::to_writer_pretty(&mut preview, value);
             }

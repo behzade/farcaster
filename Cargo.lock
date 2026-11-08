@@ -1907,6 +1907,7 @@ dependencies = [
  "farcaster-agent-protocol",
  "farcaster-utility",
  "serde_json",
+ "shell-words",
 ]
 
 [[package]]

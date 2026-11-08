@@ -421,6 +421,16 @@ fn transcript_context_menu(
                         this.set_transcript_item_expanded(row.disclosure_key(), !expanded, cx);
                     });
                 })).separator();
+                let commands = items.iter_range(row.item_start()..row.item_end())
+                    .filter_map(|item| item.tool_details.as_ref()?.command_preview())
+                    .collect::<Vec<_>>();
+                if !commands.is_empty() {
+                    let label = if commands.len() == 1 { "Copy full invocation" } else { "Copy full invocations" };
+                    let commands = commands.join("\n\n");
+                    menu = menu.item(PopupMenuItem::new(label).on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(commands.clone()));
+                    }));
+                }
                 let raw = items.iter_range(row.item_start()..row.item_end())
                     .filter_map(|item| item.tool_details.as_ref().map(|details| details.inspection_text()))
                     .collect::<Vec<_>>().join("\n\n");

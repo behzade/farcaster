@@ -124,7 +124,8 @@ pub(super) fn render_tool(
         .tool_details
         .as_ref()
         .filter(|details| details.metadata.category == Some(crate::agents::ToolCategory::Execute))
-        .and_then(|details| details.command_preview());
+        .and_then(|details| details.display_command());
+    let command = command.as_deref();
     let summary = command.map_or_else(|| tool_summary(item), command_label);
     let read_target = direct_read_target(item).map(str::to_owned);
     let opens_file = read_target.is_some();

@@ -14,6 +14,7 @@ base64 = "0.22.1"
 farcaster-agent-protocol = { path = "../agent-protocol" }
 farcaster-utility = { path = "../utility" }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
+shell-words = "1.1.1"
 
 [lints.rust]
 unsafe_code = "forbid"

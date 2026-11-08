@@ -1,9 +1,12 @@
-use std::{io::Write, sync::Arc};
+use std::{borrow::Cow, io::Write, sync::Arc};
 
 use serde_json::Value;
 
 use super::{TranscriptItem, display_tool_name};
 use farcaster_agent_protocol::{CommonTool, ToolCategory, ToolMetadata};
+
+#[path = "command_display.rs"]
+mod command_display;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ToolExecutionState {
@@ -62,9 +65,9 @@ impl ToolDetails {
 
     pub fn summary(&self) -> String {
         if self.metadata.category == Some(ToolCategory::Execute)
-            && let Some(command) = self.command_preview()
+            && let Some(command) = self.display_command()
         {
-            return short_summary(command);
+            return short_summary(&command);
         }
         if let Some(title) = self
             .metadata
@@ -101,6 +104,11 @@ impl ToolDetails {
             .get("command")
             .and_then(Value::as_str)
             .filter(|command| !command.trim().is_empty())
+    }
+
+    /// Presentation only. The exact invocation remains in arguments and inspection_text.
+    pub fn display_command(&self) -> Option<Cow<'_, str>> {
+        self.command_preview().map(command_display::display)
     }
 
     pub fn inspection_text(&self) -> String {
