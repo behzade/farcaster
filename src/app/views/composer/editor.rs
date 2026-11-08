@@ -1,5 +1,5 @@
 use gpui::{
-    AnyElement, App, Entity, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton,
+    App, Entity, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton,
     ParentElement as _, RenderOnce, Styled as _, WeakEntity, div, point, px,
 };
 use gpui_component::ElementExt as _;
@@ -19,7 +19,6 @@ pub(super) struct ComposerInput {
     composer: Entity<EditorState>,
     app: WeakEntity<FarcasterApp>,
     suggestion_count: usize,
-    actions: AnyElement,
 }
 
 impl ComposerInput {
@@ -27,13 +26,11 @@ impl ComposerInput {
         composer: Entity<EditorState>,
         app: WeakEntity<FarcasterApp>,
         suggestion_count: usize,
-        actions: AnyElement,
     ) -> Self {
         Self {
             composer,
             app,
             suggestion_count,
-            actions,
         }
     }
 }
@@ -177,7 +174,6 @@ impl RenderOnce for ComposerInput {
                     }
                 }),
             )
-            .child(self.actions)
     }
 }
 

@@ -70,6 +70,7 @@ fn asset_source_serves_themeable_and_editor_brand_icons() {
         AppIcon::UploadSimple,
         AppIcon::Archive,
         AppIcon::ArrowsClockwise,
+        AppIcon::ArrowsOut,
         AppIcon::ArrowCounterClockwise,
         AppIcon::ArrowDown,
         AppIcon::ArrowUp,

@@ -124,12 +124,7 @@ pub(super) fn load(
     }
 
     let submitted_drafts = sessions::submitted_draft_associations(&drafts);
-    let group_sessions_by_project = crate::app::persistence::open()
-        .and_then(|store| store.load_group_sessions_by_project())
-        .unwrap_or_else(|load_error| {
-            error.get_or_insert(load_error);
-            false
-        });
+    let group_sessions_by_project = false;
     let expand_transcript_folders = crate::app::persistence::open()
         .and_then(|store| store.load_expand_transcript_folders())
         .unwrap_or_else(|load_error| {

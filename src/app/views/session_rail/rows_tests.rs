@@ -2,7 +2,7 @@ use super::*;
 use gpui::{point, px, size};
 
 #[gpui::test]
-fn session_titles_wrap_without_covering_actions(cx: &mut gpui::TestAppContext) {
+fn session_project_and_actions_stay_above_title(cx: &mut gpui::TestAppContext) {
     cx.update(gpui_component::init);
     let cx = cx.add_empty_window();
     for width in [220.0, 280.0, 400.0] {
@@ -44,21 +44,14 @@ fn session_titles_wrap_without_covering_actions(cx: &mut gpui::TestAppContext) {
             );
             let title = cx.debug_bounds("title").expect("title");
             let actions = cx.debug_bounds("actions").expect("actions");
-            assert!(title.size.height > theme().type_scale.line_body);
-            assert!(title.size.height <= theme().type_scale.line_body * 2.0);
+            assert!(title.size.height <= theme().type_scale.line_body);
             assert!(actions.right() <= px(width));
             assert!(actions.bottom() <= session_row_height(compact));
-            if compact {
-                assert!(cx.debug_bounds("project").is_none());
-                assert!(title.right() <= actions.left());
-                assert!(title.top() < actions.bottom() && title.bottom() > actions.top());
-            } else {
-                let project = cx.debug_bounds("project").expect("project");
-                assert_eq!(title.size.width, px(width));
-                assert!(title.bottom() <= actions.top());
-                assert!(title.bottom() <= project.top());
-                assert!(project.right() <= actions.left());
-            }
+            let project = cx.debug_bounds("project").expect("project");
+            assert_eq!(title.size.width, px(width));
+            assert!(actions.bottom() <= title.top());
+            assert!(project.bottom() <= title.top());
+            assert!(project.right() <= actions.left());
         }
     }
 }

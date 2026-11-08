@@ -275,6 +275,9 @@ impl FarcasterApp {
         if self.workspace.send_to_chat.is_some() {
             self.close_send_to_chat(window, cx);
         }
+        if self.overlays.command_detail.is_some() {
+            self.close_command_detail(window, cx);
+        }
         if self.overlays.image_preview.is_some() {
             self.close_image_preview(window, cx);
         }

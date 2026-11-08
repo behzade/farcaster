@@ -28,6 +28,8 @@ mod changed_files;
 mod tool_preview;
 use tool_preview::ToolPreview;
 
+#[path = "command_row.rs"]
+mod command_row;
 #[path = "tool_detail.rs"]
 mod tool_detail;
 
@@ -120,13 +122,15 @@ pub(super) fn render_tool(
                 .as_ref()
                 .is_none_or(|details| details.metadata.targets.len() <= 1)
     });
-    let command = item
+    if let Some(command) = item
         .tool_details
         .as_ref()
         .filter(|details| details.metadata.category == Some(crate::agents::ToolCategory::Execute))
-        .and_then(|details| details.display_command());
-    let command = command.as_deref();
-    let summary = command.map_or_else(|| tool_summary(item), command_label);
+        .and_then(|details| details.display_command())
+    {
+        return command_row::render(font_scale, key, &command, item, expanded, entity);
+    }
+    let summary = tool_summary(item);
     let read_target = direct_read_target(item).map(str::to_owned);
     let opens_file = read_target.is_some();
     let expanded = expanded && !opens_file;
@@ -158,11 +162,6 @@ pub(super) fn render_tool(
                 }
             })
             .when(!opens_file, |row| row.aria_expanded(expanded))
-            .when(command.is_some() && presentation.is_none(), |row| {
-                row.p(theme().space.sm)
-                    .my(theme().space.xs)
-                    .bg(theme().colors.panel)
-            })
             .when(
                 status.is_some_and(|status| status != ToolStatus::Succeeded),
                 |row| row.child(status_slot(status)),
@@ -192,19 +191,8 @@ pub(super) fn render_tool(
                         .flex_1()
                         .min_w_0()
                         .text_size(theme().type_scale.body_small * font_scale)
-                        .when(command.is_some(), |label| {
-                            label
-                                .font_family(MONO_FONT_FAMILY)
-                                .line_height(theme().type_scale.line_code * font_scale)
-                                .line_clamp(if expanded { 1 } else { 4 })
-                                .text_ellipsis()
-                        })
-                        .when(command.is_none(), |label| label.truncate())
-                        .text_color(if command.is_some() {
-                            theme().colors.text
-                        } else {
-                            theme().colors.muted
-                        })
+                        .truncate()
+                        .text_color(theme().colors.muted)
                         .child(summary),
                 )
             }),

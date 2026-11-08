@@ -179,6 +179,10 @@ impl FarcasterApp {
                 ))
             })
             .when_some(
+                dialogs::command_detail::render(self, entity.clone()),
+                |root, detail| root.child(detail),
+            )
+            .when_some(
                 dialogs::image_preview::render(self, entity.clone()),
                 |root, preview| root.child(preview),
             )

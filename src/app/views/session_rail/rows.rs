@@ -14,7 +14,6 @@ use gpui::{
 };
 use gpui_component::{
     input::{Escape, Input, InputState},
-    kbd::Kbd,
     menu::PopupMenuItem,
 };
 
@@ -28,7 +27,7 @@ use crate::{
     app::ui::assets::AppIcon,
     app::ui::primitives::{
         AppIconSize, AppTooltip as _, ContextMenuTrigger, DeleteButton, IndicatorEdge,
-        ReorderPosition, ReorderTargetExt as _, app_icon, line_indicator, number_slot,
+        ReorderPosition, ReorderTargetExt as _, app_icon, line_indicator,
     },
     app::ui::theme::theme,
     app::{FarcasterApp, PickerScope, ProjectPickerIntent},
@@ -43,7 +42,6 @@ pub(super) struct SessionRowInput {
     pub(super) title_editor: Option<Entity<InputState>>,
     pub(super) subagents: usize,
     pub(super) compact: bool,
-    pub(super) shortcut: Option<u8>,
 }
 
 impl SessionRowInput {
@@ -57,7 +55,6 @@ impl SessionRowInput {
             title_editor: None,
             subagents: 0,
             compact: false,
-            shortcut: None,
         }
     }
 }
@@ -97,7 +94,6 @@ impl RenderOnce for SessionRow {
                     title_editor,
                     subagents,
                     compact,
-                    shortcut,
                 },
             entity,
         } = self;
@@ -298,8 +294,6 @@ impl RenderOnce for SessionRow {
                 session_row_trailing(
                     session.harness,
                     session_status_icon(&identity, status),
-                    age,
-                    shortcut,
                     Some(archive_action),
                     delete_action,
                     action_group.clone(),
@@ -339,18 +333,6 @@ impl RenderOnce for SessionRow {
     }
 }
 
-fn session_shortcut(number: u8) -> impl IntoElement {
-    div()
-        .debug_selector(move || format!("session-shortcut-{number}"))
-        .child(
-            Kbd::new(gpui::Keystroke {
-                key: number.to_string(),
-                ..Default::default()
-            })
-            .text_size(theme().type_scale.caption),
-        )
-}
-
 fn session_row_title(
     title: String,
     selected: bool,
@@ -377,7 +359,7 @@ pub(super) fn session_title(title: String, selected: bool, archived: bool) -> Di
     div()
         .min_w_0()
         .w_full()
-        .line_clamp(2)
+        .line_clamp(1)
         .text_ellipsis()
         .text_size(theme().type_scale.body_small)
         .line_height(theme().type_scale.line_body)
@@ -432,10 +414,7 @@ pub(super) fn archive_action(
             crate::app::ui::primitives::preserve_pointer_focus,
         )
         .flex_none()
-        .w(theme()
-            .layout
-            .session_age_slot
-            .max(theme().controls.icon_button))
+        .w(theme().controls.icon_button)
         .h(theme().controls.icon_button)
         .flex()
         .items_center()
@@ -615,8 +594,6 @@ pub(super) fn session_accessible_label(title: &str, state: &str, age: &str) -> S
 pub(super) fn session_row_trailing(
     harness: impl Into<Option<Backend>>,
     status: Option<AnyElement>,
-    age: String,
-    shortcut: Option<u8>,
     archive: Option<AnyElement>,
     delete: Option<AnyElement>,
     reveal_group: String,
@@ -625,45 +602,18 @@ pub(super) fn session_row_trailing(
         .flex_none()
         .flex()
         .items_center()
-        .gap(theme().size(2.0))
-        .child(
-            div()
-                .debug_selector(|| "session-status-slot".into())
-                .w(theme().icons.inline)
-                .h(theme().controls.icon_button)
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .children(status),
-        )
-        .child(
-            div()
-                .debug_selector(|| "session-provider-slot".into())
-                .w(theme().icons.inline)
-                .h(theme().controls.icon_button)
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(app_icon(AppIcon::for_harness(harness), AppIconSize::Inline)),
-        )
+        .gap(theme().space.xs)
         .child(session_metadata_slot(
-            "session-age-slot",
-            theme()
-                .layout
-                .session_age_slot
-                .max(theme().controls.icon_button),
-            number_slot(age, theme().layout.session_age_slot),
+            "session-status-slot",
+            theme().controls.icon_button,
+            div().children(status).into_any_element(),
             archive,
             &reveal_group,
         ))
         .child(session_metadata_slot(
-            "session-shortcut-slot",
+            "session-provider-slot",
             theme().controls.icon_button,
-            div()
-                .children(shortcut.map(session_shortcut))
-                .into_any_element(),
+            app_icon(AppIcon::for_harness(harness), AppIconSize::Inline).into_any_element(),
             delete.map(|action| {
                 div()
                     .debug_selector(|| "session-delete-action".into())
@@ -695,13 +645,18 @@ fn session_metadata_slot(
             div()
                 .id(format!("{reveal_group}-{selector}"))
                 .w_full()
+                .flex()
+                .items_center()
+                .justify_center()
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
                 .text_center()
                 .text_size(theme().type_scale.caption)
                 .text_color(theme().colors.muted)
-                .group_hover(reveal_group.to_owned(), |metadata| metadata.opacity(0.0))
+                .when(action.is_some(), |metadata| {
+                    metadata.group_hover(reveal_group.to_owned(), |metadata| metadata.opacity(0.0))
+                })
                 .child(metadata),
         )
         .when_some(action, |slot, action| {
@@ -726,6 +681,7 @@ pub(super) fn session_status_icon(identity: &str, status: Option<RunStatus>) -> 
     Some(
         div()
             .id(format!("session-status-{identity}"))
+            .debug_selector(|| "session-status-glyph".into())
             .flex_none()
             .text_color(color)
             .app_tooltip(tooltip)
@@ -794,51 +750,34 @@ pub(super) fn relative_age(modified: SystemTime) -> String {
     }
 }
 
-pub(in crate::app::views) fn session_row_height(compact: bool) -> Pixels {
-    if compact {
-        theme().layout.session_row_height
-    } else {
-        theme().layout.session_row_height + theme().controls.icon_button
-    }
+pub(in crate::app::views) fn session_row_height(_compact: bool) -> Pixels {
+    theme().controls.icon_button + theme().type_scale.line_body + theme().space.xs
 }
 
 pub(super) fn session_row_content(
-    compact: bool,
+    _compact: bool,
     title: AnyElement,
     project: AnyElement,
     actions: AnyElement,
 ) -> AnyElement {
-    let title = div().min_w_0().overflow_hidden().child(title);
-    if compact {
-        div()
-            .w_full()
-            .min_w_0()
-            .flex()
-            .items_center()
-            .gap(theme().space.sm)
-            .child(title.flex_1())
-            .child(actions)
-            .into_any_element()
-    } else {
-        div()
-            .w_full()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .justify_center()
-            .child(title.w_full())
-            .child(
-                div()
-                    .w_full()
-                    .min_w_0()
-                    .flex()
-                    .items_center()
-                    .gap(theme().space.sm)
-                    .child(project)
-                    .child(actions),
-            )
-            .into_any_element()
-    }
+    div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .justify_center()
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap(theme().space.sm)
+                .child(project)
+                .child(actions),
+        )
+        .child(div().min_w_0().w_full().overflow_hidden().child(title))
+        .into_any_element()
 }
 
 #[cfg(test)]

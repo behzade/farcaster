@@ -247,6 +247,45 @@ impl FarcasterApp {
                         }),
                 }
             }))
+            .when(
+                browser.query.trim().is_empty()
+                    && !snapshot.changes.is_empty()
+                    && rows
+                        .iter()
+                        .all(|row| matches!(row, TreeRow::Folder { open: false, .. })),
+                |list| {
+                    list.child(
+                        div()
+                            .debug_selector(|| "collapsed-changes-preview".into())
+                            .mt(theme().space.md)
+                            .flex()
+                            .flex_col()
+                            .gap(theme().space.xs)
+                            .child(
+                                div()
+                                    .text_size(theme().type_scale.caption)
+                                    .text_color(theme().colors.muted)
+                                    .child("Changed files"),
+                            )
+                            .children(snapshot.changes.iter().take(3).filter_map(|change| {
+                                self.repository_change_row(change, entity.clone())
+                            }))
+                            .child(
+                                div()
+                                    .text_size(theme().type_scale.caption)
+                                    .text_color(theme().colors.muted)
+                                    .child(if snapshot.changes.len() > 3 {
+                                        format!(
+                                            "{} more files · expand folders to view all",
+                                            snapshot.changes.len() - 3
+                                        )
+                                    } else {
+                                        "Expand folders to view all".to_owned()
+                                    }),
+                            ),
+                    )
+                },
+            )
             .when(rows.is_empty(), |list| {
                 list.child(repository_notice(
                     if !browser.query.trim().is_empty() {

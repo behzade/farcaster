@@ -116,7 +116,6 @@ impl FarcasterApp {
                                 archived: true,
                                 drop_position: None,
                                 compact: true,
-                                shortcut: None,
                             },
                             row_entity.clone(),
                         )

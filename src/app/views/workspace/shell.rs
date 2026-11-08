@@ -11,7 +11,9 @@ use crate::app::{
         layout::{
             LayoutMode, shows_right_inline, shows_run_sheet_button, shows_session_sheet_button,
         },
-        primitives::{AppIconSize, ButtonTone, app_icon, icon_button, icon_control},
+        primitives::{
+            AppIconSize, AppTooltip as _, ButtonTone, app_icon, button, icon_button, icon_control,
+        },
         theme::theme,
     },
 };
@@ -43,15 +45,20 @@ impl FarcasterApp {
                     },
                 ))
             })
-            .child(icon_button(
-                "open-project-work",
-                AppIcon::GitFork,
-                "Project plan",
-                ButtonTone::Quiet,
-                move |window, cx| {
-                    let _ = work.update(cx, |this, cx| this.open_workgraph_surface(window, cx));
-                },
-            ))
+            .child(
+                button(
+                    "open-project-work",
+                    "Plan",
+                    ButtonTone::Quiet,
+                    true,
+                    move |window, cx| {
+                        let _ = work.update(cx, |this, cx| this.open_workgraph_surface(window, cx));
+                    },
+                )
+                .accessibility_label("Project plan")
+                .app_tooltip("Project plan")
+                .child(app_icon(AppIcon::GitFork, AppIconSize::Control)),
+            )
             .child(worker_notice_control(notice_count, entity.clone()))
             .when(shows_run_sheet_button(mode), |controls| {
                 controls.child(icon_button(
@@ -84,6 +91,9 @@ impl FarcasterApp {
 fn worker_notice_control(count: usize, entity: WeakEntity<FarcasterApp>) -> impl IntoElement {
     let label = format!("Worker notices — {count} active");
     icon_control("open-worker-notices", label)
+        .w_auto()
+        .px(theme().space.sm)
+        .gap(theme().space.xs)
         .relative()
         .text_color(theme().colors.muted)
         .hover(|control| {
@@ -103,6 +113,7 @@ fn worker_notice_control(count: usize, entity: WeakEntity<FarcasterApp>) -> impl
                 .text_color(theme().colors.text)
         })
         .child(app_icon(IconName::Inbox, AppIconSize::Control))
+        .child(div().text_size(theme().type_scale.caption).child("Notices"))
         .when(count > 0, |control| {
             control.child(
                 div()

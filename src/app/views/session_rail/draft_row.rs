@@ -1,5 +1,3 @@
-use std::time::{Duration, UNIX_EPOCH};
-
 use crate::{app::session::status::run_status_label, runtime::RunStatus};
 use gpui::{
     AnyElement, App, AppContext as _, CursorStyle, InteractiveElement as _, IntoElement,
@@ -12,8 +10,8 @@ use super::{
     groups::SessionRailKind,
     hover::{draft_hover_details, session_tooltip_content},
     rows::{
-        archive_action, project_badge, project_label, relative_age, session_row_content,
-        session_row_height, session_row_trailing, session_status_icon, session_title,
+        archive_action, project_badge, project_label, session_row_content, session_row_height,
+        session_row_trailing, session_status_icon, session_title,
     },
 };
 use crate::{
@@ -46,7 +44,6 @@ pub(super) struct DraftRowInput {
     pub(super) archived: bool,
     pub(super) drop_position: Option<ReorderPosition>,
     pub(super) compact: bool,
-    pub(super) shortcut: Option<u8>,
 }
 
 #[derive(IntoElement)]
@@ -81,13 +78,11 @@ impl RenderOnce for DraftRow {
                     archived,
                     drop_position,
                     compact,
-                    shortcut,
                 },
             entity,
         } = self;
         let is_draft = status == RunStatus::Draft;
         let status_text = run_status_label(status);
-        let age = relative_age(UNIX_EPOCH + Duration::from_millis(draft.created_ms));
         let id = draft.id.clone();
         let identity = format!("draft:{id}");
         let discard_id = id.clone();
@@ -206,8 +201,6 @@ impl RenderOnce for DraftRow {
                         session_row_trailing(
                             draft.harness,
                             session_status_icon(&identity, (!is_draft).then_some(status)),
-                            age,
-                            shortcut,
                             (draft.submitted || archived).then(|| {
                                 archive_draft_action(
                                     &archive_id,

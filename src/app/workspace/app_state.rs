@@ -88,7 +88,6 @@ pub(in crate::app) struct SettingsState {
     pub(in crate::app) voice_enabled: bool,
     pub(in crate::app) voice_shortcut: Option<String>,
     pub(in crate::app) group_sessions_by_project: bool,
-    pub(in crate::app) session_grouping_error: Option<String>,
     pub(in crate::app) editor_choice: crate::storage::EditorChoice,
     pub(in crate::app) editor_command: String,
     pub(in crate::app) editor_command_input: Entity<InputState>,

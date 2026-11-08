@@ -204,6 +204,7 @@ impl FarcasterApp {
             .gap(theme().size(2.0))
             .child(surface_control(
                 "show-chat-surface",
+                "Chat",
                 chat_hint,
                 harness_icon,
                 self.workspace.surface == AppSurface::Chat,
@@ -212,6 +213,7 @@ impl FarcasterApp {
             ))
             .child(surface_control(
                 "show-editor-surface",
+                "Editor",
                 format!(
                     "{} ({modifier}+E in app views; {} anywhere)",
                     editor.label(),
@@ -226,6 +228,7 @@ impl FarcasterApp {
             ))
             .child(surface_control(
                 "show-terminal-surface",
+                "Terminal",
                 format!(
                     "Terminal ({modifier}+T in app views; {} anywhere)",
                     crate::app::ui::navigation::command_key(
@@ -244,6 +247,7 @@ type SurfaceAction = fn(&mut FarcasterApp, &mut Window, &mut Context<FarcasterAp
 
 fn surface_control(
     id: &'static str,
+    caption: &'static str,
     label: impl Into<gpui::SharedString>,
     icon: AppIcon,
     active: bool,
@@ -252,7 +256,9 @@ fn surface_control(
 ) -> gpui::Stateful<gpui::Div> {
     icon_control(id, label)
         .relative()
-        .w(theme().size(34.0))
+        .w_auto()
+        .px(theme().space.sm)
+        .gap(theme().space.xs)
         .h_full()
         .rounded_none()
         .text_color(theme().colors.muted)
@@ -275,6 +281,7 @@ fn surface_control(
             )
         })
         .child(app_icon(icon, AppIconSize::Control))
+        .child(div().text_size(theme().type_scale.caption).child(caption))
         .on_click(move |_, window, cx| {
             let _ = entity.update(cx, |app, cx| action(app, window, cx));
         })

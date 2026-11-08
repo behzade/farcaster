@@ -186,7 +186,6 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
                         archived: self.archived,
                         drop_position: None,
                         compact: self.compact,
-                        shortcut: (self.submitted && !self.archived).then_some(1),
                     },
                     self.app.clone(),
                 )
@@ -202,7 +201,6 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
                     (!self.archived).then_some(RunStatus::Working),
                 );
                 input.compact = self.compact;
-                input.shortcut = (!self.archived).then_some(1);
                 super::rows::SessionRow::new(
                     &item("chat", 1, "/project", kind, false),
                     input,
@@ -221,12 +219,7 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
         cx,
         |cx, app, _, _| {
             let mut columns = [None, None];
-            let slots = [
-                "session-status-slot",
-                "session-provider-slot",
-                "session-age-slot",
-                "session-shortcut-slot",
-            ];
+            let slots = ["session-status-slot", "session-provider-slot"];
             for (draft, submitted) in [(false, true), (true, false), (true, true)] {
                 for compact in [false, true] {
                     for archived in [false, true] {
@@ -249,10 +242,7 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
                             cx.debug_bounds("session-archive-action").is_some(),
                             submitted || archived
                         );
-                        assert_eq!(
-                            cx.debug_bounds("session-shortcut-1").is_some(),
-                            submitted && !archived
-                        );
+                        assert_eq!(cx.debug_bounds("session-shortcut-1").is_some(), false);
                         let bounds =
                             slots.map(|selector| cx.debug_bounds(selector).expect(selector));
                         let expected = columns[usize::from(compact)].get_or_insert(bounds);
@@ -260,14 +250,21 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
                         for pair in bounds.windows(2) {
                             assert!(pair[0].right() <= pair[1].left());
                         }
+                        if let Some(status) = cx.debug_bounds("session-status-glyph") {
+                            assert_eq!(
+                                status.center().x,
+                                bounds[0].center().x,
+                                "status and archive share a center"
+                            );
+                        }
                         if let Some(archive) = cx.debug_bounds("session-archive-action") {
-                            assert_eq!(archive, bounds[2], "archive/restore covers age");
+                            assert_eq!(archive, bounds[0], "archive/restore covers status");
                         }
                         if let Some(delete) = cx.debug_bounds("session-delete-action") {
-                            assert_eq!(delete, bounds[3], "delete/discard covers shortcut");
+                            assert_eq!(delete, bounds[1], "delete/discard covers provider");
                         }
                         cx.simulate_mouse_move(
-                            bounds[2].center(),
+                            bounds[0].center(),
                             None,
                             gpui::Modifiers::default(),
                         );

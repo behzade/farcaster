@@ -112,6 +112,8 @@ impl FarcasterApp {
                 || dialog.input.read(cx).focus_handle(cx),
                 |picker| picker.list.read(cx).focus_handle(cx),
             ))
+        } else if let Some(detail) = &self.overlays.command_detail {
+            Some(detail.focus.clone())
         } else if self.overlays.image_preview.is_some() {
             Some(self.overlays.image_preview_focus.clone())
         } else if let Some(pending) = &self.project.repository.edits.pending {
@@ -497,6 +499,11 @@ impl FarcasterApp {
             return;
         };
         match request {
+            PostRenderFocus::CommandDetail => {
+                if let Some(detail) = &self.overlays.command_detail {
+                    detail.focus.focus(window, cx);
+                }
+            }
             PostRenderFocus::ImagePreview => {
                 if self.overlays.image_preview.is_some() {
                     self.overlays.image_preview_focus.focus(window, cx);
@@ -553,6 +560,7 @@ impl FarcasterApp {
             || self.sessions.pending_move.is_some()
             || self.sessions.import.is_some()
             || self.navigation.pending_model_access.is_some()
+            || self.overlays.command_detail.is_some()
             || self.overlays.image_preview.is_some()
             || self.project.repository.pending_jj_init.is_some()
             || self.project.repository.edits.pending.is_some()
@@ -1026,18 +1034,14 @@ impl FarcasterApp {
         cx.notify();
     }
 
+    #[cfg(test)]
     pub(in crate::app) fn toggle_settings_project_groups(&mut self, cx: &mut Context<Self>) {
         let grouped = !self.settings.group_sessions_by_project;
-        match crate::app::persistence::open()
+        crate::app::persistence::open()
             .and_then(|store| store.save_group_sessions_by_project(grouped))
-        {
-            Ok(()) => {
-                self.settings.group_sessions_by_project = grouped;
-                self.settings.session_grouping_error = None;
-                self.notify_session_rail(cx);
-            }
-            Err(error) => self.settings.session_grouping_error = Some(error),
-        }
+            .expect("save test grouping state");
+        self.settings.group_sessions_by_project = grouped;
+        self.notify_session_rail(cx);
         cx.notify();
     }
 
@@ -1242,6 +1246,8 @@ impl FarcasterApp {
             self.close_quit_confirmation(window, cx);
         } else if self.workspace.send_to_chat.is_some() && !self.overlays.view.project_trust {
             self.close_send_to_chat(window, cx);
+        } else if self.overlays.command_detail.is_some() {
+            self.close_command_detail(window, cx);
         } else if self.overlays.image_preview.is_some() {
             self.close_image_preview(window, cx);
         } else if self.project.repository.edits.pending.is_some() {

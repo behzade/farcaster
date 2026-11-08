@@ -167,6 +167,7 @@ pub(super) enum AppSurface {
 enum PostRenderFocus {
     ActiveSurface(Option<FocusHandle>),
     ImagePreview,
+    CommandDetail,
 }
 
 #[derive(Clone)]

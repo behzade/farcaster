@@ -13,7 +13,7 @@ use super::super::usage::{
 use crate::{
     app::FarcasterApp,
     app::ui::assets::AppIcon,
-    app::ui::primitives::{AppIconSize, ButtonTone, app_icon, prominent_icon_button},
+    app::ui::primitives::{AppIconSize, ButtonTone, app_icon, button, prominent_icon_button},
     app::ui::theme::{MONO_FONT_FAMILY, theme},
     runtime::RuntimeSignal,
 };
@@ -91,10 +91,7 @@ impl FarcasterApp {
         let send_entity = entity.clone();
         let abort_entity = entity;
         div()
-            .absolute()
-            .right(theme().space.sm)
-            .bottom(theme().space.sm)
-            .occlude()
+            .flex_none()
             .flex()
             .items_center()
             .child(
@@ -122,12 +119,12 @@ impl FarcasterApp {
                             .text_color(theme().colors.error),
                         )
                     })
-                    .when_some(primary_action, |actions, label| {
-                        actions.child(prominent_icon_button(
+                    .child(
+                        button(
                             "send",
-                            AppIcon::ArrowUp,
-                            label,
+                            primary_action.unwrap_or("Send"),
                             ButtonTone::Accent,
+                            primary_action.is_some(),
                             move |window, cx| {
                                 let _ = send_entity.update(cx, |this, cx| {
                                     let value =
@@ -137,8 +134,9 @@ impl FarcasterApp {
                                     }
                                 });
                             },
-                        ))
-                    }),
+                        )
+                        .child(app_icon(AppIcon::ArrowUp, AppIconSize::Inline)),
+                    ),
             )
             .into_any_element()
     }
@@ -154,7 +152,7 @@ fn render_usage(usage: &ComposerUsage) -> AnyElement {
         .child(context_metric(usage));
     if let Some(rate) = usage.cache_hit_rate {
         row = row.child(separator()).child(labeled_metric(
-            "CH",
+            "Cache hit",
             "Cache hit rate",
             format!("{rate:.0}%"),
             theme().colors.success,
@@ -163,7 +161,7 @@ fn render_usage(usage: &ComposerUsage) -> AnyElement {
     }
     if usage.aggregate.input > 0 {
         row = row.child(separator()).child(simple_metric(
-            Some(AppIcon::ArrowDown),
+            "Input",
             "Input tokens",
             format_tokens(usage.aggregate.input),
             theme().colors.muted,
@@ -171,7 +169,7 @@ fn render_usage(usage: &ComposerUsage) -> AnyElement {
     }
     if usage.aggregate.output > 0 {
         row = row.child(separator()).child(simple_metric(
-            Some(AppIcon::ArrowUp),
+            "Output",
             "Output tokens",
             format_tokens(usage.aggregate.output),
             theme().colors.text,
@@ -179,7 +177,7 @@ fn render_usage(usage: &ComposerUsage) -> AnyElement {
     }
     if usage.aggregate.cost_micros > 0 {
         row = row.child(separator()).child(simple_metric(
-            None,
+            "Cost",
             "Cost",
             format_cost(usage.aggregate.cost_micros),
             theme().colors.text,
@@ -193,7 +191,7 @@ fn render_usage(usage: &ComposerUsage) -> AnyElement {
             |reset| format!("Weekly usage remaining: {value} · resets {reset}"),
         );
         row = row.child(separator()).child(labeled_metric(
-            "W",
+            "Week left",
             "Weekly usage remaining",
             value,
             weekly_color(remaining),
@@ -236,6 +234,7 @@ fn context_metric(usage: &ComposerUsage) -> AnyElement {
         .flex()
         .items_center()
         .gap(theme().space.sm)
+        .child(div().text_color(theme().colors.muted).child("Context"))
         .child(context_meter(percent, color))
         .child(
             div()
@@ -300,7 +299,7 @@ fn labeled_metric(
     let aria_label = format!("{accessible_label}: {value}");
     div()
         .id(accessible_label)
-        .aria_label(aria_label)
+        .aria_label(aria_label.clone())
         .flex_none()
         .flex()
         .items_center()
@@ -318,7 +317,7 @@ fn labeled_metric(
 }
 
 fn simple_metric(
-    icon: Option<AppIcon>,
+    label: &'static str,
     accessible_label: &'static str,
     value: String,
     value_color: gpui::Rgba,
@@ -326,17 +325,14 @@ fn simple_metric(
     let aria_label = format!("{accessible_label}: {value}");
     div()
         .id(accessible_label)
-        .aria_label(aria_label)
+        .aria_label(aria_label.clone())
         .flex_none()
         .flex()
         .items_center()
         .gap(theme().space.xs)
         .whitespace_nowrap()
-        .children(icon.map(|icon| {
-            app_icon(icon, AppIconSize::Inline)
-                .text_color(theme().colors.subtle)
-                .into_any_element()
-        }))
+        .child(div().text_color(theme().colors.muted).child(label))
+        .app_tooltip(aria_label.clone())
         .child(div().text_color(value_color).child(value))
         .into_any_element()
 }

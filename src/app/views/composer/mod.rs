@@ -108,7 +108,6 @@ impl FarcasterApp {
             self.composer.input.clone(),
             entity.clone(),
             suggestion_count,
-            actions,
         );
 
         let composer_focus = self.composer.focus.clone();
@@ -172,10 +171,11 @@ impl FarcasterApp {
                     .items_center()
                     .px(theme().space.md)
                     .border_t(theme().border)
-                    .border_color(theme().colors.surface)
+                    .border_color(theme().colors.border)
                     .bg(theme().colors.panel)
                     .rounded_b(theme().radius)
-                    .child(self.render_composer_controls(entity.clone(), footer_scroll)),
+                    .child(self.render_composer_controls(entity.clone(), footer_scroll))
+                    .child(actions),
             );
 
         div()
@@ -243,6 +243,6 @@ fn composer_border_color(focused: bool) -> gpui::Rgba {
     if focused {
         theme().colors.focus_border
     } else {
-        theme().colors.border
+        theme().colors.muted
     }
 }
