@@ -154,6 +154,11 @@ pub(super) fn render_tool(
                 }
             })
             .when(!opens_file, |row| row.aria_expanded(expanded))
+            .when(command.is_some() && presentation.is_none(), |row| {
+                row.p(theme().space.sm)
+                    .my(theme().space.xs)
+                    .bg(theme().colors.panel)
+            })
             .when(
                 status.is_some_and(|status| status != ToolStatus::Succeeded),
                 |row| row.child(status_slot(status)),
@@ -187,7 +192,7 @@ pub(super) fn render_tool(
                             label
                                 .font_family(MONO_FONT_FAMILY)
                                 .line_height(theme().type_scale.line_body * font_scale)
-                                .line_clamp(2)
+                                .line_clamp(4)
                                 .text_ellipsis()
                         })
                         .when(command.is_none(), |label| label.truncate())
@@ -233,7 +238,7 @@ pub(super) fn tool_summary(item: &TranscriptItem) -> String {
 }
 
 fn command_label(command: &str) -> String {
-    // Let the two-line row, rather than the 96-character activity summary,
+    // Let the wrapped row, rather than the 96-character activity summary,
     // determine where commands wrap. Bound work for very large scripts.
     let mut chars = command.trim().chars();
     let mut preview: String = chars.by_ref().take(512).collect();
