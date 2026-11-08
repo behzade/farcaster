@@ -311,10 +311,11 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
             );
             assert!(cx.debug_bounds(oldest_selector).is_none());
 
+            // This row stays visible before and after the 600px wheel movement.
             let distance_selector = Box::leak(
                 format!(
                     "agent-card-{}",
-                    crate::agent_activity::agent_activity_key(&project.join("worker-0480.jsonl"))
+                    crate::agent_activity::agent_activity_key(&project.join("worker-0487.jsonl"))
                 )
                 .into_boxed_str(),
             );
@@ -410,7 +411,7 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
             let middle_selector = Box::leak(
                 format!(
                     "agent-card-{}",
-                    crate::agent_activity::agent_activity_key(&project.join("worker-0455.jsonl"))
+                    crate::agent_activity::agent_activity_key(&project.join("worker-0468.jsonl"))
                 )
                 .into_boxed_str(),
             );

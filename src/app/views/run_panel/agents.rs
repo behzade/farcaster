@@ -1,7 +1,7 @@
 use gpui::{
-    AnyElement, Div, ElementId, InteractiveElement as _, IntoElement, ParentElement as _, Role,
-    ScrollAnchor, StatefulInteractiveElement as _, Styled as _, WeakEntity, div,
-    prelude::FluentBuilder as _, px,
+    AnyElement, Div, ElementId, FontWeight, InteractiveElement as _, IntoElement,
+    ParentElement as _, Role, ScrollAnchor, StatefulInteractiveElement as _, Styled as _,
+    WeakEntity, div, prelude::FluentBuilder as _, px,
 };
 
 use super::super::super::FarcasterApp;
@@ -170,6 +170,7 @@ impl FarcasterApp {
                     .items_center()
                     .gap(theme().space.xs)
                     .text_size(theme().type_scale.caption)
+                    .line_height(theme().type_scale.line_body)
                     .text_color(theme().colors.muted)
                     .child(
                         div()
@@ -187,27 +188,24 @@ impl FarcasterApp {
                             .overflow_hidden()
                             .flex_1()
                             .flex()
-                            .items_center()
-                            .gap(theme().space.xs)
+                            .flex_col()
                             .child(
                                 div()
-                                    .flex_none()
-                                    .max_w(theme().size(90.0))
                                     .overflow_hidden()
                                     .whitespace_nowrap()
                                     .text_ellipsis()
+                                    .text_size(theme().type_scale.body)
+                                    .font_weight(FontWeight::MEDIUM)
                                     .text_color(theme().colors.text)
                                     .child(identity),
                             )
                             .child(
                                 div()
-                                    .w_0()
                                     .min_w_0()
-                                    .flex_1()
                                     .overflow_hidden()
                                     .whitespace_nowrap()
                                     .text_ellipsis()
-                                    .child(format!("· {execution}")),
+                                    .child(execution),
                             ),
                     ),
             )

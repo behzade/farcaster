@@ -204,8 +204,8 @@ impl FarcasterApp {
         let root = root.cloned();
         let rows = prepared.visible.clone();
         let keys = prepared.keys.clone();
-        // Main row padding (8px), focus borders, and the 7px gap fit in every slot.
-        let row_height = theme().type_scale.line_body.max(theme().icons.inline)
+        // Two worker text lines, padding, focus borders, and the 7px gap fit in every slot.
+        let row_height = (theme().type_scale.line_body * 2.0).max(theme().icons.inline)
             + theme().size(15.0)
             + theme().border * 2.0;
         worker_list::reconcile(view.list, view.rows, &keys, row_height);
