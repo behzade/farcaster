@@ -191,7 +191,7 @@ pub(super) fn render_tool(
                         .when(command.is_some(), |label| {
                             label
                                 .font_family(MONO_FONT_FAMILY)
-                                .line_height(theme().type_scale.line_body * font_scale)
+                                .line_height(theme().type_scale.line_code * font_scale)
                                 .line_clamp(4)
                                 .text_ellipsis()
                         })

@@ -714,12 +714,13 @@ fn technical_text(
     selectable_text(font_scale, id, text)
         .font_family(MONO_FONT_FAMILY)
         .text_size(theme().type_scale.body_small * font_scale)
-        .line_height(theme().type_scale.line_body * font_scale)
+        .line_height(theme().type_scale.line_code * font_scale)
 }
 
 fn scaled_markdown_style(mut style: TextViewStyle, font_scale: f32) -> TextViewStyle {
     style.heading_base_font_size = theme().type_scale.reading * font_scale;
     style.code_block.text.font_size = Some((theme().type_scale.body_small * font_scale).into());
+    style.code_block.text.line_height = Some((theme().type_scale.line_code * font_scale).into());
     style
 }
 

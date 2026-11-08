@@ -214,6 +214,7 @@ pub(crate) struct TypeScale {
     pub reading: Pixels,
     pub display: Pixels,
     pub line_body: Pixels,
+    pub line_code: Pixels,
     pub line_reading: Pixels,
     pub line_composer: Pixels,
 }
@@ -315,6 +316,7 @@ const STRUCTURE: Structure = Structure {
         reading: px(15.0),
         display: px(18.0),
         line_body: px(19.0),
+        line_code: px(22.0),
         line_reading: px(24.0),
         line_composer: px(22.0),
     },
@@ -421,6 +423,7 @@ metric_keys!(
     type_scale.reading => "font-reading",
     type_scale.display => "font-display",
     type_scale.line_body => "line-body",
+    type_scale.line_code => "line-code",
     type_scale.line_reading => "line-reading",
     type_scale.line_composer => "line-composer",
     icons.inline => "icon-inline",
