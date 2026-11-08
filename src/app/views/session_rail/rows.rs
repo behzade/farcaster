@@ -342,10 +342,13 @@ impl RenderOnce for SessionRow {
 fn session_shortcut(number: u8) -> impl IntoElement {
     div()
         .debug_selector(move || format!("session-shortcut-{number}"))
-        .child(Kbd::new(gpui::Keystroke {
-            key: number.to_string(),
-            ..Default::default()
-        }))
+        .child(
+            Kbd::new(gpui::Keystroke {
+                key: number.to_string(),
+                ..Default::default()
+            })
+            .text_size(theme().type_scale.caption),
+        )
 }
 
 fn session_row_title(
@@ -622,7 +625,7 @@ pub(super) fn session_row_trailing(
         .flex_none()
         .flex()
         .items_center()
-        .gap(theme().space.xs)
+        .gap(theme().size(2.0))
         .child(
             div()
                 .debug_selector(|| "session-status-slot".into())
@@ -637,7 +640,8 @@ pub(super) fn session_row_trailing(
         .child(
             div()
                 .debug_selector(|| "session-provider-slot".into())
-                .size(theme().controls.icon_button)
+                .w(theme().icons.inline)
+                .h(theme().controls.icon_button)
                 .flex_none()
                 .flex()
                 .items_center()
