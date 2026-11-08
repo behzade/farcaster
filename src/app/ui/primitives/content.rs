@@ -20,7 +20,8 @@ pub(crate) fn folder_change_summary(count: usize, counts: Option<(usize, usize)>
         .whitespace_nowrap()
         .flex()
         .items_center()
-        .gap(theme().space.xs)
+        .gap(theme().size(6.0))
+        .font_weight(FontWeight::MEDIUM)
         .child(div().text_color(theme().colors.muted).child(format!(
             "{count} {}",
             if count == 1 { "file" } else { "files" }
@@ -46,6 +47,6 @@ pub(crate) fn section_heading(title: impl Into<SharedString>) -> impl gpui::Into
         .aria_level(2)
         .text_size(theme().type_scale.body)
         .font_weight(FontWeight::SEMIBOLD)
-        .text_color(theme().colors.muted)
+        .text_color(theme().colors.text)
         .child(title)
 }

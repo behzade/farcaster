@@ -3,6 +3,22 @@ use crate::conversation::{ConversationState, ToolReview};
 use serde_json::json;
 
 #[test]
+fn command_labels_keep_arguments_beyond_activity_summary_and_bound_large_scripts() {
+    let prefix = "/run/current-system/sw/bin/zsh -lc 'cargo test --locked --offline --quiet ";
+    let command = format!("{prefix}--bin farcaster app::views::transcript -- --test-threads=1'");
+    assert!(command.len() > 96);
+    assert_eq!(command_label(&command), command);
+    assert_eq!(
+        command_label("\n  cargo test\ngit diff --check "),
+        "cargo test\ngit diff --check"
+    );
+    let script = "متن".repeat(180);
+    let preview = command_label(&script);
+    assert_eq!(preview.chars().count(), 513);
+    assert!(preview.ends_with('…'));
+}
+
+#[test]
 fn live_activity_keeps_its_row_except_when_a_single_item_becomes_a_group() {
     use super::super::{project_rows, update_rows_from};
 

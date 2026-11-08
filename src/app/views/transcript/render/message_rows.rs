@@ -222,6 +222,7 @@ pub(super) fn render_message(
                 None => text,
             };
             with_file_links(text, entity)
+                .max_w(theme().type_scale.reading * font_scale * 40.0)
                 .text_color(item_color(item))
                 .when(user, |text| text.font_weight(FontWeight::MEDIUM))
         })
@@ -264,6 +265,7 @@ pub(super) fn render_message_chunk(
         })
         .child(
             with_file_links(selectable_text_state(font_scale, &markdown_state), entity)
+                .max_w(theme().type_scale.reading * font_scale * 40.0)
                 .text_color(item_color(item))
                 .when(user, |text| text.font_weight(FontWeight::MEDIUM)),
         )

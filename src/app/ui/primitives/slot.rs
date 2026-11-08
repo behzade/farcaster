@@ -10,7 +10,7 @@ pub(crate) fn number_slot(value: impl IntoElement, slot: Pixels) -> AnyElement {
         .justify_end()
         .whitespace_nowrap()
         .text_size(theme().type_scale.caption)
-        .text_color(theme().colors.subtle)
+        .text_color(theme().colors.text)
         .child(value)
         .into_any_element()
 }

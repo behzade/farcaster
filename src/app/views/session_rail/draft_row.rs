@@ -2,9 +2,9 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use crate::{app::session::status::run_status_label, runtime::RunStatus};
 use gpui::{
-    AnyElement, App, AppContext as _, CursorStyle, FontWeight, InteractiveElement as _,
-    IntoElement, ParentElement as _, RenderOnce, Role, StatefulInteractiveElement as _,
-    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _,
+    AnyElement, App, AppContext as _, CursorStyle, InteractiveElement as _, IntoElement,
+    ParentElement as _, RenderOnce, Role, StatefulInteractiveElement as _, Styled as _, WeakEntity,
+    Window, div, prelude::FluentBuilder as _,
 };
 
 use super::{
@@ -13,7 +13,7 @@ use super::{
     hover::{draft_hover_details, session_tooltip_content},
     rows::{
         archive_action, project_badge, project_label, relative_age, session_row_content,
-        session_row_height, session_row_trailing, session_status_icon,
+        session_row_height, session_row_trailing, session_status_icon, session_title,
     },
 };
 use crate::{
@@ -196,23 +196,7 @@ impl RenderOnce for DraftRow {
                     })
                     .child(session_row_content(
                         compact,
-                        div()
-                            .min_w_0()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_size(theme().type_scale.body_small)
-                            .font_weight(if selected {
-                                FontWeight::SEMIBOLD
-                            } else {
-                                FontWeight::NORMAL
-                            })
-                            .text_color(if archived && !selected {
-                                theme().colors.muted
-                            } else {
-                                theme().colors.text
-                            })
-                            .child(title)
-                            .into_any_element(),
+                        session_title(title, selected, archived).into_any_element(),
                         div()
                             .min_w_0()
                             .flex_1()

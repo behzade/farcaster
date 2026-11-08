@@ -307,15 +307,11 @@ fn composer_clicks_focus_blank_space_and_keep_visible_text_in_place(cx: &mut gpu
             draw(cx);
             cx.update(|window, cx| {
                 let input = input.read(cx);
-                // Match the old textarea's text_sm and 1.25rem styles.
-                assert_eq!(
-                    input.line_height(),
-                    Some((theme().type_scale.body * 1.25).round())
-                );
+                assert_eq!(input.line_height(), Some(theme().type_scale.line_composer));
                 let text = "one";
                 let expected = window.text_system().shape_line(
                     text.into(),
-                    theme().type_scale.body * 0.875,
+                    theme().type_scale.reading,
                     &[gpui::TextRun {
                         len: text.len(),
                         font: gpui::font(UI_FONT_FAMILY),

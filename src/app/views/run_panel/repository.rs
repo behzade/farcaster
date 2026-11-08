@@ -409,7 +409,7 @@ impl FarcasterApp {
                             div()
                                 .min_w_0()
                                 .flex_1()
-                                .text_size(theme().type_scale.caption)
+                                .text_size(theme().type_scale.body_small)
                                 .text_color(theme().colors.text)
                                 .truncate()
                                 .child(filename),
@@ -432,7 +432,7 @@ impl FarcasterApp {
                         .flex_none()
                         .text_size(theme().type_scale.caption)
                         .text_color(if change.kind == crate::repository::ChangeKind::Modified {
-                            theme().colors.subtle
+                            theme().colors.muted
                         } else {
                             change_color(&change.kind)
                         })

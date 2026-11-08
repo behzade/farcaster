@@ -155,6 +155,7 @@ fn review_header(
             .overflow_hidden()
             .text_ellipsis()
             .text_color(theme().colors.code)
+            .underline()
             .child(title),
     )
     .child(

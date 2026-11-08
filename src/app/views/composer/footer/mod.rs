@@ -309,7 +309,7 @@ fn labeled_metric(
         .child(
             div()
                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(theme().colors.subtle)
+                .text_color(theme().colors.muted)
                 .child(label),
         )
         .child(div().text_color(value_color).child(value))
@@ -344,7 +344,7 @@ fn simple_metric(
 pub(in crate::app::views) fn separator() -> AnyElement {
     div()
         .flex_none()
-        .px(theme().size(6.0))
+        .px(theme().space.sm)
         .text_align(gpui::TextAlign::Center)
         .font_family(MONO_FONT_FAMILY)
         .text_color(theme().colors.subtle)

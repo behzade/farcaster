@@ -124,7 +124,7 @@ fn render_plan_row(
     let number = row.node.number;
     let is_selected = selected == Some(number);
     let title_color = if row.detached || row.reached {
-        theme().colors.subtle
+        theme().colors.muted
     } else {
         theme().colors.text
     };
@@ -200,7 +200,6 @@ fn render_plan_row(
                             FontWeight::NORMAL
                         })
                         .text_color(title_color)
-                        .when(row.reached, |title| title.line_through())
                         .child(row.node.title),
                 )
                 .child(

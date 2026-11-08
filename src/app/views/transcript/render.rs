@@ -727,6 +727,7 @@ pub(super) fn transcript_markdown_style() -> TextViewStyle {
     transcript_markdown_style_with_inline_code(HighlightStyle {
         color: Some(theme().colors.code.into()),
         background_color: Some(theme().colors.panel.into()),
+        font_weight: Some(FontWeight::NORMAL),
         ..HighlightStyle::default()
     })
 }
@@ -758,7 +759,7 @@ fn transcript_markdown_style_with_inline_code(inline_code: HighlightStyle) -> Te
     code_block.overflow.x = Some(Overflow::Scroll);
     code_block.restrict_scroll_to_axis = Some(true);
     TextViewStyle {
-        paragraph_gap: rems(0.5),
+        paragraph_gap: rems(0.75),
         heading_base_font_size: theme().type_scale.reading,
         highlight_theme: highlight_theme(),
         code_block,

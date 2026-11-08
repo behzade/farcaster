@@ -268,7 +268,7 @@ fn sidebar_visible(state: &PlanLoadState, has_session: bool) -> bool {
 fn render_sidebar_row(row: PlanRow, app: WeakEntity<FarcasterApp>) -> impl IntoElement {
     let number = row.node.number;
     let title_color = if row.reached {
-        theme().colors.subtle
+        theme().colors.muted
     } else {
         theme().colors.text
     };
@@ -337,7 +337,6 @@ fn render_sidebar_row(row: PlanRow, app: WeakEntity<FarcasterApp>) -> impl IntoE
                             FontWeight::NORMAL
                         })
                         .text_color(title_color)
-                        .when(row.reached, |title| title.line_through())
                         .child(row.node.title),
                 )
                 .when(!row.node.files.is_empty(), |content| {

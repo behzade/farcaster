@@ -34,7 +34,7 @@
   --font-reading: 15px;
   --font-display: 18px;
   --line-body: 19px;
-  --line-reading: 23px;
+  --line-reading: 24px;
   --line-composer: 22px;
   --icon-inline: 16px;
   --icon-control: 18px;
@@ -59,15 +59,15 @@
   --layout-run-panel-max: 430px;
   --layout-transcript-overdraw: 160px;
   --layout-composer-min: 184px;
-  --layout-conversation-width: 1040px;
+  --layout-conversation-width: 760px;
   --layout-dialog-width: 560px;
   --layout-dialog-max-height: 680px;
   --layout-tool-max-height: 220px;
-  --layout-session-row-height: 32px;
+  --layout-session-row-height: 44px;
   --layout-status-row-height: 24px;
   --layout-session-age-slot: 30px;
   --layout-counter-slot: 18px;
-  --layout-folders-min: 128px;
+  --layout-folders-min: 176px;
   --layout-notice-panel: 160px;
   --layout-notice-panel-min: 76px;
   --layout-notice-panel-max: 2000px;

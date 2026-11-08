@@ -246,13 +246,12 @@ fn composer_height(
     composer_line_height() * rows.clamp(1, 8)
 }
 
-// The former textarea used text_sm and 1.25rem, with the UI body size as one rem.
 fn composer_font_size() -> gpui::Pixels {
-    theme().type_scale.body * 0.875
+    theme().type_scale.reading
 }
 
 fn composer_line_height() -> gpui::Pixels {
-    (theme().type_scale.body * 1.25).round()
+    theme().type_scale.line_composer
 }
 
 fn composer_editor(input: &Entity<EditorState>, height: gpui::Pixels) -> gpui::Stateful<gpui::Div> {

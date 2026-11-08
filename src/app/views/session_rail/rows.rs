@@ -7,9 +7,9 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, App, AppContext as _, CursorStyle, Entity, FontWeight, InteractiveElement as _,
-    IntoElement, MouseButton, ParentElement as _, Pixels, RenderOnce, Rgba, Role,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
+    AnyElement, App, AppContext as _, CursorStyle, Div, Entity, FontWeight,
+    InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Pixels, RenderOnce,
+    Rgba, Role, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
     prelude::FluentBuilder as _,
 };
 use gpui_component::{
@@ -366,23 +366,29 @@ fn session_row_title(
             .child(Input::new(&title_input).w_full().appearance(false))
             .into_any_element()
     } else {
-        div()
-            .whitespace_nowrap()
-            .text_ellipsis()
-            .text_size(theme().type_scale.body_small)
-            .font_weight(if selected {
-                FontWeight::SEMIBOLD
-            } else {
-                FontWeight::NORMAL
-            })
-            .text_color(if is_archived && !selected {
-                theme().colors.muted
-            } else {
-                theme().colors.text
-            })
-            .child(title)
-            .into_any_element()
+        session_title(title, selected, is_archived).into_any_element()
     }
+}
+
+pub(super) fn session_title(title: String, selected: bool, archived: bool) -> Div {
+    div()
+        .min_w_0()
+        .w_full()
+        .line_clamp(2)
+        .text_ellipsis()
+        .text_size(theme().type_scale.body_small)
+        .line_height(theme().type_scale.line_body)
+        .font_weight(if selected {
+            FontWeight::SEMIBOLD
+        } else {
+            FontWeight::NORMAL
+        })
+        .text_color(if archived && !selected {
+            theme().colors.muted
+        } else {
+            theme().colors.text
+        })
+        .child(title)
 }
 
 fn session_archive_action(
@@ -690,7 +696,7 @@ fn session_metadata_slot(
                 .text_ellipsis()
                 .text_center()
                 .text_size(theme().type_scale.caption)
-                .text_color(theme().colors.subtle)
+                .text_color(theme().colors.muted)
                 .group_hover(reveal_group.to_owned(), |metadata| metadata.opacity(0.0))
                 .child(metadata),
         )

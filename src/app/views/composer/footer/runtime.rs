@@ -1,8 +1,8 @@
 use crate::app::ui::primitives::DropdownMenu as _;
 use crate::app::ui::primitives::Popover;
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, Styled as _, Transformation, WeakEntity, div, percentage,
+    Animation, AnimationExt as _, AnyElement, FontWeight, InteractiveElement as _,
+    IntoElement as _, ParentElement as _, Styled as _, Transformation, WeakEntity, div, percentage,
     prelude::FluentBuilder as _,
 };
 use gpui_component::menu::PopupMenuItem;
@@ -13,7 +13,7 @@ use crate::{
     agents::SandboxState,
     app::ui::assets::AppIcon,
     app::ui::primitives::{AppIconSize, ButtonTone, app_icon, dropdown_content_button},
-    app::ui::theme::{MONO_FONT_FAMILY, theme},
+    app::ui::theme::theme,
     runtime::{ConfigurationStatus, HarnessAccessMode},
 };
 
@@ -50,11 +50,15 @@ pub(in crate::app::views) fn render(
         .debug_selector(|| "composer-runtime-content".into())
         .flex()
         .items_center()
-        .font_family(MONO_FONT_FAMILY)
         .text_size(theme().type_scale.body)
         .child(div().text_color(theme().colors.muted).child(provider_label))
         .child(runtime_slash())
-        .child(div().text_color(theme().colors.text).child(model_label))
+        .child(
+            div()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(theme().colors.text)
+                .child(model_label),
+        )
         .when(shows_effort, |content| {
             content.child(runtime_slash()).child(
                 div()
@@ -109,7 +113,7 @@ pub(in crate::app::views) fn render(
 
 fn runtime_slash() -> AnyElement {
     div()
-        .px(theme().size(6.0))
+        .px(theme().space.sm)
         .text_color(theme().colors.subtle)
         .child("/")
         .into_any_element()

@@ -1,7 +1,7 @@
 use std::{path::Path, sync::Arc};
 
 use gpui::{
-    AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _,
+    AnyElement, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
 };
 
@@ -65,7 +65,8 @@ pub(super) fn render_activity_group(
             .font_family(UI_FONT_FAMILY)
             .text_size(theme().type_scale.body_small * font_scale)
             .line_height(theme().type_scale.line_body * font_scale)
-            .text_color(theme().colors.muted)
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(theme().colors.text)
             .child(div().min_w_0().flex_1().truncate().child(summary)),
         )
         .when(expanded, |group| {
@@ -116,7 +117,12 @@ pub(super) fn render_tool(
                 .as_ref()
                 .is_none_or(|details| details.metadata.targets.len() <= 1)
     });
-    let summary = tool_summary(item);
+    let command = item
+        .tool_details
+        .as_ref()
+        .filter(|details| details.metadata.category == Some(crate::agents::ToolCategory::Execute))
+        .and_then(|details| details.command_preview());
+    let summary = command.map_or_else(|| tool_summary(item), command_label);
     let read_target = direct_read_target(item).map(str::to_owned);
     let opens_file = read_target.is_some();
     let expanded = expanded && !opens_file;
@@ -176,9 +182,20 @@ pub(super) fn render_tool(
                     div()
                         .flex_1()
                         .min_w_0()
-                        .truncate()
                         .text_size(theme().type_scale.body_small * font_scale)
-                        .text_color(theme().colors.muted)
+                        .when(command.is_some(), |label| {
+                            label
+                                .font_family(MONO_FONT_FAMILY)
+                                .line_height(theme().type_scale.line_body * font_scale)
+                                .line_clamp(2)
+                                .text_ellipsis()
+                        })
+                        .when(command.is_none(), |label| label.truncate())
+                        .text_color(if command.is_some() {
+                            theme().colors.text
+                        } else {
+                            theme().colors.muted
+                        })
                         .child(summary),
                 )
             }),
@@ -213,6 +230,17 @@ pub(super) fn tool_summary(item: &TranscriptItem) -> String {
         },
         |details| details.summary(),
     )
+}
+
+fn command_label(command: &str) -> String {
+    // Let the two-line row, rather than the 96-character activity summary,
+    // determine where commands wrap. Bound work for very large scripts.
+    let mut chars = command.trim().chars();
+    let mut preview: String = chars.by_ref().take(512).collect();
+    if chars.next().is_some() {
+        preview.push('…');
+    }
+    preview
 }
 
 fn activity_header<'a>(items: impl Iterator<Item = &'a TranscriptItem>) -> String {
