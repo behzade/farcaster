@@ -22,19 +22,20 @@ jobs:
 
       - name: Test Linux packaging logic
         run: |
+          python3 scripts/release-inputs_tests.py
           python3 scripts/package-deb_tests.py
           python3 scripts/package-appimage_tests.py
 
       - name: Install Linux build dependencies
         run: |
-          # Zig 0.16's C++ headers require libc++ 21 or newer.
+          # Zig 0.17's C++ headers require libc++ 22 or newer.
           curl --fail --silent --show-error --location https://apt.llvm.org/llvm-snapshot.gpg.key \
             | sudo tee /usr/share/keyrings/apt.llvm.org.asc >/dev/null
-          echo 'deb [signed-by=/usr/share/keyrings/apt.llvm.org.asc] https://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main' \
-            | sudo tee /etc/apt/sources.list.d/llvm-21.list >/dev/null
+          echo 'deb [signed-by=/usr/share/keyrings/apt.llvm.org.asc] https://apt.llvm.org/jammy/ llvm-toolchain-jammy-22 main' \
+            | sudo tee /etc/apt/sources.list.d/llvm-22.list >/dev/null
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            clang cmake desktop-file-utils dpkg-dev libc++-21-dev libc++abi-21-dev \
+            clang cmake desktop-file-utils dpkg-dev libc++-22-dev libc++abi-22-dev \
             libasound2-dev libegl1-mesa-dev \
             libfontconfig1-dev libfreetype6-dev libfuse2 libvulkan-dev \
             libwayland-dev libx11-dev libxcb1-dev libxkbcommon-dev \
@@ -57,7 +58,7 @@ jobs:
 
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
 
       - name: Install linuxdeploy
         run: |

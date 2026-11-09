@@ -6,8 +6,8 @@
   cmake,
   makeWrapper,
   writeShellScript,
-  zig_0_16,
-  llvmPackages_21,
+  zig,
+  llvmPackages_22,
   fontconfig,
   freetype,
   libGL,
@@ -26,11 +26,11 @@ let
   manifest = builtins.fromTOML (builtins.readFile ../Cargo.toml);
   lock = builtins.fromTOML (builtins.readFile ../Cargo.lock);
   ghostty = builtins.head (builtins.filter (p: p.name == "gpui-libghostty") lock.package);
-  zigDeps = callPackage ./ghostty-zig-deps.nix { };
+  zigDeps = callPackage ./ghostty-zig-deps.nix { inherit zig; };
   ghosttyZig = writeShellScript "farcaster-ghostty-zig" ''
     if [ "''${1-}" = build ]; then
       shift
-      exec ${zig_0_16}/bin/zig build \
+      exec ${zig}/bin/zig build \
         -fno-sys=freetype \
         -fno-sys=harfbuzz \
         -fno-sys=fontconfig \
@@ -40,7 +40,7 @@ let
         -fno-sys=libxml2 \
         "$@"
     fi
-    exec ${zig_0_16}/bin/zig "$@"
+    exec ${zig}/bin/zig "$@"
   '';
   runtimeLibraries = [
     fontconfig
@@ -52,11 +52,11 @@ let
     libxml2
     wayland
     vulkan-loader
-    llvmPackages_21.libcxx
+    llvmPackages_22.libcxx
   ];
 in
 assert lib.assertMsg (
-  ghostty.version == "0.3.1"
+  ghostty.version == "0.4.1-rc.1"
 ) "Refresh packaging/ghostty-zig-deps.json when upgrading gpui-libghostty";
 rustPlatform.buildRustPackage {
   pname = "farcaster";

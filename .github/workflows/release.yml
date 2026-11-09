@@ -45,7 +45,7 @@ jobs:
 
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
 
       - name: Install cargo-packager
         run: cargo install cargo-packager --version 0.11.8 --locked

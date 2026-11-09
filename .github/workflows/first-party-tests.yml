@@ -28,27 +28,29 @@ jobs:
           toolchain: 1.98.0
 
       - name: Check package inventory and test runner
-        run: python3 scripts/test_tests.py
+        run: |
+          python3 scripts/release-inputs_tests.py
+          python3 scripts/test_tests.py
 
       - name: Install Linux build and test dependencies
         run: |
-          # Match the repository's Linux build environment. Ghostty's Zig 0.16
-          # C++ headers need LLVM 21's libc++; its fontconfig archive needs libxml2.
+          # Match the repository's Linux build environment. Ghostty's Zig 0.17
+          # C++ headers need LLVM 22's libc++; its fontconfig archive needs libxml2.
           curl --fail --silent --show-error --location https://apt.llvm.org/llvm-snapshot.gpg.key \
             | sudo tee /usr/share/keyrings/apt.llvm.org.asc >/dev/null
-          echo 'deb [signed-by=/usr/share/keyrings/apt.llvm.org.asc] https://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main' \
-            | sudo tee /etc/apt/sources.list.d/llvm-21.list >/dev/null
+          echo 'deb [signed-by=/usr/share/keyrings/apt.llvm.org.asc] https://apt.llvm.org/jammy/ llvm-toolchain-jammy-22 main' \
+            | sudo tee /etc/apt/sources.list.d/llvm-22.list >/dev/null
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             build-essential ca-certificates clang cmake fonts-dejavu-core git \
-            libc++-21-dev libc++abi-21-dev libasound2-dev libegl1-mesa-dev \
+            libc++-22-dev libc++abi-22-dev libasound2-dev libegl1-mesa-dev \
             libfontconfig1-dev libfreetype6-dev libvulkan-dev libwayland-dev \
             libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
             libxml2-dev pkg-config python3
 
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
 
       - name: Test every first-party package
         # gpui-libghostty includes Ghostty source; Zig fetches its pinned packages.

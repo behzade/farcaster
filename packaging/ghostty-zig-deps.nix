@@ -1,12 +1,12 @@
-# Dependency hashes from Ghostty 9f0e1719dc918368367d368bfe300f59bb68b5a4
-# build.zig.zon.nix (MIT), matching gpui-libghostty 0.3.1's vendored source.
+# Dependency hashes from Ghostty 83fb95624b0439ee660c2679b43b38c8b63769cd
+# build.zig.zon.nix (MIT), matching gpui-libghostty 0.4.1-rc.1's upstream source.
 {
   lib,
   fetchurl,
   fetchzip,
   fetchgit,
   runCommand,
-  zig_0_16,
+  zig,
   zstd,
 }:
 let
@@ -16,42 +16,43 @@ let
     let
       isGit = lib.hasPrefix "git+" dep.url;
       gitParts = lib.splitString "#" (lib.removePrefix "git+" dep.url);
-      artifact =
-        if isGit then
-          fetchgit {
-            url = builtins.head gitParts;
-            rev = builtins.elemAt gitParts 1;
-            fetchSubmodules = false;
-            deepClone = false;
-            inherit (dep) hash;
-          }
-        else if dep.unpack then
-          fetchzip {
-            inherit (dep) url hash;
-            nativeBuildInputs = [ zstd ];
-          }
-        else
-          fetchurl {
-            inherit (dep) url hash;
-          };
     in
-    runCommand "ghostty-zig-${dep.name}" { nativeBuildInputs = [ zig_0_16 ]; } ''
-      mkdir -p source cache/tmp
-      touch source/build.zig
-      cd source
-      actual=$(zig fetch --global-cache-dir "$NIX_BUILD_TOP/cache" ${artifact})
-      test "$actual" = ${lib.escapeShellArg zigHash}
-      mkdir "$out"
-      tar xzf "$NIX_BUILD_TOP/cache/p/$actual.tar.gz" -C "$out" --strip-components=1
-    '';
+    if isGit then
+      fetchgit {
+        url = builtins.head gitParts;
+        rev = builtins.elemAt gitParts 1;
+        fetchSubmodules = false;
+        deepClone = false;
+        preFetch = ''
+          export GIT_ATTR_SOURCE=4b825dc642cb6eb9a060e54bf8d69288fbee4904
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.autocrlf GIT_CONFIG_VALUE_0=false
+        '';
+        inherit (dep) hash;
+      }
+    else if dep.unpack then
+      fetchzip {
+        inherit (dep) url hash;
+        nativeBuildInputs = [ zstd ];
+      }
+    else
+      fetchurl {
+        inherit (dep) url hash;
+      };
   packages = lib.mapAttrs fetchDependency manifest;
 in
-runCommand "farcaster-ghostty-zig-deps" { } (
-  ''mkdir -p "$out"''
+runCommand "farcaster-ghostty-zig-deps" { nativeBuildInputs = [ zig ]; } (
+  ''
+    mkdir -p "$out" cache/tmp
+    export ZIG_GLOBAL_CACHE_DIR="$NIX_BUILD_TOP/cache"
+    export ZIG_LOCAL_CACHE_DIR="$NIX_BUILD_TOP/zig-cache"
+  ''
   + "\n"
   + lib.concatStringsSep "\n" (
-    lib.mapAttrsToList (name: path: ''
-      cp -R --no-preserve=mode ${path} "$out/${name}"
+    lib.mapAttrsToList (zigHash: path: ''
+      actual=$(zig fetch ${path})
+      test "$actual" = ${lib.escapeShellArg zigHash}
+      tar xzf "$ZIG_GLOBAL_CACHE_DIR/p/$actual.tar.gz" -C "$out"
+      rm "$ZIG_GLOBAL_CACHE_DIR/p/$actual.tar.gz"
     '') packages
   )
 )

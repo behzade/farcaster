@@ -45,6 +45,7 @@
           pkgs = pkgsFor system;
           rustToolchain = rustToolchainFor pkgs;
           farcaster = pkgs.callPackage ./packaging/nix.nix {
+            zig = zig-overlay.packages.${system}."0.17.0";
             rustPlatform = pkgs.makeRustPlatform {
               cargo = rustToolchain;
               rustc = rustToolchain;
@@ -97,7 +98,7 @@
               libdrm
               libgbm
               libGL
-              libcxx
+              llvmPackages_22.libcxx
               libxml2
               libx11
               libxcb
