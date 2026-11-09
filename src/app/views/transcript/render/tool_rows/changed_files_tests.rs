@@ -1,5 +1,70 @@
 use super::*;
 
+#[gpui::test]
+fn collapsing_transcript_folders_keeps_totals_on_the_file_columns(cx: &mut gpui::TestAppContext) {
+    struct Tree {
+        app: WeakEntity<FarcasterApp>,
+        items: PersistentVec<Arc<TranscriptItem>>,
+        state: ChangeTreeState,
+        width: f32,
+    }
+    impl gpui::Render for Tree {
+        fn render(
+            &mut self,
+            _: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            div()
+                .w(gpui::px(self.width))
+                .font_family(crate::app::ui::theme::UI_FONT_FAMILY)
+                .text_size(theme().type_scale.body_small)
+                .child(render(
+                    0,
+                    &self.items,
+                    0,
+                    self.items.len(),
+                    Some(&self.state),
+                    self.app.clone(),
+                    cx,
+                ))
+        }
+    }
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::collapsing_transcript_folders_keeps_totals_on_the_file_columns"
+        ),
+        cx,
+        |cx, app, _, project| {
+            let mut item = super::super::tests::write_item();
+            let details = Arc::make_mut(item.tool_details.as_mut().unwrap());
+            details.metadata.targets = vec!["src/one/main.rs".into(), "src/two/mod.rs".into()];
+            details.arguments = serde_json::json!({"changes":[
+                {"path":"src/one/main.rs", "diff":"@@ -1 +1 @@\n-old\n+new"},
+                {"path":"src/two/mod.rs", "diff":"@@ -0,0 +1,2 @@\n+one\n+two"}
+            ]});
+            for width in [220.0, 332.0, 640.0] {
+                let mut expected = None;
+                for expanded in [false, true] {
+                    cx.update(|window, cx| {
+                        window.replace_root(cx, |_, _| Tree {
+                            app: app.downgrade(),
+                            items: std::iter::once(Arc::new(item.clone())).collect(),
+                            state: ChangeTreeState::with_default(project, expanded),
+                            width,
+                        });
+                        window.draw(cx).clear(cx);
+                    });
+                    let edges = ["diff-added-column", "diff-removed-column"]
+                        .map(|s| cx.debug_bounds(s).unwrap().right());
+                    assert_eq!(*expected.get_or_insert(edges), edges);
+                    assert_eq!(edges[1], gpui::px(width));
+                }
+            }
+        },
+    );
+}
+
 #[test]
 fn multi_file_edits_keep_independent_net_counts() {
     let mut first = super::super::tests::write_item();

@@ -82,13 +82,17 @@ impl RenderOnce for SearchField {
                     .flex()
                     .items_center()
                     .gap(theme().space.xs)
-                    .child(app_icon(AppIcon::MagnifyingGlass, AppIconSize::Inline))
+                    .child(
+                        crate::app::ui::grid::icon_slot()
+                            .child(app_icon(AppIcon::MagnifyingGlass, AppIconSize::Inline)),
+                    )
                     .child(
                         Input::new(&input)
                             .flex_1()
                             .min_w_0()
                             .text_size(theme().type_scale.body)
-                            .appearance(false),
+                            .appearance(false)
+                            .px_0(),
                     ),
             )
             .children(trailing)

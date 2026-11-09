@@ -111,7 +111,7 @@ impl RenderOnce for Panel {
             .flex()
             .items_center()
             .gap(theme().space.xs)
-            .px(theme().size(12.0))
+            .px(crate::app::ui::grid::sidebar_inset())
             .text_size(theme().type_scale.caption)
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(theme().colors.muted)

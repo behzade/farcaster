@@ -176,8 +176,9 @@ impl RenderOnce for SessionRow {
                 ))
             })
             .focus(|row| {
-                row.border(theme().border)
-                    .border_color(theme().colors.indicator)
+                row.shadow(crate::app::ui::primitives::focus_outline(
+                    theme().colors.indicator,
+                ))
             })
             .cursor(CursorStyle::PointingHand)
             .when(draggable, move |row| {
@@ -358,6 +359,7 @@ fn session_row_title(
 
 pub(super) fn session_title(title: String, selected: bool, archived: bool) -> Div {
     div()
+        .debug_selector(|| "session-title".into())
         .min_w_0()
         .w_full()
         .line_clamp(1)

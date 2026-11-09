@@ -147,8 +147,9 @@ impl RenderOnce for DraftRow {
                         ))
                     })
                     .focus(|row| {
-                        row.border(theme().border)
-                            .border_color(theme().colors.indicator)
+                        row.shadow(crate::app::ui::primitives::focus_outline(
+                            theme().colors.indicator,
+                        ))
                     })
                     .cursor(CursorStyle::PointingHand)
                     .on_drag(drag, move |drag, _, _, cx| {

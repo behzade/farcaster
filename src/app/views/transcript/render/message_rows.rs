@@ -27,7 +27,7 @@ pub(super) fn render_invocation(
     div()
         .id(("invocation-row", key))
         .w_full()
-        .px(theme().size(18.0))
+        .px(crate::app::ui::grid::transcript_inset())
         .py(theme().space.sm)
         .flex()
         .flex_col()
@@ -194,7 +194,7 @@ pub(super) fn render_message(
     div()
         .id(("transcript-row", key))
         .w_full()
-        .px(theme().size(18.0))
+        .px(crate::app::ui::grid::transcript_inset())
         .py(theme().space.sm)
         .when(user, |row| {
             row.mt(theme().space.sm)
@@ -245,7 +245,7 @@ pub(super) fn render_message_chunk(
     div()
         .id(format!("transcript-row-{key}-{block}"))
         .w_full()
-        .px(theme().size(18.0))
+        .px(crate::app::ui::grid::transcript_inset())
         .when(user, |row| row.bg(theme().colors.highlight))
         .when(first, |row| row.pt(theme().space.sm))
         .when(first && user, |row| {

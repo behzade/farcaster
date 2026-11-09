@@ -33,7 +33,7 @@ pub(in crate::app::views) fn render(
                     .flex()
                     .flex_col()
                     .gap(theme().space.md)
-                    .p(theme().space.md)
+                    .p(crate::app::ui::grid::dialog_inset())
                     .child(
                         div()
                             .text_size(theme().type_scale.body)

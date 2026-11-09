@@ -41,7 +41,7 @@ pub(in crate::app) use rows::project_label;
 pub(super) use rows::session_row_height;
 
 pub(super) fn rail_inset() -> Pixels {
-    theme().size(12.0)
+    crate::app::ui::grid::sidebar_inset()
 }
 
 #[cfg(test)]

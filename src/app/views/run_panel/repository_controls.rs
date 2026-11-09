@@ -82,10 +82,7 @@ pub(super) fn repository_header(
         .flex_col()
         .gap(theme().space.xs)
         .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(theme().space.xs)
+            crate::app::ui::grid::row()
                 .child(section_heading("Changes"))
                 .child(
                     div()

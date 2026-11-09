@@ -274,6 +274,19 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
                             bounds,
                             "hover must not shift columns"
                         );
+                        let title = cx.debug_bounds("session-title").expect("session title");
+                        for _ in 0..3 {
+                            cx.update(|window, cx| {
+                                window.focus_next(cx);
+                                window.draw(cx).clear(cx);
+                            });
+                            assert_eq!(cx.debug_bounds("session-title").unwrap(), title);
+                            assert_eq!(
+                                slots.map(|selector| cx.debug_bounds(selector).unwrap()),
+                                bounds,
+                                "keyboard focus must not shift the row"
+                            );
+                        }
                     }
                 }
             }

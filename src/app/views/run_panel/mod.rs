@@ -430,6 +430,10 @@ impl FarcasterApp {
         };
         let activity = div()
             .id("run-panel-activity")
+            // Let row highlights extend around the shared text anchor without
+            // clipping their leading selection edge in the scroll container.
+            .mx(-theme().space.xs)
+            .px(theme().space.xs)
             .min_h_0()
             .when(expanded, |activity| activity.flex_1())
             .when(!expanded, |activity| {
@@ -473,10 +477,8 @@ impl FarcasterApp {
             .min_h_0()
             .flex()
             .flex_col()
-            .pt(theme().size(17.0))
-            .pr(theme().size(15.0))
-            .pb(theme().size(14.0))
-            .pl(theme().size(18.0))
+            .py(theme().space.md)
+            .px(crate::app::ui::grid::inspector_inset())
             .gap(theme().space.md)
             .child(activity)
             .when(
@@ -493,5 +495,5 @@ impl FarcasterApp {
 }
 
 fn inspector_section() -> gpui::Div {
-    div().flex().flex_col().gap(theme().size(7.0))
+    div().flex().flex_col().gap(theme().space.sm)
 }

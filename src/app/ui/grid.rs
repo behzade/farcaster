@@ -8,6 +8,10 @@ pub(crate) fn sidebar_inset() -> Pixels {
     theme().size(12.0)
 }
 
+pub(crate) fn inspector_inset() -> Pixels {
+    theme().space.md
+}
+
 pub(crate) fn dialog_inset() -> Pixels {
     theme().space.md
 }

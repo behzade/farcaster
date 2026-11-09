@@ -133,7 +133,8 @@ fn preview(
                         .flex_none()
                         .items_center()
                         .gap(theme().space.sm)
-                        .p(theme().space.sm)
+                        .px(crate::app::ui::grid::dialog_inset())
+                        .py(theme().space.sm)
                         .child(div().flex_1().child(detail.title))
                         .child(icon_button(
                             "copy-command-detail",
@@ -156,7 +157,7 @@ fn preview(
                 )
                 .children(detail.cwd.clone().map(|cwd| {
                     div()
-                        .px(theme().space.md)
+                        .px(crate::app::ui::grid::dialog_inset())
                         .text_size(theme().type_scale.caption)
                         .text_color(theme().colors.muted)
                         .child(cwd)
@@ -166,7 +167,7 @@ fn preview(
                         .id("command-detail-content")
                         .min_h_0()
                         .overflow_y_scroll()
-                        .p(theme().space.md)
+                        .p(crate::app::ui::grid::dialog_inset())
                         .child(
                             TextView::markdown("command-detail-text", detail.markdown.clone())
                                 .style(style)

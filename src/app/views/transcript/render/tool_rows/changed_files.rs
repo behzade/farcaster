@@ -137,6 +137,9 @@ pub(super) fn render(
         home.as_deref(),
     );
     let project = project.unwrap_or_default();
+    let columns = crate::app::ui::primitives::DiffColumns::for_counts(
+        files.iter().filter_map(|file| file.counts),
+    );
     let expand = entity
         .upgrade()
         .is_some_and(|entity| entity.read(cx).settings.expand_transcript_folders);
@@ -194,10 +197,10 @@ pub(super) fn render(
                         },
                         AppIconSize::Inline,
                     )))
-                    .child(div().min_w_0().text_ellipsis().child(label))
+                    .child(div().min_w_0().flex_1().text_ellipsis().child(label))
                     .when(!open, |row| {
                         row.child(crate::app::ui::primitives::folder_change_summary(
-                            count, counts,
+                            count, counts, columns,
                         ))
                     })
                     .into_any_element()
@@ -205,14 +208,19 @@ pub(super) fn render(
                 TreeRow::File { index, depth } => div()
                     .w_full()
                     .pl(crate::app::ui::grid::tree_indent(depth))
-                    .child(file_row(key, &files[index], entity.clone()))
+                    .child(file_row(key, &files[index], columns, entity.clone()))
                     .into_any_element(),
             }
         }))
         .into_any_element()
 }
 
-fn file_row(key: usize, file: &ChangedFile, entity: WeakEntity<FarcasterApp>) -> AnyElement {
+fn file_row(
+    key: usize,
+    file: &ChangedFile,
+    columns: crate::app::ui::primitives::DiffColumns,
+    entity: WeakEntity<FarcasterApp>,
+) -> AnyElement {
     let label = Path::new(&file.label)
         .file_name()
         .unwrap_or_default()
@@ -243,7 +251,10 @@ fn file_row(key: usize, file: &ChangedFile, entity: WeakEntity<FarcasterApp>) ->
             .text_color(theme().colors.text)
             .child(label),
     )
-    .children(tool_changes::change_counts(file.counts.unwrap_or_default()))
+    .children(tool_changes::change_counts(
+        file.counts.unwrap_or_default(),
+        columns,
+    ))
     .into_any_element()
 }
 

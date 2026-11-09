@@ -177,6 +177,9 @@ impl FarcasterApp {
         panel: WeakEntity<RunPanelView>,
         browser: &RepositoryView<'_>,
     ) -> AnyElement {
+        let columns = crate::app::ui::primitives::DiffColumns::for_counts(
+            snapshot.changes.iter().filter_map(|change| change.counts),
+        );
         let rows = change_tree::rows(
             snapshot.changes.iter().enumerate().map(|(index, change)| {
                 (
@@ -232,7 +235,7 @@ impl FarcasterApp {
                             .aria_label(accessible)
                             .when(!*open, |row| {
                                 row.child(crate::app::ui::primitives::folder_change_summary(
-                                    *count, *counts,
+                                    *count, *counts, columns,
                                 ))
                             })
                             .into_any_element(),
@@ -248,45 +251,6 @@ impl FarcasterApp {
                         }),
                 }
             }))
-            .when(
-                browser.query.trim().is_empty()
-                    && !snapshot.changes.is_empty()
-                    && rows
-                        .iter()
-                        .all(|row| matches!(row, TreeRow::Folder { open: false, .. })),
-                |list| {
-                    list.child(
-                        div()
-                            .debug_selector(|| "collapsed-changes-preview".into())
-                            .mt(theme().space.md)
-                            .flex()
-                            .flex_col()
-                            .gap(theme().space.xs)
-                            .child(
-                                div()
-                                    .text_size(theme().type_scale.caption)
-                                    .text_color(theme().colors.muted)
-                                    .child("Changed files"),
-                            )
-                            .children(snapshot.changes.iter().take(3).filter_map(|change| {
-                                self.repository_change_row(change, entity.clone())
-                            }))
-                            .child(
-                                div()
-                                    .text_size(theme().type_scale.caption)
-                                    .text_color(theme().colors.muted)
-                                    .child(if snapshot.changes.len() > 3 {
-                                        format!(
-                                            "{} more files · expand folders to view all",
-                                            snapshot.changes.len() - 3
-                                        )
-                                    } else {
-                                        "Expand folders to view all".to_owned()
-                                    }),
-                            ),
-                    )
-                },
-            )
             .when(rows.is_empty(), |list| {
                 list.child(repository_notice(
                     if !browser.query.trim().is_empty() {
@@ -342,148 +306,136 @@ impl FarcasterApp {
         let state = change_kind_label(&change.kind);
         let accessible_path = accessible_change_path(change);
         let accessible = format!("Edit {layer} {state} file {accessible_path} in Neovim");
-        let target = div()
-            .id(("repository-change", row_id))
-            .group(action_group.clone())
-            .track_focus(&focus)
-            .role(Role::Button)
-            .aria_label(accessible)
-            .app_tooltip(full_path.clone())
-            .tab_index(0)
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                crate::app::ui::primitives::preserve_pointer_focus,
-            )
-            .min_w_0()
-            .w_full()
-            .h(theme().size(24.0))
-            .px_0()
-            .rounded(theme().radius)
-            .border_l(theme().border)
-            .border_color(gpui::rgba(0x00000000))
-            .flex()
-            .items_center()
-            .gap(theme().space.xs)
-            .hover(|row| row.bg(theme().colors.highlight))
-            .when(selected, |row| row.bg(theme().colors.highlight))
-            .focus(|row| {
-                row.bg(theme().colors.highlight)
-                    .border_color(theme().colors.focus_border)
-            })
-            .cursor_pointer()
-            .on_click(move |event, window, cx| {
-                let _ = click_entity.update(cx, |this, cx| {
-                    this.open_file_editor_with_diff(
-                        click_path.clone(),
-                        None,
-                        event.modifiers().alt,
-                        window,
-                        cx,
-                    );
-                });
-            })
-            .on_key_down(move |event, window, cx| {
-                if activates_button(event) {
-                    cx.stop_propagation();
-                    let _ = key_entity.update(cx, |this, cx| {
-                        this.open_file_editor(key_path.clone(), window, cx);
-                    });
-                }
-            })
-            .child(
-                div()
-                    .min_w_0()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .gap(theme().space.xs)
-                    .child(
-                        crate::app::ui::grid::icon_slot().child(file_icon(&change.relative_path)),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .flex_1()
-                            .text_size(theme().type_scale.body_small)
-                            .text_color(theme().colors.text)
-                            .truncate()
-                            .child(filename),
-                    )
-                    .when(
-                        change.layer == crate::repository::ChangeLayer::GitIndex,
-                        |label| {
-                            label.child(
-                                div()
-                                    .text_size(theme().type_scale.caption)
-                                    .text_color(theme().colors.subtle)
-                                    .child("Staged"),
-                            )
-                        },
-                    ),
-            )
-            .child(
-                div()
-                    .w(theme().size(14.0))
-                    .flex_none()
-                    .text_size(theme().type_scale.caption)
-                    .text_color(if change.kind == crate::repository::ChangeKind::Modified {
-                        theme().colors.muted
-                    } else {
-                        change_color(&change.kind)
-                    })
-                    .child(status),
-            )
-            .child(
-                file_action(
-                    ("select-repository-file", row_id),
-                    format!(
-                        "{} {} for commit",
-                        if selected { "Deselect" } else { "Select" },
-                        change.relative_path.display()
-                    ),
-                    move |_, cx| {
-                        if editable {
-                            let _ = select_entity.update(cx, |this, cx| {
-                                this.toggle_repository_file(select_path.clone(), cx)
-                            });
-                        }
-                    },
+        let target =
+            div()
+                .id(("repository-change", row_id))
+                .group(action_group.clone())
+                .track_focus(&focus)
+                .role(Role::Button)
+                .aria_label(accessible)
+                .app_tooltip(full_path.clone())
+                .tab_index(0)
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    crate::app::ui::primitives::preserve_pointer_focus,
                 )
-                .role(Role::CheckBox)
-                .aria_toggled(if selected {
-                    gpui::Toggled::True
-                } else {
-                    gpui::Toggled::False
+                .min_w_0()
+                .w_full()
+                .h(theme().size(24.0))
+                .px_0()
+                .rounded(theme().radius)
+                .flex()
+                .items_center()
+                .gap(theme().space.xs)
+                .hover(|row| row.bg(theme().colors.highlight))
+                .when(selected, |row| row.bg(theme().colors.highlight))
+                .focus(|row| {
+                    row.bg(theme().colors.highlight).shadow(
+                        crate::app::ui::primitives::focus_outline(theme().colors.focus_border),
+                    )
                 })
-                .when(!selecting, |control| {
-                    control
-                        .opacity(0.0)
-                        .group_hover(action_group.clone(), |control| control.opacity(1.0))
-                        .focus_visible(|control| control.opacity(1.0))
+                .cursor_pointer()
+                .on_click(move |event, window, cx| {
+                    let _ = click_entity.update(cx, |this, cx| {
+                        this.open_file_editor_with_diff(
+                            click_path.clone(),
+                            None,
+                            event.modifiers().alt,
+                            window,
+                            cx,
+                        );
+                    });
+                })
+                .on_key_down(move |event, window, cx| {
+                    if activates_button(event) {
+                        cx.stop_propagation();
+                        let _ = key_entity.update(cx, |this, cx| {
+                            this.open_file_editor(key_path.clone(), window, cx);
+                        });
+                    }
                 })
                 .child(
                     div()
-                        .size(theme().size(14.0))
-                        .border(theme().border)
-                        .border_color(theme().colors.muted)
-                        .when(!editable, |checkbox| checkbox.opacity(0.4))
-                        .rounded(theme().radius)
+                        .min_w_0()
+                        .flex_1()
                         .flex()
                         .items_center()
-                        .justify_center()
-                        .when(selected, |checkbox| {
-                            checkbox.bg(theme().colors.accent).child(
-                                app_icon(AppIcon::Check, AppIconSize::Inline)
-                                    .text_color(theme().colors.canvas),
-                            )
-                        }),
-                ),
-            )
-            .child(
-                div()
-                    .w(theme().size(20.0))
-                    .flex_none()
-                    .when(!selecting && editable, |slot| {
+                        .gap(theme().space.xs)
+                        .child(
+                            crate::app::ui::grid::icon_slot()
+                                .child(file_icon(&change.relative_path)),
+                        )
+                        .child(
+                            div()
+                                .debug_selector(move || format!("repository-filename-{row_id}"))
+                                .min_w_0()
+                                .flex_1()
+                                .text_size(theme().type_scale.body_small)
+                                .text_color(theme().colors.text)
+                                .truncate()
+                                .child(filename),
+                        )
+                        .when(
+                            change.layer == crate::repository::ChangeLayer::GitIndex,
+                            |label| {
+                                label.child(
+                                    div()
+                                        .text_size(theme().type_scale.caption)
+                                        .text_color(theme().colors.subtle)
+                                        .child("Staged"),
+                                )
+                            },
+                        ),
+                )
+                .child(
+                    file_action(
+                        ("select-repository-file", row_id),
+                        format!(
+                            "{} {} for commit",
+                            if selected { "Deselect" } else { "Select" },
+                            change.relative_path.display()
+                        ),
+                        move |_, cx| {
+                            if editable {
+                                let _ = select_entity.update(cx, |this, cx| {
+                                    this.toggle_repository_file(select_path.clone(), cx)
+                                });
+                            }
+                        },
+                    )
+                    .role(Role::CheckBox)
+                    .aria_toggled(if selected {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
+                    .when(!selecting, |control| {
+                        control
+                            .opacity(0.0)
+                            .group_hover(action_group.clone(), |control| control.opacity(1.0))
+                            .focus_visible(|control| control.opacity(1.0))
+                    })
+                    .child(
+                        div()
+                            .size(theme().size(14.0))
+                            .border(theme().border)
+                            .border_color(theme().colors.muted)
+                            .when(!editable, |checkbox| checkbox.opacity(0.4))
+                            .rounded(theme().radius)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .when(selected, |checkbox| {
+                                checkbox.bg(theme().colors.accent).child(
+                                    app_icon(AppIcon::Check, AppIconSize::Inline)
+                                        .text_color(theme().colors.canvas),
+                                )
+                            }),
+                    ),
+                )
+                .child(div().w(theme().size(20.0)).flex_none().when(
+                    !selecting && editable,
+                    |slot| {
                         slot.child(
                             file_action(
                                 ("discard-repository-file", row_id),
@@ -515,8 +467,22 @@ impl FarcasterApp {
                                 AppIconSize::Inline,
                             )),
                         )
-                    }),
-            );
+                    },
+                ))
+                .child(
+                    div()
+                        .debug_selector(move || format!("repository-status-{row_id}"))
+                        .w(theme().size(14.0))
+                        .text_right()
+                        .flex_none()
+                        .text_size(theme().type_scale.caption)
+                        .text_color(if change.kind == crate::repository::ChangeKind::Modified {
+                            theme().colors.muted
+                        } else {
+                            change_color(&change.kind)
+                        })
+                        .child(status),
+                );
         Some(target.into_any_element())
     }
 }

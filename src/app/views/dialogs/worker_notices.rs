@@ -39,7 +39,7 @@ pub(in crate::app::views) fn render(
                         .flex()
                         .items_center()
                         .justify_between()
-                        .px(theme().space.md)
+                        .px(crate::app::ui::grid::dialog_inset())
                         .py(theme().space.sm)
                         .border_b(theme().border)
                         .border_color(theme().colors.border)
@@ -78,7 +78,7 @@ pub(in crate::app::views) fn render(
                         .when(notices.is_empty(), |body| {
                             body.child(
                                 div()
-                                    .p(theme().space.md)
+                                    .p(crate::app::ui::grid::dialog_inset())
                                     .text_color(theme().colors.subtle)
                                     .child("No active coordination notices."),
                             )
@@ -92,7 +92,7 @@ pub(in crate::app::views) fn render(
                 )
                 .child(
                     div()
-                        .px(theme().space.md)
+                        .px(crate::app::ui::grid::dialog_inset())
                         .py(theme().space.sm)
                         .border_t(theme().border)
                         .border_color(theme().colors.border)
@@ -107,7 +107,7 @@ pub(in crate::app::views) fn render(
 fn render_notice(index: usize, notice: NoticeView) -> impl IntoElement {
     div()
         .id(("worker-notice", index))
-        .px(theme().space.md)
+        .px(crate::app::ui::grid::dialog_inset())
         .py(theme().space.sm)
         .border_b(theme().border)
         .border_color(theme().colors.surface)

@@ -2,12 +2,18 @@ use gpui::{Div, Pixels, Styled as _, div};
 
 use crate::app::ui::theme::theme;
 
-pub(crate) fn chat_column(inner_padding: f32) -> Div {
+pub(crate) fn chat_column() -> Div {
     div()
         .w_full()
         .max_w(theme().size(1120.0))
         .mx_auto()
-        .px(theme().size(40.0 - inner_padding))
+        .px(theme().size(40.0))
+}
+
+// Transcript rows include their own inset for message backgrounds and hit areas.
+// Keep their content on the composer's grid without caller-supplied arithmetic.
+pub(crate) fn transcript_column() -> Div {
+    chat_column().px(theme().size(40.0) - super::grid::transcript_inset())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

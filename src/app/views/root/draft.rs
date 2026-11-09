@@ -48,7 +48,7 @@ pub(super) fn render_body(
                 .justify_center()
                 .items_center()
                 .child(
-                    chat_column(0.0)
+                    chat_column()
                         .flex_none()
                         .flex()
                         .flex_col()

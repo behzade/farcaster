@@ -50,10 +50,7 @@ pub(crate) fn disclosure_title_row(
         .tab_index(0)
         .cursor(CursorStyle::PointingHand)
         .hover(|row| row.bg(theme().colors.highlight))
-        .focus_visible(|row| {
-            row.border(theme().border)
-                .border_color(theme().colors.focus_border)
-        })
+        .focus_visible(|row| row.shadow(super::focus_outline(theme().colors.focus_border)))
         .on_mouse_down(MouseButton::Left, super::preserve_pointer_focus)
         .on_click(move |_, window, cx| click(window, cx))
         .on_key_down(move |event, window, cx| {
@@ -86,8 +83,6 @@ pub(crate) fn tree_folder_row(
         .items_center()
         .gap(theme().space.xs)
         .rounded(theme().radius)
-        .border_l(theme().border)
-        .border_color(gpui::rgba(0x00000000))
         .text_size(theme().type_scale.caption)
         .text_color(theme().colors.muted)
         .child(crate::app::ui::grid::icon_slot().child(app_icon(
@@ -109,7 +104,7 @@ pub(crate) fn tree_folder_row(
         .hover(|row| row.bg(theme().colors.highlight))
         .focus_visible(|row| {
             row.bg(theme().colors.highlight)
-                .border_color(theme().colors.focus_border)
+                .shadow(super::focus_outline(theme().colors.focus_border))
         })
         .on_mouse_down(MouseButton::Left, super::preserve_pointer_focus)
         .on_click(move |_, window, cx| click(window, cx))

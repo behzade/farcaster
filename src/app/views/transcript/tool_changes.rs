@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use gpui::{
     App, Div, ElementId, InteractiveElement as _, ParentElement as _, Role, Stateful,
-    StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _,
+    StatefulInteractiveElement as _, Styled as _, Window, div,
 };
 use gpui_base::GlobalState;
 
@@ -56,8 +56,9 @@ pub(super) fn activation_row(
         .cursor_pointer()
         .hover(|row| row.bg(theme().colors.highlight))
         .focus_visible(|row| {
-            row.border(theme().border)
-                .border_color(theme().colors.indicator)
+            row.shadow(crate::app::ui::primitives::focus_outline(
+                theme().colors.indicator,
+            ))
         })
         .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
             window.prevent_default();
@@ -117,23 +118,17 @@ pub(super) fn file_summary(presentation: &ToolPresentation, label: String) -> Di
                 .text_color(theme().colors.text)
                 .child(label),
         )
-        .children(change_counts(presentation.counts()))
+        .children(change_counts(
+            presentation.counts(),
+            crate::app::ui::primitives::DiffColumns::for_counts([presentation.counts()]),
+        ))
 }
 
-pub(super) fn change_counts((added, removed): (usize, usize)) -> impl Iterator<Item = Div> {
-    [
-        (added, "+", theme().colors.success),
-        (removed, "−", theme().colors.error),
-    ]
-    .into_iter()
-    .map(|(count, sign, color)| {
-        div()
-            .min_w(theme().size(36.0))
-            .flex_none()
-            .text_right()
-            .text_color(color)
-            .when(count > 0, |slot| slot.child(format!("{sign}{count}")))
-    })
+pub(super) fn change_counts(
+    counts: (usize, usize),
+    columns: crate::app::ui::primitives::DiffColumns,
+) -> impl Iterator<Item = Div> {
+    crate::app::ui::primitives::diff_count_columns(Some(counts), false, columns)
 }
 
 #[cfg(test)]

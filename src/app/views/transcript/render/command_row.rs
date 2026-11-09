@@ -21,7 +21,7 @@ pub(super) fn render(
     div()
         .id(("command-row", key))
         .w_full()
-        .px(theme().size(18.0))
+        .px(crate::app::ui::grid::transcript_inset())
         .py(theme().space.xs)
         .flex()
         .flex_col()
@@ -53,7 +53,7 @@ pub(super) fn render(
         .when(expanded, |row| {
             row.child(
                 div()
-                    .ml(theme().icons.control + theme().space.xs)
+                    .ml(crate::app::ui::grid::detail_indent())
                     .flex()
                     .flex_col()
                     .gap(theme().space.xs)

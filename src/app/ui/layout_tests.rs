@@ -1,6 +1,46 @@
 use super::*;
 use gpui::px;
 
+#[gpui::test]
+fn transcript_and_composer_keep_the_same_content_edges(cx: &mut gpui::TestAppContext) {
+    use gpui::{InteractiveElement as _, ParentElement as _, point, size};
+    cx.update(gpui_component::init);
+    let cx = cx.add_empty_window();
+    for width in [320.0, 640.0, 1400.0] {
+        cx.draw(
+            point(px(0.0), px(0.0)),
+            size(px(width), px(200.0)),
+            |_, _| {
+                div()
+                    .w(px(width))
+                    .flex()
+                    .flex_col()
+                    .child(
+                        transcript_column().child(
+                            div().px(super::super::grid::transcript_inset()).child(
+                                div()
+                                    .debug_selector(|| "message-content".into())
+                                    .h(px(20.0)),
+                            ),
+                        ),
+                    )
+                    .child(
+                        chat_column().child(
+                            div()
+                                .debug_selector(|| "composer-content".into())
+                                .h(px(20.0)),
+                        ),
+                    )
+            },
+        );
+        let message = cx.debug_bounds("message-content").unwrap();
+        let composer = cx.debug_bounds("composer-content").unwrap();
+        assert_eq!(message.left(), composer.left());
+        assert_eq!(message.right(), composer.right());
+        assert!(message.size.width > px(0.0));
+    }
+}
+
 #[test]
 fn composer_clearance_adapts_and_stays_bounded() {
     assert_eq!(composer_bottom_clearance(px(300.0)), px(12.0));

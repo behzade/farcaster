@@ -24,7 +24,9 @@ pub(crate) use button::{
     ButtonTone, activates_button, button, dropdown_button, dropdown_content_button, icon_button,
     icon_button_with_size, preserve_pointer_focus, prominent_icon_button,
 };
-pub(crate) use content::{folder_change_summary, panel, section_heading};
+pub(crate) use content::{
+    DiffColumns, diff_count_columns, folder_change_summary, panel, section_heading,
+};
 pub(crate) use context_menu::ContextMenuTrigger;
 pub(crate) use delete::DeleteButton;
 pub(crate) use dialog::{confirmation_modal, modal};
@@ -32,7 +34,7 @@ pub(crate) use disclosure::{disclosure_detail, disclosure_title_row, tree_folder
 pub(crate) use feedback::{FeedbackTone, feedback};
 pub(crate) use highlight::SyntaxKey;
 pub(crate) use icon::{AppIconSize, app_icon, icon_control};
-pub(crate) use indicator::{IndicatorEdge, line_indicator};
+pub(crate) use indicator::{IndicatorEdge, focus_outline, line_indicator};
 pub(crate) use panel::Panel;
 pub(crate) use picker::{PickerDelegate, PickerRow};
 pub(crate) use popover::{ContextMenuExt, DropdownMenu, Popover};

@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc};
 
 use gpui::{
     AnyElement, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
 
 use crate::{
@@ -56,7 +56,7 @@ pub(super) fn render_activity_group(
     div()
         .id(("activity-group", key))
         .w_full()
-        .px(theme().size(18.0))
+        .px(crate::app::ui::grid::transcript_inset())
         .py(theme().size(2.0))
         .flex()
         .flex_col()
@@ -77,6 +77,9 @@ pub(super) fn render_activity_group(
         .when(expanded, |group| {
             group.child(
                 disclosure_detail()
+                    .ml(crate::app::ui::grid::detail_indent()
+                        - crate::app::ui::grid::transcript_inset())
+                    .mr(-crate::app::ui::grid::transcript_inset())
                     .flex()
                     .flex_col()
                     .gap(theme().space.xs)
@@ -147,7 +150,7 @@ pub(super) fn render_tool(
     div()
         .id(("tool-row", key))
         .w_full()
-        .px(theme().size(18.0))
+        .px(crate::app::ui::grid::transcript_inset())
         .py(theme().size(2.0))
         .flex()
         .flex_col()
@@ -162,10 +165,9 @@ pub(super) fn render_tool(
                 }
             })
             .when(!opens_file, |row| row.aria_expanded(expanded))
-            .when(
-                status.is_some_and(|status| status != ToolStatus::Succeeded),
-                |row| row.child(status_slot(status)),
-            )
+            .child(status_slot(
+                status.filter(|status| *status != ToolStatus::Succeeded),
+            ))
             .when_some(presentation, |row, presentation| {
                 let label = tool_changes::file_label(
                     presentation.path(),
@@ -181,6 +183,7 @@ pub(super) fn render_tool(
                             .min_w_0()
                             .font_family(MONO_FONT_FAMILY)
                             .text_size(theme().type_scale.body_small * font_scale)
+                            .debug_selector(|| "tool-summary-text".into())
                             .child(label),
                     )
                 }
@@ -193,6 +196,7 @@ pub(super) fn render_tool(
                         .text_size(theme().type_scale.body_small * font_scale)
                         .truncate()
                         .text_color(theme().colors.muted)
+                        .debug_selector(|| "tool-summary-text".into())
                         .child(summary),
                 )
             }),
@@ -482,13 +486,7 @@ fn file_targets(item: &TranscriptItem) -> impl Iterator<Item = &str> {
 }
 
 fn status_slot(status: Option<ToolStatus>) -> AnyElement {
-    div()
-        .w(theme().icons.control)
-        .h(theme().icons.control)
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
+    crate::app::ui::grid::icon_slot()
         .when_some(status, |slot, status| {
             slot.text_color(status.color())
                 .child(app_icon(status.icon(), AppIconSize::Inline))

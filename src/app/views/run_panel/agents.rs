@@ -1,7 +1,7 @@
 use gpui::{
     AnyElement, Div, ElementId, FontWeight, InteractiveElement as _, IntoElement,
     ParentElement as _, Role, ScrollAnchor, StatefulInteractiveElement as _, Styled as _,
-    WeakEntity, div, prelude::FluentBuilder as _, px,
+    WeakEntity, div, prelude::FluentBuilder as _,
 };
 
 use super::super::super::FarcasterApp;
@@ -24,7 +24,9 @@ pub(super) fn conversation_row(id: impl Into<ElementId>, selected: bool) -> gpui
         .flex()
         .items_center()
         .min_w_0()
-        .px(theme().space.sm)
+        .ml(-theme().space.xs)
+        .pl(theme().space.xs)
+        .pr_0()
         .py(theme().size(4.0))
         .rounded(theme().radius)
         .bg(if selected {
@@ -51,8 +53,9 @@ pub(super) fn conversation_row(id: impl Into<ElementId>, selected: bool) -> gpui
             )
         })
         .focus(|row| {
-            row.border(theme().border)
-                .border_color(theme().colors.focus_border)
+            row.shadow(crate::app::ui::primitives::focus_outline(
+                theme().colors.focus_border,
+            ))
         })
         .cursor_pointer()
 }
@@ -130,17 +133,11 @@ impl FarcasterApp {
                 gpui::MouseButton::Left,
                 crate::app::ui::primitives::preserve_pointer_focus,
             )
-            .ml(px(depth.saturating_sub(1) as f32 * 8.0))
-            .px(theme().size(2.0))
-            .py(theme().size(3.0))
+            .ml(crate::app::ui::grid::tree_indent(depth.saturating_sub(1)) - theme().space.xs)
+            .py(theme().space.xs)
             .flex()
             .items_stretch()
-            .border_l(theme().border)
-            .border_color(gpui::rgba(0x00000000))
-            .focus(|card| {
-                card.bg(theme().colors.highlight)
-                    .border_color(theme().colors.focus_border)
-            })
+            .focus(|card| card.bg(theme().colors.highlight))
             .cursor_pointer()
             .on_click(move |_, window, cx| {
                 let _ = entity.update(cx, |this, cx| {
@@ -167,21 +164,20 @@ impl FarcasterApp {
                     .flex_1()
                     .overflow_hidden()
                     .flex()
-                    .items_center()
+                    .items_start()
                     .gap(theme().space.xs)
                     .text_size(theme().type_scale.caption)
                     .line_height(theme().type_scale.line_body)
                     .text_color(theme().colors.muted)
                     .child(
-                        div()
-                            .flex_none()
+                        crate::app::ui::grid::icon_slot()
                             .text_color(color)
                             .child(app_icon(icon, AppIconSize::Inline)),
                     )
-                    .child(app_icon(
+                    .child(crate::app::ui::grid::icon_slot().child(app_icon(
                         AppIcon::for_harness(session.harness),
                         AppIconSize::Inline,
-                    ))
+                    )))
                     .child(
                         div()
                             .min_w_0()
@@ -312,3 +308,7 @@ pub(super) fn lifecycle_label(lifecycle: AgentLifecycle) -> &'static str {
         AgentLifecycle::Completed(AgentOutcome::Incomplete) => "Incomplete",
     }
 }
+
+#[cfg(test)]
+#[path = "agents_tests.rs"]
+mod tests;

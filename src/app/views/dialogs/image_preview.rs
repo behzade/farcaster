@@ -39,7 +39,7 @@ pub(in crate::app::views) fn render(
                         div()
                             .h(theme().size(48.0))
                             .flex_none()
-                            .px(theme().space.md)
+                            .px(crate::app::ui::grid::dialog_inset())
                             .flex()
                             .items_center()
                             .justify_between()
@@ -66,7 +66,7 @@ pub(in crate::app::views) fn render(
                         div()
                             .flex_1()
                             .min_h_0()
-                            .p(theme().space.md)
+                            .p(crate::app::ui::grid::dialog_inset())
                             .bg(theme().colors.canvas)
                             .child(
                                 img(preview.image)

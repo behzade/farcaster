@@ -1,6 +1,48 @@
 use super::*;
 use crate::conversation::{ConversationState, ToolReview};
+use gpui::px;
 use serde_json::json;
+
+#[gpui::test]
+fn tool_text_keeps_its_column_across_execution_states(cx: &mut gpui::TestAppContext) {
+    struct ToolRow(WeakEntity<FarcasterApp>, TranscriptItem, f32);
+    impl gpui::Render for ToolRow {
+        fn render(
+            &mut self,
+            _: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            div()
+                .w(px(self.2))
+                .child(render_tool(1.0, 0, &self.1, false, self.0.clone(), cx))
+        }
+    }
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::tool_text_keeps_its_column_across_execution_states"
+        ),
+        cx,
+        |cx, app, _, _| {
+            for width in [220.0, 330.0, 640.0] {
+                let mut expected = None;
+                for (running, failed) in [(false, false), (false, true), (true, false)] {
+                    let mut item = write_item();
+                    item.tool_presentation = None;
+                    item.streaming = running;
+                    item.is_error = failed;
+                    cx.update(|window, cx| {
+                        window.replace_root(cx, |_, _| ToolRow(app.downgrade(), item, width));
+                        window.draw(cx).clear(cx);
+                    });
+                    let label = cx.debug_bounds("tool-summary-text").expect("tool label");
+                    assert_eq!(*expected.get_or_insert(label.left()), label.left());
+                    assert!(label.right() <= px(width));
+                }
+            }
+        },
+    );
+}
 
 #[test]
 fn command_labels_keep_arguments_beyond_activity_summary_and_bound_large_scripts() {

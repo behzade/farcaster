@@ -54,7 +54,7 @@ impl FarcasterApp {
             })
             .when(has_conversation, |main| {
                 main.child(
-                    chat_column(0.0)
+                    chat_column()
                         .pt(theme().space.sm)
                         .pb(composer_bottom_clearance(viewport_height))
                         .flex_none()

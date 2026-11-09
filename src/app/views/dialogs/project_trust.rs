@@ -90,7 +90,7 @@ pub(in crate::app::views) fn render(
                     .flex()
                     .flex_col()
                     .gap(theme().space.md)
-                    .p(theme().space.md)
+                    .p(crate::app::ui::grid::dialog_inset())
                     .child(
                         div()
                             .font_family(MONO_FONT_FAMILY)
