@@ -171,7 +171,7 @@ impl FarcasterApp {
                     .items_center()
                     .px(theme().space.md)
                     .border_t(theme().border)
-                    .border_color(theme().colors.border)
+                    .border_color(theme().colors.surface)
                     .bg(theme().colors.panel)
                     .rounded_b(theme().radius)
                     .child(self.render_composer_controls(entity.clone(), footer_scroll))
@@ -243,6 +243,6 @@ fn composer_border_color(focused: bool) -> gpui::Rgba {
     if focused {
         theme().colors.focus_border
     } else {
-        theme().colors.muted
+        theme().colors.border
     }
 }

@@ -16,6 +16,7 @@ use gpui_component::{
 };
 
 use crate::{
+    app::ui::layout::chat_column,
     app::ui::primitives::{
         ButtonTone, ContextMenuTrigger, button, disclosure_detail, disclosure_title_row,
     },
@@ -279,12 +280,10 @@ pub(crate) fn render(
             let expanded = resolved_expanded(row, &conversation.items, &disclosure_states);
             let reserves_tail = index + 1 == rows.len()
                 && latest_allows_tail_reserve(row, &conversation.items, expanded);
-            let content = div()
+            // Each row supplies 18px of its own horizontal padding.
+            let content = chat_column(18.0)
                 .text_size(theme().type_scale.body * font_scale)
                 .line_height(theme().type_scale.line_body * font_scale)
-                .w_full()
-                .max_w(theme().layout.conversation_width)
-                .mx_auto()
                 .when(reserves_tail, |row| row.pb(viewport.tail_reserve))
                 .child(
                     div()

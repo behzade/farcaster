@@ -363,11 +363,7 @@ pub(super) fn session_title(title: String, selected: bool, archived: bool) -> Di
         .text_ellipsis()
         .text_size(theme().type_scale.body_small)
         .line_height(theme().type_scale.line_body)
-        .font_weight(if selected {
-            FontWeight::SEMIBOLD
-        } else {
-            FontWeight::NORMAL
-        })
+        .font_weight(FontWeight::NORMAL)
         .text_color(if archived && !selected {
             theme().colors.muted
         } else {
@@ -751,7 +747,7 @@ pub(super) fn relative_age(modified: SystemTime) -> String {
 }
 
 pub(in crate::app::views) fn session_row_height(_compact: bool) -> Pixels {
-    theme().controls.icon_button + theme().type_scale.line_body + theme().space.xs
+    theme().controls.icon_button + theme().type_scale.line_body + theme().size(12.0)
 }
 
 pub(super) fn session_row_content(

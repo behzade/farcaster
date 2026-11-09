@@ -9,6 +9,7 @@ use super::super::session_rail;
 use crate::app::{
     FarcasterApp, PickerScope, ProjectPickerIntent,
     ui::{
+        layout::chat_column,
         primitives::{ButtonTone, button},
         theme::theme,
     },
@@ -47,10 +48,7 @@ pub(super) fn render_body(
                 .justify_center()
                 .items_center()
                 .child(
-                    div()
-                        .w_full()
-                        .max_w(theme().layout.conversation_width)
-                        .px(theme().space.md)
+                    chat_column(0.0)
                         .flex_none()
                         .flex()
                         .flex_col()

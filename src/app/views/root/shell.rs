@@ -7,7 +7,10 @@ use super::{super::FarcasterApp, draft, sidebar_resize::Sidebar};
 use crate::app::{
     AppSurface,
     ui::{
-        layout::{LayoutMode, composer_bottom_clearance, shows_left_inline, shows_right_inline},
+        layout::{
+            LayoutMode, chat_column, composer_bottom_clearance, shows_left_inline,
+            shows_right_inline,
+        },
         primitives::AppTooltip as _,
         theme::theme,
     },
@@ -51,11 +54,7 @@ impl FarcasterApp {
             })
             .when(has_conversation, |main| {
                 main.child(
-                    div()
-                        .w_full()
-                        .max_w(theme().layout.conversation_width)
-                        .mx_auto()
-                        .px(theme().space.md)
+                    chat_column(0.0)
                         .pt(theme().space.sm)
                         .pb(composer_bottom_clearance(viewport_height))
                         .flex_none()

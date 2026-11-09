@@ -13,7 +13,7 @@ use super::super::usage::{
 use crate::{
     app::FarcasterApp,
     app::ui::assets::AppIcon,
-    app::ui::primitives::{AppIconSize, ButtonTone, app_icon, button, prominent_icon_button},
+    app::ui::primitives::{AppIconSize, ButtonTone, icon_button_with_size, prominent_icon_button},
     app::ui::theme::{MONO_FONT_FAMILY, theme},
     runtime::RuntimeSignal,
 };
@@ -119,24 +119,28 @@ impl FarcasterApp {
                             .text_color(theme().colors.error),
                         )
                     })
-                    .child(
-                        button(
-                            "send",
-                            primary_action.unwrap_or("Send"),
-                            ButtonTone::Accent,
-                            primary_action.is_some(),
-                            move |window, cx| {
-                                let _ = send_entity.update(cx, |this, cx| {
-                                    let value =
-                                        this.composer.input.read(cx).value().trim().to_owned();
-                                    if !value.is_empty() || this.has_composer_attachments() {
-                                        this.submit(value, this.enter_mode(), window, cx);
-                                    }
-                                });
-                            },
+                    .when_some(primary_action, |actions, label| {
+                        actions.child(
+                            icon_button_with_size(
+                                "send",
+                                AppIcon::ArrowUp,
+                                label,
+                                AppIconSize::Inline,
+                                ButtonTone::Quiet,
+                                move |window, cx| {
+                                    let _ = send_entity.update(cx, |this, cx| {
+                                        let value =
+                                            this.composer.input.read(cx).value().trim().to_owned();
+                                        if !value.is_empty() || this.has_composer_attachments() {
+                                            this.submit(value, this.enter_mode(), window, cx);
+                                        }
+                                    });
+                                },
+                            )
+                            .size(theme().size(24.0))
+                            .text_color(theme().colors.text),
                         )
-                        .child(app_icon(AppIcon::ArrowUp, AppIconSize::Inline)),
-                    ),
+                    }),
             )
             .into_any_element()
     }

@@ -112,7 +112,7 @@ pub(crate) fn prominent_icon_button(
     icon_button_with_size(id, icon, label, AppIconSize::Prominent, tone, on_press)
 }
 
-fn icon_button_with_size(
+pub(crate) fn icon_button_with_size(
     id: impl Into<ElementId>,
     icon: impl IconNamed,
     label: impl Into<SharedString>,
