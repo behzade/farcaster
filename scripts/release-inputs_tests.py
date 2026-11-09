@@ -19,7 +19,9 @@ class ReleaseInputsTests(unittest.TestCase):
                 self.assertEqual(versions, [version])
         flake = (ROOT / "flake.nix").read_text()
         self.assertEqual(re.findall(r'zig-overlay\.packages\.\$\{system\}\."([^"]+)"', flake),
-                         [version, version])
+                         [version])
+        self.assertIn("zig = zigFor system;", flake)
+        self.assertIn("(zigFor system)", flake)
 
     def test_linux_runtime_matches_ghostty(self):
         for workflow in ("linux-packages", "first-party-tests"):
@@ -29,9 +31,32 @@ class ReleaseInputsTests(unittest.TestCase):
                 self.assertIn("libc++-22-dev libc++abi-22-dev", source)
         arch = (ROOT / "packaging/arch/PKGBUILD.in").read_text()
         self.assertIn("'libc++>=22'", arch)
-        for path in ("flake.nix", "packaging/nix.nix"):
-            with self.subTest(path=path):
-                self.assertIn("llvmPackages_22.libcxx", (ROOT / path).read_text())
+        flake = (ROOT / "flake.nix").read_text()
+        self.assertIn("pkgs.llvmPackages_22.libcxx.override { inherit (pkgs) stdenv; }", flake)
+        self.assertIn("libcxx = libcxxFor pkgs;", flake)
+        self.assertIn("(libcxxFor pkgs)", flake)
+        source = (ROOT / "packaging/nix.nix").read_text()
+        self.assertRegex(source, r"runtimeLibraries = \[[^]]*\blibcxx\b")
+        self.assertNotIn("llvmPackages_22", source)
+
+    def test_nix_preserves_native_zig_target(self):
+        flake = (ROOT / "flake.nix").read_text()
+        self.assertIn('patch -d "$out" -p1 < ${./packaging/zig-native-target.patch}', flake)
+        self.assertIn('nixpkgs.lib.hasSuffix "-linux" system', flake)
+        patch = (ROOT / "packaging/zig-native-target.patch").read_text()
+        for fallback in ("rt.query.get(c) orelse resolved",
+                         "orelse resolved.flags.os_tag.unwrap()",
+                         "orelse resolved.flags.abi.unwrap()",
+                         "orelse resolved.dynamic_linker.value",
+                         "try arena.dupe(u8, dynamic_linker_path)"):
+            with self.subTest(fallback=fallback):
+                self.assertIn(fallback, patch)
+
+    def test_release_commit_uses_package_version(self):
+        config = (ROOT / "release.toml").read_text()
+        self.assertRegex(config, r"(?m)^consolidate-commits = false$")
+        self.assertIn('pre-release-commit-message = "chore(release): prepare v{{version}}"',
+                      config)
 
     def test_nix_guard_matches_locked_ghostty(self):
         lock = (ROOT / "Cargo.lock").read_text()

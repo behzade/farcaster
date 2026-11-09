@@ -2,6 +2,7 @@ publish = false
 push = true
 tag = true
 verify = true
+consolidate-commits = false
 
 tag-name = "v{{version}}"
 tag-message = "Farcaster v{{version}}"
