@@ -18,6 +18,26 @@ fn project_resolution_requires_a_directory() -> Result<(), Box<dyn std::error::E
 }
 
 #[test]
+fn isolated_background_launch_does_not_restore_fullscreen() {
+    let frame = Bounds::new(point(px(100.0), px(80.0)), size(px(1240.0), px(820.0)));
+    assert_eq!(
+        initial_window_bounds(WindowBounds::Fullscreen(frame), true),
+        WindowBounds::Windowed(frame),
+    );
+    assert_eq!(
+        initial_window_bounds(WindowBounds::Fullscreen(frame), false),
+        WindowBounds::Fullscreen(frame),
+    );
+    for bounds in [
+        WindowBounds::Windowed(frame),
+        WindowBounds::Maximized(frame),
+    ] {
+        assert_eq!(initial_window_bounds(bounds, true), bounds);
+        assert_eq!(initial_window_bounds(bounds, false), bounds);
+    }
+}
+
+#[test]
 fn restored_window_follows_its_display_when_the_display_origin_changes() {
     let placement = WindowPlacement {
         bounds: [1500.0, 80.0, 1240.0, 820.0],

@@ -94,6 +94,19 @@ fn expanded_workers_keep_the_main_row_and_restore_sections_on_navigation(
                     cx.notify();
                 })
             });
+            cx.simulate_resize(gpui::size(gpui::px(1600.0), gpui::px(900.0)));
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+            });
+            let header = crate::app::ui::grid::header_height();
+            let search = cx.debug_bounds("session-search-header").unwrap();
+            let main = cx.debug_bounds("run-panel-main-heading").unwrap();
+            let workspace = cx.debug_bounds("workspace-bar").unwrap();
+            assert_eq!(workspace.top(), gpui::px(0.0));
+            assert_eq!(workspace.size.height, header);
+            assert_eq!(search.top(), workspace.bottom());
+            assert_eq!(main.top(), search.top());
+            assert_eq!(main.size.height, search.size.height);
             cx.update(|window, cx| {
                 let panel = app.read(cx).views.run_panel.clone();
                 window.replace_root(cx, |_, _| PanelHarness(panel, gpui::px(332.0)));
@@ -110,6 +123,31 @@ fn expanded_workers_keep_the_main_row_and_restore_sections_on_navigation(
                 assert!(app.sessions.all.root_for_path(Some(&root)).is_some());
             });
             let main_before = cx.debug_bounds("run-panel-main-agent").unwrap();
+            let heading_before = cx.debug_bounds("run-panel-main-heading").unwrap();
+            assert_eq!(heading_before.top(), crate::app::ui::grid::header_height());
+            assert_eq!(
+                heading_before.size.height,
+                crate::app::ui::grid::header_height()
+            );
+            assert_eq!(main_before.center().y, heading_before.center().y);
+            assert!(main_before.size.width < heading_before.size.width / 2.0);
+            let recent_selectors: Vec<_> = ["b", "c", "d"]
+                .map(|id| {
+                    Box::leak(
+                        format!(
+                            "agent-card-{}",
+                            crate::agent_activity::agent_activity_key(
+                                &project.join(format!("{id}.jsonl"))
+                            )
+                        )
+                        .into_boxed_str(),
+                    ) as &'static str
+                })
+                .into();
+            let recent_before: Vec<_> = recent_selectors
+                .iter()
+                .map(|selector| cx.debug_bounds(selector).unwrap())
+                .collect();
             assert!(cx.debug_bounds("run-panel-repository").is_some());
             let show = cx.debug_bounds("show-more-workers").unwrap();
             cx.simulate_click(show.center(), Default::default());
@@ -117,6 +155,14 @@ fn expanded_workers_keep_the_main_row_and_restore_sections_on_navigation(
             assert_eq!(
                 cx.debug_bounds("run-panel-main-agent").unwrap(),
                 main_before
+            );
+            assert_eq!(
+                recent_selectors
+                    .iter()
+                    .map(|selector| cx.debug_bounds(selector).unwrap())
+                    .collect::<Vec<_>>(),
+                recent_before,
+                "expansion must keep recent worker rows in place"
             );
             assert!(cx.debug_bounds("show-more-workers").is_none());
             assert!(cx.debug_bounds("run-panel-plan").is_none());
@@ -323,7 +369,7 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
             super::worker_list::PREPARATIONS.with(|count| count.set(0));
             // Exercise the actual wheel path, not just programmatic selection.
             super::agents::CARD_BUILDS.with(|count| count.set(0));
-            let pointer = cx.debug_bounds("run-panel-main-agent").unwrap().center();
+            let pointer = gpui::point(gpui::px(150.0), gpui::px(200.0));
             cx.simulate_event(gpui::ScrollEvent {
                 position: pointer,
                 delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(-600.0))),
@@ -341,7 +387,7 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
                 0,
                 "wheel input must reuse preparation without filesystem work for all workers"
             );
-            assert!(cx.debug_bounds("run-panel-main-agent").is_none());
+            assert!(cx.debug_bounds("run-panel-main-agent").is_some());
             let after_scroll = cx.debug_bounds(distance_selector).unwrap();
             assert!(
                 (before_scroll.top() - after_scroll.top() - gpui::px(600.0)).abs() < gpui::px(1.0),
@@ -360,7 +406,7 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
                 cx.debug_bounds(oldest_selector).is_some(),
                 "selected worker must scroll into view"
             );
-            assert!(cx.debug_bounds("run-panel-main-agent").is_none());
+            assert!(cx.debug_bounds("run-panel-main-agent").is_some());
 
             assert_eq!(
                 super::worker_list::PREPARATIONS.with(|count| count.get()),

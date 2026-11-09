@@ -200,7 +200,10 @@ pub(crate) fn run(
             });
             drop(placement_timing);
             let window_options = WindowOptions {
-                window_bounds: Some(window_bounds),
+                window_bounds: Some(initial_window_bounds(
+                    window_bounds,
+                    isolation::is_isolated(),
+                )),
                 display_id,
                 focus: !isolation::is_isolated(),
                 show: true,
@@ -409,6 +412,16 @@ pub(crate) fn observe_window_placement<T: 'static>(
         });
         *pending.borrow_mut() = Some(task);
     })
+}
+
+fn initial_window_bounds(bounds: WindowBounds, isolated: bool) -> WindowBounds {
+    // Isolated windows launch without focus. Restoring fullscreen can start an
+    // AppKit transition in the background and leave its opaque title strip over
+    // our workspace bar. Keep the saved frame, but start the preview windowed.
+    match bounds {
+        WindowBounds::Fullscreen(frame) if isolated => WindowBounds::Windowed(frame),
+        bounds => bounds,
+    }
 }
 
 fn restored_window(cx: &App) -> Option<(WindowBounds, Option<DisplayId>)> {

@@ -4,6 +4,11 @@ use gpui::{Div, Pixels, Styled as _, div};
 
 use super::theme::theme;
 
+/// Row one holds window/workspace controls; row two holds pane headings.
+pub(crate) fn header_height() -> Pixels {
+    theme().size(38.0)
+}
+
 pub(crate) fn sidebar_inset() -> Pixels {
     theme().size(12.0)
 }

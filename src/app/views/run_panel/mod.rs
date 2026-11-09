@@ -24,7 +24,7 @@ use gpui::{
 pub(super) use resize::clamped_run_panel_width;
 
 use self::{
-    agents::{AgentSection, agent_section, conversation_row},
+    agents::{AgentSection, agent_section},
     background_jobs::background_job_row,
     performance::render_performance,
 };
@@ -138,7 +138,6 @@ impl FarcasterApp {
     fn main_agent_row(
         root: &crate::sessions::SessionSummary,
         selected: Option<&std::path::Path>,
-        anchor: &ScrollAnchor,
         focus: &gpui::FocusHandle,
         entity: WeakEntity<Self>,
         run_panel: WeakEntity<RunPanelView>,
@@ -152,11 +151,17 @@ impl FarcasterApp {
         let key_app = app.clone();
         let main_panel = run_panel.clone();
         let key_panel = run_panel.clone();
-        conversation_row("run-panel-main-agent", is_selected)
+        let control = agents::conversation_row("run-panel-main-agent", false)
             .track_focus(focus)
+            .aria_selected(is_selected)
+            .h(theme().controls.icon_button)
+            .flex_none()
+            .ml(-theme().space.sm)
+            .px(theme().space.sm)
+            .py_0()
+            .text_color(theme().colors.text)
             .line_height(theme().type_scale.line_body)
             .debug_selector(|| "run-panel-main-agent".into())
-            .anchor_scroll(is_selected.then(|| anchor.clone()))
             .aria_label("Show main agent transcript")
             .on_mouse_down(
                 gpui::MouseButton::Left,
@@ -188,32 +193,34 @@ impl FarcasterApp {
                     });
                 }
             })
-            .child("Main agent")
+            .child("Main agent");
+        div()
+            .debug_selector(|| "run-panel-main-heading".into())
+            .h(crate::app::ui::grid::header_height())
+            .flex_none()
+            .flex()
+            .items_center()
+            .child(control)
             .into_any_element()
     }
 
     fn expanded_worker_list(
         &self,
         prepared: &worker_list::PreparedWorkers,
-        root: Option<&crate::sessions::SessionSummary>,
         selected: Option<&std::path::Path>,
         entity: WeakEntity<Self>,
-        run_panel: WeakEntity<RunPanelView>,
         view: &WorkerListView<'_>,
     ) -> gpui::AnyElement {
-        let root = root.cloned();
         let rows = prepared.visible.clone();
         let keys = prepared.keys.clone();
-        // Two worker text lines, padding, focus borders, and the 7px gap fit in every slot.
-        let row_height = (theme().type_scale.line_body * 2.0).max(theme().icons.inline)
-            + theme().size(15.0)
-            + theme().border * 2.0;
+        // Match the collapsed cards' two lines, vertical padding, and section gap.
+        let row_height =
+            theme().type_scale.line_body * 2.0 + theme().space.xs * 2.0 + theme().space.sm;
         worker_list::reconcile(view.list, view.rows, &keys, row_height);
         if view.reveal_selected {
-            let index = root
+            let index = rows
                 .iter()
-                .map(|session| &session.path)
-                .chain(rows.iter().map(|row| &row.session.path))
+                .map(|row| &row.session.path)
                 .position(|path| Some(path.as_path()) == selected);
             if let Some(index) = index {
                 view.list
@@ -223,36 +230,24 @@ impl FarcasterApp {
         let selected = selected.map(std::path::Path::to_path_buf);
         let anchor = view.anchor.clone();
         let profiles = view.saved_profiles.clone();
-        let has_root = root.is_some();
-        let main_focus = view.main_focus.clone();
         let count = keys.len();
         let render: worker_list::RenderRow = std::rc::Rc::new(move |index, cx| {
-            let row = if index == 0 && has_root {
-                Self::main_agent_row(
-                    root.as_ref().unwrap(),
-                    selected.as_deref(),
-                    &anchor,
-                    &main_focus,
-                    entity.clone(),
-                    run_panel.clone(),
-                )
-            } else {
-                let Some(row) = rows.get(index - usize::from(has_root)) else {
-                    return div().into_any_element();
-                };
-                let Some(app) = entity.upgrade() else {
-                    return div().into_any_element();
-                };
-                app.read(cx)
-                    .agent_card(
-                        row,
-                        selected.as_deref() == Some(row.session.path.as_path()),
-                        &anchor,
-                        &profiles,
-                        entity.clone(),
-                    )
-                    .unwrap_or_else(|| div().into_any_element())
+            let Some(row) = rows.get(index) else {
+                return div().into_any_element();
             };
+            let Some(app) = entity.upgrade() else {
+                return div().into_any_element();
+            };
+            let row = app
+                .read(cx)
+                .agent_card(
+                    row,
+                    selected.as_deref() == Some(row.session.path.as_path()),
+                    &anchor,
+                    &profiles,
+                    entity.clone(),
+                )
+                .unwrap_or_else(|| div().into_any_element());
             div()
                 .h(row_height)
                 .line_height(theme().type_scale.line_body)
@@ -328,20 +323,14 @@ impl FarcasterApp {
                 .filter(|row| row.focus.is_some())
                 .cloned()
                 .collect();
-            let keys = root
+            let keys = visible
                 .iter()
-                .map(|session| {
-                    (
-                        super::session_rail::session_row_identity(session),
-                        worker_view.main_focus.clone(),
-                    )
-                })
-                .chain(visible.iter().map(|row| {
+                .map(|row| {
                     (
                         format!("session:{:?}", row.session_key),
                         row.focus.clone().unwrap(),
                     )
-                }))
+                })
                 .collect();
             *cache = Some(std::rc::Rc::new(worker_list::PreparedWorkers {
                 root: root_path.clone(),
@@ -370,26 +359,9 @@ impl FarcasterApp {
             .saturating_sub(RECENT_WORKERS + usize::from(selected_is_older));
         let expand_panel = run_panel.clone();
         let conversation = if expanded {
-            self.expanded_worker_list(
-                &prepared,
-                root,
-                selected,
-                entity.clone(),
-                run_panel.clone(),
-                worker_view,
-            )
+            self.expanded_worker_list(&prepared, selected, entity.clone(), worker_view)
         } else {
             inspector_section()
-                .when_some(root, |section, root| {
-                    section.child(Self::main_agent_row(
-                        root,
-                        selected,
-                        worker_view.anchor,
-                        worker_view.main_focus,
-                        entity.clone(),
-                        run_panel.clone(),
-                    ))
-                })
                 .children(
                     workers
                         .iter()
@@ -472,19 +444,41 @@ impl FarcasterApp {
                     )
                 },
             );
-        let body = div()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .py(theme().space.md)
-            .px(crate::app::ui::grid::inspector_inset())
-            .gap(theme().space.md)
-            .child(activity)
-            .when(
-                !expanded && self.project.repository.backend.is_some(),
-                |run| run.child(self.render_repository(entity.clone(), run_panel.clone(), browser)),
-            );
+        let body =
+            div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .pb(theme().space.md)
+                .px(crate::app::ui::grid::inspector_inset())
+                .child(
+                    div()
+                        .debug_selector(|| "run-panel-top-row".into())
+                        .h(crate::app::ui::grid::header_height())
+                        .flex_none()
+                        .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
+                            window.start_window_move();
+                        }),
+                )
+                .when_some(root, |body, root| {
+                    body.child(Self::main_agent_row(
+                        root,
+                        selected,
+                        worker_view.main_focus,
+                        entity.clone(),
+                        run_panel.clone(),
+                    ))
+                })
+                .child(activity.mt(theme().space.sm))
+                .when(
+                    !expanded && self.project.repository.backend.is_some(),
+                    |run| {
+                        run.child(div().mt(theme().space.md).flex_1().min_h_0().child(
+                            self.render_repository(entity.clone(), run_panel.clone(), browser),
+                        ))
+                    },
+                );
         panel()
             .size_full()
             .rounded_none()

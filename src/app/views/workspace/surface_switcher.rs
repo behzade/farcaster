@@ -57,11 +57,10 @@ impl FarcasterApp {
             .id("workspace-bar")
             .debug_selector(|| "workspace-bar".into())
             .relative()
-            .h(theme().size(38.0))
+            .h(crate::app::ui::grid::header_height())
             .flex_none()
             .flex()
             .items_center()
-            .gap(theme().space.sm)
             .px(theme().size(12.0))
             .when(
                 cfg!(target_os = "macos")
@@ -92,6 +91,7 @@ impl FarcasterApp {
             )
             .child(
                 div()
+                    .debug_selector(|| "workspace-breadcrumb".into())
                     .min_w_0()
                     .flex_1()
                     .flex()
@@ -137,11 +137,13 @@ impl FarcasterApp {
                                     )
                                     .child(
                                         div()
+                                            .debug_selector(|| "workspace-session-title".into())
                                             .min_w_0()
                                             .overflow_hidden()
                                             .text_ellipsis()
                                             .font_weight(gpui::FontWeight::MEDIUM)
                                             .text_color(theme().colors.text)
+                                            .app_tooltip(title.clone())
                                             .child(title),
                                     )
                             }),
@@ -155,14 +157,17 @@ impl FarcasterApp {
                             }),
                     ),
             )
-            .child(self.render_workspace_panels(mode, entity.clone()))
             .child(
                 div()
-                    .w(theme().size(1.0))
-                    .h(theme().space.md)
-                    .bg(theme().colors.surface),
+                    .debug_selector(|| "workspace-navigation".into())
+                    .flex_none()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .ml(theme().space.md)
+                    .child(self.render_workspace_panels(mode, entity.clone()))
+                    .child(self.render_surface_switcher(entity, harness_icon)),
             )
-            .child(self.render_surface_switcher(entity, harness_icon))
             .when(self.workspace.voice.recording(), |bar| {
                 bar.child(
                     div()
@@ -265,7 +270,10 @@ fn surface_control(
     entity: WeakEntity<FarcasterApp>,
     action: SurfaceAction,
 ) -> gpui::Stateful<gpui::Div> {
+    let click_entity = entity.clone();
     icon_control(id, label)
+        .debug_selector(move || id.into())
+        .aria_selected(active)
         .relative()
         .w_auto()
         .px(theme().space.sm)
@@ -294,6 +302,12 @@ fn surface_control(
         .child(app_icon(icon, AppIconSize::Control))
         .child(div().text_size(theme().type_scale.caption).child(caption))
         .on_click(move |_, window, cx| {
-            let _ = entity.update(cx, |app, cx| action(app, window, cx));
+            let _ = click_entity.update(cx, |app, cx| action(app, window, cx));
+        })
+        .on_key_down(move |event, window, cx| {
+            if crate::app::ui::primitives::activates_button(event) {
+                cx.stop_propagation();
+                let _ = entity.update(cx, |app, cx| action(app, window, cx));
+            }
         })
 }

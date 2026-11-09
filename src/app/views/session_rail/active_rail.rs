@@ -152,6 +152,9 @@ impl FarcasterApp {
         session_list_rows: &RefCell<Vec<String>>,
     ) -> impl IntoElement {
         let settings_entity = entity.clone();
+        let plan_entity = entity.clone();
+        let notice_entity = entity.clone();
+        let notice_count = self.worker_notices.snapshot(&self.project.path).len();
         let cancel_drop_entity = entity.clone();
         let cancel_drop_out_entity = entity.clone();
         let active_drop_entity = entity.clone();
@@ -354,12 +357,11 @@ impl FarcasterApp {
                     .flex_none()
                     .flex()
                     .flex_col()
-                    .gap(theme().space.xs)
                     .px(super::rail_inset())
-                    .pb(theme().size(10.0))
+                    .pb(theme().space.sm)
                     .child(
                         div()
-                            .h(theme().size(38.0))
+                            .h(crate::app::ui::grid::header_height())
                             .flex()
                             .items_center()
                             .when(cfg!(target_os = "macos"), |row| {
@@ -375,10 +377,19 @@ impl FarcasterApp {
                             ),
                     )
                     .child(
-                        SearchField::new("session-search", &self.navigation.search)
-                            .accessible_label("Search sessions")
-                            .inset(gpui::px(0.0))
-                            .trailing(self.session_search_controls(entity.clone())),
+                        div()
+                            .debug_selector(|| "session-search-header".into())
+                            .h(crate::app::ui::grid::header_height())
+                            .flex_none()
+                            .flex()
+                            .flex_col()
+                            .justify_center()
+                            .child(
+                                SearchField::new("session-search", &self.navigation.search)
+                                    .accessible_label("Search sessions")
+                                    .inset(gpui::px(0.0))
+                                    .trailing(self.session_search_controls(entity.clone())),
+                            ),
                     ),
             )
             .when_some(self.sessions.error.clone(), |rail, error| {
@@ -456,6 +467,7 @@ impl FarcasterApp {
                     .px(super::rail_inset())
                     .flex()
                     .items_center()
+                    .gap(theme().space.xs)
                     .child(
                         icon_button_with_size(
                             "sidebar-settings",
@@ -475,6 +487,53 @@ impl FarcasterApp {
                             - theme().icons.control)
                             / 2.0
                             + theme().icons.control / 16.0)),
+                    )
+                    .child(
+                        icon_button_with_size(
+                            "open-project-work",
+                            AppIcon::GitFork,
+                            "Project plan",
+                            AppIconSize::Control,
+                            ButtonTone::Quiet,
+                            move |window, cx| {
+                                let _ = plan_entity.update(cx, |this, cx| {
+                                    if this.overlays.view.sessions {
+                                        this.close_sheet(window, cx);
+                                    }
+                                    this.open_workgraph_surface(window, cx);
+                                });
+                            },
+                        )
+                        .debug_selector(|| "sidebar-plan-control".into()),
+                    )
+                    .child(
+                        icon_button_with_size(
+                            "open-worker-notices",
+                            gpui_component::IconName::Inbox,
+                            format!("Worker notices — {notice_count} active"),
+                            AppIconSize::Control,
+                            ButtonTone::Quiet,
+                            move |window, cx| {
+                                let _ = notice_entity.update(cx, |this, cx| {
+                                    this.open_worker_notices(window, cx);
+                                });
+                            },
+                        )
+                        .debug_selector(|| "sidebar-notices-control".into())
+                        .relative()
+                        .when(notice_count > 0, |control| {
+                            control.child(
+                                div()
+                                    .absolute()
+                                    .top(theme().size(2.0))
+                                    .right(theme().size(2.0))
+                                    .size(theme().size(6.0))
+                                    .rounded_full()
+                                    .bg(theme().colors.indicator)
+                                    .border(theme().border)
+                                    .border_color(theme().colors.panel),
+                            )
+                        }),
                     ),
             )
             .into_any_element()

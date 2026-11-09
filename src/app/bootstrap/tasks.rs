@@ -91,6 +91,7 @@ pub(super) fn spawn(
                 .update(cx, |this, cx| {
                     let active = !this.worker_notices.snapshot(&this.project.path).is_empty();
                     if refresh.update(active) {
+                        this.notify_session_rail_shell(cx);
                         cx.notify();
                     }
                 })
