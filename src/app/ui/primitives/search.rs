@@ -15,6 +15,7 @@ pub(crate) struct SearchField {
     input: Entity<InputState>,
     accessible_label: Option<SharedString>,
     trailing: Option<AnyElement>,
+    inset: gpui::Pixels,
 }
 
 impl SearchField {
@@ -24,11 +25,17 @@ impl SearchField {
             input: input.clone(),
             accessible_label: None,
             trailing: None,
+            inset: theme().size(10.0),
         }
     }
 
     pub(crate) fn accessible_label(mut self, label: impl Into<SharedString>) -> Self {
         self.accessible_label = Some(label.into());
+        self
+    }
+
+    pub(crate) fn inset(mut self, inset: gpui::Pixels) -> Self {
+        self.inset = inset;
         self
     }
 
@@ -45,6 +52,7 @@ impl RenderOnce for SearchField {
             input,
             accessible_label,
             trailing,
+            inset,
         } = self;
         let accessible = accessible_label.as_ref().map(SharedString::to_string);
         let focus_input = input.clone();
@@ -55,7 +63,7 @@ impl RenderOnce for SearchField {
             .flex_none()
             .flex()
             .gap(theme().space.xs)
-            .pl(theme().size(10.0))
+            .pl(inset)
             .border_b(theme().border)
             .border_color(if focused {
                 theme().colors.focus_border

@@ -106,35 +106,46 @@ impl FarcasterApp {
                     )
                     .child(
                         div()
-                            .id("workspace-project-new-session")
-                            .role(gpui::Role::Button)
-                            .aria_label(project_hint.clone())
-                            .tab_index(0)
-                            .cursor_pointer()
-                            .text_color(theme().colors.muted)
-                            .hover(|link| link.text_color(theme().colors.text))
-                            .focus_visible(|link| link.text_color(theme().colors.indicator))
-                            .app_tooltip(project_hint.clone())
-                            .child(project)
-                            .on_click(move |_, window, cx| {
-                                let _ = project_entity.update(cx, |app, cx| {
-                                    app.new_session(project_path.clone(), window, cx);
-                                });
-                            }),
-                    )
-                    .when_some(title, |workspace, title| {
-                        workspace
-                            .child(div().text_color(theme().colors.subtle).child("/"))
+                            .min_w_0()
+                            .flex()
+                            .items_center()
                             .child(
                                 div()
-                                    .min_w_0()
-                                    .overflow_hidden()
-                                    .text_ellipsis()
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(theme().colors.text)
-                                    .child(title),
+                                    .id("workspace-project-new-session")
+                                    .role(gpui::Role::Button)
+                                    .aria_label(project_hint.clone())
+                                    .tab_index(0)
+                                    .cursor_pointer()
+                                    .text_color(theme().colors.muted)
+                                    .hover(|link| link.text_color(theme().colors.text))
+                                    .focus_visible(|link| link.text_color(theme().colors.indicator))
+                                    .app_tooltip(project_hint.clone())
+                                    .child(project)
+                                    .on_click(move |_, window, cx| {
+                                        let _ = project_entity.update(cx, |app, cx| {
+                                            app.new_session(project_path.clone(), window, cx);
+                                        });
+                                    }),
                             )
-                    })
+                            .when_some(title, |workspace, title| {
+                                workspace
+                                    .child(
+                                        div()
+                                            .px(theme().size(2.0))
+                                            .text_color(theme().colors.subtle)
+                                            .child("/"),
+                                    )
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .overflow_hidden()
+                                            .text_ellipsis()
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .text_color(theme().colors.text)
+                                            .child(title),
+                                    )
+                            }),
+                    )
                     .child(
                         div()
                             .flex_1()

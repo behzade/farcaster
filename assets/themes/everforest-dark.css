@@ -56,10 +56,10 @@
   --layout-compact-min-width: 960px;
   --layout-window-width: 1240px;
   --layout-window-height: 820px;
-  --layout-session-rail: 286px;
+  --layout-session-rail: 330px;
   --layout-session-rail-min: 220px;
   --layout-session-rail-max: 430px;
-  --layout-run-panel: 332px;
+  --layout-run-panel: 330px;
   --layout-run-panel-min: 220px;
   --layout-run-panel-max: 430px;
   --layout-transcript-overdraw: 160px;
@@ -73,9 +73,6 @@
   --layout-session-age-slot: 30px;
   --layout-counter-slot: 18px;
   --layout-folders-min: 176px;
-  --layout-notice-panel: 160px;
-  --layout-notice-panel-min: 76px;
-  --layout-notice-panel-max: 2000px;
 
   --size-1: 1px;
   --size-2: 2px;

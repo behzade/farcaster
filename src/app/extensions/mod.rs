@@ -11,7 +11,6 @@ use std::{
 use crate::protocol::{ExtensionUiRequest, ExtensionUiResponse, NotifyTone, WidgetPlacement};
 
 const MAX_NOTIFICATIONS: usize = 8;
-const MAX_NOTIFICATION_HISTORY: usize = 200;
 const MAX_STATUSES: usize = 12;
 const MAX_WIDGETS: usize = 8;
 const MAX_WIDGET_LINES: usize = 24;
@@ -27,13 +26,6 @@ pub(crate) struct Notification {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct NotificationRecord {
-    pub id: String,
-    pub message: String,
-    pub tone: NotifyTone,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::app) struct QuestionProgress {
     request: crate::agents::QuestionRequest,
     answers: BTreeMap<String, Vec<String>>,
@@ -46,8 +38,6 @@ pub(crate) struct ExtensionUiState {
     queued_dialogs: VecDeque<ExtensionUiRequest>,
     pub(in crate::app) question_progress: BTreeMap<String, QuestionProgress>,
     pub notifications: VecDeque<Notification>,
-    pub notification_history: VecDeque<NotificationRecord>,
-    unseen_notifications: usize,
     pub statuses: BTreeMap<String, String>,
     pub above_widgets: BTreeMap<String, Vec<String>>,
     pub below_widgets: BTreeMap<String, Vec<String>>,
@@ -170,28 +160,14 @@ impl ExtensionUiState {
 
     pub(crate) fn push_notification(&mut self, id: String, message: String, tone: NotifyTone) {
         self.notifications.push_back(Notification {
-            id: id.clone(),
-            message: message.clone(),
+            id,
+            message,
             tone,
             expires_at: Instant::now() + NOTIFICATION_LIFETIME,
         });
         while self.notifications.len() > MAX_NOTIFICATIONS {
             self.notifications.pop_front();
         }
-        self.notification_history
-            .push_back(NotificationRecord { id, message, tone });
-        while self.notification_history.len() > MAX_NOTIFICATION_HISTORY {
-            self.notification_history.pop_front();
-        }
-        self.unseen_notifications = self.unseen_notifications.saturating_add(1);
-    }
-
-    pub(crate) fn unseen_notifications(&self) -> usize {
-        self.unseen_notifications
-    }
-
-    pub(crate) fn mark_notifications_seen(&mut self) {
-        self.unseen_notifications = 0;
     }
 
     pub(crate) fn reset(&mut self) {

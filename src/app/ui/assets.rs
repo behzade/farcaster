@@ -5,7 +5,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 75] = [
+const ICON_PATHS: [&str; 76] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -33,6 +33,7 @@ const ICON_PATHS: [&str; 75] = [
     "icons/phosphor/eye-slash.svg",
     "icons/phosphor/folder.svg",
     "icons/phosphor/folder-plus.svg",
+    "icons/phosphor/funnel-simple.svg",
     "icons/phosphor/gear-six.svg",
     "icons/phosphor/git-branch.svg",
     "icons/phosphor/git-fork.svg",
@@ -260,6 +261,9 @@ impl AssetSource for AppAssets {
             "icons/phosphor/git-fork.svg" => Some(include_bytes!(
                 "../../../assets/phosphor-icons/git-fork.svg"
             )),
+            "icons/phosphor/funnel-simple.svg" => Some(include_bytes!(
+                "../../../assets/phosphor-icons/funnel-simple.svg"
+            )),
             "icons/phosphor/gear-six.svg" => Some(include_bytes!(
                 "../../../assets/phosphor-icons/gear-six.svg"
             )),
@@ -431,6 +435,7 @@ pub(crate) enum AppIcon {
     Eye,
     Folder,
     FolderPlus,
+    FunnelSimple,
     GearSix,
     Ghostty,
     GitBranch,
@@ -530,6 +535,7 @@ impl IconNamed for AppIcon {
             Self::Eye => "eye",
             Self::Folder => "folder",
             Self::FolderPlus => "folder-plus",
+            Self::FunnelSimple => "funnel-simple",
             Self::GearSix => "gear-six",
             Self::Ghostty => return "icons/workbench/ghostty.svg".into(),
             Self::GitBranch => "git-branch",

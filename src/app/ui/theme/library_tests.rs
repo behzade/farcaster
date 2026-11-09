@@ -349,7 +349,6 @@ fn bounds_include_defaults_and_allow_equal_endpoints() {
     for (min, max) in [
         ("layout-session-rail-min", "layout-session-rail-max"),
         ("layout-run-panel-min", "layout-run-panel-max"),
-        ("layout-notice-panel-min", "layout-notice-panel-max"),
         ("size-12", "size-28"),
         ("size-72", "size-280"),
     ] {

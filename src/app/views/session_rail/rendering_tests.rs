@@ -3,10 +3,10 @@ use crate::app::ui::primitives::panel_bounds;
 use gpui::{point, px, size};
 #[test]
 fn the_archive_resizes_freely_up_to_the_room_the_stack_measured() {
-    let row = super::super::session_row_height(true);
+    let row = super::super::session_row_height(false);
     let room = px(472.0);
     let mut state = crate::app::ui::primitives::ResizeState::default();
-    let bounds = panel_bounds(room, rail_panel_slot(RailPanel::Archived, 3, false));
+    let bounds = panel_bounds(room, archived_panel_slot(3, false));
     assert_eq!(bounds.max_height, room);
     assert_eq!(bounds.min_height, archived_panel_height(1));
     assert_eq!(state.height(bounds), archived_panel_height(3));
@@ -39,17 +39,10 @@ fn the_archive_resizes_freely_up_to_the_room_the_stack_measured() {
 #[test]
 fn a_minimized_panel_is_only_its_header() {
     let header = theme().controls.icon_button;
-    let archived = rail_panel_slot(RailPanel::Archived, 3, true);
-    let notifications = rail_panel_slot(RailPanel::Notifications, 0, true);
+    let archived = archived_panel_slot(3, true);
     assert_eq!(archived.floor, header);
     assert_eq!(archived.preferred, header);
     assert_eq!(panel_bounds(px(472.0), archived).height, header);
-    assert_eq!(notifications.floor, header);
-    assert_eq!(panel_bounds(px(300.0), notifications).height, header);
-    assert!(
-        rail_panel_slot(RailPanel::Notifications, 0, false).floor > header,
-        "an open panel asks for more than its header"
-    );
     assert!(
         theme().layout.folders_min >= theme().layout.session_row_height * 4.0,
         "the chats keep four rows whatever grows under them"

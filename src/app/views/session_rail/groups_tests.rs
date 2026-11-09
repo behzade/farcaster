@@ -39,7 +39,6 @@ fn sidebar_prepares_session_lists_once_for_both_panels(cx: &mut gpui::TestAppCon
                 for collapsed in [true, false] {
                     app.update(cx, |app, _| {
                         app.sessions.archived_expanded = !collapsed;
-                        app.views.notification_panel.set_collapsed(collapsed);
                     });
                     LIST_BUILDS.set(0);
                     let _sidebar = app

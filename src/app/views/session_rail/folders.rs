@@ -199,6 +199,7 @@ fn group_title(
         .child(
             div()
                 .min_w_0()
+                .flex_1()
                 .whitespace_nowrap()
                 .text_ellipsis()
                 .child(label),
@@ -209,7 +210,7 @@ fn group_title(
                     .debug_selector(|| "session-group-count".into())
                     .flex_none()
                     .text_color(theme().colors.subtle)
-                    .child(format!("({count})")),
+                    .child(count.to_string()),
             )
         })
 }
@@ -240,7 +241,7 @@ pub(super) fn project_header(
         })
         .group("session-project-header")
         .w_full()
-        .px(theme().space.sm)
+        .px(super::rail_inset())
         .child(
             draggable_title(
                 group_title(
@@ -305,7 +306,10 @@ pub(super) fn new_folder_row(
 ) -> AnyElement {
     let edit = entity.clone();
     let cancel = entity.clone();
-    let row = session_section_header().id("new-folder-row").w_full();
+    let row = session_section_header()
+        .id("new-folder-row")
+        .w_full()
+        .px(super::rail_inset());
     if editing {
         return row
             .on_action(move |_: &gpui_component::input::Escape, _, cx| {
@@ -333,15 +337,18 @@ pub(super) fn new_folder_row(
             this.clear_session_drop_target(cx);
         });
     })
-    .child(button(
-        "new-folder",
-        "+ New folder",
-        ButtonTone::Quiet,
-        true,
-        move |window, cx| {
-            let _ = edit.update(cx, |this, cx| this.begin_folder_edit(None, window, cx));
-        },
-    ))
+    .child(
+        button(
+            "new-folder",
+            "+ New folder",
+            ButtonTone::Quiet,
+            true,
+            move |window, cx| {
+                let _ = edit.update(cx, |this, cx| this.begin_folder_edit(None, window, cx));
+            },
+        )
+        .px_0(),
+    )
     .into_any_element()
 }
 
@@ -374,7 +381,7 @@ pub(super) fn folder_header(
         .debug_selector(move || format!("session-folder-{id}"))
         .group("session-folder-header")
         .w_full()
-        .px(theme().space.sm)
+        .px(super::rail_inset())
         .cursor_pointer()
         .hover(|row| row.bg(theme().colors.highlight))
         .on_hover(move |hovered: &bool, _, cx| {

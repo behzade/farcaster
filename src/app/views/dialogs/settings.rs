@@ -205,6 +205,24 @@ fn general(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>, cx: &gpui::App)
             entity.clone(),
         ))
         .child(toggle_setting(
+            "session-project-groups-toggle",
+            "Group sessions by project",
+            "Group chats under project headers. Turn off to use custom folders.",
+            app.settings.group_sessions_by_project,
+            entity.clone(),
+            FarcasterApp::toggle_settings_project_groups,
+        ))
+        .when_some(
+            app.settings.session_grouping_error.clone(),
+            |content, error| {
+                content.child(feedback(
+                    "settings-session-grouping-error",
+                    error,
+                    FeedbackTone::Error,
+                ))
+            },
+        )
+        .child(toggle_setting(
             "transcript-folders-toggle",
             "Expand changed folders in transcript",
             "Start change folders expanded. Your manual folder choices stay as you left them.",

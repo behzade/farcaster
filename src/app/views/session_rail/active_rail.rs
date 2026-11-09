@@ -9,7 +9,7 @@ use gpui_component::menu::PopupMenuItem;
 use gpui_component::scroll::Scrollbar;
 
 use super::{
-    FarcasterApp, RailPanel, active_item_identity,
+    FarcasterApp, active_item_identity,
     colors::palette_color,
     draft_row::{DraftRow, DraftRowInput},
     folders::{FolderRow, folder_header, new_folder_row, project_header},
@@ -27,76 +27,121 @@ use crate::{
     app::ui::layout::TRAFFIC_LIGHT_INSET,
     app::ui::primitives::{
         AppIconSize, ButtonTone, ContextMenuTrigger, FeedbackTone, Panel, SearchField, app_icon,
-        feedback, icon_button, panel_space,
+        feedback, icon_button, icon_button_with_size, icon_control, panel_space,
     },
     app::ui::theme::theme,
 };
 
 impl FarcasterApp {
-    fn render_rail_panel(
+    fn render_archive_panel(
         &self,
-        panel: RailPanel,
         collapsed: bool,
         archived_count: usize,
         entity: &WeakEntity<Self>,
         children: impl IntoIterator<Item = AnyElement>,
     ) -> Panel {
-        let (id, title) = panel.labels();
-        let mut state = self.panel_state(panel);
+        let mut state = self.views.archived_panel;
         state.set_collapsed(collapsed);
         let toggle_entity = entity.clone();
         let resize_entity = entity.clone();
-        let bounds = self.panel_bounds_with_archived_count(panel, collapsed, archived_count);
-        Panel::new(id, &state, bounds, title)
+        let bounds = self.archive_bounds(collapsed, archived_count);
+        Panel::new("archived-panel", &state, bounds, "Archived")
             .on_toggle(move |_, cx| {
-                let _ = toggle_entity.update(cx, |this, cx| this.toggle_rail_panel(panel, cx));
+                let _ = toggle_entity.update(cx, |this, cx| this.toggle_archive(cx));
             })
             .on_resize(move |event, _, cx| {
                 let _ = resize_entity.update(cx, |this, cx| {
-                    this.begin_rail_panel_resize(panel, event.position.y, cx)
+                    this.begin_archive_resize(event.position.y, cx)
                 });
             })
             .children(children)
     }
 
-    fn render_notification_panel(
-        &self,
-        entity: WeakEntity<Self>,
-        archived_count: usize,
-    ) -> AnyElement {
-        let mut operation = OperationTiming::new(OperationKind::SidebarNotifications, 0);
-        let collapsed = self.panel_state(RailPanel::Notifications).is_collapsed();
-        let notifications = if collapsed {
-            Vec::new()
-        } else {
-            self.extensions
-                .active
-                .notification_history
-                .iter()
-                .rev()
-                .enumerate()
-                .map(|(index, notice)| {
-                    self.render_notification(
-                        ("rail-notification", index),
-                        &notice.id,
-                        &notice.message,
-                        notice.tone,
-                        entity.clone(),
-                        None,
-                    )
+    fn session_search_controls(&self, entity: WeakEntity<Self>) -> AnyElement {
+        let projects = self.available_projects();
+        let selected = self.sessions.project_filter.clone();
+        let filter_label = selected.as_deref().map_or_else(
+            || "Filter sessions by project".to_owned(),
+            |path| format!("Filter: {}", project_label(path)),
+        );
+        let filter_entity = entity.clone();
+        let project_entity = entity.clone();
+        let filter = ContextMenuTrigger::new(
+            "project-filter-menu",
+            icon_control("project-filter-button", filter_label)
+                .text_color(if selected.is_some() {
+                    theme().colors.indicator
+                } else {
+                    theme().colors.muted
                 })
-                .collect::<Vec<_>>()
-        };
-        operation.set_work(notifications.len());
-        self.render_rail_panel(
-            RailPanel::Notifications,
-            collapsed,
-            archived_count,
-            &entity,
-            notifications,
+                .hover(|control| control.bg(theme().colors.highlight))
+                .child(app_icon(AppIcon::FunnelSimple, AppIconSize::Control))
+                .into_any_element(),
         )
-        .count(self.extensions.active.unseen_notifications())
-        .into_any_element()
+        .w(theme().controls.icon_button)
+        .flex_none()
+        .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+            let all_entity = filter_entity.clone();
+            let mut menu = menu
+                .min_w(theme().size(220.0))
+                .max_h(theme().size(420.0))
+                .label("Projects")
+                .item(
+                    PopupMenuItem::new("All projects")
+                        .checked(selected.is_none())
+                        .on_click(move |_, _, cx| {
+                            let _ = all_entity
+                                .update(cx, |this, cx| this.set_session_project_filter(None, cx));
+                        }),
+                );
+            for project in &projects {
+                let target = project.clone();
+                let target_entity = filter_entity.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(project_label(project))
+                        .checked(selected.as_ref() == Some(project))
+                        .on_click(move |_, _, cx| {
+                            let _ = target_entity.update(cx, |this, cx| {
+                                this.set_session_project_filter(Some(target.clone()), cx);
+                            });
+                        }),
+                );
+            }
+            menu
+        });
+        div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(theme().space.xs)
+            .child(filter)
+            .child(icon_button(
+                "add-project",
+                AppIcon::FolderPlus,
+                "Add project",
+                ButtonTone::Quiet,
+                move |window, cx| {
+                    let _ = project_entity.update(cx, |this, cx| {
+                        this.choose_project_folder(None, window, cx);
+                    });
+                },
+            ))
+            .child(icon_button(
+                "new-session",
+                AppIcon::PencilSimple,
+                "New session",
+                ButtonTone::Quiet,
+                move |window, cx| {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.open_picker(
+                            PickerScope::Projects(ProjectPickerIntent::NewSession),
+                            window,
+                            cx,
+                        );
+                    });
+                },
+            ))
+            .into_any_element()
     }
 
     pub(in crate::app::views) fn render_sessions(
@@ -106,8 +151,7 @@ impl FarcasterApp {
         session_list: ListState,
         session_list_rows: &RefCell<Vec<String>>,
     ) -> impl IntoElement {
-        let new_entity = entity.clone();
-        let actions_entity = entity.clone();
+        let settings_entity = entity.clone();
         let cancel_drop_entity = entity.clone();
         let cancel_drop_out_entity = entity.clone();
         let active_drop_entity = entity.clone();
@@ -287,8 +331,7 @@ impl FarcasterApp {
         })
         .size_full();
         let archived_panel = self
-            .render_rail_panel(
-                RailPanel::Archived,
+            .render_archive_panel(
                 !self.sessions.archived_expanded || session_drag_active,
                 archived_entry_count,
                 &entity,
@@ -300,46 +343,25 @@ impl FarcasterApp {
             )
             .count(archived_entry_count)
             .flush_body();
-        let projects = self.available_projects();
-        let project_filter_entity = entity.clone();
-        let filter_label = self
-            .sessions
-            .project_filter
-            .as_deref()
-            .map(project_label)
-            .unwrap_or_else(|| "All".into());
-
         let measure_entity = entity.clone();
         div()
             .size_full()
             .flex()
             .flex_col()
             .bg(theme().colors.panel)
-            .on_children_prepainted(move |bounds, _, cx| {
-                let space = bounds
-                    .last()
-                    .map(|stack| panel_space(stack.size.height, theme().layout.folders_min));
-                let _ = measure_entity.update(cx, |this, cx| {
-                    if this.views.panel_space != space {
-                        this.views.panel_space = space;
-                        cx.notify();
-                    }
-                });
-            })
             .child(
                 div()
                     .flex_none()
                     .flex()
                     .flex_col()
                     .gap(theme().space.xs)
-                    .px(theme().size(10.0))
+                    .px(super::rail_inset())
                     .pb(theme().size(10.0))
                     .child(
                         div()
                             .h(theme().size(38.0))
                             .flex()
                             .items_center()
-                            .justify_end()
                             .when(cfg!(target_os = "macos"), |row| {
                                 row.pl(theme().size(TRAFFIC_LIGHT_INSET))
                             })
@@ -350,99 +372,13 @@ impl FarcasterApp {
                                     .on_mouse_down(MouseButton::Left, |_, window, _| {
                                         window.start_window_move()
                                     }),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(theme().space.xs)
-                                    .child(icon_button(
-                                        "session-actions",
-                                        AppIcon::List,
-                                        "Actions",
-                                        ButtonTone::Quiet,
-                                        move |window, cx| {
-                                            let _ = actions_entity.update(cx, |this, cx| {
-                                                this.open_picker(PickerScope::Actions, window, cx);
-                                            });
-                                        },
-                                    ))
-                                    .child(icon_button(
-                                        "new-session",
-                                        AppIcon::Plus,
-                                        "New session",
-                                        ButtonTone::Quiet,
-                                        move |window, cx| {
-                                            let _ = new_entity.update(cx, |this, cx| {
-                                                this.open_picker(
-                                                    PickerScope::Projects(
-                                                        ProjectPickerIntent::NewSession,
-                                                    ),
-                                                    window,
-                                                    cx,
-                                                );
-                                            });
-                                        },
-                                    )),
                             ),
                     )
                     .child(
                         SearchField::new("session-search", &self.navigation.search)
                             .accessible_label("Search sessions")
-                            .trailing(
-                                ContextMenuTrigger::new(
-                                    "project-filter-menu",
-                                    div()
-                                        .id("project-filter-button")
-                                        .h_full()
-                                        .flex()
-                                        .items_center()
-                                        .gap(theme().space.xs)
-                                        .px(theme().space.sm)
-                                        .cursor_pointer()
-                                        .text_size(theme().type_scale.caption)
-                                        .text_color(theme().colors.muted)
-                                        .hover(|filter| filter.bg(theme().colors.highlight))
-                                        .child(filter_label)
-                                        .child(app_icon(AppIcon::CaretDown, AppIconSize::Inline))
-                                        .into_any_element(),
-                                )
-                                .h_full()
-                                .dropdown_menu_with_anchor(
-                                    Anchor::TopRight,
-                                    move |menu, _, _| {
-                                        let all_entity = project_filter_entity.clone();
-                                        let mut menu = menu
-                                            .min_w(theme().size(220.0))
-                                            .max_h(theme().size(420.0))
-                                            .label("Projects")
-                                            .item(PopupMenuItem::new("All").on_click(
-                                                move |_, _, cx| {
-                                                    let _ = all_entity.update(cx, |this, cx| {
-                                                        this.set_session_project_filter(None, cx);
-                                                    });
-                                                },
-                                            ));
-                                        for project in &projects {
-                                            let target = project.clone();
-                                            let filter_entity = project_filter_entity.clone();
-                                            menu = menu.item(
-                                                PopupMenuItem::new(project_label(project))
-                                                    .on_click(move |_, _, cx| {
-                                                        let _ =
-                                                            filter_entity.update(cx, |this, cx| {
-                                                                this.set_session_project_filter(
-                                                                    Some(target.clone()),
-                                                                    cx,
-                                                                );
-                                                            });
-                                                    }),
-                                            );
-                                        }
-                                        menu
-                                    },
-                                ),
-                            ),
+                            .inset(gpui::px(0.0))
+                            .trailing(self.session_search_controls(entity.clone())),
                     ),
             )
             .when_some(self.sessions.error.clone(), |rail, error| {
@@ -454,6 +390,17 @@ impl FarcasterApp {
                     .min_h_0()
                     .flex()
                     .flex_col()
+                    .on_children_prepainted(move |bounds, _, cx| {
+                        let space = bounds.first().zip(bounds.last()).map(|(first, last)| {
+                            panel_space(last.bottom() - first.top(), theme().layout.folders_min)
+                        });
+                        let _ = measure_entity.update(cx, |this, cx| {
+                            if this.views.panel_space != space {
+                                this.views.panel_space = space;
+                                cx.notify();
+                            }
+                        });
+                    })
                     .child(
                         div()
                             .id("session-list-scroll")
@@ -499,8 +446,36 @@ impl FarcasterApp {
                                 },
                             ),
                     )
-                    .child(archived_panel)
-                    .child(self.render_notification_panel(entity, archived_entry_count)),
+                    .child(archived_panel),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "session-sidebar-footer".into())
+                    .flex_none()
+                    .h(theme().controls.icon_button + theme().size(12.0))
+                    .px(super::rail_inset())
+                    .flex()
+                    .items_center()
+                    .child(
+                        icon_button_with_size(
+                            "sidebar-settings",
+                            AppIcon::GearSix,
+                            "Settings",
+                            AppIconSize::Control,
+                            ButtonTone::Quiet,
+                            move |window, cx| {
+                                let _ = settings_entity.update(cx, |this, cx| {
+                                    this.open_settings(window, cx);
+                                });
+                            },
+                        )
+                        .debug_selector(|| "sidebar-settings-control".into())
+                        // Align the visible gear, including its SVG inset, with the row labels.
+                        .ml(-((theme().controls.icon_button
+                            - theme().icons.control)
+                            / 2.0
+                            + theme().icons.control / 16.0)),
+                    ),
             )
             .into_any_element()
     }

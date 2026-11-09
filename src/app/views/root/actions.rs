@@ -1,6 +1,6 @@
 use gpui::{Context, InteractiveElement as _};
 
-use super::super::{FarcasterApp, session_rail::RailPanel};
+use super::super::FarcasterApp;
 use crate::app::ui::keyboard::{ClipboardCopyAlias, ClipboardPasteAlias, CopySelection};
 use crate::app::workspace::{CycleWorkspaceBackward, CycleWorkspaceForward};
 use crate::app::{
@@ -135,9 +135,7 @@ pub(in crate::app::views) fn bind_actions(
     .on_action(cx.listener(|this, _: &NextSession, window, cx| {
         this.switch_relative_session(1, window, cx);
     }))
-    .on_action(cx.listener(|this, _: &ToggleArchivedSessions, _, cx| {
-        this.toggle_rail_panel(RailPanel::Archived, cx)
-    }))
+    .on_action(cx.listener(|this, _: &ToggleArchivedSessions, _, cx| this.toggle_archive(cx)))
     .on_action(cx.listener(|this, _: &SubmitPrompt, window, cx| {
         let value = this.composer.input.read(cx).value().trim().to_owned();
         if !value.is_empty() || this.has_composer_attachments() {

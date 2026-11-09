@@ -51,7 +51,7 @@ thread_local! {
     static SCROLL_TIMING: RefCell<ScrollTimingState> = RefCell::default();
 }
 
-const OPERATION_COUNT: usize = 16;
+const OPERATION_COUNT: usize = 15;
 static OPERATION_CALLS: [AtomicU64; OPERATION_COUNT] =
     [const { AtomicU64::new(0) }; OPERATION_COUNT];
 static OPERATION_TOTAL_NS: [AtomicU64; OPERATION_COUNT] =
@@ -78,7 +78,6 @@ pub(crate) enum OperationKind {
     SessionSidebar,
     SidebarSessionLists,
     SidebarFamilyStatus,
-    SidebarNotifications,
 }
 
 impl OperationKind {
@@ -98,7 +97,6 @@ impl OperationKind {
         Self::SessionSidebar,
         Self::SidebarSessionLists,
         Self::SidebarFamilyStatus,
-        Self::SidebarNotifications,
     ];
 
     const fn label(self) -> &'static str {
@@ -118,7 +116,6 @@ impl OperationKind {
             Self::SessionSidebar => "Session sidebar build",
             Self::SidebarSessionLists => "Sidebar session preparation",
             Self::SidebarFamilyStatus => "Sidebar family status",
-            Self::SidebarNotifications => "Sidebar notification cards",
         }
     }
 
@@ -137,7 +134,6 @@ impl OperationKind {
             Self::RuntimeDrain => "events",
             Self::SessionSidebar => "renders",
             Self::SidebarSessionLists | Self::SidebarFamilyStatus => "catalog entries",
-            Self::SidebarNotifications => "cards",
         }
     }
 }

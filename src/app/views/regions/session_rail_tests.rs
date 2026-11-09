@@ -10,7 +10,7 @@ struct ArchiveListHarness {
 impl Render for ArchiveListHarness {
     fn render(&mut self, _: &mut gpui::Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
         use gpui::{InteractiveElement as _, Styled as _, uniform_list};
-        let height = session_row_height(true);
+        let height = session_row_height(false);
         let selected = self.selected;
         uniform_list("archive-test", self.count, move |range, _, _| {
             range
@@ -77,7 +77,7 @@ fn first_archive_expansion_does_not_scroll_past_the_selected_row(cx: &mut gpui::
     let cx = cx.add_empty_window();
     let list = UniformListScrollHandle::new();
     let rows = RefCell::new((0..12).map(|index| format!("session:{index}")).collect());
-    let height = session_row_height(true);
+    let height = session_row_height(false);
     for selected in [5, 4] {
         let mut reveal = Some(SessionReveal::SessionID(format!("session:{selected}")));
         reveal_archived_session_row(&list, &rows, &mut reveal);
@@ -107,7 +107,7 @@ fn archive_content_size_tracks_insertions_and_viewport_resizes(cx: &mut gpui::Te
     use gpui::{point, px, size};
     let cx = cx.add_empty_window();
     let list = UniformListScrollHandle::new();
-    let height = session_row_height(true);
+    let height = session_row_height(false);
     for (count, width) in [(4_000, 120.), (4_001, 120.), (4_001, 240.)] {
         cx.draw(
             point(px(0.), px(0.)),
@@ -132,7 +132,6 @@ fn archive_content_size_tracks_insertions_and_viewport_resizes(cx: &mut gpui::Te
 
 #[gpui::test]
 fn expanding_archive_reveals_newest_once_after_rows_change(cx: &mut gpui::TestAppContext) {
-    use super::super::super::session_rail::RailPanel;
     use gpui::{point, px, size};
 
     crate::app::test_support::with_offline_app(
@@ -158,11 +157,11 @@ fn expanding_archive_reveals_newest_once_after_rows_change(cx: &mut gpui::TestAp
                 app.update(cx, |app, cx| {
                     app.sessions.drafts = (1..=12).map(archived).collect();
                     app.sessions.archived_expanded = false;
-                    app.toggle_rail_panel(RailPanel::Archived, cx);
+                    app.toggle_archive(cx);
                     app.views.archived_session_rail.clone()
                 })
             });
-            let height = session_row_height(true);
+            let height = session_row_height(false);
             for newest in [12, 13] {
                 cx.draw(
                     point(px(0.), px(0.)),
@@ -197,10 +196,10 @@ fn expanding_archive_reveals_newest_once_after_rows_change(cx: &mut gpui::TestAp
                     assert_eq!(rail.read(cx).list.0.borrow().base_handle.offset().y, offset);
                     if newest == 12 {
                         app.update(cx, |app, cx| {
-                            app.toggle_rail_panel(RailPanel::Archived, cx);
+                            app.toggle_archive(cx);
                             assert!(rail.read(cx).reveal.is_none());
                             app.sessions.drafts.push(archived(13));
-                            app.toggle_rail_panel(RailPanel::Archived, cx);
+                            app.toggle_archive(cx);
                         });
                     }
                 });

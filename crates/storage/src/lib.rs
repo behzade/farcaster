@@ -144,8 +144,6 @@ pub enum WindowState {
 pub struct PanelLayout {
     pub session_rail_hidden: bool,
     pub run_panel_hidden: bool,
-    pub notifications_collapsed: bool,
-    pub notifications_height: Option<f32>,
     pub archived_expanded: bool,
     pub archived_height: Option<f32>,
 }
@@ -155,8 +153,6 @@ impl Default for PanelLayout {
         Self {
             session_rail_hidden: false,
             run_panel_hidden: false,
-            notifications_collapsed: true,
-            notifications_height: None,
             archived_expanded: false,
             archived_height: None,
         }

@@ -442,8 +442,6 @@ fn panel_layout_survives_reopen() -> Result<(), Box<dyn std::error::Error>> {
     let layout = PanelLayout {
         session_rail_hidden: true,
         run_panel_hidden: true,
-        notifications_collapsed: true,
-        notifications_height: Some(240.0),
         archived_expanded: true,
         archived_height: Some(160.0),
     };
@@ -2493,4 +2491,20 @@ fn theme_save_rolls_back_library_when_selection_write_fails()
     assert_eq!(reopened.load_theme_css()?.as_deref(), Some("original"));
     assert_eq!(reopened.load_active_theme()?.as_deref(), Some("Original"));
     Ok(())
+}
+
+#[test]
+fn panel_layout_ignores_retired_notifications_fields() {
+    let layout: PanelLayout = serde_json::from_value(serde_json::json!({
+        "session_rail_hidden": true,
+        "run_panel_hidden": false,
+        "notifications_collapsed": false,
+        "notifications_height": 240.0,
+        "archived_expanded": true,
+        "archived_height": 160.0
+    }))
+    .expect("existing saved panel layout");
+    assert!(layout.session_rail_hidden);
+    assert!(layout.archived_expanded);
+    assert_eq!(layout.archived_height, Some(160.0));
 }

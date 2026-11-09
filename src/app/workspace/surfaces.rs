@@ -1034,14 +1034,18 @@ impl FarcasterApp {
         cx.notify();
     }
 
-    #[cfg(test)]
     pub(in crate::app) fn toggle_settings_project_groups(&mut self, cx: &mut Context<Self>) {
         let grouped = !self.settings.group_sessions_by_project;
-        crate::app::persistence::open()
+        match crate::app::persistence::open()
             .and_then(|store| store.save_group_sessions_by_project(grouped))
-            .expect("save test grouping state");
-        self.settings.group_sessions_by_project = grouped;
-        self.notify_session_rail(cx);
+        {
+            Ok(()) => {
+                self.settings.group_sessions_by_project = grouped;
+                self.settings.session_grouping_error = None;
+                self.notify_session_rail(cx);
+            }
+            Err(error) => self.settings.session_grouping_error = Some(error),
+        }
         cx.notify();
     }
 

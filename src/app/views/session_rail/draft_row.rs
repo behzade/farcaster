@@ -81,6 +81,7 @@ impl RenderOnce for DraftRow {
                 },
             entity,
         } = self;
+        let compact = compact && !archived;
         let is_draft = status == RunStatus::Draft;
         let status_text = run_status_label(status);
         let id = draft.id.clone();
@@ -130,7 +131,7 @@ impl RenderOnce for DraftRow {
                     .relative()
                     .flex()
                     .items_stretch()
-                    .px(theme().space.sm)
+                    .px(super::rail_inset())
                     .rounded(theme().radius)
                     .group(action_group.clone())
                     .bg(if selected {

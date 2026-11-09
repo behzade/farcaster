@@ -111,7 +111,7 @@ impl RenderOnce for Panel {
             .flex()
             .items_center()
             .gap(theme().space.xs)
-            .px(theme().space.sm)
+            .px(theme().size(12.0))
             .text_size(theme().type_scale.caption)
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(theme().colors.muted)
@@ -128,18 +128,17 @@ impl RenderOnce for Panel {
             .child(
                 div()
                     .min_w_0()
+                    .flex_1()
                     .whitespace_nowrap()
                     .text_ellipsis()
                     .child(title),
             )
-            .when(collapsed, |header| {
-                header.child(
-                    div()
-                        .flex_none()
-                        .text_color(theme().colors.subtle)
-                        .child(format!("({count})")),
-                )
-            });
+            .child(
+                div()
+                    .flex_none()
+                    .text_color(theme().colors.subtle)
+                    .child(count.to_string()),
+            );
         div()
             .id(ElementId::Name(format!("{id}-panel").into()))
             .relative()

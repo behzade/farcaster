@@ -350,6 +350,7 @@ impl FarcasterApp {
                 voice_enabled: persisted.voice_enabled,
                 voice_shortcut: persisted.voice_shortcut,
                 group_sessions_by_project: persisted.group_sessions_by_project,
+                session_grouping_error: None,
                 editor_choice: persisted.editor_choice,
                 editor_command: persisted.editor_command,
                 editor_command_input: inputs.editor_command,
@@ -384,10 +385,6 @@ impl FarcasterApp {
                 workgraph_detail: regions.workgraph_detail,
                 workgraph_sidebar: regions.workgraph_sidebar,
                 workgraph_inspector_issue: None,
-                notification_panel: ui::primitives::ResizeState::restored(
-                    persisted.panel_layout.notifications_height,
-                    persisted.panel_layout.notifications_collapsed,
-                ),
                 archived_panel: ui::primitives::ResizeState::restored(
                     persisted.panel_layout.archived_height,
                     !persisted.panel_layout.archived_expanded,

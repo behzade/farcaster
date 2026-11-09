@@ -34,7 +34,7 @@ fn reconcile_archived_rows(
     }
     let mut state = scroll.0.borrow_mut();
     let offset = state.base_handle.offset();
-    let row_height = session_row_height(true);
+    let row_height = session_row_height(false);
     let top = (-offset.y / row_height).floor().max(0.0) as usize;
     let new_top = current
         .get(top)
@@ -115,7 +115,7 @@ impl FarcasterApp {
                                 status,
                                 archived: true,
                                 drop_position: None,
-                                compact: true,
+                                compact: false,
                             },
                             row_entity.clone(),
                         )
@@ -136,7 +136,7 @@ impl FarcasterApp {
                         SessionRow::new(
                             item,
                             SessionRowInput {
-                                compact: true,
+                                compact: false,
                                 title_editor: editing.then(|| title_input.clone()),
                                 subagents: counts
                                     .get(item.session.path.as_path())

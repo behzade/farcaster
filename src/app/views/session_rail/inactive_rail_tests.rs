@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn inserting_before_the_viewport_keeps_the_same_archived_row_visible() {
     let scroll = UniformListScrollHandle::new();
-    let height = session_row_height(true);
+    let height = session_row_height(false);
     scroll
         .0
         .borrow()

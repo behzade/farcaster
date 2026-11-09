@@ -138,7 +138,6 @@ impl ThemeDefinition {
         for (min, max) in [
             (MetricKey::session_rail_min, MetricKey::session_rail_max),
             (MetricKey::run_panel_min, MetricKey::run_panel_max),
-            (MetricKey::notice_panel_min, MetricKey::notice_panel_max),
         ] {
             self.validate_bounds(LengthKey::Metric(min), LengthKey::Metric(max))?;
         }

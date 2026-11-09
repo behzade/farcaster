@@ -151,8 +151,6 @@ impl FarcasterApp {
         let layout = crate::app::infrastructure::persistence::PanelLayout {
             session_rail_hidden: self.workspace.session_rail_hidden,
             run_panel_hidden: self.workspace.run_panel_hidden,
-            notifications_collapsed: self.views.notification_panel.is_collapsed(),
-            notifications_height: self.views.notification_panel.stored_height(),
             archived_expanded: self.sessions.archived_expanded,
             archived_height: self.views.archived_panel.stored_height(),
         };

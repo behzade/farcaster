@@ -97,6 +97,7 @@ impl RenderOnce for SessionRow {
                 },
             entity,
         } = self;
+        let compact = compact && item.kind != SessionRailKind::Archived;
         let row_height = session_row_height(compact);
         let session = &item.session;
         let identity = super::session_row_identity(session);
@@ -159,7 +160,7 @@ impl RenderOnce for SessionRow {
             .relative()
             .flex()
             .items_stretch()
-            .px(theme().space.sm)
+            .px(super::rail_inset())
             .rounded(theme().radius)
             .group(action_group.clone())
             .bg(if selected {
@@ -467,6 +468,7 @@ fn session_context_menu(
     let project = session.project.clone();
     let title = session.title.clone();
     let can_fork = crate::agents::supports_session_fork(session.harness);
+    let can_move = crate::agents::supports_session_move(session.harness);
     let app_session_id = session.app_session_id;
     ContextMenuTrigger::new(format!("{identity}:context-trigger"), row)
         .size_full()
@@ -488,6 +490,25 @@ fn session_context_menu(
                         );
                     });
                 }))
+                .when(can_move, |menu| {
+                    let move_path = path.clone();
+                    let move_project = project.clone();
+                    let move_entity = entity.clone();
+                    menu.item(PopupMenuItem::new("Move to project…").on_click(
+                        move |_, window, cx| {
+                            let _ = move_entity.update(cx, |this, cx| {
+                                this.open_picker(
+                                    PickerScope::Projects(ProjectPickerIntent::MoveSession {
+                                        path: move_path.clone(),
+                                        source_project: move_project.clone(),
+                                    }),
+                                    window,
+                                    cx,
+                                );
+                            });
+                        },
+                    ))
+                })
                 .when(can_fork, |menu| {
                     let fork_path = path.clone();
                     let fork_project = project.clone();
@@ -746,16 +767,33 @@ pub(super) fn relative_age(modified: SystemTime) -> String {
     }
 }
 
-pub(in crate::app::views) fn session_row_height(_compact: bool) -> Pixels {
-    theme().controls.icon_button + theme().type_scale.line_body + theme().size(12.0)
+pub(in crate::app::views) fn session_row_height(compact: bool) -> Pixels {
+    theme().controls.icon_button
+        + if compact {
+            gpui::px(0.0)
+        } else {
+            theme().type_scale.line_body
+        }
+        + theme().size(12.0)
 }
 
 pub(super) fn session_row_content(
-    _compact: bool,
+    compact: bool,
     title: AnyElement,
     project: AnyElement,
     actions: AnyElement,
 ) -> AnyElement {
+    let trailing = div().flex_none().pl(theme().space.xs).child(actions);
+    if compact {
+        return div()
+            .w_full()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .child(div().min_w_0().flex_1().overflow_hidden().child(title))
+            .child(trailing)
+            .into_any_element();
+    }
     div()
         .w_full()
         .min_w_0()
@@ -766,11 +804,11 @@ pub(super) fn session_row_content(
             div()
                 .w_full()
                 .min_w_0()
+                .h(theme().controls.icon_button)
                 .flex()
                 .items_center()
-                .gap(theme().space.sm)
-                .child(project)
-                .child(actions),
+                .child(div().min_w_0().flex_1().overflow_hidden().child(project))
+                .child(trailing),
         )
         .child(div().min_w_0().w_full().overflow_hidden().child(title))
         .into_any_element()

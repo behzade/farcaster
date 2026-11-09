@@ -177,7 +177,7 @@ fn typing_through_wrapping_keeps_composer_position_and_text_scroll_stable(
         cx,
         |cx, app, _, _| {
             // Keep the wrapped sample within the composer's minimum height.
-            cx.simulate_resize(gpui::size(px(1_440.), px(900.)));
+            cx.simulate_resize(gpui::size(px(1_600.), px(900.)));
             cx.update(|window, cx| {
                 window.activate_window();
                 app.update(cx, |app, cx| {

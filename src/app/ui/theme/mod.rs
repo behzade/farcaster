@@ -256,9 +256,6 @@ pub(crate) struct Layout {
     pub session_age_slot: Pixels,
     pub counter_slot: Pixels,
     pub folders_min: Pixels,
-    pub notice_panel: Pixels,
-    pub notice_panel_min: Pixels,
-    pub notice_panel_max: Pixels,
 }
 
 #[derive(Clone, Copy)]
@@ -344,10 +341,10 @@ const STRUCTURE: Structure = Structure {
         compact_min_width: px(960.0),
         window_width: px(1240.0),
         window_height: px(820.0),
-        session_rail: px(286.0),
+        session_rail: px(330.0),
         session_rail_min: px(220.0),
         session_rail_max: px(430.0),
-        run_panel: px(332.0),
+        run_panel: px(330.0),
         run_panel_min: px(220.0),
         run_panel_max: px(430.0),
         transcript_overdraw: px(160.0),
@@ -361,9 +358,6 @@ const STRUCTURE: Structure = Structure {
         session_age_slot: px(30.0),
         counter_slot: px(18.0),
         folders_min: px(176.0),
-        notice_panel: px(160.0),
-        notice_panel_min: px(76.0),
-        notice_panel_max: px(2000.0),
     },
     sizes: default_sizes(),
 };
@@ -458,9 +452,6 @@ metric_keys!(
     layout.session_age_slot => "layout-session-age-slot",
     layout.counter_slot => "layout-counter-slot",
     layout.folders_min => "layout-folders-min",
-    layout.notice_panel => "layout-notice-panel",
-    layout.notice_panel_min => "layout-notice-panel-min",
-    layout.notice_panel_max => "layout-notice-panel-max",
 );
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

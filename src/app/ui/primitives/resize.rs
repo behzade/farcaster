@@ -32,10 +32,6 @@ impl ResizeState {
         self.height.map(f32::from)
     }
 
-    pub(crate) fn set_height(&mut self, height: Pixels) {
-        self.height = Some(height);
-    }
-
     pub(crate) fn height_or(&self, fallback: Pixels) -> Pixels {
         self.height.unwrap_or(fallback)
     }

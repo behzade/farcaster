@@ -9,7 +9,7 @@ use gpui::{
 };
 
 use super::{
-    FarcasterApp, RailPanel,
+    FarcasterApp,
     drag::DraggedSession,
     groups::{SessionRailItem, SessionRailKind},
 };
@@ -143,26 +143,21 @@ pub(super) fn inactive_session_badge(
 }
 
 pub(super) fn archived_panel_height(rows: usize) -> Pixels {
-    theme().controls.icon_button + super::session_row_height(true) * rows as f32
+    theme().controls.icon_button + super::session_row_height(false) * rows as f32
 }
 
-pub(super) fn rail_panel_slot(panel: RailPanel, archived: usize, collapsed: bool) -> PanelSlot {
+pub(super) fn archived_panel_slot(archived: usize, collapsed: bool) -> PanelSlot {
     if collapsed {
         return PanelSlot::new(theme().controls.icon_button, theme().controls.icon_button);
     }
-    match panel {
-        RailPanel::Archived => PanelSlot::new(
-            archived_panel_height(1),
-            archived_panel_height(archived.clamp(1, ARCHIVED_OPEN_ROWS)),
-        ),
-        RailPanel::Notifications => {
-            PanelSlot::new(theme().layout.notice_panel_min, theme().layout.notice_panel)
-        }
-    }
+    PanelSlot::new(
+        archived_panel_height(1),
+        archived_panel_height(archived.clamp(1, ARCHIVED_OPEN_ROWS)),
+    )
 }
 
 pub(super) fn archived_panel_rows(height: Pixels) -> usize {
-    ((height - theme().controls.icon_button) / super::session_row_height(true)).max(0.0) as usize
+    ((height - theme().controls.icon_button) / super::session_row_height(false)).max(0.0) as usize
 }
 
 #[cfg(test)]

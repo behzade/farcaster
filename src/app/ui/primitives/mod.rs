@@ -39,6 +39,6 @@ pub(crate) use popover::{ContextMenuExt, DropdownMenu, Popover};
 pub(crate) use reorder::{ReorderPosition, ReorderTargetExt};
 pub(crate) use resize::{ResizeBounds, ResizeState};
 pub(crate) use search::SearchField;
-pub(crate) use stack::{PanelSlot, panel_bounds, panel_resized, panel_room, panel_space};
+pub(crate) use stack::{PanelSlot, panel_bounds, panel_space};
 pub(crate) use textarea::{create_submit_textarea, submit_textarea};
 pub(crate) use tooltip::{AppTooltip, AppTooltips, init_tooltips, tooltip_overlay};

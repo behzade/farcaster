@@ -34,7 +34,7 @@ pub(super) fn create(
     });
     let composer_focus = composer.read(cx).focus_handle(cx);
 
-    let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search sessions"));
+    let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
     let search_focus = search.read(cx).focus_handle(cx);
     let session_title = cx.new(|cx| InputState::new(window, cx));
     let network_proxy = cx.new(|cx| {

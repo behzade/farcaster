@@ -4,9 +4,9 @@ use gpui::px;
 use std::{path::PathBuf, time::SystemTime};
 
 use super::{
-    ActiveSessionItem, RailPanel, SessionRailItem, SessionRailKind, archived_panel_rows,
+    ActiveSessionItem, SessionRailItem, SessionRailKind, archived_panel_rows,
     clamped_session_rail_width, first_unsubmitted_draft, hover::session_tooltip_lines,
-    minimal_row_splice, numbered_session_items, rendering::rail_panel_slot,
+    minimal_row_splice, numbered_session_items, rendering::archived_panel_slot,
     replacement_index_after_close, rows::run_status_visual, session_accessible_label,
     subagent_counts,
 };
@@ -245,7 +245,8 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
                         assert_eq!(cx.debug_bounds("session-shortcut-1").is_some(), false);
                         let bounds =
                             slots.map(|selector| cx.debug_bounds(selector).expect(selector));
-                        let expected = columns[usize::from(compact)].get_or_insert(bounds);
+                        let expected =
+                            columns[usize::from(compact && !archived)].get_or_insert(bounds);
                         assert_eq!(&bounds, expected, "columns must not depend on row state");
                         for pair in bounds.windows(2) {
                             assert!(pair[0].right() <= pair[1].left());
@@ -299,9 +300,9 @@ fn minimal_row_reconciliation_preserves_equal_prefix_and_suffix() {
 #[test]
 fn the_archive_panel_opens_at_five_rows_and_stops_at_the_room_it_was_given() {
     let room = theme().size(700.0);
-    let bounds = panel_bounds(room, rail_panel_slot(RailPanel::Archived, 100, false));
+    let bounds = panel_bounds(room, archived_panel_slot(100, false));
     let header = f32::from(theme().controls.icon_button);
-    let row = f32::from(super::session_row_height(true));
+    let row = f32::from(super::session_row_height(false));
     assert_eq!(f32::from(bounds.height), header + row * 5.0);
     assert_eq!(f32::from(bounds.min_height), header + row);
     assert_eq!(bounds.max_height, room);
@@ -309,10 +310,7 @@ fn the_archive_panel_opens_at_five_rows_and_stops_at_the_room_it_was_given() {
 
 #[test]
 fn the_archive_panel_shows_one_whole_row_at_its_minimum_size() {
-    let bounds = panel_bounds(
-        theme().size(700.0),
-        rail_panel_slot(RailPanel::Archived, 100, false),
-    );
+    let bounds = panel_bounds(theme().size(700.0), archived_panel_slot(100, false));
     assert_eq!(archived_panel_rows(bounds.min_height), 1);
     assert_eq!(archived_panel_rows(bounds.height), 5);
     assert!(archived_panel_rows(bounds.max_height) > 5);
@@ -322,7 +320,7 @@ fn the_archive_panel_shows_one_whole_row_at_its_minimum_size() {
 fn the_archive_panel_bounds_stay_valid_without_archived_chats() {
     for room in [px(0.0), theme().layout.folders_min, theme().size(600.0)] {
         for collapsed in [false, true] {
-            let bounds = panel_bounds(room, rail_panel_slot(RailPanel::Archived, 0, collapsed));
+            let bounds = panel_bounds(room, archived_panel_slot(0, collapsed));
             assert!(bounds.min_height <= bounds.max_height);
             assert!(bounds.height >= bounds.min_height);
             assert!(bounds.height <= bounds.max_height);
@@ -449,13 +447,6 @@ fn tooltips_report_model_effort_and_direct_subagent_counts() {
 }
 
 #[test]
-fn every_rail_panel_is_numbered_in_stack_order() {
-    for (index, panel) in RailPanel::ALL.into_iter().enumerate() {
-        assert_eq!(panel.index(), index);
-    }
-}
-
-#[test]
 fn direct_worker_counts_do_not_merge_profile_copies() {
     let mut first = item("same", 1, "/project", SessionRailKind::Project, false).session;
     first.path = "/first/same.jsonl".into();
@@ -547,5 +538,48 @@ fn unbound_rail_keys_keep_locator_scope_and_bound_keys_survive_metadata_changes(
     assert_eq!(
         super::session_row_identity(&first),
         super::session_row_identity(&other)
+    );
+}
+
+#[gpui::test]
+fn sidebar_gear_opens_settings_without_the_action_picker(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::sidebar_gear_opens_settings_without_the_action_picker"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.simulate_resize(gpui::size(px(1440.0), px(900.0)));
+            cx.update(|window, cx| {
+                window.activate_window();
+                window.draw(cx).clear(cx);
+                assert!(
+                    app.read(cx).views.panel_space.unwrap() > px(100.0),
+                    "archive sizing must use the list area, not the footer height"
+                );
+            });
+            let gear = cx
+                .debug_bounds("sidebar-settings-control")
+                .expect("Settings control");
+            assert_eq!(
+                gear.size.width,
+                theme().controls.icon_button,
+                "keep the full hit area"
+            );
+            cx.simulate_click(gear.center(), Default::default());
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                let app = app.read(cx);
+                assert!(
+                    app.overlays.view.settings,
+                    "gear should open Settings directly"
+                );
+                assert!(
+                    app.navigation.picker.is_none(),
+                    "gear should not open the action picker"
+                );
+            });
+        },
     );
 }
