@@ -185,9 +185,8 @@ impl Render for ProjectTrustView {
                     .flex()
                     .flex_col()
                     .gap(theme().space.md)
-                    .rounded(theme().radius)
-                    .border(theme().border)
-                    .border_color(theme().colors.border)
+                    .rounded(crate::app::ui::primitives::surface_radius())
+                    .shadow(crate::app::ui::primitives::surface_shadow())
                     .bg(theme().colors.panel)
                     .p(theme().space.md)
                     .child(

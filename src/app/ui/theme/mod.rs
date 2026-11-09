@@ -668,8 +668,8 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     component.mono_font_family = MONO_FONT_FAMILY.into();
     component.mono_font_size = theme.type_scale.body_small;
     component.highlight_theme = highlight_theme();
-    component.radius = theme.radius;
-    component.radius_lg = theme.radius;
+    component.radius = theme.radius.max(theme.size(4.0));
+    component.radius_lg = theme.radius.max(theme.size(10.0));
     component.shadow = true;
     // Resolve every component color here so no state inherits the library preset.
     // Buttons own their fills; primary also colors checked controls.

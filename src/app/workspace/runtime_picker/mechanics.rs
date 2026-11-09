@@ -44,17 +44,13 @@ pub(super) fn picker_panel(
     entity: gpui::WeakEntity<FarcasterApp>,
     select: impl Fn(&mut FarcasterApp, usize, &mut Window, &mut Context<FarcasterApp>) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
-    div()
+    crate::app::ui::primitives::floating_surface()
         .id("runtime-picker")
         .w(px(width))
         .max_h(px(height))
         .overflow_y_scroll()
         .flex()
         .flex_col()
-        .bg(theme().colors.panel)
-        .border(theme().border)
-        .border_color(theme().colors.border)
-        .rounded(theme().radius)
         .capture_key_down(move |event: &gpui::KeyDownEvent, window, cx| {
             if event.keystroke.modifiers.modified()
                 || !search_focus.contains_focused(window, cx)
@@ -117,8 +113,6 @@ pub(super) fn option_row(label: &'static str) -> gpui::Div {
         .justify_between()
         .gap(theme().space.sm)
         .p(theme().space.sm)
-        .border_t(theme().border)
-        .border_color(theme().colors.border)
         .child(div().text_color(theme().colors.muted).child(label))
 }
 

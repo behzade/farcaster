@@ -141,7 +141,7 @@ fn add_form(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement 
     }
     div().debug_selector(|| "harness-profile-form".into())
         .flex().flex_col().gap(theme().space.sm)
-        .p(theme().space.sm).border_1().border_color(theme().colors.surface)
+        .p(theme().space.md).rounded(theme().size(6.0)).bg(theme().colors.surface)
         .child(setting_label("Add profile", "Choose the protocol spoken by the command. Set its data directory if it stores sessions elsewhere."))
         .child(backends)
         .child(div().flex().gap(theme().space.sm)

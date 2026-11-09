@@ -411,7 +411,7 @@ impl WorkGraphBoardView {
         entity: Entity<Self>,
         layout: BoardLayoutMode,
     ) -> impl IntoElement {
-        let split = layout == BoardLayoutMode::Wide && has_plan;
+        let split = layout == BoardLayoutMode::Wide && has_plan && self.selected.is_some();
         div()
             .flex_1()
             .min_h_0()
@@ -468,8 +468,6 @@ fn render_board_header(
         .flex()
         .items_center()
         .justify_between()
-        .border_b(theme().border)
-        .border_color(theme().colors.surface)
         .when(has_plan, |header| {
             header.child(
                 button(
@@ -568,6 +566,8 @@ impl Render for WorkGraphBoardView {
             .track_focus(&self.focus)
             .key_context(WORKGRAPH_KEY_CONTEXT)
             .min_h_0()
+            .rounded(crate::app::ui::primitives::surface_radius())
+            .overflow_hidden()
             .bg(theme().colors.panel)
             .child(self.render_state(layout, cx))
     }

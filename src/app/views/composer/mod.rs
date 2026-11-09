@@ -119,10 +119,11 @@ impl FarcasterApp {
             .flex_none()
             .flex()
             .flex_col()
-            .rounded(theme().radius)
+            .rounded(crate::app::ui::primitives::surface_radius())
             .border(theme().border)
             .border_color(composer_border_color(focused))
             .bg(theme().colors.composer)
+            .shadow(crate::app::ui::primitives::surface_shadow())
             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                 if !window.default_prevented() {
                     composer_focus.focus(window, cx);
@@ -170,10 +171,7 @@ impl FarcasterApp {
                     .flex()
                     .items_center()
                     .px(theme().space.md)
-                    .border_t(theme().border)
-                    .border_color(theme().colors.surface)
-                    .bg(theme().colors.panel)
-                    .rounded_b(theme().radius)
+                    .rounded_b(crate::app::ui::primitives::surface_radius())
                     .child(self.render_composer_controls(entity.clone(), footer_scroll))
                     .child(actions),
             );
@@ -243,6 +241,6 @@ fn composer_border_color(focused: bool) -> gpui::Rgba {
     if focused {
         theme().colors.focus_border
     } else {
-        theme().colors.border
+        gpui::rgba(0x00000000)
     }
 }

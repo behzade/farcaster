@@ -87,7 +87,6 @@ pub(super) fn render(
                 .flex()
                 .gap(theme().space.md)
                 .child(profile_rail(app, entity.clone(), cx))
-                .child(div().w(theme().size(1.0)).bg(theme().colors.surface).flex_none())
                 .child(profile_detail(app, entity)),
         )
         .into_any_element()
@@ -184,24 +183,20 @@ fn profile_rail(
         .gap(theme().space.sm)
         .child(rail)
         .child(
-            div()
-                .border_t_1()
-                .border_color(theme().colors.surface)
-                .pt(theme().space.xs)
-                .child(
-                    profile_button(
-                        "worker-profile-add",
-                        "Add profile",
-                        false,
-                        !editing && !editor.has_draft(),
-                        cx,
-                        move |window, cx| {
-                            let _ = entity
-                                .update(cx, |this, cx| this.edit_worker_profile(None, window, cx));
-                        },
-                    )
-                    .icon(AppIcon::Plus),
-                ),
+            div().pt(theme().space.xs).child(
+                profile_button(
+                    "worker-profile-add",
+                    "Add profile",
+                    false,
+                    !editing && !editor.has_draft(),
+                    cx,
+                    move |window, cx| {
+                        let _ = entity
+                            .update(cx, |this, cx| this.edit_worker_profile(None, window, cx));
+                    },
+                )
+                .icon(AppIcon::Plus),
+            ),
         )
         .into_any_element()
 }
@@ -622,8 +617,8 @@ fn model_card() -> gpui::Div {
         .flex_col()
         .gap(theme().space.sm)
         .p(theme().size(12.0))
-        .border_1()
-        .border_color(theme().colors.surface)
+        .rounded(theme().size(6.0))
+        .bg(theme().colors.surface)
 }
 
 fn route_menu(

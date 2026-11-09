@@ -43,8 +43,6 @@ pub(in crate::app::views) fn render(
                             .flex()
                             .items_center()
                             .justify_between()
-                            .border_b(theme().border)
-                            .border_color(theme().colors.border)
                             .child(format!(
                                 "Attachment {} of {}",
                                 preview.index + 1,

@@ -84,7 +84,9 @@ impl FarcasterApp {
             let all_entity = filter_entity.clone();
             let mut menu = menu
                 .min_w(theme().size(220.0))
+                .max_w(theme().size(300.0))
                 .max_h(theme().size(420.0))
+                .scrollable(true)
                 .label("Projects")
                 .item(
                     PopupMenuItem::new("All projects")

@@ -355,8 +355,6 @@ impl FarcasterApp {
                     .justify_end()
                     .gap(theme().space.xs)
                     .p(theme().space.sm)
-                    .border_t(theme().border)
-                    .border_color(theme().colors.border)
                     .child({
                         let entity = entity.clone();
                         button(

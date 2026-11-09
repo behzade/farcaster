@@ -67,8 +67,6 @@ pub(in crate::app::views) fn render(
                         .gap(theme().space.sm)
                         .px(crate::app::ui::grid::form_inset())
                         .py(theme().space.md)
-                        .border_b_1()
-                        .border_color(theme().colors.surface)
                         .child(
                             div()
                                 .text_size(theme().type_scale.display)
@@ -130,8 +128,6 @@ pub(in crate::app::views) fn render(
                         .gap(theme().space.sm)
                         .px(crate::app::ui::grid::form_inset())
                         .py(theme().space.md)
-                        .border_t_1()
-                        .border_color(theme().colors.surface)
                         .child(
                             div()
                                 .text_size(theme().type_scale.caption)
@@ -164,6 +160,7 @@ fn settings_control(
 ) -> gpui::Stateful<gpui::Div> {
     crate::app::ui::primitives::icon_control(id, label)
         .track_focus(focus)
+        .rounded(theme().size(4.0))
         .hover(|control| control.bg(theme().colors.highlight))
 }
 

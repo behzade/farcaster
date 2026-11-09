@@ -460,8 +460,6 @@ impl FarcasterApp {
                                         .flex()
                                         .flex_wrap()
                                         .gap(theme().space.md)
-                                        .border_t(theme().border)
-                                        .border_color(theme().colors.border)
                                         .px(theme().space.md)
                                         .py(theme().space.sm)
                                         .text_size(theme().type_scale.caption)

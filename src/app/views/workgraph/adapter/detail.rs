@@ -9,7 +9,7 @@ use crate::{
     app::ui::theme::{MONO_FONT_FAMILY, theme},
     app::views::workgraph::{
         components::{
-            detail_action, detail_copy, detail_empty, detail_rule, detail_section, evidence_label,
+            detail_action, detail_copy, detail_empty, detail_section, evidence_label,
             requirement_label,
         },
         contract::{PlanData, PlanLoadState},
@@ -88,12 +88,7 @@ fn render_outcome(
 ) -> impl IntoElement {
     detail_section("Outcome")
         .p(theme().space.sm)
-        .border_l(theme().size(2.0))
-        .border_color(if current {
-            theme().colors.indicator
-        } else {
-            theme().colors.border
-        })
+        .rounded(theme().size(6.0))
         .bg(theme().colors.surface)
         .when_some(outcome, |section, step| {
             section.child(detail_copy().child(step.note.clone())).child(
@@ -180,13 +175,11 @@ impl WorkGraphBoardView {
             .flex_none()
             .h_full()
             .overflow_y_scroll()
-            .px(theme().space.md)
-            .py(theme().space.md)
-            .bg(theme().colors.panel)
+            .p(theme().size(24.0))
             .when(!external && !narrow, |detail| {
                 detail
-                    .border_l(theme().border)
-                    .border_color(theme().colors.surface)
+                    .bg(theme().colors.canvas)
+                    .rounded_br(crate::app::ui::primitives::surface_radius())
             })
             .child(match (snapshot, node) {
                 (Some(snapshot), Some(node)) => {
@@ -244,7 +237,7 @@ impl WorkGraphBoardView {
                     div()
                         .flex()
                         .flex_col()
-                        .gap(theme().space.md)
+                        .gap(theme().size(24.0))
                         .w_full()
                         .max_w(theme().size(620.0))
                         .mx_auto()
@@ -254,7 +247,6 @@ impl WorkGraphBoardView {
                             detail.child(render_scoped_paths(node))
                         })
                         .child(render_outcome(node.completion, outcome, current))
-                        .child(detail_rule())
                         .child(render_successors(successors, entity))
                         .when_some(session_action, |detail, action| {
                             detail.child(detail_action(action))

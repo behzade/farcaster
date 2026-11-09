@@ -22,8 +22,7 @@ pub(super) fn render_session_goal(goal: &crate::agents::SessionGoal, compact: bo
         .mt(if compact { px(0.0) } else { theme().space.sm })
         .px(theme().space.sm)
         .py(theme().space.sm)
-        .border(theme().border)
-        .border_color(theme().colors.border)
+        .rounded(theme().size(6.0))
         .bg(theme().colors.surface)
         .flex()
         .items_start()
@@ -107,6 +106,7 @@ pub(super) fn render_plan_list(
         .flex()
         .flex_col()
         .p(theme().space.md)
+        .gap(theme().space.xs)
         .when(rows.is_empty(), |list| {
             list.child(detail_empty("No nodes match your search."))
         })
@@ -140,12 +140,8 @@ fn render_plan_row(
         .cursor_pointer()
         .flex_none()
         .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.select_node(number, cx)))
-        .border_l(theme().size(2.0))
-        .border_color(if is_selected {
-            theme().colors.indicator
-        } else {
-            theme().colors.panel
-        })
+        .aria_selected(is_selected)
+        .rounded(theme().size(6.0))
         .bg(if is_selected {
             theme().colors.highlight
         } else {
@@ -245,8 +241,6 @@ pub(super) fn render_create_form(
                 .flex()
                 .items_center()
                 .justify_between()
-                .border_b(theme().border)
-                .border_color(theme().colors.surface)
                 .child(
                     div()
                         .text_size(theme().type_scale.display)
@@ -302,8 +296,6 @@ pub(super) fn render_create_form(
                 .items_center()
                 .justify_end()
                 .gap(theme().space.sm)
-                .border_t(theme().border)
-                .border_color(theme().colors.surface)
                 .child(button(
                         "workgraph-create-cancel",
                         "Cancel",
@@ -344,17 +336,13 @@ fn compact_field(label: &'static str, control: impl IntoElement) -> impl IntoEle
 }
 
 pub(super) fn detail_section(label: &'static str) -> Div {
-    div().flex().flex_col().gap(theme().space.xs).child(
+    div().flex().flex_col().gap(theme().space.sm).child(
         div()
             .text_size(theme().type_scale.caption)
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(theme().colors.muted)
             .child(label),
     )
-}
-
-pub(super) fn detail_rule() -> Div {
-    div().h(theme().border).w_full().bg(theme().colors.surface)
 }
 
 pub(super) fn detail_empty(text: &'static str) -> Div {

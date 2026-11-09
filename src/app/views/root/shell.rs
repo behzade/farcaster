@@ -184,7 +184,7 @@ impl FarcasterApp {
                             .max_w(theme().layout.session_rail_max)
                             .flex_none()
                             .border_r(theme().border)
-                            .border_color(theme().colors.border)
+                            .border_color(crate::app::ui::primitives::separator_color())
                             .when(
                                 !(self.modal_rendered_in_native_window()
                                     && self.overlays.view.sessions),
@@ -222,7 +222,7 @@ impl FarcasterApp {
                             .max_w(theme().layout.run_panel_max)
                             .flex_none()
                             .border_l(theme().border)
-                            .border_color(theme().colors.border)
+                            .border_color(crate::app::ui::primitives::separator_color())
                             .child(
                                 if self.modal_rendered_in_native_window() && self.overlays.view.run
                                 {

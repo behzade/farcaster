@@ -222,6 +222,7 @@ impl WorkGraphBoardView {
             .flex()
             .flex_col()
             .px(theme().space.md)
+            .gap(theme().space.xs)
             .child(
                 div()
                     .flex()
@@ -360,8 +361,8 @@ impl WorkGraphBoardView {
                     cx.notify();
                 })
             })
-            .border_b(theme().border)
-            .border_color(theme().colors.border)
+            .aria_selected(self.catalog.selected == Some(number))
+            .rounded(theme().size(6.0))
             .bg(if self.catalog.selected == Some(number) {
                 theme().colors.highlight
             } else {
