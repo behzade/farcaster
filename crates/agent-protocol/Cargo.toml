@@ -7,7 +7,7 @@ publish = false
 license = "GPL-3.0-or-later"
 
 [dependencies]
-base64 = "0.22.1"
+base64 = "0.23.1"
 farcaster-contracts = { path = "../contracts" }
 farcaster-sessions = { path = "../sessions" }
 serde = { version = "1.0.229", features = ["derive"] }

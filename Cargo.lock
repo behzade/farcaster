@@ -1852,7 +1852,7 @@ dependencies = [
 name = "farcaster-agent-protocol"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "farcaster-contracts",
  "farcaster-sessions",
  "serde",
@@ -1866,7 +1866,7 @@ version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
  "async-channel",
- "base64 0.22.1",
+ "base64 0.23.1",
  "blocking",
  "claude-sdk-types",
  "farcaster-access",
@@ -1903,7 +1903,7 @@ dependencies = [
 name = "farcaster-conversation"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "farcaster-agent-protocol",
  "farcaster-utility",
  "serde_json",
@@ -2010,7 +2010,7 @@ name = "farcaster-storage"
 version = "0.1.0"
 dependencies = [
  "async-channel",
- "base64 0.22.1",
+ "base64 0.23.1",
  "farcaster-access",
  "farcaster-agent-protocol",
  "farcaster-agents",
