@@ -63,6 +63,20 @@ class ReleaseInputsTests(unittest.TestCase):
         self.assertIn('pre-release-commit-message = "chore(release): prepare v{{version}}"',
                       config)
 
+    def test_nix_builds_linux_ghostty_shim_with_pic(self):
+        source = (ROOT / "packaging/nix.nix").read_text()
+        self.assertIn('postPatch = \'\'', source)
+        self.assertIn('patch -d "$cargoDepsCopy/gpui-libghostty-${ghostty.version}" '
+                      '-p1 < ${./ghostty-linux-shim-pic.patch}', source)
+        patch = (ROOT / "packaging/ghostty-linux-shim-pic.patch").read_text()
+        self.assertIn("fn compile_linux_shim(", patch)
+        additions = [line[1:] for line in patch.splitlines()
+                     if line.startswith("+") and not line.startswith("+++")]
+        self.assertEqual(additions, [
+            '        .args(["cc", "-std=c11", "-D_POSIX_C_SOURCE=200809L", '
+            '"-fPIC", "-c", "-I"])',
+        ])
+
     def test_nix_guard_matches_locked_ghostty(self):
         lock = (ROOT / "Cargo.lock").read_text()
         version = re.search(r'name = "gpui-libghostty"\nversion = "([^"]+)"', lock).group(1)

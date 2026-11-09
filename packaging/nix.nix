@@ -89,6 +89,9 @@ rustPlatform.buildRustPackage {
     "farcaster"
   ];
   doCheck = false;
+  postPatch = ''
+    patch -d "$cargoDepsCopy/gpui-libghostty-${ghostty.version}" -p1 < ${./ghostty-linux-shim-pic.patch}
+  '';
   preBuild = ''
     export ZIG="${ghosttyZig}"
     export GHOSTTY_NATIVE_CACHE_DIR="$NIX_BUILD_TOP/ghostty-native"
