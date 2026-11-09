@@ -7,7 +7,7 @@
   makeWrapper,
   writeShellScript,
   zig,
-  libcxx,
+  llvmPackages_22,
   fontconfig,
   freetype,
   libGL,
@@ -52,7 +52,7 @@ let
     libxml2
     wayland
     vulkan-loader
-    libcxx
+    llvmPackages_22.libcxx
   ];
 in
 assert lib.assertMsg (

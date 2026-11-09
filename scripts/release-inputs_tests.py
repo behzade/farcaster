@@ -32,15 +32,20 @@ class ReleaseInputsTests(unittest.TestCase):
         arch = (ROOT / "packaging/arch/PKGBUILD.in").read_text()
         self.assertIn("'libc++>=22'", arch)
         flake = (ROOT / "flake.nix").read_text()
-        self.assertIn("pkgs.llvmPackages_22.libcxx.override { inherit (pkgs) stdenv; }", flake)
-        self.assertIn("libcxx = libcxxFor pkgs;", flake)
-        self.assertIn("(libcxxFor pkgs)", flake)
-        source = (ROOT / "packaging/nix.nix").read_text()
-        self.assertRegex(source, r"runtimeLibraries = \[[^]]*\blibcxx\b")
-        self.assertNotIn("llvmPackages_22", source)
+        for path in ("flake.nix", "packaging/nix.nix"):
+            with self.subTest(path=path):
+                self.assertIn("llvmPackages_22.libcxx", (ROOT / path).read_text())
+
+    def test_nix_uses_the_pinned_llvm_toolchain(self):
+        flake = (ROOT / "flake.nix").read_text()
+        self.assertNotIn("libcxxFor", flake)
+        self.assertNotRegex(flake, r"libcxx\.override\b")
+        self.assertNotIn("llvmPackages_21", flake)
 
     def test_nix_preserves_native_zig_target(self):
         flake = (ROOT / "flake.nix").read_text()
+        self.assertIn("installPhase = previous.installPhase + ''", flake)
+        self.assertNotIn('postInstall = (previous.postInstall or "")', flake)
         self.assertIn('patch -d "$out" -p1 < ${./packaging/zig-native-target.patch}', flake)
         self.assertIn('nixpkgs.lib.hasSuffix "-linux" system', flake)
         patch = (ROOT / "packaging/zig-native-target.patch").read_text()

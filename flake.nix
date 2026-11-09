@@ -37,13 +37,12 @@
           overlays = [ rust-overlay.overlays.default ];
         };
       rustToolchainFor = pkgs: pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
-      libcxxFor = pkgs: pkgs.llvmPackages_22.libcxx.override { inherit (pkgs) stdenv; };
       zigFor =
         system:
         zig-overlay.packages.${system}."0.17.0".overrideAttrs (
           previous:
           nixpkgs.lib.optionalAttrs (nixpkgs.lib.hasSuffix "-linux" system) {
-            postInstall = (previous.postInstall or "") + ''
+            installPhase = previous.installPhase + ''
               patch -d "$out" -p1 < ${./packaging/zig-native-target.patch}
             '';
           }
@@ -57,7 +56,6 @@
           rustToolchain = rustToolchainFor pkgs;
           farcaster = pkgs.callPackage ./packaging/nix.nix {
             zig = zigFor system;
-            libcxx = libcxxFor pkgs;
             rustPlatform = pkgs.makeRustPlatform {
               cargo = rustToolchain;
               rustc = rustToolchain;
@@ -110,7 +108,7 @@
               libdrm
               libgbm
               libGL
-              (libcxxFor pkgs)
+              llvmPackages_22.libcxx
               libxml2
               libx11
               libxcb
