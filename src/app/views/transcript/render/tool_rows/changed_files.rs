@@ -183,17 +183,17 @@ pub(super) fn render(
                     )
                     .aria_expanded(open)
                     .h(theme().size(22.0))
-                    .pl(px(depth as f32 * 12.0))
+                    .pl(crate::app::ui::grid::tree_indent(depth))
                     .text_size(theme().type_scale.body_small)
                     .text_color(theme().colors.muted)
-                    .child(app_icon(
+                    .child(crate::app::ui::grid::icon_slot().child(app_icon(
                         if open {
                             AppIcon::CaretDown
                         } else {
                             AppIcon::CaretRight
                         },
                         AppIconSize::Inline,
-                    ))
+                    )))
                     .child(div().min_w_0().text_ellipsis().child(label))
                     .when(!open, |row| {
                         row.child(crate::app::ui::primitives::folder_change_summary(
@@ -204,7 +204,7 @@ pub(super) fn render(
                 }
                 TreeRow::File { index, depth } => div()
                     .w_full()
-                    .pl(px(depth as f32 * 12.0))
+                    .pl(crate::app::ui::grid::tree_indent(depth))
                     .child(file_row(key, &files[index], entity.clone()))
                     .into_any_element(),
             }
@@ -232,10 +232,11 @@ fn file_row(key: usize, file: &ChangedFile, entity: WeakEntity<FarcasterApp>) ->
     )
     .h(theme().size(22.0))
     .text_size(theme().type_scale.body_small)
-    .child(file_icon(Path::new(&file.path)))
+    .child(crate::app::ui::grid::icon_slot().child(file_icon(Path::new(&file.path))))
     .child(
         div()
             .min_w_0()
+            .flex_1()
             .overflow_hidden()
             .whitespace_nowrap()
             .text_ellipsis()

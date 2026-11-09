@@ -65,7 +65,7 @@ pub(in crate::app::views) fn render(
                         .justify_between()
                         .flex_wrap()
                         .gap(theme().space.sm)
-                        .px(theme().size(24.0))
+                        .px(crate::app::ui::grid::form_inset())
                         .py(theme().space.md)
                         .border_b_1()
                         .border_color(theme().colors.surface)
@@ -118,7 +118,7 @@ pub(in crate::app::views) fn render(
                         .h(theme().size(520.0))
                         .max_h(theme().size(520.0))
                         .overflow_y_scroll()
-                        .p(theme().size(24.0))
+                        .p(crate::app::ui::grid::form_inset())
                         .child(content),
                 )
                 .child(
@@ -128,7 +128,7 @@ pub(in crate::app::views) fn render(
                         .items_center()
                         .justify_between()
                         .gap(theme().space.sm)
-                        .px(theme().size(24.0))
+                        .px(crate::app::ui::grid::form_inset())
                         .py(theme().space.md)
                         .border_t_1()
                         .border_color(theme().colors.surface)
@@ -276,6 +276,8 @@ fn voice_setting(
                 .child(setting_label("Voice", description))
                 .child(
                     Button::new("voice-toggle")
+                        .w(theme().size(56.0))
+                        .flex_none()
                         .debug_selector(|| "voice-toggle".into())
                         .accessibility_label("Voice")
                         .label(if enabled { "On" } else { "Off" })
@@ -486,6 +488,8 @@ fn toggle_setting(
         .child(setting_label(title, description))
         .child(
             Button::new(id)
+                .w(theme().size(56.0))
+                .flex_none()
                 .label(if enabled { "On" } else { "Off" })
                 .with_size(Size::Small)
                 .toggled(enabled)
@@ -501,6 +505,7 @@ fn toggle_setting(
 fn setting_label(title: &'static str, description: &'static str) -> AnyElement {
     div()
         .min_w_0()
+        .flex_1()
         .max_w(theme().size(480.0))
         .flex()
         .flex_col()

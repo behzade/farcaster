@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use gpui::{
     App, Div, ElementId, InteractiveElement as _, ParentElement as _, Role, Stateful,
-    StatefulInteractiveElement as _, Styled as _, Window, div,
+    StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _,
 };
 use gpui_base::GlobalState;
 
@@ -47,12 +47,8 @@ pub(super) fn activation_row(
 ) -> Stateful<Div> {
     let press = Rc::new(on_press);
     let click = press.clone();
-    div()
+    crate::app::ui::grid::row()
         .id(id)
-        .w_full()
-        .flex()
-        .items_center()
-        .gap(theme().space.xs)
         .rounded(theme().radius)
         .role(Role::Button)
         .aria_label(label)
@@ -105,6 +101,7 @@ pub(super) fn file_path(path: &str, project: Option<&std::path::Path>) -> std::p
 pub(super) fn file_summary(presentation: &ToolPresentation, label: String) -> Div {
     div()
         .min_w_0()
+        .flex_1()
         .flex()
         .items_center()
         .gap(theme().space.xs)
@@ -113,6 +110,7 @@ pub(super) fn file_summary(presentation: &ToolPresentation, label: String) -> Di
         .child(
             div()
                 .min_w_0()
+                .flex_1()
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
@@ -128,12 +126,13 @@ pub(super) fn change_counts((added, removed): (usize, usize)) -> impl Iterator<I
         (removed, "−", theme().colors.error),
     ]
     .into_iter()
-    .filter(|(count, _, _)| *count > 0)
     .map(|(count, sign, color)| {
         div()
+            .min_w(theme().size(36.0))
             .flex_none()
+            .text_right()
             .text_color(color)
-            .child(format!("{sign}{count}"))
+            .when(count > 0, |slot| slot.child(format!("{sign}{count}")))
     })
 }
 

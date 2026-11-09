@@ -10,7 +10,7 @@ use crate::app::ui::{assets::AppIcon, theme::theme};
 
 pub(crate) fn disclosure_detail() -> Div {
     div()
-        .ml(theme().icons.control + theme().space.xs)
+        .ml(crate::app::ui::grid::detail_indent())
         .mt(theme().space.xs)
 }
 
@@ -80,8 +80,8 @@ pub(crate) fn tree_folder_row(
         .w_full()
         .min_w_0()
         .h(theme().size(24.0))
-        .pl(gpui::px(depth as f32 * 12.0 + 4.0))
-        .pr(theme().space.xs)
+        .pl(crate::app::ui::grid::tree_indent(depth))
+        .pr_0()
         .flex()
         .items_center()
         .gap(theme().space.xs)
@@ -90,7 +90,7 @@ pub(crate) fn tree_folder_row(
         .border_color(gpui::rgba(0x00000000))
         .text_size(theme().type_scale.caption)
         .text_color(theme().colors.muted)
-        .child(div().w(theme().size(14.0)).flex_none().child(app_icon(
+        .child(crate::app::ui::grid::icon_slot().child(app_icon(
             if expanded {
                 AppIcon::CaretDown
             } else {

@@ -2,6 +2,7 @@ pub(crate) mod assets;
 pub(crate) mod change_tree;
 pub(crate) mod file_icons;
 pub(crate) mod focus;
+pub(crate) mod grid;
 pub(crate) mod images;
 pub(crate) mod keybindings;
 pub(crate) mod keyboard;
