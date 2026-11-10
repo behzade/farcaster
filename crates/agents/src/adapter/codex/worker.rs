@@ -656,6 +656,7 @@ fn supported_model_efforts(model: &Value) -> Vec<String> {
 
 enum PendingRequest {
     Command(commands::Request),
+    Compact,
     LoadSkills,
     ObsoleteSkills,
     StartTurn,
@@ -1061,7 +1062,7 @@ impl WorkerSession for CodexWorkerSession {
     fn compact(&mut self) -> Result<(), String> {
         let id = self.request("thread/compact/start", json!({"threadId": self.thread_id}))?;
         self.manual_compaction = true;
-        self.pending.insert(id, PendingRequest::Ignore);
+        self.pending.insert(id, PendingRequest::Compact);
         Ok(())
     }
 
@@ -1244,6 +1245,15 @@ impl CodexWorkerSession {
                 };
                 if accepted.is_ok() {
                     self.prompt_requests.remove(id);
+                    // Compaction has no userMessage echo. Its native acknowledgement
+                    // proves that the command was consumed, even while it keeps running.
+                    if matches!(self.pending.get(id), Some(PendingRequest::Compact)) {
+                        self.events.push_back(WorkerEvent::Activity(
+                            WorkerActivity::CommandCompleted {
+                                submission_id: prompt.clone(),
+                            },
+                        ));
+                    }
                     if let Some(PendingRequest::Control {
                         client_id: Some(client_id),
                         ..
@@ -1415,6 +1425,11 @@ impl CodexWorkerSession {
                             Ok(Some(event)) => return Some(event),
                             Ok(None) => {}
                             Err(error) => return Some(WorkerEvent::Failed(error)),
+                        }
+                    }
+                    Some(PendingRequest::Compact) => {
+                        if let Some(event) = self.events.pop_front() {
+                            return Some(event);
                         }
                     }
                     Some(
@@ -1596,7 +1611,7 @@ impl CodexWorkerSession {
                                 error.code
                             )));
                         }
-                        Some(PendingRequest::Ignore) | None => {}
+                        Some(PendingRequest::Compact | PendingRequest::Ignore) | None => {}
                     }
                     self.manual_compaction = false;
                     self.compacting = false;

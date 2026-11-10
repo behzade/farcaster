@@ -60,6 +60,7 @@ impl ConversationState {
             .and_then(|id| self.tools.get(id).copied().or_else(|| self.tool_index(id)));
         let mut incremental_content_changed = true;
         let mut queue_changed = false;
+        let mut compaction_changed = None;
         match kind {
             "agent_start" => {
                 self.begin_run();
@@ -71,6 +72,10 @@ impl ConversationState {
                 }
             }
             "agent_settled" => {
+                if self.compacting {
+                    compaction_changed =
+                        Some(self.compaction_notice(CompactionState::Interrupted, None));
+                }
                 self.running = false;
                 if let Some(start) = self.run_started_at.take() {
                     self.completed_runs.push(start..self.items.len());
@@ -110,21 +115,22 @@ impl ConversationState {
             }
             "compaction_start" => {
                 self.compacting = true;
-                self.notice(format!(
-                    "Compacting context ({})",
-                    text_field(event, "reason")
-                ));
+                compaction_changed = Some(self.compaction_notice(CompactionState::Running, None));
             }
             "compaction_end" => {
                 self.compacting = false;
-                let message = if event.get("aborted").and_then(Value::as_bool) == Some(true) {
-                    "Compaction aborted".to_owned()
-                } else if let Some(error) = event.get("errorMessage").and_then(Value::as_str) {
-                    format!("Compaction failed: {error}")
+                let error = event
+                    .get("errorMessage")
+                    .and_then(Value::as_str)
+                    .filter(|error| !error.trim().is_empty());
+                let status = if event.get("aborted").and_then(Value::as_bool) == Some(true) {
+                    CompactionState::Aborted
+                } else if error.is_some() {
+                    CompactionState::Failed
                 } else {
-                    "Context compacted".to_owned()
+                    CompactionState::Complete
                 };
-                self.notice(message);
+                compaction_changed = Some(self.compaction_notice(status, error));
             }
             "auto_retry_start"
             | "summarization_retry_scheduled"
@@ -140,7 +146,7 @@ impl ConversationState {
             "turn_start" | "turn_end" => {}
             unknown => self.diagnostic(format!("Unknown RPC event: {unknown}")),
         }
-        let changed_from = match kind {
+        let changed_from = compaction_changed.or_else(|| match kind {
             "message_start" => Some(previous_len.saturating_sub(1)),
             "message_update" if incremental_content_changed => previous_live_start,
             "message_update" => None,
@@ -156,16 +162,14 @@ impl ConversationState {
             | "tool_execution_end"
             | "tool_metadata_changed"
             | "tool_review_changed" => affected_tool.or(Some(previous_len)),
-            "compaction_start"
-            | "compaction_end"
-            | "auto_retry_start"
+            "auto_retry_start"
             | "auto_retry_end"
             | "summarization_retry_scheduled"
             | "summarization_retry_attempt_start"
             | "summarization_retry_finished"
             | "extension_error" => Some(previous_len),
             _ => None,
-        };
+        });
         let state_changed = queue_changed || previous_state != state(self);
         (changed_from, state_changed)
     }
@@ -461,6 +465,39 @@ impl ConversationState {
             tool_review: None,
             invocation: None,
         }));
+    }
+
+    fn compaction_notice(&mut self, status: CompactionState, error: Option<&str>) -> usize {
+        let pending = self
+            .items
+            .rposition(|item| item.kind == TranscriptKind::Compaction(CompactionState::Running));
+        let index = pending.unwrap_or(self.items.len());
+        let text = match error {
+            Some(error) => format!("{}: {error}", status.label()),
+            None => status.label().to_owned(),
+        };
+        let item = Arc::new(TranscriptItem {
+            kind: TranscriptKind::Compaction(status),
+            label: "Context".into(),
+            text,
+            images: Arc::default(),
+            files: Arc::default(),
+            stream_chunks: Arc::default(),
+            streaming: status == CompactionState::Running,
+            is_error: status == CompactionState::Failed,
+            tool_call_id: None,
+            tool_output: String::new(),
+            tool_presentation: None,
+            tool_details: None,
+            tool_review: None,
+            invocation: None,
+        });
+        if pending.is_some() {
+            self.items.set(index, item);
+        } else {
+            self.items.push(item);
+        }
+        index
     }
 
     fn diagnostic(&mut self, text: String) {

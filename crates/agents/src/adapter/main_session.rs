@@ -799,11 +799,9 @@ impl WorkerSessionTransport {
             WorkerActivity::RetryFinished => json!({"type": "auto_retry_end"}),
             WorkerActivity::CompactionStarted => json!({
                 "type": "compaction_start",
-                "reason": "manual",
             }),
             WorkerActivity::CompactionFinished { aborted, error } => json!({
                 "type": "compaction_end",
-                "reason": "manual",
                 "aborted": aborted,
                 "errorMessage": error,
             }),

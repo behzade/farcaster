@@ -15,6 +15,9 @@ use crate::{
 };
 
 #[cfg(test)]
+#[path = "conversation/compaction_tests.rs"]
+mod compaction_tests;
+#[cfg(test)]
 #[path = "conversation/notices_tests.rs"]
 mod notices_tests;
 
@@ -61,9 +64,31 @@ pub enum TranscriptKind {
     Tool,
     Error,
     Notice,
+    Compaction(CompactionState),
     Custom,
     AgentResult,
     PeerMessage,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CompactionState {
+    Running,
+    Complete,
+    Aborted,
+    Failed,
+    Interrupted,
+}
+
+impl CompactionState {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Running => "Compacting context…",
+            Self::Complete => "Context compacted",
+            Self::Aborted => "Compaction cancelled",
+            Self::Failed => "Compaction failed",
+            Self::Interrupted => "Compaction interrupted",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -413,7 +438,12 @@ impl ConversationState {
     pub fn ended_in_error(&self) -> bool {
         self.items
             .iter_rev()
-            .find(|item| item.kind != TranscriptKind::Notice)
+            .find(|item| {
+                !matches!(
+                    item.kind,
+                    TranscriptKind::Notice | TranscriptKind::Compaction(_)
+                )
+            })
             .is_some_and(|item| item.kind == TranscriptKind::Error)
     }
 

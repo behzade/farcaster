@@ -579,6 +579,11 @@ fn render_row(
                 entity.clone(),
             )
         }
+        TranscriptRow::Item { index, .. }
+            if matches!(items[index].kind, TranscriptKind::Compaction(_)) =>
+        {
+            detail_rows::render_compaction(font_scale, key, &items[index])
+        }
         TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Error => {
             render_error(font_scale, key, &items[index], expanded, entity)
         }
@@ -788,9 +793,10 @@ fn fenced_text(text: &str) -> String {
 fn item_color(item: &TranscriptItem) -> gpui::Rgba {
     match item.kind {
         TranscriptKind::Error => theme().colors.error,
-        TranscriptKind::Notice | TranscriptKind::Custom | TranscriptKind::AgentResult => {
-            theme().colors.muted
-        }
+        TranscriptKind::Notice
+        | TranscriptKind::Custom
+        | TranscriptKind::AgentResult
+        | TranscriptKind::Compaction(_) => theme().colors.muted,
         TranscriptKind::User | TranscriptKind::Assistant | TranscriptKind::PeerMessage => {
             theme().colors.text
         }

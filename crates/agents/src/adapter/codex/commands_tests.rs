@@ -30,6 +30,34 @@ fn reply(session: &mut CodexWorkerSession, request: &Value, result: Value) -> Ve
 }
 
 #[test]
+fn compact_acceptance_reports_command_consumption_without_a_user_message_echo() {
+    let (mut session, mut sent) = writable_test_session();
+    assert!(!submit(&mut session, "compact-submission", "/compact").expect("submit"));
+    let request = read(&mut sent);
+    let events = reply(&mut session, &request, json!({}));
+    assert!(
+        events.iter().any(|event| matches!(event,
+            WorkerEvent::Activity(WorkerActivity::CommandCompleted { submission_id })
+                if submission_id == "compact-submission"
+        )),
+        "accepted /compact must resolve its pending delivery receipt"
+    );
+    assert_eq!(
+        session.poll_prompt_ack(),
+        Some(("compact-submission".into(), Ok(())))
+    );
+    assert!(
+        session.manual_compaction,
+        "acceptance must not finish compaction early"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, WorkerEvent::Settled { .. }))
+    );
+}
+
+#[test]
 fn review_and_compact_use_native_requests_and_reject_invalid_arguments() {
     for (command, method, target) in [
         ("/compact", "thread/compact/start", Value::Null),

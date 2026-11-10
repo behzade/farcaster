@@ -13,6 +13,38 @@ use crate::extensions::SessionState;
 struct IdleWorker;
 
 #[test]
+fn compaction_bridge_preserves_outcomes_without_guessing_the_trigger() {
+    for backend in Backend::ALL {
+        let mut transport = WorkerSessionTransport::new(
+            std::path::Path::new("/locators"),
+            backend,
+            "compact-test".into(),
+            Box::new(IdleWorker),
+            MainSessionMetadata::default(),
+            None,
+        )
+        .expect("transport");
+        transport.enqueue_activity(WorkerActivity::CompactionStarted);
+        transport.enqueue_activity(WorkerActivity::CompactionFinished {
+            aborted: true,
+            error: Some("Stopped by user".into()),
+        });
+        let Some(SessionEvent::Activity(start)) = transport.pending.pop_front() else {
+            panic!("start")
+        };
+        assert_eq!(start.value()["type"], "compaction_start");
+        assert!(start.value().get("reason").is_none());
+        let Some(SessionEvent::Activity(end)) = transport.pending.pop_front() else {
+            panic!("end")
+        };
+        assert_eq!(end.value()["type"], "compaction_end");
+        assert_eq!(end.value()["aborted"], true);
+        assert_eq!(end.value()["errorMessage"], "Stopped by user");
+        assert!(end.value().get("reason").is_none());
+    }
+}
+
+#[test]
 fn steer_error_recovery_defaults_to_failure_without_backend_opt_in() {
     let transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
@@ -87,6 +119,58 @@ struct ControlledPromptState {
 }
 
 struct ControlledPromptWorker(Arc<std::sync::Mutex<ControlledPromptState>>);
+
+#[test]
+fn consumed_compact_command_resolves_pending_prompt_in_both_receipt_orders() {
+    for ack_first in [true, false] {
+        let mut transport = WorkerSessionTransport::new(
+            std::path::Path::new("/locators"),
+            Backend::Codex,
+            "compact".into(),
+            Box::new(ControlledPromptWorker(Arc::new(std::sync::Mutex::new(
+                ControlledPromptState {
+                    can_cancel_before_delivery: true,
+                    ..Default::default()
+                },
+            )))),
+            MainSessionMetadata::default(),
+            None,
+        )
+        .expect("transport");
+        let id = transport
+            .send(SessionCommand::Prompt {
+                mode: PromptMode::Normal,
+                message: "/compact".into(),
+                images: Vec::new(),
+            })
+            .expect("submit");
+        if ack_first {
+            transport.finish_prompt_ack(id.clone(), Ok(()));
+            assert!(transport.pending_prompts.contains_key(&id));
+        }
+        transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::CommandCompleted {
+            submission_id: id.clone(),
+        }));
+        if !ack_first {
+            transport.finish_prompt_ack(id.clone(), Ok(()));
+        }
+        transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::CompactionFinished {
+            aborted: false,
+            error: None,
+        }));
+        transport.enqueue_worker_event(WorkerEvent::Settled {
+            output: String::new(),
+        });
+        assert!(transport.pending_prompts.is_empty());
+        assert!(transport.prompt_deliveries.is_empty());
+        assert!(!transport.running);
+        assert!(transport.pending.iter().any(|event| matches!(event,
+            SessionEvent::Response(response)
+                if response.id.as_deref() == Some(id.as_str())
+                    && matches!(&response.result, Ok(Payload::Prompt(PromptMode::Normal)))
+        )));
+    }
+}
 
 impl WorkerSession for ControlledPromptWorker {
     fn respond_questions(&mut self, response: crate::QuestionResponse) -> Result<(), String> {

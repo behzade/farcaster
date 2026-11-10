@@ -1,6 +1,25 @@
 use std::sync::Arc;
 
 use super::*;
+
+#[test]
+fn compaction_status_updates_keep_their_row_key_and_refresh_the_revision() {
+    let mut state = crate::conversation::ConversationState::default();
+    state.reduce_deferred(&serde_json::json!({"type":"compaction_start"}));
+    let running = project_rows(&state.items);
+    state.reduce_deferred(&serde_json::json!({"type":"compaction_end"}));
+    let complete = project_rows(&state.items);
+    assert_eq!(running.len(), 1);
+    assert_eq!(complete.len(), 1);
+    assert_eq!(running[0].key(), complete[0].key());
+    assert!(running[0].same_position(&complete[0]));
+    assert_ne!(running[0], complete[0]);
+    assert_eq!(
+        copy_transcript_items(&state.items, 0..=0),
+        "Context compacted"
+    );
+}
+
 use crate::{
     app::ui::theme::theme,
     conversation::{self, TranscriptItem, TranscriptKind},
