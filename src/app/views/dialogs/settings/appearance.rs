@@ -145,6 +145,8 @@ fn theme_list(themes: &ThemeSettings, entity: WeakEntity<FarcasterApp>) -> AnyEl
                                 .gap(theme().space.sm)
                                 .child(
                                     div()
+                                        .w(theme().size(180.0))
+                                        .flex_none()
                                         .truncate()
                                         .text_size(theme().type_scale.body)
                                         .text_color(theme().colors.text)

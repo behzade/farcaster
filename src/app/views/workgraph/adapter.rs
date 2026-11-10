@@ -16,7 +16,7 @@ use super::{
 use crate::{
     app::FarcasterApp,
     app::ui::assets::AppIcon,
-    app::ui::primitives::{ButtonTone, FeedbackTone, button, feedback, icon_button},
+    app::ui::primitives::{ButtonTone, FeedbackTone, SearchField, button, feedback, icon_button},
     app::ui::theme::theme,
 };
 use gpui::{
@@ -24,10 +24,7 @@ use gpui::{
     InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _, Subscription,
     Task, WeakEntity, Window, div, prelude::FluentBuilder as _,
 };
-use gpui_component::{
-    input::{Input, InputEvent, InputState, TextareaState},
-    kbd::Kbd,
-};
+use gpui_component::input::{InputEvent, InputState, TextareaState};
 use workgraph::{link_session, load_selected_plan};
 
 pub(crate) const WORKGRAPH_KEY_CONTEXT: &str = "PiWorkGraph";
@@ -457,69 +454,86 @@ fn render_board_header(
     entity: Entity<WorkGraphBoardView>,
 ) -> impl IntoElement {
     let refresh = entity.clone();
-    let back = entity.clone();
+    let detail_refresh = entity.clone();
     let plans = entity.clone();
     div()
-        .h(theme().size(56.0))
         .flex_none()
-        .pl(theme().space.md)
-        .pr(theme().size(56.0))
+        .px(crate::app::ui::grid::dialog_inset())
+        .pt(theme().space.md)
+        .pb(theme().space.sm)
         .gap(theme().space.sm)
         .flex()
-        .items_center()
-        .justify_between()
-        .when(has_plan, |header| {
-            header.child(
-                button(
-                    "workgraph-all-plans-back",
-                    "Back",
-                    ButtonTone::Quiet,
-                    true,
-                    move |window, cx| plans.update(cx, |this, cx| this.back_to_plans(window, cx)),
-                )
-                .app_tooltip("Back to all plans")
-                .child(
-                    Kbd::new(gpui::Keystroke::parse("backspace").expect("static shortcut"))
-                        .outline(),
-                ),
-            )
-        })
-        .child(if show_list {
-            div()
-                .min_w_0()
-                .flex_1()
-                .truncate()
-                .text_size(theme().type_scale.reading)
-                .font_weight(FontWeight::SEMIBOLD)
-                .child(plan_title.to_owned())
-                .into_any_element()
-        } else {
-            button(
-                "workgraph-detail-back",
-                "← Back to plan",
-                ButtonTone::Quiet,
-                true,
-                move |_, cx| back.update(cx, |this, cx| this.clear_selection(cx)),
-            )
-            .into_any_element()
-        })
+        .flex_col()
         .child(
             div()
+                .h(theme().controls.icon_button)
+                .pr(theme().controls.icon_button + theme().space.sm)
                 .flex()
                 .items_center()
-                .gap(theme().space.xs)
-                .when(show_list, |actions| {
-                    actions.child(Input::new(search).w(theme().size(140.0)))
+                .gap(theme().space.sm)
+                .when(has_plan, |title| {
+                    title.child(icon_button(
+                        "workgraph-all-plans-back",
+                        AppIcon::ArrowLeft,
+                        if show_list {
+                            "Back to all plans"
+                        } else {
+                            "Back to plan"
+                        },
+                        ButtonTone::Quiet,
+                        move |window, cx| {
+                            plans.update(cx, |this, cx| {
+                                if show_list {
+                                    this.back_to_plans(window, cx);
+                                } else {
+                                    this.clear_selection(cx);
+                                }
+                            });
+                        },
+                    ))
                 })
-                .child(icon_button(
-                    "workgraph-refresh",
-                    AppIcon::ArrowsClockwise,
-                    "Refresh plan",
-                    ButtonTone::Quiet,
-                    move |_, cx| refresh.update(cx, |this, cx| this.refresh(cx)),
-                ))
-                .when(show_list, |actions| {
-                    actions.child(button(
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex_1()
+                        .truncate()
+                        .text_size(theme().type_scale.reading)
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .app_tooltip(plan_title.to_owned())
+                        .child(plan_title.to_owned()),
+                )
+                .when(!show_list, |title| {
+                    title.child(icon_button(
+                        "workgraph-refresh",
+                        AppIcon::ArrowsClockwise,
+                        "Refresh plan",
+                        ButtonTone::Quiet,
+                        move |_, cx| {
+                            detail_refresh.update(cx, |this, cx| this.refresh(cx));
+                        },
+                    ))
+                }),
+        )
+        .when(show_list, |header| {
+            header.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(theme().space.sm)
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            SearchField::new("workgraph-search", search)
+                                .accessible_label("Search plans and tasks"),
+                        ),
+                    )
+                    .child(icon_button(
+                        "workgraph-refresh",
+                        AppIcon::ArrowsClockwise,
+                        "Refresh plan",
+                        ButtonTone::Quiet,
+                        move |_, cx| refresh.update(cx, |this, cx| this.refresh(cx)),
+                    ))
+                    .child(button(
                         "workgraph-create-open",
                         if has_plan { "Add node" } else { "New plan" },
                         ButtonTone::Neutral,
@@ -527,9 +541,9 @@ fn render_board_header(
                         move |window, cx| {
                             entity.update(cx, |this, cx| this.start_create(window, cx));
                         },
-                    ))
-                }),
-        )
+                    )),
+            )
+        })
 }
 
 fn render_empty_plan(entity: Entity<WorkGraphBoardView>) -> impl IntoElement {

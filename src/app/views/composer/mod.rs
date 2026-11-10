@@ -239,7 +239,9 @@ pub(super) fn composer_primary_action(
 
 fn composer_border_color(focused: bool) -> gpui::Rgba {
     if focused {
-        theme().colors.focus_border
+        let mut color = theme().colors.focus_border;
+        color.a *= 0.6;
+        color
     } else {
         gpui::rgba(0x00000000)
     }

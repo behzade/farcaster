@@ -104,7 +104,7 @@ impl FarcasterApp {
                             .child(
                                 div()
                                     .absolute()
-                                    .top(theme().size(12.0))
+                                    .top(theme().space.md)
                                     .right(theme().space.md)
                                     .child(icon_button(
                                         "close-project-work",
