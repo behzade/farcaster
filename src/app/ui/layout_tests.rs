@@ -38,6 +38,11 @@ fn transcript_and_composer_keep_the_same_content_edges(cx: &mut gpui::TestAppCon
         assert_eq!(message.left(), composer.left());
         assert_eq!(message.right(), composer.right());
         assert!(message.size.width > px(0.0));
+        assert_eq!(message.size.width, px((width - 80.0).min(950.0)));
+        assert_eq!(
+            message.left(),
+            px((width - f32::from(message.size.width)) / 2.0)
+        );
     }
 }
 

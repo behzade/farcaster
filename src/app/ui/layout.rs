@@ -5,7 +5,7 @@ use crate::app::ui::theme::theme;
 pub(crate) fn chat_column() -> Div {
     div()
         .w_full()
-        .max_w(theme().size(1120.0))
+        .max_w(theme().size(950.0 + 2.0 * 40.0))
         .mx_auto()
         .px(theme().size(40.0))
 }
