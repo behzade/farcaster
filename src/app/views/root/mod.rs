@@ -58,6 +58,7 @@ impl Render for FarcasterApp {
             main,
             session_rail_width,
             run_panel_width,
+            window.is_a11y_active(),
         );
         let picker = self.render_picker(entity.clone(), cx);
         let root = div()
@@ -110,11 +111,18 @@ impl Render for FarcasterApp {
             .text_size(theme().type_scale.body);
         let root = actions::bind(root, cx).child(shell);
 
-        self.render_root_overlays(root, entity, picker, work_active, cx)
-            .child(super::native_overlay::keyboard::input_proxy(
-                window,
-                &self.navigation.chat.focus,
-                cx,
-            ))
+        self.render_root_overlays(
+            root,
+            entity,
+            picker,
+            work_active,
+            window.is_a11y_active(),
+            cx,
+        )
+        .child(super::native_overlay::keyboard::input_proxy(
+            window,
+            &self.navigation.chat.focus,
+            cx,
+        ))
     }
 }

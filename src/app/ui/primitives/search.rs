@@ -54,7 +54,6 @@ impl RenderOnce for SearchField {
             trailing,
             inset,
         } = self;
-        let accessible = accessible_label.as_ref().map(SharedString::to_string);
         let focus_input = input.clone();
         let focused = input.read(cx).focus_handle(cx).is_focused(window);
         div()
@@ -71,7 +70,6 @@ impl RenderOnce for SearchField {
                 gpui::rgba(0x00000000)
             })
             .text_color(theme().colors.muted)
-            .when_some(accessible, |field, label| field.aria_label(label))
             .on_click(move |_, window, cx| {
                 focus_input.read(cx).focus_handle(cx).focus(window, cx);
             })
@@ -88,6 +86,7 @@ impl RenderOnce for SearchField {
                     )
                     .child(
                         Input::new(&input)
+                            .when_some(accessible_label, |input, label| input.aria_label(label))
                             .flex_1()
                             .min_w_0()
                             .text_size(theme().type_scale.body)

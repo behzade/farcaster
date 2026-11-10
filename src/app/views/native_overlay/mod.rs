@@ -462,7 +462,7 @@ impl Render for ModalWindow {
             } else {
                 root
             };
-            app.render_overlay_contents(root, owner, picker, false, cx)
+            app.render_overlay_contents(root, owner, picker, false, window.is_a11y_active(), cx)
                 .child(self.tooltips.clone())
                 .on_prepaint(move |_, window, cx| {
                     if let Some(focus) = initial_focus {

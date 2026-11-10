@@ -1,3 +1,4 @@
+pub(crate) mod accessibility;
 pub(crate) mod assets;
 pub(crate) mod change_tree;
 pub(crate) mod file_icons;

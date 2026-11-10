@@ -7,6 +7,7 @@ use super::{super::FarcasterApp, draft, sidebar_resize::Sidebar};
 use crate::app::{
     AppSurface,
     ui::{
+        accessibility::cached_panel,
         layout::{
             LayoutMode, chat_column, composer_bottom_clearance, shows_left_inline,
             shows_right_inline,
@@ -168,6 +169,7 @@ impl FarcasterApp {
         main: AnyElement,
         session_rail_width: gpui::Pixels,
         run_panel_width: gpui::Pixels,
+        accessibility_active: bool,
     ) -> AnyElement {
         div()
             .size_full()
@@ -189,12 +191,10 @@ impl FarcasterApp {
                                 !(self.modal_rendered_in_native_window()
                                     && self.overlays.view.sessions),
                                 |panel| {
-                                    panel.child(
-                                        self.views
-                                            .session_rail
-                                            .clone()
-                                            .cached(gpui::StyleRefinement::default().size_full()),
-                                    )
+                                    panel.child(cached_panel(
+                                        self.views.session_rail.clone(),
+                                        accessibility_active,
+                                    ))
                                 },
                             )
                             .child(resize_handle(
@@ -232,11 +232,7 @@ impl FarcasterApp {
                                 {
                                     self.views.workgraph_detail.clone().into_any_element()
                                 } else {
-                                    self.views
-                                        .run_panel
-                                        .clone()
-                                        .cached(gpui::StyleRefinement::default().size_full())
-                                        .into_any_element()
+                                    cached_panel(self.views.run_panel.clone(), accessibility_active)
                                 },
                             )
                             .child(resize_handle(
