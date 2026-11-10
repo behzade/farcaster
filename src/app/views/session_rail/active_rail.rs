@@ -493,7 +493,7 @@ impl FarcasterApp {
                     .child(
                         icon_button_with_size(
                             "open-project-work",
-                            AppIcon::GitFork,
+                            AppIcon::ListChecks,
                             "Project plan",
                             AppIconSize::Control,
                             ButtonTone::Quiet,
@@ -511,7 +511,7 @@ impl FarcasterApp {
                     .child(
                         icon_button_with_size(
                             "open-worker-notices",
-                            gpui_component::IconName::Inbox,
+                            AppIcon::Chats,
                             format!("Worker notices — {notice_count} active"),
                             AppIconSize::Control,
                             ButtonTone::Quiet,

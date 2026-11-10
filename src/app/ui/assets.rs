@@ -5,7 +5,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 76] = [
+const ICON_PATHS: [&str; 78] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -20,6 +20,7 @@ const ICON_PATHS: [&str; 76] = [
     "icons/phosphor/caret-right.svg",
     "icons/phosphor/chat-circle.svg",
     "icons/phosphor/chat-circle-dots.svg",
+    "icons/phosphor/chats.svg",
     "icons/phosphor/chalkboard.svg",
     "icons/phosphor/check.svg",
     "icons/phosphor/check-circle.svg",
@@ -44,6 +45,7 @@ const ICON_PATHS: [&str; 76] = [
     "icons/phosphor/key.svg",
     "icons/phosphor/keyboard.svg",
     "icons/phosphor/list.svg",
+    "icons/phosphor/list-checks.svg",
     "icons/phosphor/magnifying-glass.svg",
     "icons/phosphor/microscope.svg",
     "icons/phosphor/minus.svg",
@@ -207,6 +209,9 @@ impl AssetSource for AppAssets {
             "icons/phosphor/chalkboard.svg" => Some(include_bytes!(
                 "../../../assets/phosphor-icons/chalkboard.svg"
             )),
+            "icons/phosphor/chats.svg" => {
+                Some(include_bytes!("../../../assets/phosphor-icons/chats.svg"))
+            }
             "icons/phosphor/check.svg" => {
                 Some(include_bytes!("../../../assets/phosphor-icons/check.svg"))
             }
@@ -288,6 +293,9 @@ impl AssetSource for AppAssets {
             "icons/phosphor/list.svg" => {
                 Some(include_bytes!("../../../assets/phosphor-icons/list.svg"))
             }
+            "icons/phosphor/list-checks.svg" => Some(include_bytes!(
+                "../../../assets/phosphor-icons/list-checks.svg"
+            )),
             "icons/phosphor/magnifying-glass.svg" => Some(include_bytes!(
                 "../../../assets/phosphor-icons/magnifying-glass.svg"
             )),
@@ -421,6 +429,7 @@ pub(crate) enum AppIcon {
     CaretRight,
     ChatCircle,
     ChatCircleDots,
+    Chats,
     Chalkboard,
     Check,
     CheckCircle,
@@ -445,6 +454,7 @@ pub(crate) enum AppIcon {
     Key,
     Keyboard,
     List,
+    ListChecks,
     MagnifyingGlass,
     Minus,
     Neovim,
@@ -521,6 +531,7 @@ impl IconNamed for AppIcon {
             Self::CaretRight => "caret-right",
             Self::ChatCircle => "chat-circle",
             Self::ChatCircleDots => "chat-circle-dots",
+            Self::Chats => "chats",
             Self::Chalkboard => "chalkboard",
             Self::Check => "check",
             Self::CheckCircle => "check-circle",
@@ -549,6 +560,7 @@ impl IconNamed for AppIcon {
             Self::Key => "key",
             Self::Keyboard => "keyboard",
             Self::List => "list",
+            Self::ListChecks => "list-checks",
             Self::MagnifyingGlass => "magnifying-glass",
             Self::Minus => "minus",
             Self::Neovim => return "icons/workbench/neovim.svg".into(),
