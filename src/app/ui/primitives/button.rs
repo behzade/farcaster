@@ -43,9 +43,7 @@ pub(super) fn on_accessible_click<T: gpui::InteractiveElement>(
         })
         .on_a11y_action(gpui::AccessibleAction::Click, move |_, window, cx| {
             if enabled.get() {
-                activate_accessible_window(window, cx);
-                press(window, cx);
-                crate::app::ui::accessibility::refresh_hidden_accessibility(window, cx);
+                press_accessibly(&press, window, cx);
             }
         })
         .0
@@ -80,13 +78,11 @@ pub(crate) fn on_press_button(
     })
 }
 
-pub(super) fn activate_accessible_window(window: &mut Window, cx: &mut App) {
-    // macOS queues window activation. Re-activating an already-key owner can
-    // steal focus back from the panel this action is about to open.
-    if !window.is_window_active() {
-        cx.activate(true);
-        window.activate_window();
-    }
+fn press_accessibly(press: &ButtonPress, window: &mut Window, cx: &mut App) {
+    // AX clients can operate background windows. Press the control without
+    // activating the app; AppKit handles activation for real pointer input.
+    press(window, cx);
+    crate::app::ui::accessibility::refresh_hidden_accessibility(window, cx);
 }
 
 pub(crate) fn preserve_pointer_focus(_: &gpui::MouseDownEvent, window: &mut Window, cx: &mut App) {
@@ -217,11 +213,7 @@ pub(crate) fn on_press_control(
     let accessible_press = Rc::clone(&on_press);
     control
         .on_a11y_action(gpui::AccessibleAction::Click, move |_, window, cx| {
-            // AX presses skip AppKit's mouse activation. Native modal panels
-            // need their owner active before the requested action opens them.
-            activate_accessible_window(window, cx);
-            accessible_press(window, cx);
-            crate::app::ui::accessibility::refresh_hidden_accessibility(window, cx);
+            press_accessibly(accessible_press.as_ref(), window, cx);
         })
         .on_click(move |_, window, cx| on_press(window, cx))
 }

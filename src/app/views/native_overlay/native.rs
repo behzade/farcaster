@@ -33,6 +33,30 @@ pub(super) struct TestHost(pub NativeHost);
 impl gpui::Global for TestHost {}
 
 impl NativeHost {
+    #[cfg(target_os = "macos")]
+    pub(in crate::app) fn request_background_frame(window: &Window) {
+        if let Ok(native) = macos::Host::capture(window) {
+            native.request_frame();
+        }
+    }
+
+    pub(in crate::app) fn background_accessibility(window: &Window) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            window.is_a11y_active() && !macos::Host::application_active()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = window;
+            false
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(in crate::app) fn prepare_accessibility(window: &Window) -> Result<(), String> {
+        macos::Host::prepare_accessibility(window)
+    }
+
     pub(super) fn open_panel<V: Render + 'static>(
         owner: &Window,
         bounds: Bounds<Pixels>,
@@ -107,7 +131,7 @@ impl NativeHost {
                 // before AppKit can expose its initial empty window node.
                 #[cfg(target_os = "macos")]
                 if owner.is_a11y_active() && input != OverlayInput::Tooltip {
-                    macos::Host::prepare_accessibility(window)?;
+                    Self::prepare_accessibility(window)?;
                     window.draw(cx).clear(cx);
                 }
                 let _ = cx;
@@ -334,8 +358,8 @@ mod macos {
     use gpui::{Bounds, Pixels, Window};
     use objc2::{MainThreadMarker, rc::Retained};
     use objc2_app_kit::{
-        NSAccessibility, NSApplication, NSPanel, NSView, NSWindow, NSWindowCollectionBehavior,
-        NSWindowStyleMask,
+        NSAccessibility, NSApplication, NSPanel, NSPopUpMenuWindowLevel, NSView, NSWindow,
+        NSWindowCollectionBehavior, NSWindowOrderingMode, NSWindowStyleMask,
     };
     use objc2_foundation::{NSPoint, NSRect, NSSize};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -363,6 +387,15 @@ mod macos {
     }
 
     impl Host {
+        pub(super) fn request_frame(&self) {
+            self.view.setNeedsDisplay(true);
+        }
+
+        pub(super) fn application_active() -> bool {
+            MainThreadMarker::new()
+                .is_some_and(|main| NSApplication::sharedApplication(main).isActive())
+        }
+
         pub(super) fn prepare_accessibility(window: &Window) -> Result<(), String> {
             let native = Self::capture(window)?;
             let view = native
@@ -422,16 +455,28 @@ mod macos {
             panel.setHidesOnDeactivate(true);
             panel.setHasShadow(false);
             self.position_window(&popup.window, bounds, offset);
-            match input {
-                super::OverlayInput::Passive | super::OverlayInput::Tooltip => {
-                    popup.window.orderFront(None)
-                }
-                super::OverlayInput::Modal => {
-                    panel.setCollectionBehavior(
-                        NSWindowCollectionBehavior::MoveToActiveSpace
-                            | NSWindowCollectionBehavior::FullScreenAuxiliary,
-                    );
-                    popup.window.makeKeyAndOrderFront(None);
+            let main =
+                MainThreadMarker::new().ok_or("panel presentation requires the main thread")?;
+            if !NSApplication::sharedApplication(main).isActive() {
+                // A background AX request must not make the panel key or put
+                // it above the app the user is working in. Keep it by its owner.
+                panel.setCollectionBehavior(self.window.collectionBehavior());
+                popup.window.orderWindow_relativeTo(
+                    NSWindowOrderingMode::Above,
+                    self.window.windowNumber(),
+                );
+            } else {
+                match input {
+                    super::OverlayInput::Passive | super::OverlayInput::Tooltip => {
+                        popup.window.orderFront(None)
+                    }
+                    super::OverlayInput::Modal => {
+                        panel.setCollectionBehavior(
+                            NSWindowCollectionBehavior::MoveToActiveSpace
+                                | NSWindowCollectionBehavior::FullScreenAuxiliary,
+                        );
+                        popup.window.makeKeyAndOrderFront(None);
+                    }
                 }
             }
             // Changing the style mask clears AppKit's first responder. GPUI's
@@ -452,6 +497,18 @@ mod macos {
             bounds: Bounds<Pixels>,
             offset: gpui::Point<Pixels>,
         ) {
+            if let Some(main) = MainThreadMarker::new() {
+                // GPUI popups start at menu level, above other apps' windows.
+                // Background panels must use their owner's level instead.
+                let level = if NSApplication::sharedApplication(main).isActive() {
+                    NSPopUpMenuWindowLevel
+                } else {
+                    self.window.level()
+                };
+                if popup.level() != level {
+                    popup.setLevel(level);
+                }
+            }
             let rect = NSRect::new(
                 NSPoint::new(
                     offset.x.as_f32() as f64,

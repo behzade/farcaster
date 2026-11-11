@@ -15,7 +15,11 @@ pub(crate) fn refresh_hidden_accessibility(window: &mut Window, cx: &mut App) {
 fn defer_accessibility_draw(window: &mut Window, cx: &mut App) {
     // The action may still hold the root view or input entity. Drawing inside
     // that lease would borrow it twice, so wait until the effect cycle ends.
-    window.defer(cx, |window, cx| window.draw(cx).clear(cx));
+    window.defer(cx, |window, cx| {
+        window.draw(cx).clear(cx);
+        #[cfg(target_os = "macos")]
+        crate::app::views::native_overlay::native::NativeHost::request_background_frame(window);
+    });
 }
 
 pub(crate) fn observe_accessible_input<T: EventEmitter<InputEvent> + 'static>(

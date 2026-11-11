@@ -15,7 +15,8 @@ fi
 
 # Reuse the existing process without replacing its executable or creating another.
 if ps -axo comm= | grep -Fxq -- "$bundle/Contents/MacOS/farcaster"; then
-    open -g "$bundle"
+    # Even a background open sends a reopen event to AppKit. Reusing a live
+    # instance needs no Launch Services request and must not change its focus.
     printf '%s\n' "$bundle"
     exit 0
 fi

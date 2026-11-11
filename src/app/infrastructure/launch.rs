@@ -263,6 +263,27 @@ pub(crate) fn run(
                 root
             });
             drop(open_window_timing);
+            #[cfg(target_os = "macos")]
+            if isolation::is_isolated()
+                && let Ok(handle) = result.as_ref()
+            {
+                use crate::app::views::native_overlay::native::NativeHost;
+
+                // Isolated serves UI inspection even when fully covered.
+                // AccessKit's first request otherwise returns an empty tree
+                // and schedules a display frame that an occluded window never
+                // receives. Initialize once, outside the root view's lease;
+                // leave normal launches lazy and do not activate either app.
+                let handle: gpui::AnyWindowHandle = (*handle).into();
+                let _ = handle.update(cx, |_, window, cx| match NativeHost::prepare_accessibility(
+                    window,
+                ) {
+                    Ok(()) => window.draw(cx).clear(cx),
+                    Err(error) => {
+                        zlog::warn!("Isolated accessibility: {error}");
+                    }
+                });
+            }
             if let Err(error) = result {
                 *failure_in_app.borrow_mut() =
                     Some(LaunchError::NativeWindow(format!("{error:#}")));

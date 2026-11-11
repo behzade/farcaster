@@ -30,6 +30,7 @@ pub(in crate::app) struct ModalWindowState {
     pub(in crate::app::views) owner_window: Option<AnyWindowHandle>,
     pending: bool,
     failed: bool,
+    background_accessibility: bool,
     passive_height: Option<Pixels>,
     observers: Vec<Subscription>,
 }
@@ -48,7 +49,9 @@ pub(in crate::app) struct ModalWindow {
 
 impl FarcasterApp {
     pub(in crate::app) fn native_overlays_available(&self) -> bool {
-        cfg!(any(target_os = "macos", target_os = "linux")) && !self.overlays.modal.failed
+        cfg!(any(target_os = "macos", target_os = "linux"))
+            && !self.overlays.modal.failed
+            && !self.overlays.modal.background_accessibility
     }
 
     pub(in crate::app::views) fn native_request_is_passive(&self) -> bool {
@@ -160,6 +163,10 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A background AX client keeps reading the owner window. Use the
+        // existing inline overlay path instead of opening a separate panel
+        // that would need keyboard focus to become that client's target.
+        self.overlays.modal.background_accessibility = NativeHost::background_accessibility(window);
         if self.overlays.modal.observers.is_empty() {
             let id = window.window_handle().window_id();
             popup::register_owner(window, cx.entity().downgrade(), cx);
@@ -268,7 +275,7 @@ fn synchronize(owner: WeakEntity<FarcasterApp>, window: &mut Window, cx: &mut Ap
         }
         Ok(None)
     };
-    if wanted && was_modal && input == OverlayInput::Passive {
+    if wanted && was_modal && input == OverlayInput::Passive && (owner_active || popup_active) {
         window.activate_window();
         app.update(cx, |app, _| app.request_active_surface_focus(None));
     }

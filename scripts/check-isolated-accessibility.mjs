@@ -1,6 +1,7 @@
 // Run through Computer Use's node_repl, with its supported @oai/sky client:
 // var ax = await import('/absolute/repo/scripts/check-isolated-accessibility.mjs');
 // var report = await ax.checkIsolatedAccessibility(sky);
+// For background-only checks, pass { background: true }; this uses no keys.
 // nodeRepl.write(JSON.stringify(report, null, 2));
 //
 // Use a seeded Isolated instance with Neovim available and a completed demo
@@ -24,7 +25,7 @@ export function findControl(text, role, label) {
   return { index: Number(rows[0].trim().split(' ')[0]), on: rows[0].endsWith(', Value: on') };
 }
 
-export async function checkIsolatedAccessibility(sky, { cycles = 3, record = async () => {} } = {}) {
+export async function checkIsolatedAccessibility(sky, { cycles = 3, background = false, record = async () => {} } = {}) {
   if (!Number.isInteger(cycles) || cycles < 1 || cycles > 10) throw new Error('cycles must be 1–10');
   const checks = [];
   const unverified = [];
@@ -68,7 +69,8 @@ export async function checkIsolatedAccessibility(sky, { cycles = 3, record = asy
         let text = await press('button', 'Settings', prefix + '-settings-first-read');
         expect(text.includes('dialog Settings'), 'Settings absent on first read');
         expect(text.includes('tab group Settings pages'), 'Settings controls absent on first read');
-        if (surface === 'editor') expect(text.includes('system dialog Farcaster — Dialog'), 'Expected native modal above Neovim');
+        if (surface === 'editor' && !background) expect(text.includes('system dialog Farcaster — Dialog'), 'Expected native modal above Neovim');
+        if (background) expect(!text.includes('system dialog Farcaster — Dialog'), 'Background dialog must stay in the owner AX tree');
         expect(!text.includes('Search sessions'), 'Covered workspace leaked into modal tree');
         selectedTab(text, 'General');
         for (const label of ['Workers', 'Appearance', 'Connections', 'General']) {
@@ -88,10 +90,11 @@ export async function checkIsolatedAccessibility(sky, { cycles = 3, record = asy
         if (surface === 'editor') selectedTab(last.text, editor);
         checks.push({ surface, cycle, firstRead: true, tabs: true, button: true, modalScope: true, restored: true });
       }
-      // The editor uses a separate native popup; Chat uses an inline menu.
+      // Foreground Editor uses a native popup. Background AX stays inline.
       const menu = await press('button', 'Repository actions', surface + '-dropdown-first-read');
       expect(menu.includes('Expand all folders') && menu.includes('Collapse all folders'), 'Dropdown absent on first read');
-      await sky.press_key({ app: APP, key: 'Escape' });
+      if (background) await press('button', 'Repository actions', surface + '-dropdown-dismiss');
+      else await sky.press_key({ app: APP, key: 'Escape' });
       workspace(await state(surface + '-dropdown-closed'));
       checks.push({ surface, dropdown: true, restored: true });
     }
@@ -99,14 +102,17 @@ export async function checkIsolatedAccessibility(sky, { cycles = 3, record = asy
     // Exercise the other shared trigger (a popover rather than a menu).
     const runtime = await press('button', 'Runtime', 'runtime-first-read');
     findControl(runtime, 'text field (settable)', 'Search models…');
-    await sky.press_key({ app: APP, key: 'Escape' });
+    if (background) await press('button', 'Runtime', 'runtime-dismiss');
+    else await sky.press_key({ app: APP, key: 'Escape' });
     workspace(await state('runtime-closed'));
     checks.push({ runtimePopover: true, restored: true });
     // Focus must return to the composer after a modal closes. Use no typing:
     // the focused AX line itself is the assertion.
     const focusedComposer = text => /The focused UI element is .*text entry area.*What would you like to work on\?/.test(text);
-    const focused = await press('text entry area (settable)', 'What would you like to work on?', 'focus-composer');
-    if (focusedComposer(focused)) {
+    const focused = background ? '' : await press('text entry area (settable)', 'What would you like to work on?', 'focus-composer');
+    if (background) {
+      unverified.push('Composer keyboard focus: left with the user during background-only checks');
+    } else if (focusedComposer(focused)) {
       await press('button', 'Settings', 'focus-settings');
       const restored = await press('button', 'Close settings', 'focus-restored');
       expect(focusedComposer(restored), 'Composer focus not restored');
@@ -116,7 +122,7 @@ export async function checkIsolatedAccessibility(sky, { cycles = 3, record = asy
       // modal. That cannot establish a restoration failure or a passing check.
       unverified.push('Composer focus restoration: AX did not report composer focus before opening a modal');
     }
-    return { app: APP, passed: true, checks, unverified };
+    return { app: APP, background, passed: true, checks, unverified };
   } finally {
     // Restore the only preference this check changes, even on assertion failure.
     if (restoreGrouping !== undefined) {
