@@ -22,8 +22,9 @@ mod textarea;
 mod tooltip;
 
 pub(crate) use button::{
-    ButtonTone, activates_button, button, dropdown_button, dropdown_content_button, icon_button,
-    icon_button_with_size, on_press_control, preserve_pointer_focus, prominent_icon_button,
+    ButtonPressExt, ButtonTone, activates_button, button, dropdown_button, dropdown_content_button,
+    icon_button, icon_button_with_size, on_press_control, preserve_pointer_focus,
+    prominent_icon_button,
 };
 pub(crate) use content::{
     DiffColumns, diff_count_columns, folder_change_summary, panel, section_heading,

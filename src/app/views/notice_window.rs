@@ -179,6 +179,7 @@ fn open(
         kind: host.kind(owner_window, anchor),
         focus: false,
         show: false,
+        inactive_frame_interval: None,
         titlebar: None,
         is_movable: false,
         is_resizable: false,

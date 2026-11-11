@@ -1,5 +1,5 @@
 use crate::app::ui::primitives::AppTooltip as _;
-use std::rc::Rc;
+use std::{cell::Cell, rc::Rc};
 
 use gpui::{
     AnyElement, App, Div, ElementId, InteractiveElement as _, IntoElement, KeyDownEvent,
@@ -17,6 +17,77 @@ use crate::{
 };
 
 type ButtonPress = dyn Fn(&mut Window, &mut App);
+
+// Component buttons already have stable ids and retain this interactivity
+// when rendering. Adapt that same node, without adding a layout/AX wrapper.
+pub(super) struct Accessible<T>(pub T);
+
+impl<T: gpui::InteractiveElement> gpui::InteractiveElement for Accessible<T> {
+    fn interactivity(&mut self) -> &mut gpui::Interactivity {
+        self.0.interactivity()
+    }
+}
+impl<T: gpui::InteractiveElement> gpui::StatefulInteractiveElement for Accessible<T> {}
+
+pub(super) fn on_accessible_click<T: gpui::InteractiveElement>(
+    control: T,
+    press: impl Fn(&mut Window, &mut App) + 'static,
+) -> T {
+    // Read the rendered node, so a later `.disabled(...)` or loading state
+    // also blocks an AX press. No action is allowed before its first paint.
+    let enabled = Rc::new(Cell::new(false));
+    let rendered = enabled.clone();
+    Accessible(control)
+        .a11y_synthetic_children(move |tree| {
+            rendered.set(!tree.parent_node().is_disabled());
+        })
+        .on_a11y_action(gpui::AccessibleAction::Click, move |_, window, cx| {
+            if enabled.get() {
+                activate_accessible_window(window, cx);
+                press(window, cx);
+                crate::app::ui::accessibility::refresh_hidden_accessibility(window, cx);
+            }
+        })
+        .0
+}
+
+pub(crate) trait ButtonPressExt {
+    fn on_press(self, enabled: bool, on_press: impl Fn(&mut Window, &mut App) + 'static) -> Button;
+}
+
+impl ButtonPressExt for Button {
+    fn on_press(self, enabled: bool, on_press: impl Fn(&mut Window, &mut App) + 'static) -> Button {
+        on_press_button(self, enabled, on_press)
+    }
+}
+
+pub(crate) fn on_press_button(
+    button: Button,
+    enabled: bool,
+    on_press: impl Fn(&mut Window, &mut App) + 'static,
+) -> Button {
+    let on_press: Rc<ButtonPress> = Rc::new(on_press);
+    let accessible_press = on_press.clone();
+    on_accessible_click(button, move |window, cx| {
+        if enabled {
+            accessible_press(window, cx);
+        }
+    })
+    .on_click(move |_, window, cx| {
+        if enabled {
+            on_press(window, cx);
+        }
+    })
+}
+
+pub(super) fn activate_accessible_window(window: &mut Window, cx: &mut App) {
+    // macOS queues window activation. Re-activating an already-key owner can
+    // steal focus back from the panel this action is about to open.
+    if !window.is_window_active() {
+        cx.activate(true);
+        window.activate_window();
+    }
+}
 
 pub(crate) fn preserve_pointer_focus(_: &gpui::MouseDownEvent, window: &mut Window, cx: &mut App) {
     window.prevent_default();
@@ -39,12 +110,15 @@ pub(crate) fn button(
     on_press: impl Fn(&mut Window, &mut App) + 'static,
 ) -> Button {
     let label = label.into();
-    let button = Button::new(id)
-        .accessibility_label(label.clone())
-        .child(button_content(label))
-        .with_size(Size::Small)
-        .disabled(!enabled)
-        .on_click(move |_, window, cx| on_press(window, cx));
+    let button = on_press_button(
+        Button::new(id)
+            .accessibility_label(label.clone())
+            .child(button_content(label))
+            .with_size(Size::Small)
+            .disabled(!enabled),
+        enabled,
+        on_press,
+    );
     tone_button(button, tone)
 }
 
@@ -145,9 +219,9 @@ pub(crate) fn on_press_control(
         .on_a11y_action(gpui::AccessibleAction::Click, move |_, window, cx| {
             // AX presses skip AppKit's mouse activation. Native modal panels
             // need their owner active before the requested action opens them.
-            cx.activate(true);
-            window.activate_window();
+            activate_accessible_window(window, cx);
             accessible_press(window, cx);
+            crate::app::ui::accessibility::refresh_hidden_accessibility(window, cx);
         })
         .on_click(move |_, window, cx| on_press(window, cx))
 }

@@ -207,6 +207,10 @@ pub(crate) fn run(
                 display_id,
                 focus: !isolation::is_isolated(),
                 show: true,
+                // A visible window on another display still needs smooth
+                // scrolling and streaming while another app has focus. GPUI
+                // otherwise caps its queued animation frames at about 30 FPS.
+                inactive_frame_interval: None,
                 titlebar: Some(TitlebarOptions {
                     title: Some(isolation::window_title("Farcaster").into()),
                     appears_transparent: cfg!(target_os = "macos"),

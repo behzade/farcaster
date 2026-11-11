@@ -37,6 +37,7 @@ impl ComposerInput {
 
 impl RenderOnce for ComposerInput {
     fn render(self, window: &mut gpui::Window, cx: &mut App) -> impl IntoElement {
+        crate::app::ui::accessibility::observe_accessible_input(&self.composer, window, cx);
         let highlights = self.app.upgrade().map(|app| {
             let app = app.read(cx);
             (

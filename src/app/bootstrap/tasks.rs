@@ -34,6 +34,7 @@ pub(super) fn spawn(
     workgraph_updates: async_channel::Receiver<()>,
     worker_updates: async_channel::Receiver<()>,
     notice_updates: async_channel::Receiver<()>,
+    window: gpui::AnyWindowHandle,
     cx: &mut Context<FarcasterApp>,
 ) -> BootstrapTasks {
     let runtime_wake = runtime.wake_receiver();
@@ -42,6 +43,11 @@ pub(super) fn spawn(
             if weak.update(cx, |this, cx| this.drain_runtime(cx)).is_err() {
                 break;
             }
+            // Search results and other requested data arrive after the input
+            // action's redraw. Occluded windows still need to publish that data.
+            let _ = window.update(cx, |_, window, cx| {
+                crate::app::ui::accessibility::refresh_hidden_accessibility(window, cx);
+            });
         }
     });
     let workgraph_updates = cx.spawn(async move |weak, cx| {

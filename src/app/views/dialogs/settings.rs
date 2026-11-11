@@ -18,7 +18,8 @@ use crate::{
     app::OVERLAY_KEY_CONTEXT,
     app::ui::assets::AppIcon,
     app::ui::primitives::{
-        AppIconSize, ButtonTone, FeedbackTone, app_icon, button, feedback, modal, on_press_control,
+        AppIconSize, ButtonPressExt as _, ButtonTone, FeedbackTone, app_icon, button, feedback,
+        modal, on_press_control,
     },
     app::ui::theme::theme,
     app::workspace::{
@@ -188,7 +189,7 @@ fn settings_action(
         .size(theme().controls.icon_button)
         .disabled(!enabled)
         .child(app_icon(icon, AppIconSize::Control))
-        .on_click(move |_, window, cx| on_press(window, cx))
+        .on_press(enabled, on_press)
 }
 
 fn general(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>, cx: &gpui::App) -> AnyElement {
@@ -291,7 +292,7 @@ fn voice_setting(
                         .disabled(!available)
                         .when(enabled, |button| button.primary())
                         .when(!enabled, |button| button.secondary())
-                        .on_click(move |_, _, cx| {
+                        .on_press(available, move |_, cx| {
                             let _ = entity.update(cx, FarcasterApp::toggle_settings_voice);
                         }),
                 ),
@@ -329,7 +330,7 @@ fn voice_setting(
                                 })
                                 .with_size(Size::Small)
                                 .secondary()
-                                .on_click(move |_, _, cx| {
+                                .on_press(true, move |_, cx| {
                                     let _ = capture
                                         .update(cx, FarcasterApp::begin_voice_shortcut_capture);
                                 }),
@@ -342,7 +343,7 @@ fn voice_setting(
                                     .label("Reset")
                                     .with_size(Size::Small)
                                     .secondary()
-                                    .on_click(move |_, _, cx| {
+                                    .on_press(true, move |_, cx| {
                                         let _ =
                                             reset.update(cx, FarcasterApp::reset_voice_shortcut);
                                     }),
@@ -481,7 +482,7 @@ fn editor_option(
         .toggled(option == selected)
         .when(option == selected, |button| button.primary())
         .when(option != selected, |button| button.secondary())
-        .on_click(move |_, _, cx| {
+        .on_press(true, move |_, cx| {
             let _ = entity.update(cx, |this, cx| this.select_editor(option, cx));
         })
         .into_any_element()
@@ -511,7 +512,7 @@ fn toggle_setting(
                 .toggled(enabled)
                 .when(enabled, |button| button.primary())
                 .when(!enabled, |button| button.secondary())
-                .on_click(move |_, _, cx| {
+                .on_press(true, move |_, cx| {
                     let _ = entity.update(cx, toggle);
                 }),
         )

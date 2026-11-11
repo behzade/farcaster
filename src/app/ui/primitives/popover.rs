@@ -1,17 +1,21 @@
 use std::rc::Rc;
 
 use gpui::{
-    Anchor, AnyElement, App, Bounds, Context, ElementId, Focusable as _, InteractiveElement as _,
-    IntoElement, MouseButton, ParentElement as _, Pixels, RenderOnce, SharedString,
-    StyleRefinement, Styled, Window, div, point, px,
+    Anchor, AnyElement, App, Bounds, Context, Element, ElementId, FocusHandle, Focusable as _,
+    GlobalElementId, InspectorElementId, InteractiveElement as _, IntoElement, LayoutId,
+    MouseButton, ParentElement as _, Pixels, RenderOnce, SharedString,
+    StatefulInteractiveElement as _, StyleRefinement, Styled, Window, div, point, px,
 };
 use gpui_base::{ElementExt as _, PopoverState};
 use gpui_component::{Selectable, ThemeStyled as _};
 
+use super::button::{Accessible, on_accessible_click};
 use crate::app::views::native_overlay::{native::OverlayInput, popup};
 
 type Content = Rc<dyn Fn(&mut PopoverState, &mut Window, &mut Context<PopoverState>) -> AnyElement>;
 type OpenChange = Rc<dyn Fn(&bool, &mut Window, &mut App)>;
+type Press = Rc<dyn Fn(&mut Window, &mut App)>;
+type TriggerBuilder = Box<dyn FnOnce(bool, Press) -> AnyElement>;
 
 #[derive(IntoElement)]
 pub(crate) struct Popover {
@@ -20,7 +24,7 @@ pub(crate) struct Popover {
     appearance: bool,
     open: Option<bool>,
     on_open_change: Option<OpenChange>,
-    trigger: Option<Box<dyn FnOnce(bool) -> AnyElement>>,
+    trigger: Option<TriggerBuilder>,
     content: Option<Content>,
     mouse_button: MouseButton,
     at_pointer: bool,
@@ -52,8 +56,19 @@ impl Popover {
         self.open = Some(open);
         self
     }
-    pub(crate) fn trigger<T: Selectable + IntoElement + 'static>(mut self, trigger: T) -> Self {
-        self.trigger = Some(Box::new(move |open| trigger.open(open).into_any_element()));
+    pub(crate) fn trigger<T: Selectable + gpui::InteractiveElement + IntoElement + 'static>(
+        mut self,
+        trigger: T,
+    ) -> Self {
+        self.trigger = Some(Box::new(move |open, press| {
+            on_accessible_click(
+                Accessible(trigger.open(open)).aria_expanded(open).0,
+                move |window, cx| {
+                    press(window, cx);
+                },
+            )
+            .into_any_element()
+        }));
         self
     }
     pub(crate) fn on_open_change(
@@ -202,6 +217,11 @@ impl RenderOnce for Popover {
         });
         let pointer_state = bounds_state.clone();
         let trigger_state = state.clone();
+        let accessible_state = state.clone();
+        let press: Press = Rc::new(move |window, cx| {
+            accessible_state.update(cx, |state, cx| state.toggle_open(window, cx));
+            cx.notify(parent);
+        });
         div()
             .id(self.id)
             .key_context("Popover")
@@ -220,7 +240,7 @@ impl RenderOnce for Popover {
                 cx.stop_propagation();
                 cx.notify(parent);
             })
-            .child(trigger(open))
+            .child(trigger(open, press))
             .into_any_element()
     }
 }
@@ -228,7 +248,7 @@ impl RenderOnce for Popover {
 use gpui::prelude::FluentBuilder as _;
 #[derive(IntoElement)]
 struct Trigger {
-    build: Box<dyn FnOnce(bool) -> AnyElement>,
+    build: TriggerBuilder,
     open: bool,
 }
 impl Selectable for Trigger {
@@ -242,7 +262,18 @@ impl Selectable for Trigger {
 }
 impl RenderOnce for Trigger {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        (self.build)(self.open)
+        ActionScope::new(move |target, _, _| {
+            (self.build)(
+                self.open,
+                Rc::new(move |window, cx| {
+                    target.dispatch_action(
+                        &gpui_base::actions::Confirm { secondary: false },
+                        window,
+                        cx,
+                    );
+                }),
+            )
+        })
     }
 }
 
@@ -416,13 +447,17 @@ impl<T: DropdownMenu> RenderOnce for Menu<T> {
 }
 
 #[derive(IntoElement)]
-struct FallbackTrigger<T: IntoElement + 'static>(T);
-impl<T: Styled + IntoElement + 'static> Styled for FallbackTrigger<T> {
+struct FallbackTrigger<T: Selectable + gpui::InteractiveElement + IntoElement + 'static>(T);
+impl<T: Styled + Selectable + gpui::InteractiveElement + IntoElement + 'static> Styled
+    for FallbackTrigger<T>
+{
     fn style(&mut self) -> &mut StyleRefinement {
         self.0.style()
     }
 }
-impl<T: Selectable + IntoElement + 'static> Selectable for FallbackTrigger<T> {
+impl<T: Selectable + gpui::InteractiveElement + IntoElement + 'static> Selectable
+    for FallbackTrigger<T>
+{
     fn selected(mut self, selected: bool) -> Self {
         self.0 = self.0.selected(selected);
         self
@@ -430,17 +465,116 @@ impl<T: Selectable + IntoElement + 'static> Selectable for FallbackTrigger<T> {
     fn is_selected(&self) -> bool {
         self.0.is_selected()
     }
+    fn open(mut self, open: bool) -> Self {
+        self.0 = self.0.open(open);
+        self
+    }
+    fn is_open(&self) -> bool {
+        self.0.is_open()
+    }
 }
-impl<T: gpui::InteractiveElement + IntoElement + 'static> gpui::InteractiveElement
+impl<T: Selectable + gpui::InteractiveElement + IntoElement + 'static> gpui::InteractiveElement
     for FallbackTrigger<T>
 {
     fn interactivity(&mut self) -> &mut gpui::Interactivity {
         self.0.interactivity()
     }
 }
-impl<T: IntoElement + 'static> RenderOnce for FallbackTrigger<T> {
+impl<T: Selectable + gpui::InteractiveElement + IntoElement + 'static> RenderOnce
+    for FallbackTrigger<T>
+{
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        self.0
+        ActionScope::new(move |target, _, _| {
+            let open = self.0.is_open();
+            on_accessible_click(
+                Accessible(self.0).aria_expanded(open).0,
+                move |window, cx| {
+                    target.dispatch_action(
+                        &gpui_base::actions::Confirm { secondary: false },
+                        window,
+                        cx,
+                    );
+                },
+            )
+            .into_any_element()
+        })
+    }
+}
+
+// Registers an action target on the popover's dispatch node, without moving
+// keyboard focus or adding a layout box around the trigger. This lets an AX
+// press use the same Confirm action as the keyboard.
+type ScopeBuilder = Box<dyn FnOnce(FocusHandle, &mut Window, &mut App) -> AnyElement>;
+
+struct ActionScope {
+    build: Option<ScopeBuilder>,
+}
+struct ScopeFrame {
+    target: FocusHandle,
+    child: AnyElement,
+}
+
+impl ActionScope {
+    fn new(build: impl FnOnce(FocusHandle, &mut Window, &mut App) -> AnyElement + 'static) -> Self {
+        Self {
+            build: Some(Box::new(build)),
+        }
+    }
+}
+impl IntoElement for ActionScope {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+impl Element for ActionScope {
+    type RequestLayoutState = ScopeFrame;
+    type PrepaintState = ();
+    fn id(&self) -> Option<ElementId> {
+        Some("accessible-popover-trigger".into())
+    }
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+    fn request_layout(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ScopeFrame) {
+        let target = window.with_optional_element_state::<FocusHandle, _>(id, |target, _| {
+            let target = target.flatten().unwrap_or_else(|| cx.focus_handle());
+            (target.clone(), Some(target))
+        });
+        let mut child =
+            self.build.take().expect("action scope laid out once")(target.clone(), window, cx);
+        let layout = child.request_layout(window, cx);
+        (layout, ScopeFrame { target, child })
+    }
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        frame: &mut ScopeFrame,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        window.set_focus_handle(&frame.target, cx);
+        frame.child.prepaint(window, cx);
+    }
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        frame: &mut ScopeFrame,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        frame.child.paint(window, cx);
     }
 }
 impl<T: Styled + Selectable + gpui::InteractiveElement + IntoElement + 'static>

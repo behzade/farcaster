@@ -9,8 +9,8 @@ use crate::{
         ui::{
             assets::AppIcon,
             primitives::{
-                AppTooltip as _, ButtonTone, activates_button, dropdown_button, icon_button,
-                icon_control, section_heading,
+                AppTooltip as _, ButtonPressExt as _, ButtonTone, activates_button,
+                dropdown_button, icon_button, icon_control, section_heading,
             },
             theme::{MONO_FONT_FAMILY, theme},
         },
@@ -100,13 +100,13 @@ pub(super) fn repository_header(
                         }),
                 )
                 .when(snapshot.is_some() && selected_count > 0, |row| {
+                    let can_edit =
+                        syncing.is_none() && app.project.repository.edits.pending.is_none();
                     let selection_button = |id, icon, label: &'static str| {
                         Button::new(id)
                             .icon(icon)
                             .with_size(Size::Small)
-                            .disabled(
-                                syncing.is_some() || app.project.repository.edits.pending.is_some(),
-                            )
+                            .disabled(!can_edit)
                             .accessibility_label(label)
                             .app_tooltip(label)
                     };
@@ -117,7 +117,7 @@ pub(super) fn repository_header(
                             "Clear file selection",
                         )
                         .ghost()
-                        .on_click(move |_, _, cx| {
+                        .on_press(can_edit, move |_, cx| {
                             let _ = clear.update(cx, |this, cx| {
                                 this.clear_repository_selection(cx);
                             });
@@ -130,7 +130,7 @@ pub(super) fn repository_header(
                             "Review and commit selected files",
                         )
                         .primary()
-                        .on_click(move |_, window, cx| {
+                        .on_press(can_edit, move |window, cx| {
                             let _ = commit.update(cx, |this, cx| {
                                 this.review_repository_edit(
                                     RepositoryEdit::Commit,

@@ -108,7 +108,7 @@ fn profile_button(
         .when(selected, |button| {
             button.text_color(theme().colors.indicator)
         })
-        .on_click(move |_, window, cx| on_press(window, cx))
+        .on_press(enabled, on_press)
 }
 
 fn profile_rail(

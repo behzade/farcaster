@@ -166,6 +166,7 @@ impl FarcasterApp {
             workgraph_updates,
             worker_updates,
             notice_board.updates(),
+            window.window_handle(),
             cx,
         );
         let performance = tasks::start_performance_monitor(window, cx);

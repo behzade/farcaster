@@ -54,6 +54,7 @@ impl RenderOnce for SearchField {
             trailing,
             inset,
         } = self;
+        crate::app::ui::accessibility::observe_accessible_input(&input, window, cx);
         let focus_input = input.clone();
         let focused = input.read(cx).focus_handle(cx).is_focused(window);
         div()

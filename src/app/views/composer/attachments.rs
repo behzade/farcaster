@@ -1,4 +1,4 @@
-use crate::app::ui::primitives::AppTooltip as _;
+use crate::app::ui::primitives::{AppTooltip as _, ButtonPressExt as _};
 use gpui::{
     AnyElement, App, ElementId, InteractiveElement as _, IntoElement as _, ParentElement as _,
     Styled as _, WeakEntity, div,
@@ -89,7 +89,8 @@ fn remove_button(
         .app_tooltip(tooltip)
         .with_size(Size::XSmall)
         .ghost()
-        .on_click(move |_, _, cx| {
+        .accessibility_label(tooltip)
+        .on_press(true, move |_, cx| {
             cx.stop_propagation();
             remove(cx);
         })

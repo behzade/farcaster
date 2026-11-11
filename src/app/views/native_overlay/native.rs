@@ -52,6 +52,7 @@ impl NativeHost {
             kind: host.panel_kind(owner, offset, input),
             focus: false,
             show: false,
+            inactive_frame_interval: None,
             titlebar: None,
             is_movable: false,
             is_resizable: false,
@@ -89,8 +90,11 @@ impl NativeHost {
         if host.is_wayland() {
             super::stack::register(owner.window_handle(), popup.into(), cx);
         }
-        let result = popup
-            .update(cx, |_, window, _| {
+        // Do not lease the panel's view here: preparing its AX tree draws that
+        // same view. Panel::update would hold it borrowed throughout the draw.
+        let handle: gpui::AnyWindowHandle = popup.into();
+        let result = handle
+            .update(cx, |_, window, cx| {
                 if input != OverlayInput::Tooltip {
                     window.set_window_title(match input {
                         OverlayInput::Modal => "Farcaster — Dialog",
@@ -98,6 +102,15 @@ impl NativeHost {
                         OverlayInput::Tooltip => unreachable!(),
                     });
                 }
+                // Each macOS window activates AccessKit lazily. If the owner
+                // already serves an AX client, build the panel's real tree
+                // before AppKit can expose its initial empty window node.
+                #[cfg(target_os = "macos")]
+                if owner.is_a11y_active() && input != OverlayInput::Tooltip {
+                    macos::Host::prepare_accessibility(window)?;
+                    window.draw(cx).clear(cx);
+                }
+                let _ = cx;
                 host.present(window, bounds, offset, input)
             })
             .map_err(|error| error.to_string())
@@ -321,7 +334,8 @@ mod macos {
     use gpui::{Bounds, Pixels, Window};
     use objc2::{MainThreadMarker, rc::Retained};
     use objc2_app_kit::{
-        NSApplication, NSPanel, NSView, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
+        NSAccessibility, NSApplication, NSPanel, NSView, NSWindow, NSWindowCollectionBehavior,
+        NSWindowStyleMask,
     };
     use objc2_foundation::{NSPoint, NSRect, NSSize};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -349,6 +363,16 @@ mod macos {
     }
 
     impl Host {
+        pub(super) fn prepare_accessibility(window: &Window) -> Result<(), String> {
+            let native = Self::capture(window)?;
+            let view = native
+                .window
+                .contentView()
+                .ok_or("native panel has no content view")?;
+            let _ = view.accessibilityChildren();
+            Ok(())
+        }
+
         pub(super) fn capture(window: &Window) -> Result<Self, String> {
             let main =
                 MainThreadMarker::new().ok_or("notification window requires the main thread")?;
