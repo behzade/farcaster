@@ -34,10 +34,9 @@ use super::{
 use crate::{
     adapter::{child_stderr, farcaster_mcp, main_session},
     agents::{
-        AgentLaunchConfig, CommonTool, PeerMessage, SessionGoal, TokenUsage, ToolReviewState,
-        WorkerActivity, WorkerActivityState, WorkerContext, WorkerEvent, WorkerInput,
-        WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
-        WorkerUsage,
+        AgentLaunchConfig, PeerMessage, SessionGoal, TokenUsage, ToolReviewState, WorkerActivity,
+        WorkerActivityState, WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse,
+        WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory, WorkerUsage,
     },
 };
 
@@ -1874,7 +1873,7 @@ impl CodexWorkerSession {
                             }
                         }
                         CodexMethod::AutoApprovalReviewStarted => {
-                            let Some((started, review)) = codex_tool_review_started(&params) else {
+                            let Some(review) = codex_tool_review_started(&params) else {
                                 log_bad_codex_notification(
                                     method_name,
                                     &params,
@@ -1882,12 +1881,10 @@ impl CodexWorkerSession {
                                 );
                                 continue;
                             };
-                            self.events.push_back(WorkerEvent::Activity(review));
-                            return Some(WorkerEvent::Activity(started));
+                            return Some(WorkerEvent::Activity(review));
                         }
                         CodexMethod::AutoApprovalReviewCompleted => {
-                            let Some((review, finished)) = codex_tool_review_completed(&params)
-                            else {
+                            let Some(review) = codex_tool_review_completed(&params) else {
                                 log_bad_codex_notification(
                                     method_name,
                                     &params,
@@ -1895,9 +1892,6 @@ impl CodexWorkerSession {
                                 );
                                 continue;
                             };
-                            if let Some(finished) = finished {
-                                self.events.push_back(WorkerEvent::Activity(finished));
-                            }
                             return Some(WorkerEvent::Activity(review));
                         }
                         CodexMethod::GuardianWarning => {}
@@ -3179,36 +3173,18 @@ fn codex_passive_item(item: &Value) -> bool {
         })
 }
 
-fn codex_tool_review_started(params: &Value) -> Option<(WorkerActivity, WorkerActivity)> {
+fn codex_tool_review_started(params: &Value) -> Option<WorkerActivity> {
     let id = params.get("targetItemId")?.as_str()?;
-    let action = params.get("action")?;
-    let kind = action.get("type")?.as_str()?;
-    let (name, args) = match kind {
-        "command" => (
-            CommonTool::Bash.name().to_owned(),
-            json!({
-                "command": action.get("command").cloned().unwrap_or(Value::Null),
-                "cwd": action.get("cwd").cloned().unwrap_or(Value::Null),
-            }),
-        ),
-        _ => (kind.to_owned(), action.clone()),
-    };
-    Some((
-        WorkerActivity::ToolStarted {
-            id: id.to_owned(),
-            name,
-            args,
-            metadata: tool::metadata(action, kind),
-        },
-        WorkerActivity::ToolReviewChanged {
-            id: id.to_owned(),
-            state: ToolReviewState::Reviewing,
-            detail: None,
-        },
-    ))
+    // Reviews can cover child actions without their own tool lifecycle. Native
+    // item events alone start/end execution, including pre-review command items.
+    Some(WorkerActivity::ToolReviewChanged {
+        id: id.to_owned(),
+        state: ToolReviewState::Reviewing,
+        detail: None,
+    })
 }
 
-fn codex_tool_review_completed(params: &Value) -> Option<(WorkerActivity, Option<WorkerActivity>)> {
+fn codex_tool_review_completed(params: &Value) -> Option<WorkerActivity> {
     let review = params.get("review")?;
     let approved = review.get("status").and_then(Value::as_str) == Some("approved");
     let mut summary = Vec::new();
@@ -3227,19 +3203,11 @@ fn codex_tool_review_completed(params: &Value) -> Option<(WorkerActivity, Option
     } else {
         ToolReviewState::Blocked
     };
-    let finished = (!approved).then(|| WorkerActivity::ToolFinished {
-        id: id.clone(),
-        result: json!([]),
-        is_error: true,
-    });
-    Some((
-        WorkerActivity::ToolReviewChanged {
-            id,
-            state,
-            detail: (!summary.is_empty()).then(|| summary.join("\n")),
-        },
-        finished,
-    ))
+    Some(WorkerActivity::ToolReviewChanged {
+        id,
+        state,
+        detail: (!summary.is_empty()).then(|| summary.join("\n")),
+    })
 }
 
 fn codex_tool_start(params: &Value) -> Option<WorkerActivity> {

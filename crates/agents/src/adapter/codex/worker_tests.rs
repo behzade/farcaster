@@ -1812,6 +1812,112 @@ fn completed_tools_publish_late_metadata() {
 }
 
 #[test]
+fn approval_reviews_do_not_create_or_restart_tool_execution() {
+    use crate::adapter::main_session::{MainSessionMetadata, WorkerSessionTransport};
+    use crate::conversation::{ConversationState, ToolExecutionState};
+    use crate::{SessionEvent, SessionTransport};
+
+    // Reviews may cover a child action, or arrive after the target tool ended.
+    // Neither case supplies a new execution lifecycle for the client to start.
+    for native_status in [None, Some("inProgress"), Some("completed"), Some("failed")] {
+        for review_status in ["approved", "denied", "aborted", "timedOut"] {
+            let mut session = test_session();
+            let mut notifications = Vec::new();
+            if let Some(status) = native_status {
+                notifications.push((
+                    "item/started",
+                    json!({"item": {
+                        "type":"commandExecution", "id":"tool-1",
+                        "command":"cargo check", "cwd":"/project", "status":"inProgress"
+                    }}),
+                ));
+                if status != "inProgress" {
+                    notifications.push((
+                        "item/completed",
+                        json!({"item": {
+                            "type":"commandExecution", "id":"tool-1",
+                            "command":"cargo check", "cwd":"/project", "status":status,
+                            "aggregatedOutput":"done"
+                        }}),
+                    ));
+                }
+            }
+            let action = json!({"type":"writeStdin", "processId":"process-1", "chars":""});
+            notifications.extend([
+                (
+                    "item/autoApprovalReview/started",
+                    json!({
+                        "targetItemId":"tool-1", "action":action,
+                        "review":{"status":"inProgress"}
+                    }),
+                ),
+                (
+                    "item/autoApprovalReview/completed",
+                    json!({
+                        "targetItemId":"tool-1", "action":action,
+                        "review":{"status":review_status}
+                    }),
+                ),
+                ("item/agentMessage/delta", json!({"delta":"Moving on"})),
+            ]);
+            for (method, mut params) in notifications {
+                params["threadId"] = json!("thread-1");
+                session
+                    .queued_inbound
+                    .push_back(Ok(CodexInbound::Notification {
+                        method: method.into(),
+                        params,
+                    }));
+            }
+            let mut transport = WorkerSessionTransport::new(
+                std::path::Path::new("/locators"),
+                Backend::Codex,
+                "thread-1".into(),
+                Box::new(session),
+                MainSessionMetadata::default(),
+                None,
+            )
+            .expect("transport");
+            let mut conversation = ConversationState::default();
+            while let Some(event) = transport.poll() {
+                if let SessionEvent::Activity(activity) = event {
+                    conversation.reduce(activity.value());
+                }
+            }
+            let tools = conversation
+                .items
+                .iter()
+                .filter(|item| item.tool_call_id.is_some())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                tools.len(),
+                usize::from(native_status.is_some()),
+                "{native_status:?}, {review_status}"
+            );
+            if let Some(status) = native_status {
+                assert_eq!(
+                    tools[0].tool_execution_state(),
+                    Some(match status {
+                        "inProgress" => ToolExecutionState::Running,
+                        "failed" => ToolExecutionState::Failed,
+                        _ => ToolExecutionState::Succeeded,
+                    }),
+                    "{native_status:?}, {review_status}"
+                );
+                assert_eq!(
+                    tools[0].tool_details.as_ref().expect("details").name,
+                    "bash"
+                );
+                assert_eq!(
+                    tools[0].tool_output,
+                    if status == "inProgress" { "" } else { "done" }
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn automatic_approval_review_targets_the_reviewed_tool() {
     let started = json!({
         "targetItemId":"exec-1",
@@ -1823,19 +1929,11 @@ fn automatic_approval_review_targets_the_reviewed_tool() {
     });
     assert_eq!(
         codex_tool_review_started(&started),
-        Some((
-            WorkerActivity::ToolStarted {
-                id: "exec-1".into(),
-                name: "bash".into(),
-                args: json!({"command":"git add logo.svg", "cwd":"/project"}),
-                metadata: tool::metadata(&started["action"], "command"),
-            },
-            WorkerActivity::ToolReviewChanged {
-                id: "exec-1".into(),
-                state: ToolReviewState::Reviewing,
-                detail: None,
-            },
-        ))
+        Some(WorkerActivity::ToolReviewChanged {
+            id: "exec-1".into(),
+            state: ToolReviewState::Reviewing,
+            detail: None,
+        })
     );
 
     let completed = json!({
@@ -1849,39 +1947,29 @@ fn automatic_approval_review_targets_the_reviewed_tool() {
     });
     assert_eq!(
         codex_tool_review_completed(&completed),
-        Some((
-            WorkerActivity::ToolReviewChanged {
-                id: "exec-1".into(),
-                state: ToolReviewState::Approved,
-                detail: Some(
-                    "Risk: low\nAuthorization: high\nThe command only stages the requested file."
-                        .into()
-                ),
-            },
-            None,
-        ))
+        Some(WorkerActivity::ToolReviewChanged {
+            id: "exec-1".into(),
+            state: ToolReviewState::Approved,
+            detail: Some(
+                "Risk: low\nAuthorization: high\nThe command only stages the requested file."
+                    .into()
+            ),
+        })
     );
 }
 
 #[test]
-fn denied_automatic_approval_review_ends_the_pending_tool() {
+fn denied_automatic_approval_review_does_not_end_tool_execution() {
     assert_eq!(
         codex_tool_review_completed(&json!({
             "targetItemId":"exec-1",
             "review":{"status":"denied", "rationale":"Too broad"}
         })),
-        Some((
-            WorkerActivity::ToolReviewChanged {
-                id: "exec-1".into(),
-                state: ToolReviewState::Blocked,
-                detail: Some("Too broad".into()),
-            },
-            Some(WorkerActivity::ToolFinished {
-                id: "exec-1".into(),
-                result: json!([]),
-                is_error: true,
-            }),
-        ))
+        Some(WorkerActivity::ToolReviewChanged {
+            id: "exec-1".into(),
+            state: ToolReviewState::Blocked,
+            detail: Some("Too broad".into()),
+        })
     );
 }
 
