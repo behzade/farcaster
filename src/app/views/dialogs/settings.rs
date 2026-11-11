@@ -18,7 +18,7 @@ use crate::{
     app::OVERLAY_KEY_CONTEXT,
     app::ui::assets::AppIcon,
     app::ui::primitives::{
-        AppIconSize, ButtonTone, FeedbackTone, app_icon, button, feedback, modal,
+        AppIconSize, ButtonTone, FeedbackTone, app_icon, button, feedback, modal, on_press_control,
     },
     app::ui::theme::theme,
     app::workspace::{
@@ -73,36 +73,48 @@ pub(in crate::app::views) fn render(
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .child("Settings"),
                         )
-                        .child(div().flex().gap(theme().space.xs).children(
-                            SettingsTab::ALL.into_iter().map(|page| {
-                                let select = entity.clone();
-                                let selected = page == tab;
-                                settings_control(
-                                    format!("settings-tab-{}", page.label()),
-                                    page.label(),
-                                    &app.settings.tab_focus[page as usize],
-                                )
-                                .debug_selector(move || format!("settings-tab-{}", page.label()))
-                                .w_auto()
-                                .px(theme().space.sm)
-                                .aria_selected(selected)
-                                .text_color(if selected {
-                                    theme().colors.indicator
-                                } else {
-                                    theme().colors.muted
-                                })
-                                .when(selected, |tab| tab.bg(theme().colors.highlight))
-                                .child(page.label())
-                                .on_click(move |_, window, cx| {
-                                    let _ = select.update(cx, |this, cx| {
-                                        this.workspace.voice.capturing_shortcut = false;
-                                        this.settings.tab = page;
-                                        this.settings.tab_focus[page as usize].focus(window, cx);
-                                        cx.notify();
-                                    });
-                                })
-                            }),
-                        )),
+                        .child(
+                            div()
+                                .id("settings-tabs")
+                                .role(gpui::Role::TabList)
+                                .aria_label("Settings pages")
+                                .flex()
+                                .gap(theme().space.xs)
+                                .children(SettingsTab::ALL.into_iter().map(|page| {
+                                    let select = entity.clone();
+                                    let selected = page == tab;
+                                    on_press_control(
+                                        settings_control(
+                                            format!("settings-tab-{}", page.label()),
+                                            page.label(),
+                                            &app.settings.tab_focus[page as usize],
+                                        )
+                                        .role(gpui::Role::Tab)
+                                        .debug_selector(move || {
+                                            format!("settings-tab-{}", page.label())
+                                        })
+                                        .w_auto()
+                                        .px(theme().space.sm)
+                                        .aria_selected(selected)
+                                        .text_color(if selected {
+                                            theme().colors.indicator
+                                        } else {
+                                            theme().colors.muted
+                                        })
+                                        .when(selected, |tab| tab.bg(theme().colors.highlight))
+                                        .child(page.label()),
+                                        move |window, cx| {
+                                            let _ = select.update(cx, |this, cx| {
+                                                this.workspace.voice.capturing_shortcut = false;
+                                                this.settings.tab = page;
+                                                this.settings.tab_focus[page as usize]
+                                                    .focus(window, cx);
+                                                cx.notify();
+                                            });
+                                        },
+                                    )
+                                })),
+                        ),
                 )
                 .child(
                     div()
@@ -111,6 +123,8 @@ pub(in crate::app::views) fn render(
                             tab.label(),
                             app.settings.themes.editing
                         ))
+                        .role(gpui::Role::Group)
+                        .aria_label(format!("{} settings", tab.label()))
                         .debug_selector(|| "settings-content".into())
                         .min_h_0()
                         .h(theme().size(520.0))
@@ -303,6 +317,11 @@ fn voice_setting(
                         .child(
                             Button::new("voice-shortcut")
                                 .debug_selector(|| "voice-shortcut".into())
+                                .accessibility_label(if recording {
+                                    "Voice shortcut: press a shortcut".to_owned()
+                                } else {
+                                    format!("Voice shortcut: {}", app.voice_shortcut_label(cx))
+                                })
                                 .label(if recording {
                                     "Press shortcut…".to_owned()
                                 } else {
@@ -319,6 +338,7 @@ fn voice_setting(
                             row.child(
                                 Button::new("voice-shortcut-reset")
                                     .debug_selector(|| "voice-shortcut-reset".into())
+                                    .accessibility_label("Reset voice shortcut")
                                     .label("Reset")
                                     .with_size(Size::Small)
                                     .secondary()
@@ -483,6 +503,7 @@ fn toggle_setting(
         .child(setting_label(title, description))
         .child(
             Button::new(id)
+                .accessibility_label(title)
                 .w(theme().size(56.0))
                 .flex_none()
                 .label(if enabled { "On" } else { "Off" })

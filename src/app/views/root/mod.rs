@@ -9,7 +9,10 @@ mod sidebar_resize;
 pub(in crate::app::views) use actions::bind_actions as bind_overlay_actions;
 pub(in crate::app) use sidebar_resize::SidebarResize;
 
-use gpui::{InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _, div};
+use gpui::{
+    InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    StatefulInteractiveElement as _, Styled as _, div,
+};
 
 use super::FarcasterApp;
 use crate::app::ui::{
@@ -61,6 +64,18 @@ impl Render for FarcasterApp {
             window.is_a11y_active(),
         );
         let picker = self.render_picker(entity.clone(), cx);
+        let workspace_covered = work_active || self.native_workspace_covered_by_overlay();
+        let shell = div()
+            .id("workspace-content")
+            .role(gpui::Role::Group)
+            .aria_label("Workspace")
+            .a11y_synthetic_children(move |builder| {
+                if workspace_covered {
+                    builder.parent_node().set_hidden();
+                }
+            })
+            .size_full()
+            .child(shell);
         let root = div()
             .relative()
             .size_full()

@@ -93,6 +93,7 @@ fn dialog_surface(id: impl Into<gpui::ElementId>, label: impl Into<SharedString>
         .id(id)
         .role(Role::Dialog)
         .aria_label(label)
+        .a11y_synthetic_children(|builder| builder.parent_node().set_modal())
         .tab_group()
         .w(theme().layout.dialog_width)
         .max_w_full()

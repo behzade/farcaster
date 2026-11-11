@@ -3,6 +3,7 @@ use crate::{
     app::ui::layout::{TRAFFIC_LIGHT_INSET, shows_left_inline},
     app::ui::primitives::{
         AppIconSize, AppTooltip as _, ButtonTone, app_icon, icon_button, icon_control,
+        on_press_control,
     },
     app::ui::theme::theme,
     app::workspace::editor::effective_editor_choice,
@@ -214,6 +215,9 @@ impl FarcasterApp {
         let editor =
             effective_editor_choice(self.settings.editor_choice, &self.workspace_project());
         div()
+            .id("workspace-surface-tabs")
+            .role(gpui::Role::TabList)
+            .aria_label("Workspace views")
             .h_full()
             .flex()
             .items_center()
@@ -271,43 +275,46 @@ fn surface_control(
     action: SurfaceAction,
 ) -> gpui::Stateful<gpui::Div> {
     let click_entity = entity.clone();
-    icon_control(id, label)
-        .debug_selector(move || id.into())
-        .aria_selected(active)
-        .relative()
-        .w_auto()
-        .px(theme().space.sm)
-        .gap(theme().space.xs)
-        .h_full()
-        .rounded_none()
-        .text_color(theme().colors.muted)
-        .hover(move |control| {
-            control.bg(theme().colors.highlight).text_color(if active {
-                theme().colors.indicator
-            } else {
-                theme().colors.text
+    on_press_control(
+        icon_control(id, label)
+            .role(gpui::Role::Tab)
+            .debug_selector(move || id.into())
+            .aria_selected(active)
+            .relative()
+            .w_auto()
+            .px(theme().space.sm)
+            .gap(theme().space.xs)
+            .h_full()
+            .rounded_none()
+            .text_color(theme().colors.muted)
+            .hover(move |control| {
+                control.bg(theme().colors.highlight).text_color(if active {
+                    theme().colors.indicator
+                } else {
+                    theme().colors.text
+                })
             })
-        })
-        .when(active, |control| {
-            control.text_color(theme().colors.indicator).child(
-                div()
-                    .absolute()
-                    .bottom_0()
-                    .left_0()
-                    .right_0()
-                    .h(theme().size(2.0))
-                    .bg(theme().colors.indicator),
-            )
-        })
-        .child(app_icon(icon, AppIconSize::Control))
-        .child(div().text_size(theme().type_scale.caption).child(caption))
-        .on_click(move |_, window, cx| {
+            .when(active, |control| {
+                control.text_color(theme().colors.indicator).child(
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .left_0()
+                        .right_0()
+                        .h(theme().size(2.0))
+                        .bg(theme().colors.indicator),
+                )
+            })
+            .child(app_icon(icon, AppIconSize::Control))
+            .child(div().text_size(theme().type_scale.caption).child(caption)),
+        move |window, cx| {
             let _ = click_entity.update(cx, |app, cx| action(app, window, cx));
-        })
-        .on_key_down(move |event, window, cx| {
-            if crate::app::ui::primitives::activates_button(event) {
-                cx.stop_propagation();
-                let _ = entity.update(cx, |app, cx| action(app, window, cx));
-            }
-        })
+        },
+    )
+    .on_key_down(move |event, window, cx| {
+        if crate::app::ui::primitives::activates_button(event) {
+            cx.stop_propagation();
+            let _ = entity.update(cx, |app, cx| action(app, window, cx));
+        }
+    })
 }

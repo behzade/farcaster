@@ -245,7 +245,17 @@ pub(crate) fn run(
                     )
                 });
                 let root = cx.new(|cx| gpui_component::Root::new(launch, window, cx));
-                window.on_next_frame(move |_, _| drop(first_frame_timing));
+                window.on_next_frame(move |window, _| {
+                    drop(first_frame_timing);
+                    if isolation::is_isolated() {
+                        zlog::info!(
+                            "isolated window ready bounds={:?} visibility={:?} active={}",
+                            window.bounds(),
+                            window.visibility(),
+                            window.is_window_active(),
+                        );
+                    }
+                });
                 root
             });
             drop(open_window_timing);

@@ -91,6 +91,13 @@ impl NativeHost {
         }
         let result = popup
             .update(cx, |_, window, _| {
+                if input != OverlayInput::Tooltip {
+                    window.set_window_title(match input {
+                        OverlayInput::Modal => "Farcaster — Dialog",
+                        OverlayInput::Passive => "Farcaster — Popup",
+                        OverlayInput::Tooltip => unreachable!(),
+                    });
+                }
                 host.present(window, bounds, offset, input)
             })
             .map_err(|error| error.to_string())

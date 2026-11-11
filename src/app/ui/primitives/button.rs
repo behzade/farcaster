@@ -122,14 +122,34 @@ pub(crate) fn icon_button_with_size(
 ) -> Stateful<Div> {
     let on_press: Rc<ButtonPress> = Rc::new(on_press);
     let click = Rc::clone(&on_press);
-    tone_icon_control(icon_control(id, label).child(app_icon(icon, size)), tone)
-        .on_click(move |_, window, cx| click(window, cx))
-        .on_key_down(move |event, window, cx| {
-            if activates_button(event) {
-                cx.stop_propagation();
-                on_press(window, cx);
-            }
+    on_press_control(
+        tone_icon_control(icon_control(id, label).child(app_icon(icon, size)), tone),
+        move |window, cx| click(window, cx),
+    )
+    .on_key_down(move |event, window, cx| {
+        if activates_button(event) {
+            cx.stop_propagation();
+            on_press(window, cx);
+        }
+    })
+}
+
+/// Native accessibility presses must not depend on pointer position or hit testing.
+pub(crate) fn on_press_control(
+    control: Stateful<Div>,
+    on_press: impl Fn(&mut Window, &mut App) + 'static,
+) -> Stateful<Div> {
+    let on_press: Rc<ButtonPress> = Rc::new(on_press);
+    let accessible_press = Rc::clone(&on_press);
+    control
+        .on_a11y_action(gpui::AccessibleAction::Click, move |_, window, cx| {
+            // AX presses skip AppKit's mouse activation. Native modal panels
+            // need their owner active before the requested action opens them.
+            cx.activate(true);
+            window.activate_window();
+            accessible_press(window, cx);
         })
+        .on_click(move |_, window, cx| on_press(window, cx))
 }
 
 pub(crate) fn activates_button(event: &KeyDownEvent) -> bool {
