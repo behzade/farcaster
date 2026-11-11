@@ -21,6 +21,154 @@ fn remembered_session(project: &Path, id: &str, title: &str) -> SessionSummary {
 }
 
 #[gpui::test]
+fn startup_restores_selected_chat_and_its_unsent_composer(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_prepared_offline_app(
+        concat!(
+            module_path!(),
+            "::startup_restores_selected_chat_and_its_unsent_composer"
+        ),
+        cx,
+        |project| {
+            let project_path = project.canonicalize().unwrap();
+            let project = project_path.as_path();
+            let other = project.join("other");
+            std::fs::create_dir(&other).unwrap();
+            let selected = remembered_session(&other, "selected", "Selected chat");
+            let mut newer = remembered_session(&other, "newer", "Background update");
+            newer.modified += std::time::Duration::from_secs(30);
+            let mut store = crate::app::persistence::open().unwrap();
+            store
+                .replace_sessions(&[
+                    remembered_session(project, "first", "First project"),
+                    selected.clone(),
+                    newer,
+                ])
+                .unwrap();
+            store
+                .save_composer_session(&crate::storage::ComposerRecord {
+                    target: session_target(&selected.path),
+                    text: "continue here".into(),
+                    cursor: 13,
+                    attachments: vec![crate::storage::ComposerAttachment::TextFile {
+                        path: project.join("notes.txt"),
+                    }],
+                    ..Default::default()
+                })
+                .unwrap();
+        },
+        |cx, app, _, project| {
+            let project_path = project.canonicalize().unwrap();
+            let project = project_path.as_path();
+            let other = project.join("other");
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.select_session(other.join("selected.jsonl"), other.clone(), window, cx);
+                    futures::executor::block_on(app.sessions.writer.flush()).unwrap();
+                    let launched =
+                        crate::app::infrastructure::launch::resolve_project(None).unwrap();
+                    assert_eq!(
+                        launched, other,
+                        "normal launch must return to the selected project"
+                    );
+                    let restored = persisted::load(&launched, None, cx);
+                    assert_eq!(
+                        restored.initial_session.as_ref().unwrap().path,
+                        other.join("selected.jsonl")
+                    );
+                    assert_eq!(restored.composer_sessions.current().text, "continue here");
+                    assert_eq!(
+                        restored
+                            .composer_sessions
+                            .saved_attachments()
+                            .next()
+                            .unwrap()
+                            .1
+                            .len(),
+                        1
+                    );
+                    assert!(
+                        restored.drafts.is_empty(),
+                        "restoring a chat must not add an empty draft"
+                    );
+                    let explicit =
+                        crate::app::infrastructure::launch::resolve_project(Some(project.into()))
+                            .unwrap();
+                    assert_eq!(explicit, project);
+                    let other = persisted::load(&explicit, None, cx);
+                    assert!(
+                        other.initial_session.is_none(),
+                        "explicit project must not restore another project's chat"
+                    );
+                    assert_eq!(other.initial_draft.project, project);
+                })
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn startup_restores_a_draft_then_opens_its_bound_history(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::startup_restores_a_draft_then_opens_its_bound_history"
+        ),
+        cx,
+        |cx, app, _, project| {
+            let project_path = project.canonicalize().unwrap();
+            let project = project_path.as_path();
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let id = app.sessions.selected_draft.clone().unwrap();
+                    let target = draft_target(&id);
+                    app.composer.sessions =
+                        crate::app::composer::sessions::load(target.clone(), cx).0;
+                    app.composer.input.update(cx, |input, cx| {
+                        input.set_value("unfinished request", window, cx)
+                    });
+                    app.capture_composer_session(cx);
+                    assert!(app.sync_current_draft(&target));
+                    app.remember_session_selection();
+                    futures::executor::block_on(app.sessions.writer.flush()).unwrap();
+                    futures::executor::block_on(app.composer.sessions.flush()).unwrap();
+                    let restored = persisted::load(project, None, cx);
+                    assert_eq!(restored.initial_draft.id, id);
+                    assert!(restored.initial_session.is_none());
+                    assert_eq!(
+                        restored.composer_sessions.current().text,
+                        "unfinished request"
+                    );
+                    assert_eq!(restored.drafts.len(), 1);
+
+                    let mut bound = restored.initial_draft;
+                    bound.submitted = true;
+                    bound.session_path = Some(project.join("bound.jsonl"));
+                    {
+                        let mut store = crate::app::persistence::open().unwrap();
+                        store.allocate_app_session_id(&bound).unwrap();
+                    }
+                    let restored = persisted::load(project, None, cx);
+                    assert_eq!(
+                        restored.initial_session.as_ref().unwrap().path,
+                        project.join("bound.jsonl")
+                    );
+                    assert_eq!(restored.initial_draft.id, id);
+                    assert_eq!(
+                        restored.composer_sessions.current_target(),
+                        session_target(&project.join("bound.jsonl"))
+                    );
+                    assert!(restored.drafts.is_empty());
+                    assert_eq!(
+                        restored.composer_sessions.current().text,
+                        "unfinished request"
+                    );
+                })
+            });
+        },
+    );
+}
+
+#[gpui::test]
 fn the_rail_paints_stored_chats_before_the_runtime_answers(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_prepared_offline_app(
         concat!(

@@ -46,6 +46,9 @@ impl FarcasterApp {
         }
         self.sessions.pending_draft_saves.remove(id);
         self.remember_rail_projects([project]);
+        if self.sessions.selected_draft.as_deref() == Some(id) {
+            self.remember_session_selection();
+        }
         true
     }
 

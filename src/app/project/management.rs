@@ -119,6 +119,7 @@ impl FarcasterApp {
         ) {
             self.save_project_registry();
         }
+        self.remember_session_selection();
     }
 
     pub(in crate::app) fn request_composer_project_files(&mut self, cx: &mut Context<Self>) {

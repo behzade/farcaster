@@ -23,6 +23,29 @@ pub(in crate::app) fn current_close_target(
 }
 
 impl FarcasterApp {
+    pub(in crate::app) fn remember_session_selection(&mut self) {
+        let target = self.composer.sessions.current_target();
+        let selected = crate::sessions::draft_id(target)
+            .and_then(|id| self.sessions.drafts.iter().find(|draft| draft.id == id))
+            .map(|draft| (draft.project.clone(), draft.app_session_id))
+            .or_else(|| {
+                let path = crate::sessions::session_path(target)?;
+                self.sessions
+                    .all
+                    .iter()
+                    .find(|session| session.path == path)
+                    .map(|session| (session.project.clone(), session.app_session_id))
+            });
+        let (project, id) = selected.unwrap_or((self.project.path.clone(), 0));
+        if let Err(error) = self
+            .sessions
+            .writer
+            .save_selected_session(project, (id > 0).then_some(id))
+        {
+            self.sessions.error = Some(error);
+        }
+    }
+
     fn target_for_path(&self, path: &Path) -> Option<SessionTarget> {
         let path = crate::sessions::normalize_session_path(path);
         self.sessions
@@ -585,6 +608,7 @@ impl FarcasterApp {
             let _ = self.composer.sessions.discard_and_switch(&target, current);
         }
         self.remove_session_draft(id);
+        self.remember_session_selection();
         self.notify_session_rail(cx);
         self.notify_composer(cx);
         self.notify_run_panel(cx);

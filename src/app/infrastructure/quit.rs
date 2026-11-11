@@ -100,6 +100,7 @@ impl FarcasterApp {
             self.notify_session_rail(cx);
             return;
         }
+        self.remember_session_selection();
         self.lifecycle.saving_before_quit = true;
         let revision = self.sessions.writer.revision();
         let composer_revision = self.composer.sessions.persistence_revision();

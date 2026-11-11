@@ -7,7 +7,8 @@ pub(super) struct PersistedState {
     pub(super) error: Option<String>,
     pub(super) session_order: Vec<i64>,
     pub(super) session_folders: crate::app::session_folders::SessionFolders,
-    pub(super) selected_draft: String,
+    pub(super) initial_draft: sessions::DraftSession,
+    pub(super) initial_session: Option<SessionSummary>,
     pub(super) preferred_harness: Option<Backend>,
     pub(super) preferred_profile_id: Option<String>,
     pub(super) draft_session_ids: HashMap<String, i64>,
@@ -31,6 +32,8 @@ pub(super) fn load(
     saved_proxy: Option<String>,
     cx: &mut Context<FarcasterApp>,
 ) -> PersistedState {
+    let project_path = sessions::normalize_session_path(project);
+    let project = project_path.as_path();
     let registry_timing =
         crate::app::infrastructure::performance::StartupTiming::new("app.load_registry");
     let (mut projects, mut error) = match project_registry::load() {
@@ -91,15 +94,48 @@ pub(super) fn load(
         };
     let draft_timing =
         crate::app::infrastructure::performance::StartupTiming::new("app.create_draft");
-    let initial_draft = session::draft_store::new(
-        project.to_path_buf(),
-        preferred_harness,
-        preferred_profile_id.clone(),
-    );
+    let (selected_id, initial_session) = crate::app::persistence::open()
+        .and_then(|store| {
+            let Some(id) = store.load_selected_session(project)? else {
+                return Ok((None, None));
+            };
+            let session = store
+                .cached_sessions("")?
+                .into_iter()
+                .find(|session| session.app_session_id == id);
+            Ok((Some(id), session))
+        })
+        .unwrap_or_else(|load_error| {
+            error.get_or_insert(load_error);
+            (None, None)
+        });
+    let initial_draft = drafts
+        .iter()
+        .find(|draft| Some(draft.app_session_id) == selected_id)
+        .cloned()
+        .unwrap_or_else(|| {
+            session::draft_store::new(
+                project.to_path_buf(),
+                preferred_harness,
+                preferred_profile_id.clone(),
+            )
+        });
     drop(draft_timing);
 
-    let selected_draft = initial_draft.id.clone();
-    drafts.push(initial_draft);
+    if initial_session.is_some() && initial_draft.app_session_id > 0 {
+        // The selected draft has become a chat; keep its saved composer under the chat identity.
+        match crate::app::persistence::open()
+            .and_then(|mut store| store.remove_draft(&initial_draft.id))
+        {
+            Ok(()) => drafts.retain(|draft| draft.id != initial_draft.id),
+            Err(save_error) => {
+                error.get_or_insert(save_error);
+            }
+        }
+    }
+    if initial_session.is_none() && initial_draft.app_session_id <= 0 {
+        drafts.push(initial_draft.clone());
+    }
     let draft_session_ids = drafts
         .iter()
         .map(|draft| (draft.id.clone(), draft.app_session_id))
@@ -116,8 +152,13 @@ pub(super) fn load(
 
     let composer_timing =
         crate::app::infrastructure::performance::StartupTiming::new("app.load_composer_sessions");
-    let (composer_sessions, composer_error) =
-        crate::app::composer::sessions::load(draft_target(&selected_draft), cx);
+    let (composer_sessions, composer_error) = crate::app::composer::sessions::load(
+        initial_session.as_ref().map_or_else(
+            || draft_target(&initial_draft.id),
+            |session| session_target(&session.path),
+        ),
+        cx,
+    );
     drop(composer_timing);
     if error.is_none() {
         error = composer_error;
@@ -192,7 +233,8 @@ pub(super) fn load(
         error,
         session_order,
         session_folders,
-        selected_draft,
+        initial_draft,
+        initial_session,
         preferred_harness,
         preferred_profile_id,
         draft_session_ids,

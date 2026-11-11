@@ -56,13 +56,11 @@ impl FarcasterApp {
             crate::app::infrastructure::performance::StartupTiming::new("app.spawn_runtime");
         let runtime = RuntimeHandle::spawn(
             project.clone(),
+            persisted.initial_draft.clone(),
             persisted
-                .drafts
-                .iter()
-                .find(|draft| draft.id == persisted.selected_draft)
-                .expect("startup draft is registered")
-                .clone(),
-            None,
+                .initial_session
+                .as_ref()
+                .map(SessionSummary::target),
             agent_launch,
             runtime_host::host(cx.background_executor().clone()),
         );
@@ -104,11 +102,12 @@ impl FarcasterApp {
                 projects: vec![project.clone()],
                 ..Default::default()
             },
+            initial_draft: draft.clone(),
+            initial_session: None,
             drafts: vec![draft],
             error: None,
             session_order: Vec::new(),
             session_folders: Default::default(),
-            selected_draft: draft_id.clone(),
             preferred_harness: Some(crate::agents::Backend::Pi),
             preferred_profile_id: None,
             draft_session_ids: HashMap::new(),
@@ -203,6 +202,10 @@ impl FarcasterApp {
             snapshot: Arc::new(RuntimeSnapshot {
                 status: "Starting".into(),
                 project: project.clone(),
+                selected_session: persisted
+                    .initial_session
+                    .as_ref()
+                    .map(|session| session.path.clone()),
                 ..RuntimeSnapshot::default()
             }),
             runtime_generation: 0,
@@ -230,7 +233,10 @@ impl FarcasterApp {
                 drafts: persisted.drafts,
                 draft_session_ids: persisted.draft_session_ids,
                 pending_draft_saves: HashSet::new(),
-                selected_draft: Some(persisted.selected_draft),
+                selected_draft: persisted
+                    .initial_session
+                    .is_none()
+                    .then_some(persisted.initial_draft.id),
                 preferred_harness: persisted.preferred_harness,
                 preferred_profile_id: persisted.preferred_profile_id,
                 submitted_drafts: persisted.submitted_drafts,

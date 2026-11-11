@@ -5,15 +5,47 @@ pub struct SessionStateChanges {
     pub projects: Option<projects::ProjectList>,
     pub drafts: BTreeMap<String, Option<DraftSession>>,
     pub folders: Option<sessions::SessionFolders>,
+    pub selected_sessions: BTreeMap<PathBuf, Option<i64>>,
+    pub last_selected_project: Option<PathBuf>,
 }
 
 impl SessionStateChanges {
     pub fn is_empty(&self) -> bool {
-        self.projects.is_none() && self.drafts.is_empty() && self.folders.is_none()
+        self.projects.is_none()
+            && self.drafts.is_empty()
+            && self.folders.is_none()
+            && self.selected_sessions.is_empty()
+            && self.last_selected_project.is_none()
     }
 }
 
 impl StateStore {
+    pub fn load_last_selected_project(&self) -> Result<Option<PathBuf>, String> {
+        self.connection
+            .query_row(
+                "SELECT value FROM meta WHERE key='last_selected_project'",
+                [],
+                |row| row.get::<_, String>(0).map(PathBuf::from),
+            )
+            .optional()
+            .map_err(|error| format!("load last selected project: {error}"))
+    }
+
+    pub fn load_selected_session(&self, project: &Path) -> Result<Option<i64>, String> {
+        let project = sessions::normalize_session_path(project);
+        self.connection
+            .query_row(
+                "SELECT s.id FROM meta m
+                 JOIN sessions s ON s.id=CAST(m.value AS INTEGER)
+                 JOIN projects p ON p.id=s.project_id
+                 WHERE m.key=?1 AND p.path=?2 AND s.archived_at IS NULL",
+                params![selected_session_key(&project), project.to_string_lossy()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| format!("load selected session: {error}"))
+    }
+
     pub fn set_app_session_archived(
         &mut self,
         app_session_id: sessions::AppSessionId,
@@ -42,6 +74,29 @@ impl StateStore {
                 None => remove_draft_row(&tx, key)?,
             }
         }
+        for (project, selected) in &changes.selected_sessions {
+            let key = selected_session_key(project);
+            if let Some(id) = selected {
+                tx.execute(
+                    "INSERT INTO meta(key,value) VALUES(?1,?2)
+                     ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    params![key, id.to_string()],
+                )
+            } else {
+                tx.execute("DELETE FROM meta WHERE key=?1", [key])
+            }
+            .map_err(|error| format!("save selected session: {error}"))?;
+        }
+        if let Some(project) = &changes.last_selected_project {
+            tx.execute(
+                "INSERT INTO meta(key,value) VALUES('last_selected_project',?1)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [sessions::normalize_session_path(project)
+                    .to_string_lossy()
+                    .as_ref()],
+            )
+            .map_err(|error| format!("save last selected project: {error}"))?;
+        }
         if let Some(folders) = &changes.folders {
             let json = serde_json::to_string(folders)
                 .map_err(|error| format!("encode session folders: {error}"))?;
@@ -55,6 +110,13 @@ impl StateStore {
         tx.commit()
             .map_err(|error| format!("commit session state save: {error}"))
     }
+}
+
+fn selected_session_key(project: &Path) -> String {
+    format!(
+        "selected_session:{}",
+        sessions::normalize_session_path(project).display()
+    )
 }
 
 pub(super) fn apply_archive_intent(
