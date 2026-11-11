@@ -65,15 +65,12 @@ pub(in crate::app::views) fn render(
                             .text_size(theme().type_scale.display)
                             .child("Import sessions"),
                     )
-                    .child(
-                        div()
-                            .text_size(theme().type_scale.body)
-                            .text_color(theme().colors.muted)
-                            .child(
-                                "Choose one harness, review what is on disk, then import the sessions you want. Farcaster does not watch session files.",
-                            ),
-                    )
-                    .child(harness_picker(entity.clone(), harness, dialog.profile_id.as_deref(), app.settings.harness_profiles.list().unwrap_or_default()))
+                    .child(harness_picker(
+                        entity.clone(),
+                        harness,
+                        dialog.profile_id.as_deref(),
+                        app.settings.harness_profiles.list().unwrap_or_default(),
+                    ))
                     .when_some(error, |this, message| {
                         this.child(feedback("import-error", message, FeedbackTone::Error))
                     })
@@ -82,9 +79,9 @@ pub(in crate::app::views) fn render(
                             .text_color(theme().colors.muted)
                             .child(format!("Looking for {harness_name} sessions…"))
                     } else if candidates.is_empty() {
-                        div().text_color(theme().colors.muted).child(format!(
-                            "No new {harness_name} sessions on disk."
-                        ))
+                        div()
+                            .text_color(theme().colors.muted)
+                            .child(format!("No new {harness_name} sessions on disk."))
                     } else {
                         candidate_list(entity.clone(), &candidates, &selected)
                     })

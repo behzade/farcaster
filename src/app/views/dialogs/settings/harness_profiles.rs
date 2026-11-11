@@ -16,10 +16,7 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
             .items_center()
             .justify_between()
             .gap(theme().space.sm)
-            .child(setting_label(
-                "Harness profiles",
-                "Run another command with a supported harness protocol.",
-            ))
+            .child(setting_label("Harness profiles", ""))
             .child(
                 settings_control(
                     "toggle-harness-profile-form",
@@ -139,21 +136,45 @@ fn add_form(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement 
             }),
         );
     }
-    div().debug_selector(|| "harness-profile-form".into())
-        .flex().flex_col().gap(theme().space.sm)
-        .p(theme().space.md).rounded(theme().size(6.0)).bg(theme().colors.surface)
-        .child(setting_label("Add profile", "Choose the protocol spoken by the command. Set its data directory if it stores sessions elsewhere."))
+    div()
+        .debug_selector(|| "harness-profile-form".into())
+        .flex()
+        .flex_col()
+        .gap(theme().space.sm)
+        .p(theme().space.md)
+        .rounded(theme().size(6.0))
+        .bg(theme().colors.surface)
+        .child(setting_label("Add profile", ""))
         .child(backends)
-        .child(div().flex().gap(theme().space.sm)
-            .child(field("Name", &app.settings.harness_profile_name))
-            .child(field("Command or absolute path", &app.settings.harness_profile_executable)))
-        .when(crate::agents::profile_data_environment_key(app.settings.harness_profile_backend).is_some(), |form| {
-            form.child(field("Data directory (optional)", &app.settings.harness_profile_data_directory))
-        })
-        .child(div().flex().justify_end().child(settings_action("add-harness-profile", "Add harness profile", AppIcon::Check, true,
+        .child(
+            div()
+                .flex()
+                .gap(theme().space.sm)
+                .child(field("Name", &app.settings.harness_profile_name))
+                .child(field(
+                    "Command or absolute path",
+                    &app.settings.harness_profile_executable,
+                )),
+        )
+        .when(
+            crate::agents::profile_data_environment_key(app.settings.harness_profile_backend)
+                .is_some(),
+            |form| {
+                form.child(field(
+                    "Data directory (optional)",
+                    &app.settings.harness_profile_data_directory,
+                ))
+            },
+        )
+        .child(div().flex().justify_end().child(settings_action(
+            "add-harness-profile",
+            "Add harness profile",
+            AppIcon::Check,
+            true,
             move |window, cx| {
                 let _ = entity.update(cx, |this, cx| this.add_harness_profile(window, cx));
-            })))
+            },
+        )))
         .into_any_element()
 }
 

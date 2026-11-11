@@ -555,12 +555,6 @@ fn render_empty_plan(entity: Entity<WorkGraphBoardView>) -> impl IntoElement {
         .items_center()
         .justify_center()
         .gap(theme().space.sm)
-        .child(
-            div()
-                .text_size(theme().type_scale.body)
-                .font_weight(FontWeight::SEMIBOLD)
-                .child("No plan yet"),
-        )
         .child(button(
             "workgraph-empty-create",
             "New plan",

@@ -99,16 +99,7 @@ impl FarcasterApp {
                             .update(cx, |app, cx| app.render_runtime_picker(window, cx))
                             .unwrap_or_else(|_| div().into_any_element())
                     });
-                let body = div()
-                    .flex()
-                    .flex_col()
-                    .gap(theme().space.sm)
-                    .child(
-                        div()
-                            .text_color(theme().colors.muted)
-                            .child("Choose a model to start this worker."),
-                    )
-                    .child(picker);
+                let body = div().flex().flex_col().gap(theme().space.sm).child(picker);
                 (title.into(), body.into_any_element())
             }
             ExtensionUiRequest::Select {

@@ -5,10 +5,7 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
         .flex()
         .flex_col()
         .gap(theme().space.sm)
-        .child(setting_label(
-            "Harness sign-in",
-            "Sign in with your account to use a harness.",
-        ));
+        .child(setting_label("Harness sign-in", ""));
     let mut targets = crate::agents::Backend::ALL
         .into_iter()
         .filter(|backend| crate::agents::supports_sign_in(*backend))

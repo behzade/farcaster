@@ -108,7 +108,7 @@ pub(super) fn render_plan_list(
         .p(theme().space.md)
         .gap(theme().space.xs)
         .when(rows.is_empty(), |list| {
-            list.child(detail_empty("No nodes match your search."))
+            list.child(detail_empty("No matching nodes"))
         })
         .children(
             rows.into_iter()

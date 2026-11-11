@@ -9,7 +9,7 @@ use super::{
     },
 };
 #[cfg(test)]
-use crate::repository::BackendPreference;
+use crate::repository::{BackendPreference, RepositoryKind};
 use crate::{
     app::ui::theme::theme,
     app::ui::{
@@ -20,7 +20,7 @@ use crate::{
             button,
         },
     },
-    repository::{RepositoryEdit, RepositoryKind, WorkingCopyChange, WorkingCopySnapshot},
+    repository::{RepositoryEdit, WorkingCopyChange, WorkingCopySnapshot},
 };
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement, ParentElement as _, Role,
@@ -251,19 +251,15 @@ impl FarcasterApp {
                         }),
                 }
             }))
-            .when(rows.is_empty(), |list| {
-                list.child(repository_notice(
-                    if !browser.query.trim().is_empty() {
-                        "No matching files"
-                    } else {
-                        match snapshot.location.kind {
-                            RepositoryKind::Git => "Working tree and index are clean",
-                            RepositoryKind::Jujutsu => "Current change is empty",
-                        }
-                    },
-                    theme().colors.subtle,
-                ))
-            })
+            .when(
+                rows.is_empty() && !browser.query.trim().is_empty(),
+                |list| {
+                    list.child(repository_notice(
+                        "No matching files",
+                        theme().colors.subtle,
+                    ))
+                },
+            )
             .into_any_element()
     }
 

@@ -232,15 +232,8 @@ impl WorkGraphBoardView {
                     .child(caption("Plan / dependencies").flex_1())
                     .child(caption("Status / progress").w(theme().size(120.0))),
             )
-            .when(rows.is_empty(), |list| {
-                list.child(
-                    caption(if data.plans.is_empty() {
-                        "No plans yet. Create a plan to get started."
-                    } else {
-                        "No plans match this filter and search."
-                    })
-                    .py(theme().space.md),
-                )
+            .when(rows.is_empty() && !data.plans.is_empty(), |list| {
+                list.child(caption("No matching plans").py(theme().space.md))
             })
             .when(
                 self.catalog.filter.is_none()
@@ -336,14 +329,12 @@ impl WorkGraphBoardView {
             })
             .map(|node| format!("#{} {}", node.number, node.title))
             .collect::<std::collections::BTreeSet<_>>();
-        let dependency = if blockers.is_empty() {
-            "No pending dependencies".into()
-        } else {
+        let dependency = (!blockers.is_empty()).then(|| {
             format!(
                 "Waiting on {}",
                 blockers.into_iter().collect::<Vec<_>>().join(", ")
             )
-        };
+        });
         div()
             .id(format!("workgraph-plan-{number}"))
             .role(gpui::Role::Button)
@@ -387,7 +378,9 @@ impl WorkGraphBoardView {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(plan.title.clone()),
                     )
-                    .child(caption(dependency).line_clamp(2))
+                    .when_some(dependency, |row, text| {
+                        row.child(caption(text).line_clamp(2))
+                    })
                     .child(caption(format!(
                         "#{} · Updated {}",
                         number,

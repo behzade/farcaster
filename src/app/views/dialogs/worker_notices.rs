@@ -73,28 +73,12 @@ pub(in crate::app::views) fn render(
                         .id("worker-notices-list")
                         .max_h(theme().size(520.0))
                         .overflow_y_scroll()
-                        .when(notices.is_empty(), |body| {
-                            body.child(
-                                div()
-                                    .p(crate::app::ui::grid::dialog_inset())
-                                    .text_color(theme().colors.subtle)
-                                    .child("No active coordination notices."),
-                            )
-                        })
                         .children(
                             notices
                                 .into_iter()
                                 .enumerate()
                                 .map(|(index, notice)| render_notice(index, notice)),
                         ),
-                )
-                .child(
-                    div()
-                        .px(crate::app::ui::grid::dialog_inset())
-                        .py(theme().space.sm)
-                        .text_size(theme().type_scale.caption)
-                        .text_color(theme().colors.subtle)
-                        .child("Notices expire after 15 minutes"),
                 )
         },
     )

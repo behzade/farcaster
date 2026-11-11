@@ -159,15 +159,15 @@ impl WorkGraphBoardView {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(task.title.clone()),
                     )
-                    .child(detail_section("Acceptance").child(
-                        div().text_size(theme().type_scale.body_small).child(
-                            if task.acceptance.is_empty() {
-                                "No acceptance condition recorded.".into()
-                            } else {
-                                task.acceptance.clone()
-                            },
-                        ),
-                    ))
+                    .when(!task.acceptance.is_empty(), |detail| {
+                        detail.child(
+                            detail_section("Acceptance").child(
+                                div()
+                                    .text_size(theme().type_scale.body_small)
+                                    .child(task.acceptance.clone()),
+                            ),
+                        )
+                    })
                     .when_some(
                         state.as_ref().and_then(|state| state.completion.as_ref()),
                         |detail, completion| {
@@ -188,42 +188,54 @@ impl WorkGraphBoardView {
                             detail.child(caption(format!("Owner: {}", owner.session_id)))
                         },
                     )
-                    .child(detail_section("Depends on").child(render_relations(
-                        graph,
-                        task.number,
-                        true,
-                        entity.clone(),
-                    )))
-                    .child(
-                        detail_section(if graph.work_status(task.number) == WorkStatus::Done {
-                            "Enables"
-                        } else {
-                            "Next tasks"
-                        })
-                        .child(render_relations(
-                            graph,
-                            task.number,
-                            false,
-                            entity.clone(),
-                        )),
+                    .when(
+                        graph.edges.iter().any(|edge| edge.to == task.number),
+                        |detail| {
+                            detail.child(detail_section("Depends on").child(render_relations(
+                                graph,
+                                task.number,
+                                true,
+                                entity.clone(),
+                            )))
+                        },
+                    )
+                    .when(
+                        graph.edges.iter().any(|edge| edge.from == task.number),
+                        |detail| {
+                            detail.child(
+                                detail_section(
+                                    if graph.work_status(task.number) == WorkStatus::Done {
+                                        "Enables"
+                                    } else {
+                                        "Next tasks"
+                                    },
+                                )
+                                .child(render_relations(
+                                    graph,
+                                    task.number,
+                                    false,
+                                    entity.clone(),
+                                )),
+                            )
+                        },
                     )
             })
-            .child(
-                detail_section("Linked sessions")
-                    .when(
-                        !graph
-                            .sessions
-                            .iter()
-                            .any(|session| session.plan_number == number),
-                        |detail| detail.child(caption("No linked sessions.")),
+            .when(
+                graph
+                    .sessions
+                    .iter()
+                    .any(|session| session.plan_number == number),
+                |detail| {
+                    detail.child(
+                        detail_section("Linked sessions").children(
+                            graph
+                                .sessions
+                                .iter()
+                                .filter(|session| session.plan_number == number)
+                                .map(|session| caption(session.session_id.clone())),
+                        ),
                     )
-                    .children(
-                        graph
-                            .sessions
-                            .iter()
-                            .filter(|session| session.plan_number == number)
-                            .map(|session| caption(session.session_id.clone())),
-                    ),
+                },
             )
     }
 }
@@ -252,7 +264,6 @@ fn render_relations(
         .flex()
         .flex_col()
         .gap(theme().space.xs)
-        .when(nodes.is_empty(), |list| list.child(caption("None")))
         .children(nodes.into_iter().map(|node| {
             let entity = entity.clone();
             let number = node.number;

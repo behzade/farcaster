@@ -124,16 +124,10 @@ pub(in crate::app::views) fn render(
                         .flex_none()
                         .flex()
                         .items_center()
-                        .justify_between()
+                        .justify_end()
                         .gap(theme().space.sm)
                         .px(crate::app::ui::grid::form_inset())
                         .py(theme().space.md)
-                        .child(
-                            div()
-                                .text_size(theme().type_scale.caption)
-                                .text_color(theme().colors.muted)
-                                .child("Valid changes save automatically."),
-                        )
                         .child(
                             settings_action(
                                 "close-settings",
@@ -204,7 +198,7 @@ fn general(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>, cx: &gpui::App)
         .child(toggle_setting(
             "session-project-groups-toggle",
             "Group sessions by project",
-            "Group chats under project headers. Turn off to use custom folders.",
+            "",
             app.settings.group_sessions_by_project,
             entity.clone(),
             FarcasterApp::toggle_settings_project_groups,
@@ -222,7 +216,7 @@ fn general(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>, cx: &gpui::App)
         .child(toggle_setting(
             "transcript-folders-toggle",
             "Expand changed folders in transcript",
-            "Start change folders expanded. Your manual folder choices stay as you left them.",
+            "",
             app.settings.expand_transcript_folders,
             entity.clone(),
             FarcasterApp::toggle_settings_transcript_folders,
@@ -254,7 +248,7 @@ fn voice_setting(
     let description = if !available {
         "Install and open Hex to enable voice (3.3 or later on Linux)."
     } else {
-        "Hold to speak; release to send. Double-tap to lock; press again to send. Replies are read aloud outside chat."
+        "Hold to speak; release to send. Double-tap to lock; press again to send. Spoken replies outside chat."
     };
     let capture = entity.clone();
     let reset = entity.clone();
@@ -299,7 +293,7 @@ fn voice_setting(
                     if recording {
                         "Press a shortcut. Click again to cancel."
                     } else {
-                        "Click to record a new shortcut."
+                        ""
                     },
                 ))
                 .child(
@@ -350,7 +344,7 @@ fn connections(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEleme
         .child(toggle_setting(
             "builtin-mcp-toggle",
             "Built-in MCP",
-            "Add local tools to new sessions. Turning this off disconnects existing MCP clients.",
+            "Disabling disconnects existing MCP clients.",
             crate::builtin_mcp::enabled(),
             entity.clone(),
             FarcasterApp::toggle_settings_builtin_mcp,
@@ -371,7 +365,7 @@ fn connections(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEleme
                         .gap(theme().space.md)
                         .child(setting_label(
                             "Network proxy",
-                            "Used when the project environment has no HTTP or HTTPS proxy.",
+                            "Fallback when the project has no proxy.",
                         ))
                         .child(
                             div()
@@ -423,7 +417,7 @@ fn editor_setting(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
         .gap(theme().space.md)
         .child(setting_label(
             "Editor",
-            "Open files, projects, and review locations in this editor. Chat code capture uses embedded Neovim.",
+            "Chat code capture uses embedded Neovim.",
         ))
         .child(
             div()
@@ -442,7 +436,11 @@ fn editor_setting(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
                 })),
         )
         .when(choice == EditorChoice::Custom, |section| {
-            section.child(setting_label("Terminal command", "Command and arguments, for example micro -softwrap true. Quote paths containing spaces. Applies to new editor sessions."))
+            section
+                .child(setting_label(
+                    "Terminal command",
+                    "Quote paths with spaces. Applies to new editor sessions.",
+                ))
                 .child(Input::new(&app.settings.editor_command_input))
         })
         .into_any_element()
@@ -514,12 +512,14 @@ fn setting_label(title: &'static str, description: &'static str) -> AnyElement {
                 .text_color(theme().colors.text)
                 .child(title),
         )
-        .child(
-            div()
-                .text_size(theme().type_scale.body_small)
-                .text_color(theme().colors.muted)
-                .child(description),
-        )
+        .when(!description.is_empty(), |label| {
+            label.child(
+                div()
+                    .text_size(theme().type_scale.body_small)
+                    .text_color(theme().colors.muted)
+                    .child(description),
+            )
+        })
         .into_any_element()
 }
 
@@ -533,14 +533,7 @@ fn transcript_font_size(size: gpui::Pixels, entity: WeakEntity<FarcasterApp>) ->
         .items_center()
         .justify_between()
         .gap(theme().space.md)
-        .child(setting_label(
-            "Transcript font size",
-            if cfg!(target_os = "macos") {
-                "Applies to all sessions. Cmd+- / Cmd+= also adjust the size."
-            } else {
-                "Applies to all sessions. Ctrl+- / Ctrl+= also adjust the size."
-            },
-        ))
+        .child(setting_label("Transcript font size", ""))
         .child(
             div()
                 .flex()
