@@ -305,6 +305,17 @@ impl WorkerPool {
     }
 
     #[cfg(test)]
+    pub(super) fn delayed_setup_completion_for_test(&self, id: &str) -> Result<impl Drop, String> {
+        let state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| "worker pool state is unavailable")?;
+        let record = state.records.get(id).ok_or("worker is unavailable")?;
+        Ok(setup::SetupCompletion(record.setup_done.clone()))
+    }
+
+    #[cfg(test)]
     pub fn fence_family(&self, parent: &super::CallerContext) -> Result<(), String> {
         let identity = super::caller::CallerSession::from_context(parent);
         let key = identity.key.ok_or("parent has no canonical session key")?;
@@ -852,10 +863,8 @@ impl WorkerPool {
             if let Ok(mut cancelled) = record.setup_cancelled.lock() {
                 *cancelled = false;
             }
-            let (setup_done, _) = &*record.setup_done;
-            if let Ok(mut setup_done) = setup_done.lock() {
-                *setup_done = false;
-            }
+            // An earlier setup may still hold its completion guard after retirement.
+            record.setup_done = Arc::new((Mutex::new(false), Condvar::new()));
             if let Ok(mut current) = record.snapshot.lock() {
                 current.status = WorkerStatus::Pending;
                 super::activity::record(&current.project);
@@ -1018,14 +1027,16 @@ fn retire_idle_for_new_worker(state: &mut PoolState, process_limit: usize) -> Re
         .collect::<Vec<_>>();
     if ids.len() < retire
         && let Some(error) = state.records.values().find_map(|record| {
-            (record.thread.is_none() && !record.cleanup_confirmed.load(Ordering::SeqCst)).then(
-                || {
-                    snapshot(record)
-                        .ok()
-                        .and_then(|snapshot| snapshot.error)
-                        .unwrap_or_else(|| "worker cleanup is not confirmed".into())
-                },
-            )
+            // A reserved worker has no run thread until setup finishes.
+            (record.thread.is_none()
+                && !record.cleanup_confirmed.load(Ordering::SeqCst)
+                && record.setup_done.0.lock().is_ok_and(|done| *done))
+            .then(|| {
+                snapshot(record)
+                    .ok()
+                    .and_then(|snapshot| snapshot.error)
+                    .unwrap_or_else(|| "worker cleanup is not confirmed".into())
+            })
         })
     {
         return Err(error);

@@ -276,6 +276,46 @@ fn starts_with_an_initial_prompt_and_enforces_capacity() -> Result<(), String> {
 }
 
 #[test]
+fn pending_workers_do_not_block_new_starts() -> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let factory = Arc::new(FakeFactory::default());
+    let (pool, _) = pool(factory.clone(), project.path(), 1)?;
+    let parent = canonical_parent(project.path(), None);
+    let context = CallerRegistry::shared().resolve(parent.token())?;
+    let mut child = request(project.path());
+    child.parent_session = context.session;
+    child.parent_worker_id = Some(context.worker_id);
+    let (gate, changed) = &*factory.create_gate;
+    *gate.lock().map_err(|_| "create gate")? = true;
+    let pending_attempts = (0..2)
+        .map(|index| {
+            child.name = format!("child-{index}");
+            pool.queue_assigned(
+                child.clone(),
+                assignment(),
+                crate::PeerMessage {
+                    from: "parent".into(),
+                    message: "initial".into(),
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    *gate.lock().map_err(|_| "create gate")? = false;
+    changed.notify_all();
+
+    for attempt in pending_attempts {
+        let (_, created, pending) = attempt?;
+        assert!(created && pending);
+    }
+    let snapshots = pool.snapshots()?;
+    assert_eq!(snapshots.len(), 2);
+    for snapshot in &snapshots {
+        wait_for_worker_status(&pool, &snapshot.id, WorkerStatus::Running)?;
+    }
+    Ok(())
+}
+
+#[test]
 fn future_launches_use_current_proxy_and_requested_access_mode() -> Result<(), String> {
     let project = tempfile::tempdir().map_err(|error| error.to_string())?;
     let factory = Arc::new(FakeFactory::default());
@@ -1547,6 +1587,71 @@ fn stopping_a_family_expires_its_delivered_child_input() -> Result<(), String> {
             })
             .is_err()
     );
+    Ok(())
+}
+
+#[test]
+fn delayed_setup_completion_cannot_complete_a_resumed_worker() -> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let factory = Arc::new(FakeFactory::default());
+    let (pool, _) = pool(factory.clone(), project.path(), 1)?;
+    let parent = canonical_parent(project.path(), None);
+    let context = CallerRegistry::shared().resolve(parent.token())?;
+    let mut child = request(project.path());
+    child.parent_session = context.session.clone();
+    child.parent_worker_id = Some(context.worker_id.clone());
+    let first = pool.start_assigned(child.clone(), Some(assignment()))?;
+    // Retain the old completion as if setup paused after releasing the pool lock.
+    let old_completion = pool.delayed_setup_completion_for_test(&first.id)?;
+    factory.events.lock().map_err(|_| "events")?[0]
+        .send(WorkerEvent::SessionChanged {
+            locator: "/sessions/first-child.jsonl".into(),
+        })
+        .map_err(|_| "session change")?;
+    factory.events.lock().map_err(|_| "events")?[0]
+        .send(WorkerEvent::Settled {
+            output: "done".into(),
+        })
+        .map_err(|_| "settle")?;
+    wait_for_worker_status(&pool, &first.id, WorkerStatus::Idle)?;
+    child.name = "second".into();
+    let second = pool.start_assigned(child.clone(), Some(assignment()))?;
+    factory.events.lock().map_err(|_| "events")?[1]
+        .send(WorkerEvent::Settled {
+            output: "done".into(),
+        })
+        .map_err(|_| "settle")?;
+    wait_for_worker_status(&pool, &second.id, WorkerStatus::Idle)?;
+
+    let (gate, changed) = &*factory.create_gate;
+    *gate.lock().map_err(|_| "create gate")? = true;
+    let resumed = pool.resume_child(
+        &context,
+        "implementation",
+        "continue".into(),
+        None,
+        |_, _| Some(context.access_mode),
+    );
+    drop(old_completion);
+    child.name = "third".into();
+    let next = pool.queue_assigned(
+        child,
+        assignment(),
+        crate::PeerMessage {
+            from: "parent".into(),
+            message: "initial".into(),
+        },
+    );
+    *gate.lock().map_err(|_| "create gate")? = false;
+    changed.notify_all();
+
+    assert!(resumed?.is_some(), "the retired child must resume");
+    let (_, created, pending) = next?;
+    assert!(
+        created && pending,
+        "a pending resume must not look like failed cleanup"
+    );
+    wait_for_worker_status(&pool, &first.id, WorkerStatus::Running)?;
     Ok(())
 }
 
