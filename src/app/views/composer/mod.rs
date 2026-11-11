@@ -121,7 +121,7 @@ impl FarcasterApp {
             .flex_col()
             .rounded(crate::app::ui::primitives::surface_radius())
             .border(theme().border)
-            .border_color(composer_border_color(focused))
+            .border_color(gpui::rgba(0x00000000))
             .bg(theme().colors.composer)
             .shadow(crate::app::ui::primitives::surface_shadow())
             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
