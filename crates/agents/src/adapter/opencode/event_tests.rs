@@ -86,6 +86,12 @@ fn classifies_versioned_aliases_and_unknown_events() {
         ("session.next.tool.failed", OpenCodeEventKind::ToolFailed),
         ("session.next.step.ended.2", OpenCodeEventKind::StepEnded),
         ("permission.asked.1", OpenCodeEventKind::PermissionAsked),
+        ("permission.replied.1", OpenCodeEventKind::PermissionReplied),
+        ("session.inbox.enqueued", OpenCodeEventKind::KnownIgnored),
+        (
+            "session.instructions.updated",
+            OpenCodeEventKind::KnownIgnored,
+        ),
         (
             "session.next.compaction.started",
             OpenCodeEventKind::CompactionStarted,

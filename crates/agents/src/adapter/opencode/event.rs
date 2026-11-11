@@ -84,6 +84,7 @@ pub fn read_event(reader: &mut impl BufRead) -> Result<Option<OpenCodeEvent>, St
 pub(super) enum OpenCodeEventKind<'a> {
     CatalogUpdated,
     PermissionAsked,
+    PermissionReplied,
     ExecutionStarted,
     ExecutionSucceeded,
     ExecutionInterrupted,
@@ -127,6 +128,7 @@ impl<'a> OpenCodeEventKind<'a> {
         match event_type {
             "catalog.updated" | "model.updated" => Self::CatalogUpdated,
             "permission.asked" => Self::PermissionAsked,
+            "permission.replied" => Self::PermissionReplied,
             "session.execution.started" => Self::ExecutionStarted,
             "session.execution.succeeded" => Self::ExecutionSucceeded,
             "session.execution.interrupted" => Self::ExecutionInterrupted,
@@ -164,6 +166,8 @@ impl<'a> OpenCodeEventKind<'a> {
             "session.compaction.failed" => Self::CompactionFailed,
             "form.created" => Self::FormCreated,
             "session.next.prompt.admitted"
+            | "session.inbox.enqueued"
+            | "session.instructions.updated"
             | "session.step.streamed"
             | "session.next.compaction.delta" => Self::KnownIgnored,
             _ => Self::Unknown(event_type),

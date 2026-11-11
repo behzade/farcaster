@@ -930,6 +930,30 @@ impl OpenCodeWorkerSession {
                 continue;
             };
             let event_kind = OpenCodeEventKind::parse(reported_event_type);
+            if event_kind == OpenCodeEventKind::PermissionReplied {
+                let (Some(session_id), Some(request_id)) = (
+                    event.data.get("sessionID").and_then(Value::as_str),
+                    event.data.get("requestID").and_then(Value::as_str),
+                ) else {
+                    log_bad_opencode_event(
+                        &event,
+                        "permission reply is missing sessionID or requestID",
+                    );
+                    continue;
+                };
+                // Permission requests can belong to a child session. Resolve only
+                // a permission we surfaced, with the same request and session IDs.
+                if matches!(
+                    self.pending_inputs.get(request_id),
+                    Some(PendingOpenCodeInput::Permission { session_id: pending }) if pending == session_id
+                ) {
+                    self.pending_inputs.remove(request_id);
+                    return Some(WorkerEvent::InputResolved {
+                        id: request_id.to_owned(),
+                    });
+                }
+                continue;
+            }
             if let Some((session_id, request_id)) = opencode_permission_request(&event, event_kind)
             {
                 if matches!(self.access_mode, crate::HarnessAccessMode::Full) {
@@ -1464,7 +1488,9 @@ impl OpenCodeWorkerSession {
                     }));
                 }
                 OpenCodeEventKind::KnownIgnored => {}
-                OpenCodeEventKind::CatalogUpdated | OpenCodeEventKind::PermissionAsked => {
+                OpenCodeEventKind::CatalogUpdated
+                | OpenCodeEventKind::PermissionAsked
+                | OpenCodeEventKind::PermissionReplied => {
                     log_bad_opencode_event(&event, "event reached same-session dispatch twice")
                 }
                 OpenCodeEventKind::Unknown(_) => {
@@ -1592,10 +1618,10 @@ impl WorkerSession for OpenCodeWorkerSession {
     }
 
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String> {
-        let pending = self
-            .pending_inputs
-            .remove(&response.id)
-            .ok_or_else(|| format!("unknown OpenCode interaction: {}", response.id))?;
+        // Native resolution can race a queued user answer.
+        let Some(pending) = self.pending_inputs.remove(&response.id) else {
+            return Ok(());
+        };
         let mut client = self.server.client();
         match pending {
             PendingOpenCodeInput::Confirmation => {

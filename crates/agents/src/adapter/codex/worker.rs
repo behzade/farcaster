@@ -2092,6 +2092,8 @@ impl CodexWorkerSession {
                             }
                         }
                         CodexMethod::ThreadStatusChanged
+                        | CodexMethod::ThreadReadStateChanged
+                        | CodexMethod::TurnModerationMetadata
                         | CodexMethod::TurnDiffUpdated
                         | CodexMethod::TurnPlanUpdated
                         | CodexMethod::ServerRequestResolved
@@ -2104,6 +2106,8 @@ impl CodexWorkerSession {
                         CodexMethod::SkillsChanged
                         | CodexMethod::McpServerStartupStatusUpdated
                         | CodexMethod::AccountRateLimitsUpdated
+                        | CodexMethod::AccountUpdated
+                        | CodexMethod::DeprecationNotice
                         | CodexMethod::Warning
                         | CodexMethod::ConfigWarning
                         | CodexMethod::RemoteControlStatusChanged
@@ -3122,7 +3126,10 @@ fn codex_notification_is_for_thread(
     match params.get("threadId").and_then(Value::as_str) {
         Some(reported) if reported != thread_id => false,
         _ if method.tier() == CodexNotificationTier::Global => {
-            if matches!(method, CodexMethod::Warning | CodexMethod::ConfigWarning) {
+            if matches!(
+                method,
+                CodexMethod::Warning | CodexMethod::ConfigWarning | CodexMethod::DeprecationNotice
+            ) {
                 zlog::warn!("Codex app-server {method_name}: {params}");
             }
             false
