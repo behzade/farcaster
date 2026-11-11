@@ -30,13 +30,14 @@ pub(super) const ARCHIVED_OPEN_ROWS: usize = 5;
 pub(super) fn session_section_header() -> Div {
     div()
         .w_full()
-        .h(theme().controls.icon_button)
+        .h(theme().controls.icon_button + theme().space.sm)
+        .pt(theme().space.sm)
         .flex_none()
         .flex()
         .items_center()
         .gap(theme().space.xs)
         .pr(theme().space.xs)
-        .text_size(theme().type_scale.caption)
+        .text_size(theme().type_scale.body_small)
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(theme().colors.muted)
 }

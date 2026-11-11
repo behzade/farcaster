@@ -108,3 +108,18 @@ pub(crate) fn section_heading(title: impl Into<SharedString>) -> impl gpui::Into
         .text_color(theme().colors.text)
         .child(title)
 }
+
+/// Pane sections sit below item titles in the type hierarchy.
+pub(crate) fn sidebar_heading(title: impl Into<SharedString>) -> impl gpui::IntoElement {
+    let title = title.into();
+    div()
+        .id(title.clone())
+        .role(Role::Heading)
+        .aria_label(title.clone())
+        .aria_level(2)
+        .text_size(theme().type_scale.body_small)
+        .line_height(theme().type_scale.line_body)
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(theme().colors.muted)
+        .child(title)
+}

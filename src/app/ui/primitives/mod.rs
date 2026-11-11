@@ -27,7 +27,7 @@ pub(crate) use button::{
     prominent_icon_button,
 };
 pub(crate) use content::{
-    DiffColumns, diff_count_columns, folder_change_summary, panel, section_heading,
+    DiffColumns, diff_count_columns, folder_change_summary, panel, section_heading, sidebar_heading,
 };
 pub(crate) use context_menu::ContextMenuTrigger;
 pub(crate) use delete::DeleteButton;

@@ -18,7 +18,7 @@ use crate::{
     app::FarcasterApp,
     app::ui::assets::AppIcon,
     app::ui::primitives::{
-        AppIconSize, ButtonTone, FeedbackTone, app_icon, button, feedback, section_heading,
+        AppIconSize, ButtonTone, FeedbackTone, app_icon, button, feedback, sidebar_heading,
     },
     app::ui::theme::theme,
 };
@@ -200,7 +200,7 @@ impl Render for WorkGraphSidebarView {
             .overflow_hidden()
             .whitespace_nowrap()
             .text_ellipsis()
-            .child(section_heading(title));
+            .child(sidebar_heading(title));
         let visible = sidebar_visible(&self.state, self.session_id.is_some());
         div()
             .debug_selector(|| "run-panel-plan".into())

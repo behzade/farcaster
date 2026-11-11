@@ -201,6 +201,7 @@ impl FarcasterApp {
                                     .overflow_hidden()
                                     .whitespace_nowrap()
                                     .text_ellipsis()
+                                    .text_color(theme().colors.subtle)
                                     .child(execution),
                             ),
                     ),

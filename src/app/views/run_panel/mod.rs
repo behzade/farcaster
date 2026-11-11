@@ -16,9 +16,9 @@ mod tests;
 pub(in crate::app::views) mod worker_list;
 
 use gpui::{
-    InteractiveElement as _, IntoElement, ParentElement as _, ScrollAnchor, ScrollHandle,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
-    uniform_list,
+    FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, ScrollAnchor,
+    ScrollHandle, StatefulInteractiveElement as _, Styled as _, WeakEntity, div,
+    prelude::FluentBuilder as _, uniform_list,
 };
 
 pub(super) use resize::clamped_run_panel_width;
@@ -159,7 +159,9 @@ impl FarcasterApp {
             .ml(-theme().space.sm)
             .px(theme().space.sm)
             .py_0()
-            .text_color(theme().colors.text)
+            .text_size(theme().type_scale.body_small)
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(theme().colors.muted)
             .line_height(theme().type_scale.line_body)
             .debug_selector(|| "run-panel-main-agent".into())
             .aria_label("Show main agent transcript")
@@ -419,7 +421,7 @@ impl FarcasterApp {
             .when(expanded, |activity| activity.overflow_y_hidden())
             .flex()
             .flex_col()
-            .gap(theme().space.sm)
+            .gap(theme().space.md)
             .child(conversation)
             .when(!expanded, |activity| {
                 activity.child(self.views.workgraph_sidebar.clone())
@@ -444,41 +446,48 @@ impl FarcasterApp {
                     )
                 },
             );
-        let body =
-            div()
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .flex_col()
-                .pb(theme().space.md)
-                .px(crate::app::ui::grid::inspector_inset())
-                .child(
-                    div()
-                        .debug_selector(|| "run-panel-top-row".into())
-                        .h(crate::app::ui::grid::header_height())
-                        .flex_none()
-                        .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
-                            window.start_window_move();
-                        }),
-                )
-                .when_some(root, |body, root| {
-                    body.child(Self::main_agent_row(
-                        root,
-                        selected,
-                        worker_view.main_focus,
-                        entity.clone(),
-                        run_panel.clone(),
-                    ))
-                })
-                .child(activity.mt(theme().space.sm))
-                .when(
-                    !expanded && self.project.repository.backend.is_some(),
-                    |run| {
-                        run.child(div().mt(theme().space.md).flex_1().min_h_0().child(
-                            self.render_repository(entity.clone(), run_panel.clone(), browser),
-                        ))
-                    },
-                );
+        let body = div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .pb(theme().space.md)
+            .px(crate::app::ui::grid::inspector_inset())
+            .child(
+                div()
+                    .debug_selector(|| "run-panel-top-row".into())
+                    .h(crate::app::ui::grid::header_height())
+                    .flex_none()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
+                        window.start_window_move();
+                    }),
+            )
+            .when_some(root, |body, root| {
+                body.child(Self::main_agent_row(
+                    root,
+                    selected,
+                    worker_view.main_focus,
+                    entity.clone(),
+                    run_panel.clone(),
+                ))
+            })
+            .child(activity.mt(theme().space.xs))
+            .when(
+                !expanded && self.project.repository.backend.is_some(),
+                |run| {
+                    run.child(
+                        div()
+                            .mt(theme().space.md + theme().space.sm)
+                            .flex_1()
+                            .min_h_0()
+                            .child(self.render_repository(
+                                entity.clone(),
+                                run_panel.clone(),
+                                browser,
+                            )),
+                    )
+                },
+            );
         panel()
             .size_full()
             .rounded_none()

@@ -360,7 +360,7 @@ impl FarcasterApp {
                     .flex()
                     .flex_col()
                     .px(super::rail_inset())
-                    .pb(theme().space.sm)
+                    .pb(theme().space.sm + theme().space.xs)
                     .child(
                         div()
                             .h(crate::app::ui::grid::header_height())
@@ -459,7 +459,7 @@ impl FarcasterApp {
                                 },
                             ),
                     )
-                    .child(archived_panel),
+                    .child(div().flex_none().pt(theme().space.sm).child(archived_panel)),
             )
             .child(
                 div()

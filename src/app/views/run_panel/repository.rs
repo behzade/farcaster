@@ -23,7 +23,7 @@ use crate::{
     repository::{RepositoryEdit, WorkingCopyChange, WorkingCopySnapshot},
 };
 use gpui::{
-    AnyElement, InteractiveElement as _, IntoElement, ParentElement as _, Role,
+    AnyElement, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Role,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
 
@@ -58,7 +58,22 @@ impl FarcasterApp {
             .flex()
             .flex_col()
             .gap(theme().space.xs)
-            .child(header)
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .gap(theme().space.xs)
+                    .py(theme().space.xs)
+                    .child(header)
+                    .when_some(snapshot, |section, _| {
+                        section.child(
+                            SearchField::new("repository-search", browser.search)
+                                .accessible_label("Filter changed files")
+                                .inset(gpui::px(0.0)),
+                        )
+                    }),
+            )
             .when(
                 self.project.repository.loading && !self.project.repository.initialized,
                 |section| {
@@ -116,18 +131,12 @@ impl FarcasterApp {
                 },
             )
             .when_some(snapshot, |section, snapshot| {
-                section
-                    .child(
-                        SearchField::new("repository-search", browser.search)
-                            .accessible_label("Filter changed files")
-                            .inset(gpui::px(0.0)),
-                    )
-                    .child(self.repository_changes(
-                        snapshot,
-                        entity.clone(),
-                        panel.clone(),
-                        browser,
-                    ))
+                section.child(self.repository_changes(
+                    snapshot,
+                    entity.clone(),
+                    panel.clone(),
+                    browser,
+                ))
             })
             .when(!self.project.repository.execution_allowed, |section| {
                 section
@@ -233,6 +242,8 @@ impl FarcasterApp {
                                 },
                             )
                             .aria_label(accessible)
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(theme().colors.text)
                             .when(!*open, |row| {
                                 row.child(crate::app::ui::primitives::folder_change_summary(
                                     *count, *counts, columns,

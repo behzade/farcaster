@@ -10,7 +10,7 @@ use crate::{
             assets::AppIcon,
             primitives::{
                 AppTooltip as _, ButtonPressExt as _, ButtonTone, activates_button,
-                dropdown_button, icon_button, icon_control, section_heading,
+                dropdown_button, icon_button, icon_control, sidebar_heading,
             },
             theme::{MONO_FONT_FAMILY, theme},
         },
@@ -83,7 +83,7 @@ pub(super) fn repository_header(
         .gap(theme().space.xs)
         .child(
             crate::app::ui::grid::row()
-                .child(section_heading("Changes"))
+                .child(sidebar_heading("Changes"))
                 .child(
                     div()
                         .flex_1()
