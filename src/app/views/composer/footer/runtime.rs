@@ -77,7 +77,7 @@ pub(in crate::app::views) fn render(
                 "select-runtime",
                 "Runtime",
                 runtime_content,
-                ButtonTone::Neutral,
+                ButtonTone::Quiet,
                 true,
             )
             .when(app.editable_draft_harness().is_none(), |button| {
