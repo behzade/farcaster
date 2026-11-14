@@ -570,3 +570,7 @@ mod tests;
 #[cfg(test)]
 #[path = "conversation/receipt_fallback_tests.rs"]
 mod receipt_fallback_tests;
+
+#[cfg(test)]
+#[path = "conversation/output_images_tests.rs"]
+mod output_images_tests;

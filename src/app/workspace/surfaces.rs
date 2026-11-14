@@ -1198,17 +1198,51 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.overlays.image_preview.is_none() {
-            self.overlays.image_preview_return_focus = window.focused(cx);
+        self.overlays.image_preview_task.take();
+        let rule = crate::app::attachment::resolve(
+            crate::app::attachment::AttachmentSource::Image(image.format()),
+        );
+        let byte_len = image.bytes().len() as u64;
+        let action = rule.preview_action(byte_len, true);
+        if action != rule.open {
+            self.open_image_action(image, action, window, cx);
+            return;
         }
-        self.cover_native_workspace_surface(cx);
-        self.overlays.image_preview = Some(ImagePreview {
-            image,
-            index,
-            total,
+        let project = self.workspace_project();
+        let target = self.composer.sessions.current_target().to_owned();
+        let renderer = cx.svg_renderer();
+        let decode = cx.background_executor().spawn(async move {
+            let image = crate::app::ui::images::normalized(image);
+            let rendered = image.to_image_data(renderer);
+            (image, rendered)
         });
-        self.overlays.post_render_focus = Some(PostRenderFocus::ImagePreview);
-        cx.notify();
+        self.overlays.image_preview_task = Some(cx.spawn_in(window, async move |weak, cx| {
+            let (image, rendered) = decode.await;
+            let _ = weak.update_in(cx, |this, window, cx| {
+                if this.workspace_project() != project
+                    || this.composer.sessions.current_target() != target
+                {
+                    return;
+                }
+                let Ok(rendered) = rendered else {
+                    this.close_image_preview(window, cx);
+                    this.open_image_action(image, rule.preview_action(byte_len, false), window, cx);
+                    return;
+                };
+                if this.overlays.image_preview.is_none() {
+                    this.overlays.image_preview_return_focus = window.focused(cx);
+                }
+                this.cover_native_workspace_surface(cx);
+                this.overlays.image_preview = Some(ImagePreview {
+                    image,
+                    rendered,
+                    index,
+                    total,
+                });
+                this.overlays.post_render_focus = Some(PostRenderFocus::ImagePreview);
+                cx.notify();
+            });
+        }));
     }
 
     pub(in crate::app) fn close_image_preview(
@@ -1216,6 +1250,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.overlays.image_preview_task.take();
         if self.overlays.image_preview.take().is_none() {
             return;
         }

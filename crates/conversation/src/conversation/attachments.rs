@@ -80,6 +80,54 @@ pub(super) fn pasted_file_summary_length<'a>(
     None
 }
 
+// Adapters expose output files as resource links; native IDs stay behind the adapter.
+pub(super) fn result_files(content: &serde_json::Value) -> Vec<FileAttachment> {
+    content_blocks(content)
+        .into_iter()
+        .flatten()
+        .filter_map(|block| {
+            if block.get("type")?.as_str()? != "resource_link" {
+                return None;
+            }
+            let uri = block.get("uri")?.as_str()?;
+            let path = match url::Url::parse(uri) {
+                Ok(url) if url.scheme() == "file" => url.to_file_path().ok()?,
+                Ok(url) if matches!(url.scheme(), "http" | "https") => {
+                    std::path::PathBuf::from(uri)
+                }
+                Ok(_) => return None,
+                Err(_) => {
+                    let path = std::path::PathBuf::from(uri);
+                    if !path.is_absolute() {
+                        return None;
+                    }
+                    path
+                }
+            };
+            Some(FileAttachment {
+                name: block
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| {
+                        path.file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned()
+                    }),
+                path,
+            })
+        })
+        .collect()
+}
+
+pub(super) fn content_blocks(value: &serde_json::Value) -> Option<&[serde_json::Value]> {
+    value
+        .as_array()
+        .or_else(|| value.get("content")?.as_array())
+        .map(Vec::as_slice)
+}
+
 #[cfg(test)]
 #[path = "attachments_tests.rs"]
 mod tests;

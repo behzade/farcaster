@@ -3269,7 +3269,9 @@ fn codex_tool_end(params: &Value) -> Option<WorkerActivity> {
         .get("status")
         .and_then(Value::as_str)
         .is_some_and(|status| matches!(status, "failed" | "declined"));
-    let result = if let Some(content) = item.pointer("/result/content").and_then(Value::as_array) {
+    let result = if kind == "imageGeneration" {
+        Value::Array(tool::image_output(item))
+    } else if let Some(content) = item.pointer("/result/content").and_then(Value::as_array) {
         Value::Array(content.clone())
     } else if failed
         && let Some(error) = item

@@ -1029,3 +1029,53 @@ fn tool_completion_and_late_metadata_invalidate_the_actual_earlier_row() {
     let changed = conversation.reduce(&json!({"type":"message_end", "message":{"role":"toolResult", "toolCallId":"first", "content":[], "isError":false}}));
     assert_eq!(changed, Some(0));
 }
+#[test]
+fn long_inline_images_and_distant_reference_definitions_survive_chunks() {
+    let inline = format!("![inline](data:image/png;base64,{})", "a".repeat(20_000));
+    let text = format!(
+        "{inline}\n\n![reference][picture]\n\n{}\n\n[picture]: /tmp/picture.png\n",
+        "some prose\n\n".repeat(1500)
+    );
+    let chunks = markdown_chunks(&text);
+    let rendered: Vec<_> = chunks
+        .iter()
+        .map(|chunk| markdown_chunk_text(&text, *chunk))
+        .collect();
+    assert!(rendered.iter().any(|chunk| chunk.contains(&inline)));
+    let reference = rendered
+        .iter()
+        .find(|chunk| chunk.contains("![reference][picture]"))
+        .unwrap();
+    let root = ::markdown::to_mdast(reference, &::markdown::ParseOptions::gfm()).unwrap();
+    assert!(format!("{root:?}").contains("ImageReference"));
+}
+
+#[test]
+fn html_presentation_actions_keep_the_entire_document() {
+    let text = format!(
+        "```html\n<!doctype html>\n{}\n<script>document.title='complete'</script>\n```",
+        "<p>slide</p>\n".repeat(1000)
+    );
+    let chunks = markdown_chunks(&text);
+    assert_eq!(chunks.len(), 1);
+    assert_eq!(markdown_chunk_text(&text, chunks[0]), text);
+}
+
+#[test]
+fn tool_images_remain_visible_outside_collapsed_activity_groups() {
+    let mut image_tool = item(TranscriptKind::Tool, "Generate", "");
+    Arc::make_mut(&mut image_tool).images = Arc::new(vec![Arc::new(
+        conversation::EncodedImage::new(vec![1, 2, 3], "image/png").unwrap(),
+    )]);
+    let items = PersistentVec::from_iter([
+        item(TranscriptKind::Thinking, "", "working"),
+        image_tool,
+        item(TranscriptKind::Tool, "Read", ""),
+    ]);
+    let rows = project_rows(&items);
+    assert_eq!(rows.len(), 3);
+    assert!(
+        rows.iter()
+            .all(|row| matches!(row, TranscriptRow::Item { .. }))
+    );
+}

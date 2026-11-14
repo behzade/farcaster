@@ -121,6 +121,7 @@ pub(crate) fn run(
                 ("io.github.behzade.farcaster", "Farcaster")
             };
             cx.set_app_identity(app_id, app_name);
+            cx.set_http_client(std::sync::Arc::new(super::image_http::ImageHttpClient));
             let components_timing = StartupTiming::always("launch.init_components");
             gpui_component::init(cx);
             crate::app::ui::primitives::init_tooltips(cx);

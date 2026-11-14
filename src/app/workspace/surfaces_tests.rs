@@ -1,6 +1,56 @@
 use super::*;
 
 #[gpui::test]
+fn image_preview_decodes_before_opening_and_cancels_on_close(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::image_preview_decodes_before_opening_and_cancels_on_close"
+        ),
+        cx,
+        |cx, app, _, _| {
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::new_rgb8(64, 16)
+                .write_to(&mut bytes, image::ImageFormat::Jpeg)
+                .unwrap();
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.open_image_preview(
+                        Arc::new(Image::from_bytes(
+                            gpui::ImageFormat::Png,
+                            bytes.into_inner(),
+                        )),
+                        0,
+                        1,
+                        window,
+                        cx,
+                    );
+                });
+            });
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let preview = app
+                        .overlays
+                        .image_preview
+                        .as_ref()
+                        .expect("decoded preview");
+                    assert_eq!(preview.image.format(), gpui::ImageFormat::Jpeg);
+                    let image = preview.image.clone();
+                    app.close_image_preview(window, cx);
+                    app.open_image_preview(image, 0, 1, window, cx);
+                    app.close_image_preview(window, cx);
+                });
+            });
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                app.update(cx, |app, _| assert!(app.overlays.image_preview.is_none()))
+            });
+        },
+    );
+}
+
+#[gpui::test]
 fn worker_notices_block_surface_switch_until_closed(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
         concat!(

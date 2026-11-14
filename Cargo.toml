@@ -63,6 +63,7 @@ gpui-base = "=0.8.1"
 gpui-component = "=0.8.1"
 gpui-libghostty = "0.4.1-rc.1"
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff", "ico"] }
 markdown = "1.0.0"
 notify = "8.2.1"
 nucleo-matcher = "0.3.1"
@@ -76,19 +77,19 @@ thiserror = "2.0.19"
 time = { version = "0.3.54", features = ["formatting", "parsing"] }
 toml = "1.1.3"
 url = "2.5.8"
+ureq = { version = "3.5.0", default-features = false, features = ["rustls"] }
 uuid = { version = "1.24.0", features = ["v4"] }
 workgraph = { path = "workgraph" }
 zlog = { package = "gpui-pre-zlog", version = "=0.3.10" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-image = { version = "0.25.10", default-features = false, features = ["png"] }
 x11rb = { version = "0.14.0", features = ["shape"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSAccessibilityProtocols", "NSApplication", "NSEvent", "NSMenu", "NSPanel", "NSResponder", "NSView", "NSWindow"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["NSBundle", "NSObject", "NSString"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSAccessibilityProtocols", "NSApplication", "NSEvent", "NSMenu", "NSPanel", "NSResponder", "NSView", "NSWindow", "NSWorkspace"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSBundle", "NSObject", "NSString", "NSURL"] }
 objc2-user-notifications = { version = "0.3", default-features = false, features = ["UNUserNotificationCenter", "block2"] }
 
 [dev-dependencies]

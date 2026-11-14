@@ -131,7 +131,23 @@ pub(super) fn render_tool(
         .filter(|details| details.metadata.category == Some(crate::agents::ToolCategory::Execute))
         .and_then(|details| details.display_command())
     {
-        return command_row::render(font_scale, key, &command, item, expanded, entity);
+        return div()
+            .child(command_row::render(
+                font_scale,
+                key,
+                &command,
+                item,
+                expanded,
+                entity.clone(),
+            ))
+            .when(item.has_attachments(), |row| {
+                row.child(
+                    crate::app::views::transcript::attachments::render_attachments(
+                        key, item, entity,
+                    ),
+                )
+            })
+            .into_any_element();
     }
     let summary = tool_summary(item);
     let read_target = direct_read_target(item).map(str::to_owned);
@@ -158,7 +174,7 @@ pub(super) fn render_tool(
             tool_changes::title_row(("tool-title", key), title_label, move |window, cx| {
                 if let Some(path) = &read_target {
                     let _ = title_entity.update(cx, |this, cx| {
-                        this.open_file_editor_at_line(path.clone().into(), None, window, cx)
+                        this.open_transcript_file(path.clone().into(), None, window, cx)
                     });
                 } else {
                     toggle(window, cx);
@@ -201,6 +217,15 @@ pub(super) fn render_tool(
                 )
             }),
         )
+        .when(item.has_attachments(), |tool| {
+            tool.child(
+                crate::app::views::transcript::attachments::render_attachments(
+                    key,
+                    item,
+                    entity.clone(),
+                ),
+            )
+        })
         .when(expanded, |tool| {
             tool.child(
                 disclosure_detail()
@@ -364,7 +389,17 @@ fn file_links(
                 diff_enabled,
                 move |diff, window, cx| {
                     let _ = entity.update(cx, |this, cx| {
-                        this.open_file_editor_with_diff(path.clone().into(), line, diff, window, cx)
+                        if diff {
+                            this.open_file_editor_with_diff(
+                                path.clone().into(),
+                                line,
+                                true,
+                                window,
+                                cx,
+                            );
+                        } else {
+                            this.open_transcript_file(path.clone().into(), line, window, cx);
+                        }
                     });
                 },
             )

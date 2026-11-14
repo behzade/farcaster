@@ -155,6 +155,9 @@ pub(super) fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
                                     .filter(|thinking| !thinking.trim().is_empty())?;
                                 (TranscriptKind::Thinking, String::new(), thinking.to_owned())
                             }
+                            Some("image") => {
+                                (TranscriptKind::Assistant, String::new(), String::new())
+                            }
                             Some("toolCall") => (
                                 TranscriptKind::Tool,
                                 tool_name(block)
@@ -168,7 +171,11 @@ pub(super) fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
                             kind,
                             label,
                             text,
-                            images: Arc::default(),
+                            images: if block.get("type").and_then(Value::as_str) == Some("image") {
+                                content_images(block)
+                            } else {
+                                Arc::default()
+                            },
                             files: Arc::default(),
                             stream_chunks: Arc::default(),
                             streaming: false,
@@ -276,12 +283,12 @@ pub(super) fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
         text: user_text.unwrap_or_else(|| {
             projected_user.map_or_else(|| message_text(message).into_owned(), Cow::into_owned)
         }),
-        files: Arc::new(files),
-        images: if kind == TranscriptKind::User {
-            message_images(message)
+        files: Arc::new(if kind == TranscriptKind::Tool {
+            super::attachments::result_files(message)
         } else {
-            Arc::default()
-        },
+            files
+        }),
+        images: content_images(message),
         stream_chunks: Arc::default(),
         streaming: false,
         is_error,
@@ -461,13 +468,11 @@ pub(super) fn decode_prompt_images(images: &[PromptImage]) -> Arc<Vec<Arc<Encode
     )
 }
 
-fn message_images(message: &Value) -> Arc<Vec<Arc<EncodedImage>>> {
+pub(super) fn content_images(content: &Value) -> Arc<Vec<Arc<EncodedImage>>> {
     decode_images(
-        message
-            .get("content")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
+        super::attachments::content_blocks(content)
+            .unwrap_or_else(|| std::slice::from_ref(content))
+            .iter()
             .filter(|block| block.get("type").and_then(Value::as_str) == Some("image"))
             .filter_map(|block| {
                 block

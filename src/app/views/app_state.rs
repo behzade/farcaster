@@ -21,6 +21,7 @@ pub(in crate::app) struct AppOverlays {
     pub(in crate::app) view: views::overlay_state::OverlayViewState,
     pub(in crate::app) command_detail: Option<super::dialogs::command_detail::CommandDetail>,
     pub(in crate::app) image_preview: Option<ImagePreview>,
+    pub(in crate::app) image_preview_task: Option<gpui::Task<()>>,
     pub(in crate::app) image_preview_focus: FocusHandle,
     pub(in crate::app) image_preview_return_focus: Option<FocusHandle>,
     pub(in crate::app) sheet_focus: FocusHandle,

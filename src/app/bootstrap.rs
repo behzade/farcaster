@@ -405,6 +405,7 @@ impl FarcasterApp {
                 view: Default::default(),
                 command_detail: None,
                 image_preview: None,
+                image_preview_task: None,
                 image_preview_focus: cx.focus_handle(),
                 image_preview_return_focus: None,
                 sheet_focus: cx.focus_handle(),

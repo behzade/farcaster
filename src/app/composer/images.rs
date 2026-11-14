@@ -21,7 +21,7 @@ impl ComposerImage {
         let byte_len = bytes.len();
         Ok(Self {
             prompt,
-            preview: Arc::new(Image::from_bytes(format, bytes)),
+            preview: crate::app::ui::images::normalized(Arc::new(Image::from_bytes(format, bytes))),
             byte_len,
         })
     }

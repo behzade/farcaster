@@ -537,6 +537,17 @@ fn append_delta(partial: &mut PartialContent, delta: &Value) -> bool {
 
 fn freeze_stream_chunks(partial: &mut PartialContent) {
     while partial.value.len() > STREAM_TAIL_MAX_BYTES {
+        if partial.kind == PartialKind::Text
+            && (partial.value.contains("![")
+                || partial.value.contains("](")
+                || partial.value.contains("][")
+                || partial
+                    .value
+                    .lines()
+                    .any(|line| line.trim_start().starts_with('[')))
+        {
+            break;
+        }
         let mut split = STREAM_CHUNK_BYTES.min(partial.value.len());
         while !partial.value.is_char_boundary(split) {
             split -= 1;

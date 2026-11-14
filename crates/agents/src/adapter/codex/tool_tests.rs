@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn generated_images_project_inline_bytes_saved_paths_and_unavailable_ids() {
+    let inline = image_output(&json!({"result":"iVBORw0KGgo=","savedPath":"/tmp/output.png"}));
+    assert_eq!(inline[0]["type"], "image");
+    assert_eq!(inline[0]["mimeType"], "image/png");
+    assert_eq!(inline[1]["uri"], "/tmp/output.png");
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("saved.png");
+    std::fs::write(&path, b"\x89PNG\r\n\x1a\n").unwrap();
+    let saved = image_output(&json!({"savedPath":path}));
+    assert_eq!(saved[0]["data"], "iVBORw0KGgo=");
+    let unavailable = image_output(&json!({"fileId":"provider-only"}));
+    assert!(
+        unavailable[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("no local file or image bytes")
+    );
+    let failed = image_output(&json!({"failure":"generation failed"}));
+    assert!(
+        failed[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("generation failed")
+    );
+}
+
+#[test]
 fn command_projection_preserves_native_actions_and_targets() {
     let item = json!({
         "type":"commandExecution",

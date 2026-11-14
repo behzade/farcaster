@@ -550,6 +550,7 @@ fn render_row(
                 cx,
             ),
             entity.clone(),
+            cx,
         ),
         TranscriptRow::StreamChunk {
             index,
@@ -577,6 +578,7 @@ fn render_row(
                     cx,
                 ),
                 entity.clone(),
+                cx,
             )
         }
         TranscriptRow::Item { index, .. }
@@ -607,6 +609,7 @@ fn render_row(
                 )),
                 Some(invocation_transcript_markdown_style(resolved)),
                 entity.clone(),
+                cx,
             )
         }
         TranscriptRow::Item { index, .. } if items[index].invocation.is_some() => {
@@ -662,6 +665,7 @@ fn render_row(
                 markdown_state,
                 None,
                 entity,
+                cx,
             )
         }
     }
@@ -701,7 +705,11 @@ fn selectable_text(
     id: impl Into<gpui::ElementId>,
     text: impl Into<gpui::SharedString>,
 ) -> TextView {
-    styled_selectable_text(font_scale, TextView::markdown(id, text))
+    let text = text.into();
+    styled_selectable_text(
+        font_scale,
+        TextView::markdown(id, super::markdown::clickable_images(&text).into_owned()),
+    )
 }
 
 fn selectable_text_state(font_scale: f32, state: &Entity<TextViewState>) -> TextView {

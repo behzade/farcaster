@@ -644,6 +644,9 @@ fn history_tool_messages(item: &Value, kind: &str) -> Vec<Value> {
 }
 
 fn history_tool_output(item: &Value, kind: &str, is_error: bool) -> Vec<Value> {
+    if kind == "imageGeneration" {
+        return tool::image_output(item);
+    }
     if kind == "subAgentActivity" {
         return vec![json!({"type": "text", "text": tool::subagent_summary(item)})];
     }

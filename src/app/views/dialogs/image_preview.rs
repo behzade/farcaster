@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, IntoElement as _, ObjectFit, ParentElement as _, Styled as _, StyledImage as _,
-    WeakEntity, div, img, relative,
+    WeakEntity, div, img,
 };
 
 use crate::app::FarcasterApp;
@@ -19,7 +19,7 @@ pub(in crate::app::views) fn render(
     Some(
         modal(
             "image-preview",
-            "Image preview",
+            format!("Image {} of {}", preview.index + 1, preview.total),
             &app.overlays.image_preview_focus,
             crate::app::OVERLAY_KEY_CONTEXT,
             move |window, cx| {
@@ -28,25 +28,40 @@ pub(in crate::app::views) fn render(
             |surface| {
                 let close = entity.clone();
                 surface
-                    .w(theme().size(960.0))
-                    .max_w_full()
-                    .h(relative(0.86))
-                    .max_h(relative(0.92))
+                    .relative()
+                    .w_full()
+                    .h_full()
+                    .max_h_full()
+                    .rounded_none()
+                    .shadow(Vec::new())
+                    .bg(gpui::transparent_black())
                     .overflow_hidden()
-                    .flex()
-                    .flex_col()
+                    .child(
+                        img(preview.rendered.clone())
+                            .size_full()
+                            .object_fit(ObjectFit::Contain),
+                    )
                     .child(
                         div()
-                            .h(theme().size(48.0))
-                            .flex_none()
-                            .px(crate::app::ui::grid::dialog_inset())
+                            .absolute()
+                            .top(theme().space.sm)
+                            .right(theme().space.sm)
                             .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(format!(
-                                "Attachment {} of {}",
-                                preview.index + 1,
-                                preview.total
+                            .gap(theme().space.xs)
+                            .child(icon_button(
+                                "open-image-externally",
+                                AppIcon::Eye,
+                                "Open image externally",
+                                ButtonTone::Quiet,
+                                {
+                                    let entity = entity.clone();
+                                    let image = preview.image.clone();
+                                    move |window, cx| {
+                                        let _ = entity.update(cx, |this, cx| {
+                                            this.open_image_externally(image.clone(), window, cx)
+                                        });
+                                    }
+                                },
                             ))
                             .child(icon_button(
                                 "close-image-preview",
@@ -55,22 +70,10 @@ pub(in crate::app::views) fn render(
                                 ButtonTone::Quiet,
                                 move |window, cx| {
                                     let _ = close.update(cx, |this, cx| {
-                                        this.close_image_preview(window, cx);
+                                        this.close_image_preview(window, cx)
                                     });
                                 },
                             )),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_h_0()
-                            .p(crate::app::ui::grid::dialog_inset())
-                            .bg(theme().colors.canvas)
-                            .child(
-                                img(preview.image)
-                                    .size_full()
-                                    .object_fit(ObjectFit::Contain),
-                            ),
                     )
             },
         )

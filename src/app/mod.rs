@@ -1,4 +1,5 @@
 use crate::agents::Backend;
+mod attachment;
 mod bootstrap;
 mod change_detection;
 mod composer;
@@ -180,6 +181,7 @@ struct SessionTitleEdit {
 #[derive(Clone)]
 pub(crate) struct ImagePreview {
     pub(crate) image: Arc<Image>,
+    pub(crate) rendered: Arc<gpui::RenderImage>,
     pub(crate) index: usize,
     pub(crate) total: usize,
 }

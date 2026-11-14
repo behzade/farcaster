@@ -158,6 +158,13 @@ pub(super) fn metadata(item: &Value, kind: &str) -> ToolMetadata {
     let targets = match kind {
         "fileChange" => paths(item.get("changes")),
         "commandExecution" => paths(item.get("commandActions")),
+        "imageGeneration" => item
+            .get("savedPath")
+            .and_then(Value::as_str)
+            .filter(|path| !path.is_empty())
+            .map(str::to_owned)
+            .into_iter()
+            .collect(),
         "imageView" => item
             .get("path")
             .and_then(Value::as_str)
@@ -289,6 +296,67 @@ pub(super) fn web_search_query(item: &Value) -> Option<&str> {
                 .into_iter()
                 .find_map(|field| action.get(field).and_then(Value::as_str))
         })
+}
+
+// Keep native image storage fields out of the conversation/UI contracts.
+pub(super) fn image_output(item: &Value) -> Vec<Value> {
+    use base64::Engine as _;
+    let mut blocks = Vec::new();
+    let saved = item
+        .get("savedPath")
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty());
+    let inline = item
+        .get("result")
+        .and_then(Value::as_str)
+        .filter(|data| !data.is_empty());
+    let bytes = inline
+        .and_then(|data| {
+            let data = data
+                .strip_prefix("data:")
+                .and_then(|s| s.split_once(";base64,").map(|(_, data)| data))
+                .unwrap_or(data);
+            (data.len() <= 45 * 1024 * 1024)
+                .then(|| base64::engine::general_purpose::STANDARD.decode(data).ok())
+                .flatten()
+        })
+        .or_else(|| {
+            saved.and_then(|path| {
+                (std::fs::metadata(path).ok()?.len() <= 32 * 1024 * 1024)
+                    .then(|| std::fs::read(path).ok())
+                    .flatten()
+            })
+        });
+    if let Some(bytes) = bytes {
+        let mime = if bytes.starts_with(b"\x89PNG") {
+            Some("image/png")
+        } else if bytes.starts_with(b"\xff\xd8\xff") {
+            Some("image/jpeg")
+        } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+            Some("image/webp")
+        } else {
+            None
+        };
+        if let Some(mime) = mime {
+            blocks.push(json!({"type":"image", "mimeType":mime, "data":base64::engine::general_purpose::STANDARD.encode(bytes)}));
+        }
+    }
+    if let Some(path) = saved {
+        blocks.push(json!({"type":"resource_link", "name":std::path::Path::new(path).file_name().unwrap_or_default().to_string_lossy(), "uri":path}));
+    }
+    if blocks.is_empty() {
+        let text = if let Some(failure) = item.get("failure").filter(|v| !v.is_null()) {
+            format!("Image generation failed: {failure}")
+        } else if let Some(id) = item.get("fileId").and_then(Value::as_str) {
+            format!(
+                "Generated image {id} is stored by the provider, but no local file or image bytes are available."
+            )
+        } else {
+            "Image generation returned no previewable image.".to_owned()
+        };
+        blocks.push(json!({"type":"text", "text":text}));
+    }
+    blocks
 }
 
 #[cfg(test)]

@@ -14,6 +14,8 @@ use crate::{
     conversation::{TranscriptItem, TranscriptKind},
 };
 
+use super::links::with_transcript_images;
+
 use super::{item_color, selectable_text, selectable_text_state, technical_text, with_file_links};
 
 pub(super) fn render_invocation(
@@ -188,6 +190,7 @@ pub(super) fn render_message(
     markdown_state: Option<Entity<TextViewState>>,
     markdown_style: Option<TextViewStyle>,
     entity: WeakEntity<FarcasterApp>,
+    cx: &gpui::App,
 ) -> AnyElement {
     let user = item.kind == TranscriptKind::User;
     let tooltip = invocation_tooltip_text(item);
@@ -209,7 +212,7 @@ pub(super) fn render_message(
             item.kind == TranscriptKind::PeerMessage || (user && !item.label.is_empty()),
             |row| row.child(peer_label(font_scale, &item.label)),
         )
-        .when(user && item.has_attachments(), |row| {
+        .when(item.has_attachments(), |row| {
             row.child(render_attachments(key, item, entity.clone()))
         })
         .child({
@@ -221,7 +224,7 @@ pub(super) fn render_message(
                 Some(style) => text.style(super::scaled_markdown_style(style, font_scale)),
                 None => text,
             };
-            with_file_links(text, entity)
+            with_transcript_images(text, entity, cx)
                 .text_color(item_color(item))
                 .when(user, |text| text.font_weight(FontWeight::MEDIUM))
         })
@@ -239,6 +242,7 @@ pub(super) fn render_message_chunk(
     follows_tool: bool,
     markdown_state: Entity<TextViewState>,
     entity: WeakEntity<FarcasterApp>,
+    cx: &gpui::App,
 ) -> AnyElement {
     let user = item.kind == TranscriptKind::User;
     div()
@@ -259,13 +263,17 @@ pub(super) fn render_message_chunk(
             first && (item.kind == TranscriptKind::PeerMessage || (user && !item.label.is_empty())),
             |row| row.child(peer_label(font_scale, &item.label)),
         )
-        .when(first && user && item.has_attachments(), |row| {
+        .when(first && item.has_attachments(), |row| {
             row.child(render_attachments(key, item, entity.clone()))
         })
         .child(
-            with_file_links(selectable_text_state(font_scale, &markdown_state), entity)
-                .text_color(item_color(item))
-                .when(user, |text| text.font_weight(FontWeight::MEDIUM)),
+            with_transcript_images(
+                selectable_text_state(font_scale, &markdown_state),
+                entity,
+                cx,
+            )
+            .text_color(item_color(item))
+            .when(user, |text| text.font_weight(FontWeight::MEDIUM)),
         )
         .into_any_element()
 }

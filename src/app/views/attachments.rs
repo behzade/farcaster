@@ -2,58 +2,66 @@ use std::sync::Arc;
 
 use crate::app::{
     FarcasterApp,
+    attachment::{self, AttachmentSource, AttachmentView},
     ui::theme::{UI_FONT_FAMILY, theme},
 };
 use gpui::{
     AnyElement, Div, Image, IntoElement as _, ObjectFit, ParentElement as _, Styled as _,
-    StyledImage as _, WeakEntity, div, img,
+    StyledImage as _, WeakEntity, div, img, prelude::FluentBuilder as _,
 };
 
 fn card() -> Div {
     div()
-        .h(theme().size(48.0))
+        .relative()
         .flex_none()
-        .flex()
-        .items_center()
-        .gap(theme().space.xs)
-        .px(theme().space.sm)
-        .rounded(theme().radius)
-        .border(theme().border)
-        .border_color(theme().colors.border)
-        .bg(theme().colors.surface)
+        .max_w_full()
         .font_family(UI_FONT_FAMILY)
         .text_size(theme().type_scale.caption)
         .text_color(theme().colors.text)
 }
 
 fn content(name: String, detail: String, image: Option<Arc<Image>>) -> AnyElement {
+    let rule = attachment::resolve(match &image {
+        Some(image) => AttachmentSource::Image(image.format()),
+        None => AttachmentSource::File(std::path::Path::new(&name)),
+    });
     let preview = match image {
         Some(image) => img(image)
-            .size(theme().size(32.0))
-            .rounded(theme().radius)
+            .size(theme().size(24.0))
+            .flex_none()
+            .rounded(theme().size(3.0))
             .object_fit(ObjectFit::Cover)
             .into_any_element(),
-        None => div()
-            .size(theme().size(32.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .text_color(theme().colors.muted)
-            .child("TXT")
-            .into_any_element(),
+        None => crate::app::ui::file_icons::file_icon(std::path::Path::new(&name)),
+    };
+    let (label, detail) = if rule.view == AttachmentView::Image {
+        (detail, String::new())
+    } else {
+        (name, detail)
     };
     div()
+        .h_full()
+        .max_w(theme().size(220.0))
+        .min_w_0()
         .flex()
         .items_center()
         .gap(theme().space.sm)
+        .px(theme().space.sm)
         .child(preview)
         .child(
             div()
+                .min_w_0()
                 .flex()
                 .flex_col()
-                .max_w(theme().size(220.0))
-                .child(div().truncate().child(name))
-                .child(div().text_color(theme().colors.muted).child(detail)),
+                .child(div().truncate().child(label))
+                .when(!detail.is_empty(), |text| {
+                    text.child(
+                        div()
+                            .truncate()
+                            .text_color(theme().colors.muted)
+                            .child(detail),
+                    )
+                }),
         )
         .into_any_element()
 }
@@ -80,16 +88,16 @@ pub(super) fn open_card(
     let click = open.clone();
     card()
         .id(id)
-        .hover(|card| card.border_color(theme().colors.accent))
+        .h(theme().size(40.0))
+        .rounded(theme().size(6.0))
+        .bg(theme().colors.surface)
         .child(
             div()
                 .id("open-attachment")
                 .h_full()
-                .flex()
-                .items_center()
-                .rounded(theme().radius)
+                .max_w_full()
                 .border(theme().border)
-                .border_color(theme().colors.surface)
+                .border_color(gpui::transparent_black())
                 .cursor_pointer()
                 .tab_index(0)
                 .on_mouse_down(
@@ -97,7 +105,12 @@ pub(super) fn open_card(
                     crate::app::ui::primitives::preserve_pointer_focus,
                 )
                 .role(gpui::Role::Button)
-                .aria_label(format!("Open {name}"))
+                .aria_label(if detail.is_empty() {
+                    format!("Open {name}")
+                } else {
+                    format!("{name}: {detail}")
+                })
+                .hover(|control| control.text_color(theme().colors.accent))
                 .focus_visible(|control| control.border_color(theme().colors.focus_border))
                 .child(content(name, detail, image))
                 .on_click(move |_, window, cx| click(window, cx))
@@ -135,3 +148,7 @@ pub(super) fn image_card(
         },
     )
 }
+
+#[cfg(test)]
+#[path = "attachments_tests.rs"]
+mod tests;
