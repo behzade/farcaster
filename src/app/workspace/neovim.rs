@@ -158,6 +158,9 @@ impl NvimEditor {
             })
             .ok();
         let launch_file = socket_dir.path().join("launch.sh");
+        let background_setup = socket_dir.path().join("background.lua");
+        std::fs::write(&background_setup, include_str!("neovim_background.lua"))
+            .map_err(|error| format!("prepare Neovim background sync: {error}"))?;
         let command = editor_launch::prepare(
             &launch_file,
             &executable,
@@ -168,6 +171,8 @@ impl NvimEditor {
                 state_setup(socket_dir.path()).into(),
                 "--listen".into(),
                 socket_dir.path().join("nvim.sock").into_os_string(),
+                "-S".into(),
+                background_setup.into_os_string(),
                 "--".into(),
                 project.clone().into_os_string(),
             ],
