@@ -374,7 +374,8 @@ impl FarcasterApp {
                         )
                         .tone(ButtonTone::Quiet)
                         .disabled(providers.len() < 2)
-                        .w(theme().size(180.0))
+                        .auto_menu_width()
+                        .anchor(gpui::Anchor::TopRight)
                         .min_w(theme().size(0.0))
                         .max_w(px((width - 100.0).max(0.0)))
                         .overflow_hidden(),
