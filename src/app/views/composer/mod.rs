@@ -255,21 +255,32 @@ impl FarcasterApp {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ComposerAction {
+    Send,
+    Steer,
+    Stop,
+    Run,
+}
+
 pub(super) fn composer_primary_action(
     has_content: bool,
     can_submit: bool,
     exact_command: bool,
     running: bool,
-) -> Option<&'static str> {
-    if !has_content || !can_submit {
+) -> Option<ComposerAction> {
+    if !has_content {
+        return running.then_some(ComposerAction::Stop);
+    }
+    if !can_submit {
         return None;
     }
-    Some(if exact_command {
-        "Run"
-    } else if running {
-        "Steer"
+    Some(if running {
+        ComposerAction::Steer
+    } else if exact_command {
+        ComposerAction::Run
     } else {
-        "Send"
+        ComposerAction::Send
     })
 }
 

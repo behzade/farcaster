@@ -257,6 +257,11 @@ fn composer_text_attachments_and_controls_share_an_inset(cx: &mut gpui::TestAppC
                 });
                 cx.update(|window, cx| window.draw(cx).clear(cx));
                 let frame = cx.debug_bounds("composer-frame").expect("composer frame");
+                assert_eq!(
+                    cx.debug_bounds("composer-primary-action").is_some(),
+                    !text.is_empty() || attachment || running,
+                    "one action appears only when there is content or an active run"
+                );
                 let runtime = cx
                     .debug_bounds("composer-runtime-content")
                     .expect("runtime controls");

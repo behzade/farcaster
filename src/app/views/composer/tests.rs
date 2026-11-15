@@ -238,22 +238,28 @@ fn saved_prompt_body_keeps_actions_in_view_for_large_text(cx: &mut gpui::TestApp
 }
 
 #[test]
-fn primary_action_only_appears_for_submit_ready_content() {
+fn primary_action_matches_content_and_running_state() {
+    use super::ComposerAction::{Run, Send, Steer, Stop};
     assert_eq!(composer_primary_action(false, true, false, false), None);
-    assert_eq!(composer_primary_action(false, true, false, true), None);
+    assert_eq!(
+        composer_primary_action(false, true, false, true),
+        Some(Stop)
+    );
+    assert_eq!(
+        composer_primary_action(false, false, false, true),
+        Some(Stop)
+    );
     assert_eq!(composer_primary_action(true, false, false, false), None);
     assert_eq!(
         composer_primary_action(true, true, false, false),
-        Some("Send")
+        Some(Send)
     );
     assert_eq!(
         composer_primary_action(true, true, false, true),
-        Some("Steer")
+        Some(Steer)
     );
-    assert_eq!(
-        composer_primary_action(true, true, true, false),
-        Some("Run")
-    );
+    assert_eq!(composer_primary_action(true, true, true, false), Some(Run));
+    assert_eq!(composer_primary_action(true, true, true, true), Some(Steer));
 }
 
 #[test]

@@ -12,10 +12,11 @@ use gpui::{
 };
 
 use super::super::usage::{ComposerUsage, composer_usage, format_tokens};
+use super::ComposerAction;
 use crate::{
     app::FarcasterApp,
     app::ui::assets::AppIcon,
-    app::ui::primitives::{AppIconSize, ButtonTone, icon_button_with_size, prominent_icon_button},
+    app::ui::primitives::{AppIconSize, ButtonTone, icon_button_with_size},
     app::ui::theme::{MONO_FONT_FAMILY, theme},
     runtime::RuntimeSignal,
 };
@@ -99,65 +100,53 @@ impl FarcasterApp {
     pub(in crate::app::views) fn render_composer_actions(
         &self,
         entity: WeakEntity<Self>,
-        primary_action: Option<&'static str>,
+        primary_action: Option<ComposerAction>,
     ) -> AnyElement {
-        let send_entity = entity.clone();
-        let abort_entity = entity;
-        let send_size = theme().size(24.0);
         div()
             .flex_none()
-            .w(theme().controls.icon_button + send_size + theme().space.xs)
+            .w(theme().controls.icon_button)
             .flex()
             .items_center()
             .justify_end()
-            .child(
-                div()
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap(theme().space.xs)
-                    .when(self.snapshot.conversation.running, |actions| {
-                        actions.child(
-                            prominent_icon_button(
-                                "abort",
-                                AppIcon::Stop,
-                                "Abort",
-                                ButtonTone::Quiet,
-                                move |_, cx| {
-                                    let _ = abort_entity.update(cx, |this, _| {
-                                        this.runtime.signal(
-                                            this.composer.sessions.current_target(),
-                                            RuntimeSignal::Abort,
-                                        )
-                                    });
-                                },
-                            )
-                            .text_color(theme().colors.error),
-                        )
-                    })
-                    .when_some(primary_action, |actions, label| {
-                        actions.child(
-                            icon_button_with_size(
-                                "send",
-                                AppIcon::ArrowUp,
-                                label,
-                                AppIconSize::Inline,
-                                ButtonTone::Quiet,
-                                move |window, cx| {
-                                    let _ = send_entity.update(cx, |this, cx| {
-                                        let value =
-                                            this.composer.input.read(cx).value().trim().to_owned();
-                                        if !value.is_empty() || this.has_composer_attachments() {
-                                            this.submit(value, this.enter_mode(), window, cx);
-                                        }
-                                    });
-                                },
-                            )
-                            .size(send_size)
-                            .text_color(theme().colors.text),
-                        )
+            .when_some(primary_action, |slot, action| {
+                let (icon, label) = match action {
+                    ComposerAction::Send => (AppIcon::ArrowUp, "Send"),
+                    ComposerAction::Steer => (AppIcon::ArrowUp, "Steer"),
+                    ComposerAction::Stop => (AppIcon::Stop, "Stop"),
+                    ComposerAction::Run => (AppIcon::ArrowUp, "Run"),
+                };
+                slot.child(
+                    icon_button_with_size(
+                        "composer-primary-action",
+                        icon,
+                        label,
+                        AppIconSize::Control,
+                        ButtonTone::Quiet,
+                        move |window, cx| {
+                            let _ = entity.update(cx, |this, cx| {
+                                if action == ComposerAction::Stop {
+                                    this.runtime.signal(
+                                        this.composer.sessions.current_target(),
+                                        RuntimeSignal::Abort,
+                                    );
+                                } else {
+                                    let value =
+                                        this.composer.input.read(cx).value().trim().to_owned();
+                                    if !value.is_empty() || this.has_composer_attachments() {
+                                        this.submit(value, this.enter_mode(), window, cx);
+                                    }
+                                }
+                            });
+                        },
+                    )
+                    .debug_selector(|| "composer-primary-action".into())
+                    .text_color(if action == ComposerAction::Stop {
+                        theme().colors.error
+                    } else {
+                        theme().colors.text
                     }),
-            )
+                )
+            })
             .into_any_element()
     }
 }
