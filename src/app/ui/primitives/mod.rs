@@ -50,6 +50,8 @@ pub(crate) use resize::{ResizeBounds, ResizeState};
 pub(crate) use search::SearchField;
 pub(crate) use selection::SelectionStyle;
 pub(crate) use stack::{PanelSlot, panel_bounds, panel_space};
-pub(crate) use surface::{floating_surface, separator_color, surface_radius, surface_shadow};
+pub(crate) use surface::{
+    RaisedEdge, floating_surface, raised_edge_shadow, surface_radius, surface_shadow,
+};
 pub(crate) use textarea::{create_submit_textarea, submit_textarea};
 pub(crate) use tooltip::{AppTooltip, AppTooltips, init_tooltips, tooltip_overlay};

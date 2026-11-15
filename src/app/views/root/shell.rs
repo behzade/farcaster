@@ -12,7 +12,7 @@ use crate::app::{
             LayoutMode, chat_column, composer_bottom_clearance, shows_left_inline,
             shows_right_inline,
         },
-        primitives::AppTooltip as _,
+        primitives::{AppTooltip as _, RaisedEdge, raised_edge_shadow},
         theme::theme,
     },
 };
@@ -103,6 +103,16 @@ impl FarcasterApp {
                 _ => self.render_chat_main(entity.clone(), viewport_height),
             }
         };
+        let shadows = [
+            Some(RaisedEdge::Top),
+            (shows_left_inline(mode) && !self.workspace.session_rail_hidden)
+                .then_some(RaisedEdge::Left),
+            (shows_right_inline(mode) && !self.workspace.run_panel_hidden)
+                .then_some(RaisedEdge::Right),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|edge| raised_edge_shadow(edge, native_surface && !native_surface_covered));
 
         div()
             .flex_1()
@@ -111,21 +121,29 @@ impl FarcasterApp {
             .flex()
             .flex_col()
             .child(self.render_workspace_bar(entity.clone(), mode))
-            .child(div().relative().flex_1().min_h_0().child(main).when(
-                native_surface
-                    && self.extensions.active.dialog.is_some()
-                    && !self.modal_rendered_in_native_window(),
-                |center| {
-                    center.child(
-                        div()
-                            .absolute()
-                            .left_0()
-                            .right_0()
-                            .bottom_0()
-                            .child(self.render_composer_request(entity, request_focused)),
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(main)
+                    .when(
+                        native_surface
+                            && self.extensions.active.dialog.is_some()
+                            && !self.modal_rendered_in_native_window(),
+                        |center| {
+                            center.child(
+                                div()
+                                    .absolute()
+                                    .left_0()
+                                    .right_0()
+                                    .bottom_0()
+                                    .child(self.render_composer_request(entity, request_focused)),
+                            )
+                        },
                     )
-                },
-            ))
+                    .children(shadows),
+            )
             .into_any_element()
     }
 
@@ -185,8 +203,7 @@ impl FarcasterApp {
                             .min_w(theme().layout.session_rail_min)
                             .max_w(theme().layout.session_rail_max)
                             .flex_none()
-                            .border_r(theme().border)
-                            .border_color(crate::app::ui::primitives::separator_color())
+                            .bg(theme().colors.composer)
                             .when(
                                 !(self.modal_rendered_in_native_window()
                                     && self.overlays.view.sessions),
@@ -221,8 +238,7 @@ impl FarcasterApp {
                             .min_w(theme().layout.run_panel_min)
                             .max_w(theme().layout.run_panel_max)
                             .flex_none()
-                            .border_l(theme().border)
-                            .border_color(crate::app::ui::primitives::separator_color())
+                            .bg(theme().colors.composer)
                             .child(
                                 if self.modal_rendered_in_native_window() && self.overlays.view.run
                                 {

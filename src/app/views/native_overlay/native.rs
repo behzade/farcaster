@@ -34,6 +34,13 @@ impl gpui::Global for TestHost {}
 
 impl NativeHost {
     #[cfg(target_os = "macos")]
+    pub(in crate::app) fn decoration_layer(
+        window: &Window,
+    ) -> Option<objc2::rc::Retained<objc2_quartz_core::CALayer>> {
+        macos::Host::capture(window).ok()?.decoration_layer()
+    }
+
+    #[cfg(target_os = "macos")]
     pub(in crate::app) fn request_background_frame(window: &Window) {
         if let Ok(native) = macos::Host::capture(window) {
             native.request_frame();
@@ -387,6 +394,10 @@ mod macos {
     }
 
     impl Host {
+        pub(super) fn decoration_layer(&self) -> Option<Retained<objc2_quartz_core::CALayer>> {
+            self.view.layer()
+        }
+
         pub(super) fn request_frame(&self) {
             self.view.setNeedsDisplay(true);
         }

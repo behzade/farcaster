@@ -11,6 +11,7 @@ pub use core::{WorkerActivitySubscription, subscribe_worker_activity};
 mod profiles;
 pub use profiles::{HarnessProfile, HarnessProfiles, profile_id_from_locator};
 
+pub use adapter::model_display_name;
 pub use adapter::profile_data_environment_key;
 pub use adapter::project_shell_environment;
 #[cfg(feature = "test-support")]

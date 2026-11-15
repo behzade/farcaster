@@ -2,6 +2,7 @@ use crate::Backend;
 pub(super) mod backend;
 mod catalog;
 mod configuration;
+pub(super) use configuration::display_model_name;
 mod connection;
 mod cursor_extension;
 mod events;

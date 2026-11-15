@@ -106,6 +106,25 @@ pub(super) struct ModelSelection {
     pub parameters: Vec<(String, String)>,
 }
 
+// Persisted catalogs can still carry the older parameter display syntax.
+// Keep that syntax at the adapter boundary, without changing selection IDs.
+pub(in crate::adapter) fn display_model_name(name: &str) -> String {
+    let Some((title, parameters)) = name.rsplit_once(" · ") else {
+        return name.to_owned();
+    };
+    let parameters = parameters
+        .split(',')
+        .map(|parameter| {
+            let parameter = parameter.trim();
+            parameter
+                .strip_prefix("context=")
+                .map_or_else(|| parameter.to_owned(), |value| format!("{value} context"))
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{title} · {parameters}")
+}
+
 pub(super) fn metadata(
     profile: &AcpProfile,
     response: &Value,
@@ -228,7 +247,7 @@ pub(super) fn metadata(
                     number.parse::<u64>().ok()?.checked_mul(multiplier)
                 })
                 .unwrap_or(0);
-            models.push(json!({"id":id,"name":if suffix.is_empty() {name.to_owned()} else {format!("{name} · {suffix}")},
+            models.push(json!({"id":id,"name":if suffix.is_empty() {name.to_owned()} else {display_model_name(&format!("{name} · {suffix}"))},
                 "provider":profile.backend,"contextWindow":context_window,"reasoning":!efforts.is_empty(),"efforts":efforts,"serviceTiers":service_tiers}));
             ids.selections.insert(
                 id,

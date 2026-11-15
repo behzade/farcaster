@@ -30,7 +30,7 @@ pub(super) fn conversation_row(id: impl Into<ElementId>, selected: bool) -> gpui
         .pr_0()
         .py(theme().size(4.0))
         .rounded(theme().radius)
-        .bg(theme().colors.inspector)
+        .bg(theme().colors.composer)
         .selection_style(selected)
         .hover(move |row| {
             row.bg(if selected {

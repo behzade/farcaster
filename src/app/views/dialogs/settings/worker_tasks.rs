@@ -419,7 +419,7 @@ fn route(
         .filter(|model| model.provider == route.provider)
         .map(|model| {
             (
-                model_label(model),
+                crate::agents::model_display_name(route.harness, model),
                 model.id == route.model,
                 WorkerRouteChoice::Model {
                     provider: model.provider.clone(),
@@ -433,7 +433,7 @@ fn route(
         .iter()
         .find(|model| model.provider == route.provider && model.id == route.model);
     let model_label = selected_model
-        .map(model_label)
+        .map(|model| crate::agents::model_display_name(route.harness, model))
         .unwrap_or_else(|| selected(&route.model, "Select model"));
     let efforts = std::iter::once(String::new())
         .chain(model_efforts(&catalog, selected_model).iter().cloned())
@@ -475,10 +475,10 @@ fn route(
                         .flex()
                         .items_center()
                         .gap(theme().space.xs)
-                        .child(settings_action(
+                        .child(button(
                             "worker-model-clear",
                             "Clear model",
-                            AppIcon::Eraser,
+                            ButtonTone::Quiet,
                             enabled,
                             move |_, cx| {
                                 let _ = clear.update(cx, |this, cx| {
@@ -773,8 +773,4 @@ fn selected(value: &str, placeholder: &str) -> String {
     } else {
         value.into()
     }
-}
-
-fn model_label(model: &crate::protocol::Model) -> String {
-    selected(&model.name, &model.id)
 }

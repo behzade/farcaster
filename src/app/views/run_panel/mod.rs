@@ -494,7 +494,7 @@ impl FarcasterApp {
             .size_full()
             .rounded_none()
             .border_0()
-            .bg(theme().colors.inspector)
+            .bg(theme().colors.composer)
             .child(body)
     }
 }

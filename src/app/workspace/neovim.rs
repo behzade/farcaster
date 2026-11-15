@@ -263,8 +263,10 @@ pub(super) fn nvim_executable() -> PathBuf {
 
 fn state_setup(state_dir: &Path) -> String {
     let state = format!("{}//", state_dir.display());
+    // Farcaster restores editor tabs itself. Keep auto-session from loading or
+    // overwriting the desktop editor's shared session for the same project.
     format!(
-        "let &directory = {0} | let &backupdir = {0} | let &undodir = {0}",
+        "let g:auto_session_enabled = v:false | let &directory = {0} | let &backupdir = {0} | let &undodir = {0}",
         vim_string(&state)
     )
 }

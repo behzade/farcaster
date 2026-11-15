@@ -36,6 +36,17 @@ mod shell_environment;
 mod sign_in;
 mod stream_text;
 use backend::for_backend;
+pub fn model_display_name(harness: Backend, model: &crate::extensions::Model) -> String {
+    let name = if model.name.is_empty() {
+        &model.id
+    } else {
+        &model.name
+    };
+    match harness {
+        Backend::Cursor | Backend::Antigravity => acp::display_model_name(name),
+        _ => name.to_owned(),
+    }
+}
 pub use sign_in::{SignIn, SignInEvent, sign_in, sign_in_required, supports_sign_in};
 pub fn profile_data_environment_key(backend: Backend) -> Option<&'static str> {
     for_backend(backend).profile_data_environment_key()

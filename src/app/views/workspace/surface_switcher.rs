@@ -69,9 +69,7 @@ impl FarcasterApp {
                     && (!shows_left_inline(mode) || self.workspace.session_rail_hidden),
                 |bar| bar.pl(theme().size(TRAFFIC_LIGHT_INSET)),
             )
-            .border_b(theme().border)
-            .border_color(theme().colors.surface)
-            .bg(theme().colors.canvas)
+            .bg(theme().colors.composer)
             .on_hover(move |hovered, _window, cx| {
                 let _ = bar_entity.update(cx, |app, cx| {
                     app.set_workspace_bar_hovered(*hovered, cx);

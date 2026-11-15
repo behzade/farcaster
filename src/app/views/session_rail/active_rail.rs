@@ -351,7 +351,7 @@ impl FarcasterApp {
             .size_full()
             .flex()
             .flex_col()
-            .bg(theme().colors.panel)
+            .bg(theme().colors.composer)
             .child(
                 div()
                     .flex_none()

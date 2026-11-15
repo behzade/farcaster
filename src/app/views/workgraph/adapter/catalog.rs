@@ -198,6 +198,31 @@ impl WorkGraphBoardView {
                 }),
             )
             .child(div().flex_1())
+            .when(
+                self.catalog.filter.is_none()
+                    && summaries.iter().any(|row| row.status == WorkStatus::Done),
+                |toolbar| {
+                    toolbar.child(button(
+                        "plans-toggle-done",
+                        if self.catalog.hide_done {
+                            "Show completed plans"
+                        } else {
+                            "Hide completed plans"
+                        },
+                        ButtonTone::Quiet,
+                        true,
+                        move |_, cx| {
+                            collapse.update(cx, |this, cx| {
+                                this.catalog.hide_done = !this.catalog.hide_done;
+                                if this.catalog.hide_done {
+                                    this.catalog.selected = None;
+                                }
+                                cx.notify();
+                            })
+                        },
+                    ))
+                },
+            )
             .child(button(
                 "plans-sort",
                 if self.catalog.recent {
@@ -236,31 +261,6 @@ impl WorkGraphBoardView {
             .when(rows.is_empty() && !data.plans.is_empty(), |list| {
                 list.child(caption("No matching plans").py(theme().space.md))
             })
-            .when(
-                self.catalog.filter.is_none()
-                    && summaries.iter().any(|row| row.status == WorkStatus::Done),
-                |list| {
-                    list.child(button(
-                        "plans-toggle-done",
-                        if self.catalog.hide_done {
-                            "Show completed plans"
-                        } else {
-                            "Hide completed plans"
-                        },
-                        ButtonTone::Quiet,
-                        true,
-                        move |_, cx| {
-                            collapse.update(cx, |this, cx| {
-                                this.catalog.hide_done = !this.catalog.hide_done;
-                                if this.catalog.hide_done {
-                                    this.catalog.selected = None;
-                                }
-                                cx.notify();
-                            })
-                        },
-                    ))
-                },
-            )
             .children(
                 rows.iter()
                     .filter(|row| self.catalog.shows(row))

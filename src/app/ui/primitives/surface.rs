@@ -1,6 +1,13 @@
-use gpui::{BoxShadow, Div, Hsla, Pixels, Styled as _, div, hsla, px};
+#[cfg(target_os = "macos")]
+use gpui::ParentElement as _;
+use gpui::{
+    BoxShadow, Div, Pixels, Styled as _, div, hsla, linear_color_stop, linear_gradient, px,
+};
 
 use crate::app::ui::theme::{Appearance, appearance, theme};
+
+#[cfg(target_os = "macos")]
+mod macos;
 
 /// Floating surfaces share a shape and depth; inner sections use spacing.
 pub(crate) fn surface_radius() -> Pixels {
@@ -34,9 +41,39 @@ pub(crate) fn floating_surface() -> Div {
         .shadow(surface_shadow())
 }
 
-/// Pane edges remain draggable without the contrast of an outlined surface.
-pub(crate) fn separator_color() -> Hsla {
-    let mut color = Hsla::from(theme().colors.border);
-    color.a *= 0.35;
-    color
+#[derive(Clone, Copy)]
+pub(crate) enum RaisedEdge {
+    Top,
+    Left,
+    Right,
+}
+
+/// Paint the bars' shadows over the content, without covering their controls
+/// or letting a later sibling's background hide a sidebar's shadow.
+pub(crate) fn raised_edge_shadow(edge: RaisedEdge, native_surface: bool) -> Div {
+    let depth = theme().size(8.0);
+    let opacity = if appearance() == Appearance::Dark {
+        0.22
+    } else {
+        0.08
+    };
+    let (strip, angle) = match edge {
+        RaisedEdge::Top => (div().top_0().left_0().right_0().h(depth), 180.0),
+        RaisedEdge::Left => (div().top_0().bottom_0().left_0().w(depth), 90.0),
+        RaisedEdge::Right => (div().top_0().bottom_0().right_0().w(depth), 270.0),
+    };
+    let strip = strip.absolute();
+    // Native Ghostty views sit above GPUI's Metal drawing. Use a decoration
+    // layer above those views, with no view or hitbox to intercept editor input.
+    #[cfg(target_os = "macos")]
+    if native_surface {
+        return strip.child(macos::shadow(edge, opacity));
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = native_surface;
+    strip.bg(linear_gradient(
+        angle,
+        linear_color_stop(hsla(0.0, 0.0, 0.0, opacity), 0.0),
+        linear_color_stop(hsla(0.0, 0.0, 0.0, 0.0), 1.0),
+    ))
 }

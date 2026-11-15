@@ -10,6 +10,37 @@ impl Drop for Server {
 }
 
 #[test]
+#[ignore = "requires a Neovim executable; checks real startup before user config"]
+fn embedded_startup_keeps_user_config_without_desktop_auto_sessions() {
+    let directory = tempfile::tempdir().expect("create state directory");
+    let init = directory.path().join("init.lua");
+    std::fs::write(
+        &init,
+        "vim.g.session_enabled_at_init = vim.g.auto_session_enabled ~= false\nvim.o.tabstop = 3\n",
+    )
+    .expect("write user config");
+    let script = directory.path().join("check.lua");
+    std::fs::write(
+        &script,
+        "assert(vim.o.tabstop == 3, 'user config must still load')\nassert(vim.g.session_enabled_at_init == false, 'session ownership must be set before user config')\nvim.cmd('qa!')\n",
+    )
+    .expect("write startup check");
+    let output = Command::new(nvim_executable())
+        .current_dir(directory.path())
+        .args(["--headless", "-i", "NONE", "-u"])
+        .arg(&init)
+        .args(["--cmd", &state_setup(directory.path()), "-l"])
+        .arg(&script)
+        .output()
+        .expect("run startup check");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 #[ignore = "requires a Neovim executable; runs a real headless server"]
 fn code_capture_preserves_normal_visual_and_unsaved_buffer_state() -> Result<(), String> {
     let directory = tempfile::tempdir().map_err(|e| e.to_string())?;

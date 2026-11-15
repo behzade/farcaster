@@ -90,6 +90,8 @@ block2 = "0.6"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSAccessibilityProtocols", "NSApplication", "NSEvent", "NSMenu", "NSPanel", "NSResponder", "NSView", "NSWindow", "NSWorkspace"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSBundle", "NSObject", "NSString", "NSURL"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["CGColor"] }
+objc2-quartz-core = { version = "0.3", default-features = false, features = ["CALayer", "CATransaction", "objc2-core-foundation", "objc2-core-graphics"] }
 objc2-user-notifications = { version = "0.3", default-features = false, features = ["UNUserNotificationCenter", "block2"] }
 
 [dev-dependencies]

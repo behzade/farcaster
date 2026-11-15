@@ -1,5 +1,9 @@
 mod runtime;
 
+#[cfg(test)]
+#[path = "footer_tests.rs"]
+mod tests;
+
 use crate::app::ui::primitives::AppTooltip as _;
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _, PathBuilder,
@@ -163,21 +167,36 @@ fn render_usage(usage: &ComposerUsage) -> AnyElement {
             None,
         ));
     }
-    if usage.aggregate.input > 0 {
-        row = row.child(separator()).child(simple_metric(
-            "Input",
-            "Input tokens",
-            format_tokens(usage.aggregate.input),
-            theme().colors.muted,
-        ));
-    }
-    if usage.aggregate.output > 0 {
-        row = row.child(separator()).child(simple_metric(
-            "Output",
-            "Output tokens",
-            format_tokens(usage.aggregate.output),
-            theme().colors.text,
-        ));
+    if usage.aggregate.input > 0 || usage.aggregate.output > 0 {
+        row = row.child(separator()).child(
+            div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(theme().space.xs)
+                .app_tooltip("Token totals for this session and its workers")
+                .child(
+                    div()
+                        .text_color(theme().colors.muted)
+                        .child("Session + workers"),
+                )
+                .when(usage.aggregate.input > 0, |tokens| {
+                    tokens.child(simple_metric(
+                        "In",
+                        "Session and worker input tokens",
+                        format_tokens(usage.aggregate.input),
+                        theme().colors.muted,
+                    ))
+                })
+                .when(usage.aggregate.output > 0, |tokens| {
+                    tokens.child(simple_metric(
+                        "Out",
+                        "Session and worker output tokens",
+                        format_tokens(usage.aggregate.output),
+                        theme().colors.text,
+                    ))
+                }),
+        );
     }
     if usage.aggregate.cost_micros > 0 {
         row = row.child(separator()).child(simple_metric(
@@ -225,29 +244,37 @@ fn weekly_color(remaining: f64) -> gpui::Rgba {
 }
 
 fn context_metric(usage: &ComposerUsage) -> AnyElement {
-    let value = match (usage.context_used, usage.context_total) {
-        (Some(used), Some(total)) => format!("{}/{}", format_tokens(used), format_tokens(total)),
-        (Some(used), None) => format!("{}/—", format_tokens(used)),
-        (None, Some(total)) => format!("—/{}", format_tokens(total)),
-        (None, None) => "—/—".into(),
-    };
-    let percent = usage.context_percent.unwrap_or(0.0).clamp(0.0, 100.0);
-    let color = context_color(usage.context_percent);
     div()
         .flex_none()
         .flex()
         .items_center()
         .gap(theme().space.sm)
         .child(div().text_color(theme().colors.muted).child("Context"))
-        .child(context_meter(percent, color))
+        .when_some(usage.context_percent, |metric, percent| {
+            metric.child(context_meter(
+                percent.clamp(0.0, 100.0),
+                context_color(Some(percent)),
+            ))
+        })
         .child(
             div()
                 .flex_none()
                 .whitespace_nowrap()
                 .text_color(theme().colors.text)
-                .child(value),
+                .child(context_value(usage)),
         )
         .into_any_element()
+}
+
+fn context_value(usage: &ComposerUsage) -> String {
+    match (usage.context_used, usage.context_total) {
+        (Some(used), Some(total)) => format!("{}/{}", format_tokens(used), format_tokens(total)),
+        (Some(used), None) => format!("{} used", format_tokens(used)),
+        (None, Some(total)) => format!("{} capacity", format_tokens(total)),
+        (None, None) => usage
+            .context_percent
+            .map_or_else(|| "unavailable".into(), |percent| format!("{percent:.0}%")),
+    }
 }
 
 fn context_meter(percent: f64, color: gpui::Rgba) -> AnyElement {
