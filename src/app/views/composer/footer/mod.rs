@@ -69,11 +69,14 @@ impl FarcasterApp {
             .id("composer-status")
             .w_full()
             .min_w_0()
-            .h(theme().size(28.0))
+            .h(theme().controls.icon_button)
             .flex_none()
             .flex()
             .items_center()
-            .px(theme().size(12.0))
+            .px(theme().space.sm)
+            .text_size(theme().type_scale.caption)
+            .line_height(theme().type_scale.line_body)
+            .text_color(theme().colors.muted)
             .overflow_x_scroll()
             .track_scroll(scroll)
             .when_some(mode, |row, mode| {
@@ -140,6 +143,8 @@ impl FarcasterApp {
                         },
                     )
                     .debug_selector(|| "composer-primary-action".into())
+                    .rounded_full()
+                    .bg(theme().colors.highlight)
                     .text_color(if action == ComposerAction::Stop {
                         theme().colors.error
                     } else {

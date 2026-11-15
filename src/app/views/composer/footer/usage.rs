@@ -18,6 +18,8 @@ pub(super) fn render(usage: ComposerUsage) -> AnyElement {
         .flex()
         .items_center()
         .gap(theme().space.sm)
+        .text_size(theme().type_scale.caption)
+        .text_color(theme().colors.muted)
         .child("Usage")
         .when(usage.aggregate.cost_micros > 0, |row| {
             row.child(

@@ -47,9 +47,26 @@ pub(in crate::app::views) fn render(
         || identity.effort.is_some_and(|effort| effort != "off");
     let runtime_content = setting_content()
         .debug_selector(|| "composer-runtime-content".into())
-        .child(div().text_color(theme().colors.muted).child(provider_label))
-        .child(model_label)
-        .when(shows_effort, |content| content.child(effort_label(effort)));
+        .child(
+            div()
+                .font_weight(FontWeight::MEDIUM)
+                .child(model_label.clone()),
+        )
+        .when(shows_effort, |content| {
+            content.child(
+                div()
+                    .text_color(theme().colors.muted)
+                    .child(effort_label(effort)),
+            )
+        });
+    let runtime_label = if shows_effort {
+        format!(
+            "{provider_label} · {model_label} · {}",
+            effort_label(effort)
+        )
+    } else {
+        format!("{provider_label} · {model_label}")
+    };
     let runtime_entity = entity.clone();
     let content_entity = entity.clone();
     let runtime = Popover::new("runtime-popover")
@@ -59,7 +76,7 @@ pub(in crate::app::views) fn render(
         .trigger(
             dropdown_content_button(
                 "select-runtime",
-                "Runtime",
+                runtime_label,
                 runtime_content,
                 ButtonTone::Quiet,
                 true,
@@ -189,7 +206,7 @@ fn sandbox_state_tooltip(state: SandboxState, selected: HarnessAccessMode) -> St
 const fn access_mode_icon(mode: HarnessAccessMode) -> AppIcon {
     match mode {
         HarnessAccessMode::Sandboxed => AppIcon::Shield,
-        HarnessAccessMode::Auto => AppIcon::GearSix,
+        HarnessAccessMode::Auto => AppIcon::Shield,
         HarnessAccessMode::Full => AppIcon::WarningCircle,
     }
 }

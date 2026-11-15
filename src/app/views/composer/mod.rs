@@ -172,6 +172,7 @@ impl FarcasterApp {
             .flex_none()
             .flex()
             .flex_col()
+            .p(theme().space.sm)
             .rounded(crate::app::ui::primitives::surface_radius())
             .border(theme().border)
             .border_color(gpui::rgba(0x00000000))
@@ -190,7 +191,7 @@ impl FarcasterApp {
                     .min_h_0()
                     .flex()
                     .flex_col()
-                    .p(theme().space.sm)
+                    .pb(theme().space.sm)
                     .when_some(widgets_above, |composer, widgets| composer.child(widgets))
                     .when_some(
                         attachments::render(self, entity.clone()),
@@ -201,13 +202,11 @@ impl FarcasterApp {
             )
             .child(
                 div()
-                    .h(theme().size(36.0))
+                    .h(theme().controls.icon_button)
                     .flex_none()
                     .flex()
                     .items_center()
                     .gap(theme().space.md)
-                    .px(theme().space.md)
-                    .rounded_b(crate::app::ui::primitives::surface_radius())
                     .child(self.render_composer_controls(entity.clone(), footer_scroll))
                     .child(actions),
             );

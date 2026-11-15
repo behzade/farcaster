@@ -286,7 +286,25 @@ fn composer_text_attachments_and_controls_share_an_inset(cx: &mut gpui::TestAppC
                 let add = cx
                     .debug_bounds("composer-attach")
                     .expect("attachment control");
-                assert_eq!(add.left(), left, "first footer control inset");
+                assert_eq!(
+                    add.left() - frame.left(),
+                    frame.bottom() - add.bottom(),
+                    "attachment control has equal side and bottom insets"
+                );
+                assert_eq!(
+                    add.left(),
+                    frame.left() + theme().border + theme().space.sm,
+                    "toolbar shares the frame inset"
+                );
+                if let Some(action) = cx.debug_bounds("composer-primary-action") {
+                    assert_eq!(action.top(), add.top(), "toolbar controls share a row");
+                    assert_eq!(action.size, add.size, "action uses the shared control size");
+                    assert_eq!(
+                        frame.right() - action.right(),
+                        frame.bottom() - action.bottom(),
+                        "action control has equal side and bottom insets"
+                    );
+                }
                 assert!(
                     runtime.left() >= add.right(),
                     "runtime follows the add control"
