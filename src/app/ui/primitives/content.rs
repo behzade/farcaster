@@ -55,6 +55,30 @@ pub(crate) fn folder_change_summary(
         .children(diff_count_columns(counts, true, columns))
 }
 
+pub(crate) fn change_group_label(label: String, count: usize) -> Div {
+    div()
+        .min_w_0()
+        .flex_1()
+        .flex()
+        .items_center()
+        .gap(theme().space.xs)
+        .text_size(theme().type_scale.caption)
+        .font_weight(FontWeight::NORMAL)
+        .text_color(theme().colors.muted)
+        .child(div().min_w_0().truncate().child(label))
+        .child(div().flex_none().child(count.to_string()))
+}
+
+pub(crate) fn change_path_prefix(path: &std::path::Path) -> Div {
+    div()
+        .min_w_0()
+        .text_size(theme().type_scale.caption)
+        .text_color(theme().colors.muted)
+        .truncate()
+        .mb(theme().space.xs)
+        .child(path.to_string_lossy().into_owned())
+}
+
 pub(crate) fn diff_count_columns(
     counts: Option<(usize, usize)>,
     show_zero: bool,

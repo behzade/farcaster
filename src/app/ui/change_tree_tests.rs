@@ -1,5 +1,138 @@
 use super::*;
 
+#[test]
+fn grouped_paths_keep_exact_parents_and_shallow_rows() {
+    let paths = [
+        "src/app/views/dialogs/settings/appearance.rs",
+        "src/app/views/dialogs/settings.rs",
+        "src/app/views/workgraph/adapter/catalog.rs",
+        "src/app/views/workgraph/core.rs",
+    ];
+    let (prefix, rows) = grouped_rows(
+        paths
+            .iter()
+            .enumerate()
+            .map(|(i, path)| (i, Path::new(path), None, Some((1, 2)))),
+        "",
+        Path::new("/repo"),
+        &ChangeTreeState::default(),
+    );
+    assert_eq!(prefix, Path::new("src/app/views"));
+    let groups: Vec<_> = rows
+        .iter()
+        .filter_map(|row| match row {
+            TreeRow::Folder {
+                label,
+                depth,
+                count,
+                ..
+            } => Some((label.as_str(), *depth, *count)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        groups,
+        [
+            ("dialogs/settings", 0, 1),
+            ("dialogs", 0, 1),
+            ("workgraph/adapter", 0, 1),
+            ("workgraph", 0, 1)
+        ]
+    );
+    assert!(
+        rows.iter()
+            .filter_map(|row| match row {
+                TreeRow::File { depth, .. } => Some(*depth),
+                _ => None,
+            })
+            .all(|depth| depth == 1)
+    );
+}
+
+#[test]
+fn grouped_search_preserves_prefix_disclosure_layers_and_unknown_counts() {
+    let project = Path::new("/repo");
+    let mut state = ChangeTreeState::with_default(project, false);
+    state.toggle(project, Path::new("src/a"));
+    let render = |query| {
+        grouped_rows(
+            [
+                (
+                    0,
+                    Path::new("src/a/file.rs"),
+                    Some(Path::new("old/name.rs")),
+                    Some((3, 2)),
+                ),
+                (1, Path::new("src/a/file.rs"), None, None),
+                (2, Path::new("src/b/other.rs"), None, Some((1, 0))),
+            ]
+            .into_iter(),
+            query,
+            project,
+            &state,
+        )
+    };
+    let (prefix, all) = render("");
+    assert_eq!(prefix, Path::new("src"));
+    assert!(matches!(
+        &all[0],
+        TreeRow::Folder {
+            count: 1,
+            counts: None,
+            open: true,
+            ..
+        }
+    ));
+    assert_eq!(
+        &all[1..3],
+        &[
+            TreeRow::File { index: 0, depth: 1 },
+            TreeRow::File { index: 1, depth: 1 }
+        ]
+    );
+    let (filtered_prefix, filtered) = render("old/name");
+    assert_eq!(prefix, filtered_prefix);
+    assert!(
+        matches!(&filtered[0], TreeRow::Folder { label, counts: Some((3, 2)), open: true, .. } if label == "a")
+    );
+    assert!(matches!(
+        &render("other").1[0],
+        TreeRow::Folder { open: true, .. }
+    ));
+    assert!(!state.is_open(project, Path::new("src/b")));
+}
+
+#[test]
+fn grouped_paths_keep_root_and_external_paths_distinct() {
+    for paths in [
+        vec!["src/a.rs"],
+        vec!["README", "src/a.rs", "/outside/a.rs", "~/a.rs"],
+    ] {
+        let (prefix, rows) = grouped_rows(
+            paths
+                .iter()
+                .enumerate()
+                .map(|(i, path)| (i, Path::new(path), None, None)),
+            "",
+            Path::new("/repo"),
+            &ChangeTreeState::default(),
+        );
+        assert!(prefix.as_os_str().is_empty());
+        let groups: Vec<_> = rows
+            .iter()
+            .filter_map(|row| match row {
+                TreeRow::Folder { label, .. } => Some(label.as_str()),
+                _ => None,
+            })
+            .collect();
+        if paths.len() == 1 {
+            assert_eq!(groups, ["src"]);
+        } else {
+            assert_eq!(groups, ["/outside", "src", "~", "Project root"]);
+        }
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn lossy_folder_collisions_keep_file_order_and_counts() {

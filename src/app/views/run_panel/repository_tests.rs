@@ -22,7 +22,7 @@ fn auto_does_not_select_jj_before_discovery() {
 }
 
 #[gpui::test]
-fn file_status_and_labels_stay_aligned_during_hover_focus_and_selection(
+fn file_counts_and_labels_stay_aligned_during_hover_focus_and_selection(
     cx: &mut gpui::TestAppContext,
 ) {
     use gpui::{ParentElement as _, Render, Styled as _, px};
@@ -47,6 +47,7 @@ fn file_status_and_labels_stay_aligned_during_hover_focus_and_selection(
                     crate::app::ui::primitives::tree_folder_row(
                         "folder",
                         "src/app".into(),
+                        Some(1),
                         self.depth,
                         false,
                         true,
@@ -66,7 +67,13 @@ fn file_status_and_labels_stay_aligned_during_hover_focus_and_selection(
                         .pl(crate::app::ui::grid::tree_indent(self.depth))
                         .child(
                             app.read(cx)
-                                .repository_change_row(&self.change, self.app.clone())
+                                .repository_change_row(
+                                    &self.change,
+                                    crate::app::ui::primitives::DiffColumns::for_counts(
+                                        self.change.counts,
+                                    ),
+                                    self.app.clone(),
+                                )
                                 .unwrap(),
                         ),
                 )
@@ -75,7 +82,7 @@ fn file_status_and_labels_stay_aligned_during_hover_focus_and_selection(
     crate::app::test_support::with_offline_app(
         concat!(
             module_path!(),
-            "::file_status_and_labels_stay_aligned_during_hover_focus_and_selection"
+            "::file_counts_and_labels_stay_aligned_during_hover_focus_and_selection"
         ),
         cx,
         |cx, app, _, project| {
@@ -97,7 +104,8 @@ fn file_status_and_labels_stay_aligned_during_hover_focus_and_selection(
             let change = snapshot.changes[0].clone();
             let key = change.target.key.clone();
             let row_id = repository_row_id(&key);
-            let status_selector = Box::leak(format!("repository-status-{row_id}").into_boxed_str());
+
+            let counts_selector = Box::leak(format!("repository-counts-{row_id}").into_boxed_str());
             let filename_selector =
                 Box::leak(format!("repository-filename-{row_id}").into_boxed_str());
             let focus = cx.update(|_, cx| {
@@ -122,18 +130,14 @@ fn file_status_and_labels_stay_aligned_during_hover_focus_and_selection(
                         });
                         window.draw(cx).clear(cx);
                     });
-                    let before = [status_selector as &str, filename_selector as &str]
+                    let before = [counts_selector as &str, filename_selector as &str]
                         .map(|s| cx.debug_bounds(s).unwrap());
                     assert_eq!(before[0].right(), px(width));
                     assert_eq!(
                         before[0].right(),
                         cx.debug_bounds("folder-summary").unwrap().right()
                     );
-                    assert_eq!(
-                        before[1].left(),
-                        crate::app::ui::grid::tree_indent(depth)
-                            + crate::app::ui::grid::detail_indent()
-                    );
+                    assert_eq!(before[1].left(), crate::app::ui::grid::tree_indent(depth));
                     assert!(before[1].size.width > px(0.0));
                     cx.simulate_mouse_move(before[1].center(), None, Default::default());
                     cx.update(|window, cx| {
@@ -141,7 +145,7 @@ fn file_status_and_labels_stay_aligned_during_hover_focus_and_selection(
                         window.draw(cx).clear(cx);
                     });
                     assert_eq!(
-                        [status_selector as &str, filename_selector as &str]
+                        [counts_selector as &str, filename_selector as &str]
                             .map(|s| cx.debug_bounds(s).unwrap()),
                         before
                     );
@@ -157,7 +161,7 @@ fn file_status_and_labels_stay_aligned_during_hover_focus_and_selection(
                         window.draw(cx).clear(cx);
                     });
                     assert_eq!(
-                        [status_selector as &str, filename_selector as &str]
+                        [counts_selector as &str, filename_selector as &str]
                             .map(|s| cx.debug_bounds(s).unwrap()),
                         before
                     );

@@ -102,6 +102,7 @@ pub(in crate::app::views) fn render(
                         crate::app::ui::primitives::tree_folder_row(
                             format!("review-folder-{}", path.display()),
                             label,
+                            None,
                             depth,
                             open,
                             true,

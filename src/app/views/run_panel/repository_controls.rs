@@ -1,6 +1,6 @@
 use super::{
     super::super::FarcasterApp,
-    repository_presentation::{git_identity, repository_sync_metadata},
+    repository_presentation::{git_identity, repository_row_id, repository_sync_metadata},
 };
 use crate::app::ui::primitives::DropdownMenu as _;
 use crate::{
@@ -9,21 +9,20 @@ use crate::{
         ui::{
             assets::AppIcon,
             primitives::{
-                AppTooltip as _, ButtonPressExt as _, ButtonTone, activates_button,
-                dropdown_button, icon_button, icon_control, sidebar_heading,
+                AppTooltip as _, ButtonPressExt as _, ButtonTone, Dropdown, DropdownItem,
+                dropdown_button, icon_button, sidebar_heading,
             },
             theme::{MONO_FONT_FAMILY, theme},
         },
     },
     repository::{
         BackendPreference, RepositoryBackend, RepositoryEdit, RepositoryKind, RepositorySyncAction,
-        SnapshotIdentity, WorkingCopySnapshot,
+        SnapshotIdentity, WorkingCopyChange, WorkingCopySnapshot,
     },
 };
 use gpui::{
-    AnyElement, App, Div, ElementId, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
-    prelude::FluentBuilder as _,
+    AnyElement, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _, WeakEntity,
+    div, prelude::FluentBuilder as _,
 };
 
 use gpui_component::{
@@ -32,25 +31,91 @@ use gpui_component::{
     menu::PopupMenuItem,
 };
 
-pub(super) fn file_action(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    on_press: impl Fn(&mut Window, &mut App) + 'static,
-) -> Stateful<Div> {
-    let press = std::rc::Rc::new(on_press);
-    let click = press.clone();
-    icon_control(id, label)
-        .size(theme().size(20.0))
-        .on_click(move |_, window, cx| {
-            cx.stop_propagation();
-            click(window, cx);
-        })
-        .on_key_down(move |event, window, cx| {
-            if activates_button(event) {
-                cx.stop_propagation();
-                press(window, cx);
-            }
-        })
+pub(super) fn repository_file_menu(
+    app: &FarcasterApp,
+    change: &WorkingCopyChange,
+    entity: WeakEntity<FarcasterApp>,
+    selected: bool,
+    action_group: gpui::SharedString,
+) -> impl IntoElement {
+    let editable = app.project.repository.execution_allowed
+        && app.project.repository.sync.action.is_none()
+        && app.project.repository.edits.pending.is_none()
+        && change.kind != crate::repository::ChangeKind::Conflict;
+    let mut items = Vec::new();
+    for (label, diff) in [("Open file", false), ("View diff", true)] {
+        let entity = entity.clone();
+        let path = change.target.absolute_path();
+        items.push(DropdownItem::new(label, move |window, cx| {
+            let _ = entity.update(cx, |app, cx| {
+                app.open_file_editor_with_diff(path.clone(), None, diff, window, cx);
+            });
+        }));
+    }
+    let select = entity.clone();
+    let path = change.relative_path.clone();
+    items.push(
+        DropdownItem::new(
+            if selected {
+                "Deselect for commit"
+            } else {
+                "Select for commit"
+            },
+            move |_, cx| {
+                if editable {
+                    let _ =
+                        select.update(cx, |app, cx| app.toggle_repository_file(path.clone(), cx));
+                }
+            },
+        )
+        .disabled(!editable),
+    );
+    let path = change.relative_path.clone();
+    items.push(
+        DropdownItem::new(
+            if matches!(
+                change.kind,
+                crate::repository::ChangeKind::Added | crate::repository::ChangeKind::Untracked
+            ) {
+                "Delete file…"
+            } else {
+                "Discard file changes…"
+            },
+            move |window, cx| {
+                if editable {
+                    let _ = entity.update(cx, |app, cx| {
+                        app.review_repository_edit(
+                            RepositoryEdit::Discard,
+                            Some(path.clone()),
+                            window,
+                            cx,
+                        );
+                    });
+                }
+            },
+        )
+        .disabled(!editable),
+    );
+    Dropdown::with_content(
+        (
+            "repository-file-actions",
+            repository_row_id(&change.target.key),
+        ),
+        "⋯",
+        div().text_color(theme().colors.muted).child("⋯"),
+        items,
+    )
+    .tone(ButtonTone::Quiet)
+    .caret(false)
+    .accessibility_label(format!("Actions for {}", change.relative_path.display()))
+    .auto_menu_width()
+    .w(theme().size(20.0))
+    .h(theme().size(22.0))
+    .px(gpui::px(0.0))
+    .flex_none()
+    .opacity(0.0)
+    .group_hover(action_group, |menu| menu.opacity(1.0))
+    .focus_visible(|menu| menu.opacity(1.0))
 }
 
 pub(super) fn repository_header(

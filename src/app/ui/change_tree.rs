@@ -87,6 +87,102 @@ struct Node<'a> {
     counts: Option<(usize, usize)>,
 }
 
+/// Exact-parent groups keep every filename at the same depth. Compute the
+/// common path before filtering so searching never changes the path labels.
+pub(crate) fn grouped_rows<'a>(
+    files: impl Iterator<Item = (usize, &'a Path, Option<&'a Path>, Option<(usize, usize)>)>,
+    query: &str,
+    project: &Path,
+    state: &ChangeTreeState,
+) -> (PathBuf, Vec<TreeRow>) {
+    let files: Vec<_> = files.collect();
+    let mut prefix = files
+        .first()
+        .and_then(|(_, path, _, _)| path.parent())
+        .unwrap_or_else(|| Path::new(""))
+        .to_path_buf();
+    for (_, path, _, _) in &files {
+        let parent = path.parent().unwrap_or_else(|| Path::new(""));
+        while !parent.starts_with(&prefix) {
+            if !prefix.pop() {
+                prefix.clear();
+                break;
+            }
+        }
+    }
+    // Keep a real directory name for a group that sits at the common path.
+    if files
+        .iter()
+        .any(|(_, path, _, _)| path.parent() == Some(prefix.as_path()))
+        && !prefix.pop()
+    {
+        prefix.clear();
+    }
+    let query = query.trim().to_lowercase();
+    let mut groups = BTreeMap::<PathBuf, Node<'_>>::new();
+    let mut seen = BTreeSet::new();
+    for (index, path, original, counts) in files {
+        if !query.is_empty()
+            && !path.to_string_lossy().to_lowercase().contains(&query)
+            && !original.is_some_and(|path| path.to_string_lossy().to_lowercase().contains(&query))
+        {
+            continue;
+        }
+        let group = groups
+            .entry(path.parent().unwrap_or_else(|| Path::new("")).into())
+            .or_default();
+        group.count += usize::from(seen.insert(path));
+        group.counts = sum_counts(group.counts, counts);
+        group.files.push((
+            path.file_name().unwrap_or_default().to_string_lossy(),
+            index,
+        ));
+    }
+    let mut groups: Vec<_> = groups.into_iter().collect();
+    // Descendant directories precede files directly in their parent, as in a tree.
+    groups.sort_by(|(a, _), (b, _)| {
+        if a != b && a.starts_with(b) {
+            std::cmp::Ordering::Less
+        } else if a != b && b.starts_with(a) {
+            std::cmp::Ordering::Greater
+        } else {
+            a.cmp(b)
+        }
+    });
+    let mut rows = Vec::new();
+    for (path, mut group) in groups {
+        let label = if path.as_os_str().is_empty() {
+            "Project root".into()
+        } else {
+            path.strip_prefix(&prefix)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .into_owned()
+        };
+        let open = !query.is_empty() || state.is_open(project, &path);
+        rows.push(TreeRow::Folder {
+            path,
+            label,
+            count: group.count,
+            counts: group.counts,
+            depth: 0,
+            open,
+        });
+        if open {
+            group
+                .files
+                .sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+            rows.extend(
+                group
+                    .files
+                    .into_iter()
+                    .map(|(_, index)| TreeRow::File { index, depth: 1 }),
+            );
+        }
+    }
+    (prefix, rows)
+}
+
 impl Default for Node<'_> {
     fn default() -> Self {
         Self {

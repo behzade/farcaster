@@ -86,6 +86,7 @@ fn command_and_folder_focus_do_not_move_their_content(cx: &mut gpui::TestAppCont
                     crate::app::ui::primitives::tree_folder_row(
                         "folder-focus",
                         "src/app".into(),
+                        None,
                         2,
                         false,
                         true,

@@ -1,10 +1,7 @@
 use std::{collections::BTreeMap, path::Path};
 
 use super::*;
-use crate::app::ui::{
-    change_tree::{self, ChangeTreeState, TreeRow},
-    file_icons::file_icon,
-};
+use crate::app::ui::change_tree::{self, ChangeTreeState, TreeRow};
 use crate::app::views::transcript::net_changes::{Edit, NetChanges, unified_edits};
 
 struct ChangedFile {
@@ -144,7 +141,7 @@ pub(super) fn render(
         .upgrade()
         .is_some_and(|entity| entity.read(cx).settings.expand_transcript_folders);
     let default_state = ChangeTreeState::with_default(&project, expand);
-    let rows = change_tree::rows(
+    let (prefix, rows) = change_tree::grouped_rows(
         files
             .iter()
             .enumerate()
@@ -159,6 +156,9 @@ pub(super) fn render(
         .w_full()
         .flex()
         .flex_col()
+        .when(!prefix.as_os_str().is_empty(), |list| {
+            list.child(crate::app::ui::primitives::change_path_prefix(&prefix))
+        })
         .children(rows.into_iter().map(|row| {
             match row {
                 TreeRow::Folder {
@@ -185,9 +185,10 @@ pub(super) fn render(
                         },
                     )
                     .aria_expanded(open)
+                    .mt(theme().space.xs)
                     .h(theme().size(22.0))
                     .pl(crate::app::ui::grid::tree_indent(depth))
-                    .text_size(theme().type_scale.body_small)
+                    .text_size(theme().type_scale.caption)
                     .text_color(theme().colors.muted)
                     .child(crate::app::ui::grid::icon_slot().child(app_icon(
                         if open {
@@ -197,17 +198,17 @@ pub(super) fn render(
                         },
                         AppIconSize::Inline,
                     )))
-                    .child(div().min_w_0().flex_1().text_ellipsis().child(label))
+                    .child(crate::app::ui::primitives::change_group_label(label, count))
                     .when(!open, |row| {
-                        row.child(crate::app::ui::primitives::folder_change_summary(
-                            count, counts, columns,
+                        row.children(crate::app::ui::primitives::diff_count_columns(
+                            counts, false, columns,
                         ))
                     })
                     .into_any_element()
                 }
-                TreeRow::File { index, depth } => div()
+                TreeRow::File { index, .. } => div()
                     .w_full()
-                    .pl(crate::app::ui::grid::tree_indent(depth))
+                    .pl(crate::app::ui::grid::detail_indent())
                     .child(file_row(key, &files[index], columns, entity.clone()))
                     .into_any_element(),
             }
@@ -240,7 +241,6 @@ fn file_row(
     )
     .h(theme().size(22.0))
     .text_size(theme().type_scale.body_small)
-    .child(crate::app::ui::grid::icon_slot().child(file_icon(Path::new(&file.path))))
     .child(
         div()
             .min_w_0()
@@ -251,8 +251,9 @@ fn file_row(
             .text_color(theme().colors.text)
             .child(label),
     )
-    .children(tool_changes::change_counts(
-        file.counts.unwrap_or_default(),
+    .children(crate::app::ui::primitives::diff_count_columns(
+        file.counts,
+        false,
         columns,
     ))
     .into_any_element()

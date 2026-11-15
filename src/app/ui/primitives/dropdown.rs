@@ -96,6 +96,10 @@ impl Dropdown {
         self.trigger = super::button::tone_button(self.trigger, tone);
         self
     }
+    pub(crate) fn caret(mut self, visible: bool) -> Self {
+        self.trigger = self.trigger.dropdown_caret(visible);
+        self
+    }
     pub(crate) fn disabled(mut self, disabled: bool) -> Self {
         self.trigger = self.trigger.disabled(disabled || self.items.is_empty());
         self
