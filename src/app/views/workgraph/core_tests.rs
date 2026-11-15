@@ -114,6 +114,11 @@ fn projection_is_stable_and_marks_reached_and_current_nodes() {
     assert!(rows[0].reached);
     assert!(rows[1].current);
     assert!(rows.iter().all(|row| !row.detached));
+    assert!(rows[0].root);
+    assert!(rows[1..].iter().all(|row| !row.root));
+    assert_eq!(rows[1].prerequisites, vec![1]);
+    assert_eq!(rows[2].prerequisites, vec![1]);
+    assert_eq!(rows[3].prerequisites, vec![2, 3]);
 }
 
 #[test]
@@ -121,6 +126,8 @@ fn search_and_keyboard_navigation_use_visible_rows() {
     let rows = plan_rows(&snapshot(), &workgraph::ProjectGraph::default(), "jj");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].node.number, 3);
+    assert!(!rows[0].root);
+    assert_eq!(rows[0].prerequisites, vec![1]);
     assert_eq!(adjacent_node_number(&rows, None, 1), Some(3));
 }
 

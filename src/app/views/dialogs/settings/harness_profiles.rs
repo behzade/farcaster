@@ -13,9 +13,8 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
         div()
             .flex()
             .items_center()
-            .justify_between()
             .gap(theme().space.sm)
-            .child(setting_label("Harness profiles", "Separate commands and data directories for agent connections. Worker profiles choose the model and effort."))
+            .child(setting_label("Harness profiles", ""))
             .child(
                 settings_control(
                     "toggle-harness-profile-form",
@@ -39,6 +38,9 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
                     });
                 }),
             ),
+    ).child(
+        div().text_size(theme().type_scale.body_small).text_color(theme().colors.muted)
+            .child("Separate commands and data directories for agent connections. Worker profiles choose the model and effort.")
     );
     let empty = profiles.is_empty();
     let mut list = div()

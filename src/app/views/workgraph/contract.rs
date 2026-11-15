@@ -9,6 +9,8 @@ pub(super) enum PlanLoadState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct PlanRow {
     pub node: workgraph::Node,
+    pub root: bool,
+    pub prerequisites: Vec<u64>,
     pub reached: bool,
     pub current: bool,
     pub detached: bool,

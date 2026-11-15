@@ -273,6 +273,7 @@ impl WorkGraphBoardView {
             .flex_col()
             .child(render_board_header(
                 "All plans",
+                None,
                 false,
                 true,
                 &self.search,

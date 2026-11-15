@@ -22,28 +22,20 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
     );
     for (backend, profile_id, name) in targets {
         let sign_in = entity.clone();
-        rows = rows.child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap(theme().space.sm)
-                .child(name)
-                .child(button(
-                    format!(
-                        "harness-sign-in-{backend}-{}",
-                        profile_id.as_deref().unwrap_or("default")
-                    ),
-                    "Sign in",
-                    ButtonTone::Quiet,
-                    app.settings.sign_in.active.is_none(),
-                    move |_, cx| {
-                        let _ = sign_in.update(cx, |this, cx| {
-                            this.sign_in_harness(backend, profile_id.clone(), cx)
-                        });
-                    },
-                )),
-        );
+        rows = rows.child(setting_row(name, "").child(button(
+            format!(
+                "harness-sign-in-{backend}-{}",
+                profile_id.as_deref().unwrap_or("default")
+            ),
+            "Sign in",
+            ButtonTone::Quiet,
+            app.settings.sign_in.active.is_none(),
+            move |_, cx| {
+                let _ = sign_in.update(cx, |this, cx| {
+                    this.sign_in_harness(backend, profile_id.clone(), cx)
+                });
+            },
+        )));
     }
     if let Some(message) = &app.settings.sign_in.message {
         rows = rows.child(feedback(

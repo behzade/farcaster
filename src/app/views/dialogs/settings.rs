@@ -260,13 +260,8 @@ fn voice_setting(
         .flex_col()
         .gap(theme().space.sm)
         .child(
-            div()
+            setting_row("Voice", description)
                 .debug_selector(|| "settings-voice".into())
-                .flex()
-                .items_center()
-                .justify_start()
-                .gap(theme().space.md)
-                .child(setting_label("Voice", description))
                 .child(
                     Button::new("voice-toggle")
                         .w(theme().size(56.0))
@@ -286,58 +281,52 @@ fn voice_setting(
                 ),
         )
         .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_start()
-                .gap(theme().space.md)
-                .child(setting_label(
-                    "Voice shortcut",
-                    if recording {
-                        "Press a shortcut. Click again to cancel."
-                    } else {
-                        ""
-                    },
-                ))
-                .child(
-                    div()
-                        .flex()
-                        .gap(theme().space.sm)
-                        .child(
-                            Button::new("voice-shortcut")
-                                .debug_selector(|| "voice-shortcut".into())
-                                .accessibility_label(if recording {
-                                    "Voice shortcut: press a shortcut".to_owned()
-                                } else {
-                                    format!("Voice shortcut: {}", app.voice_shortcut_label(cx))
-                                })
-                                .label(if recording {
-                                    "Press shortcut…".to_owned()
-                                } else {
-                                    app.voice_shortcut_label(cx)
-                                })
+            setting_row(
+                "Voice shortcut",
+                if recording {
+                    "Press a shortcut. Click again to cancel."
+                } else {
+                    ""
+                },
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(theme().space.sm)
+                    .child(
+                        Button::new("voice-shortcut")
+                            .debug_selector(|| "voice-shortcut".into())
+                            .accessibility_label(if recording {
+                                "Voice shortcut: press a shortcut".to_owned()
+                            } else {
+                                format!("Voice shortcut: {}", app.voice_shortcut_label(cx))
+                            })
+                            .label(if recording {
+                                "Press shortcut…".to_owned()
+                            } else {
+                                app.voice_shortcut_label(cx)
+                            })
+                            .with_size(Size::Small)
+                            .secondary()
+                            .on_press(true, move |_, cx| {
+                                let _ =
+                                    capture.update(cx, FarcasterApp::begin_voice_shortcut_capture);
+                            }),
+                    )
+                    .when(app.settings.voice_shortcut.is_some(), |row| {
+                        row.child(
+                            Button::new("voice-shortcut-reset")
+                                .debug_selector(|| "voice-shortcut-reset".into())
+                                .accessibility_label("Reset voice shortcut")
+                                .label("Reset")
                                 .with_size(Size::Small)
                                 .secondary()
                                 .on_press(true, move |_, cx| {
-                                    let _ = capture
-                                        .update(cx, FarcasterApp::begin_voice_shortcut_capture);
+                                    let _ = reset.update(cx, FarcasterApp::reset_voice_shortcut);
                                 }),
                         )
-                        .when(app.settings.voice_shortcut.is_some(), |row| {
-                            row.child(
-                                Button::new("voice-shortcut-reset")
-                                    .debug_selector(|| "voice-shortcut-reset".into())
-                                    .accessibility_label("Reset voice shortcut")
-                                    .label("Reset")
-                                    .with_size(Size::Small)
-                                    .secondary()
-                                    .on_press(true, move |_, cx| {
-                                        let _ =
-                                            reset.update(cx, FarcasterApp::reset_voice_shortcut);
-                                    }),
-                            )
-                        }),
-                ),
+                    }),
+            ),
         )
         .into_any_element()
 }
@@ -367,44 +356,34 @@ fn connections(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEleme
                 .flex_col()
                 .gap(theme().space.sm)
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap(theme().space.md)
-                        .child(setting_label(
-                            "Network proxy",
-                            "Fallback when the project has no proxy.",
-                        ))
-                        .child(
-                            div()
-                                .debug_selector(|| "network-proxy-control".into())
-                                .w(theme().size(300.0))
-                                .flex_none()
-                                .flex()
-                                .items_center()
-                                .gap(theme().space.sm)
-                                .child(
-                                    div()
-                                        .debug_selector(|| "network-proxy-input".into())
-                                        .flex_1()
-                                        .min_w(theme().size(120.0))
-                                        .child(
-                                            Input::new(&app.settings.network_proxy_input).w_full(),
-                                        ),
-                                )
-                                .child(settings_action(
-                                    "clear-network-proxy",
-                                    "Clear network proxy",
-                                    AppIcon::Eraser,
-                                    true,
-                                    move |window, cx| {
-                                        let _ = clear.update(cx, |this, cx| {
-                                            this.clear_network_proxy(window, cx)
-                                        });
-                                    },
-                                )),
-                        ),
+                    setting_row("Network proxy", "Fallback when the project has no proxy.").child(
+                        div()
+                            .debug_selector(|| "network-proxy-control".into())
+                            .w(theme().size(300.0))
+                            .max_w_full()
+                            .min_w_0()
+                            .flex()
+                            .items_center()
+                            .gap(theme().space.sm)
+                            .child(
+                                div()
+                                    .debug_selector(|| "network-proxy-input".into())
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(Input::new(&app.settings.network_proxy_input).w_full()),
+                            )
+                            .child(settings_action(
+                                "clear-network-proxy",
+                                "Clear network proxy",
+                                AppIcon::Eraser,
+                                true,
+                                move |window, cx| {
+                                    let _ = clear.update(cx, |this, cx| {
+                                        this.clear_network_proxy(window, cx)
+                                    });
+                                },
+                            )),
+                    ),
                 )
                 .when_some(
                     app.settings.network_proxy_error.clone(),
@@ -428,37 +407,42 @@ fn editor_setting(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
         .flex()
         .flex_col()
         .gap(theme().space.md)
-        .child(setting_label(
-            "Editor",
-            "Chat code capture uses embedded Neovim.",
-        ))
         .child(
-            Dropdown::new(
-                "editor-choice",
-                selected.label(),
-                available
-                    .into_iter()
-                    .map(|option| {
-                        let entity = entity.clone();
-                        DropdownItem::new(option.label(), move |_, cx| {
-                            let _ = entity.update(cx, |this, cx| this.select_editor(option, cx));
+            setting_row("Editor", "Chat code capture uses embedded Neovim.").child(
+                Dropdown::new(
+                    "editor-choice",
+                    selected.label(),
+                    available
+                        .into_iter()
+                        .map(|option| {
+                            let entity = entity.clone();
+                            DropdownItem::new(option.label(), move |_, cx| {
+                                let _ =
+                                    entity.update(cx, |this, cx| this.select_editor(option, cx));
+                            })
+                            .icon(AppIcon::for_editor(option))
+                            .selected(option == selected)
                         })
-                        .icon(AppIcon::for_editor(option))
-                        .selected(option == selected)
-                    })
-                    .collect(),
-            )
-            .w(theme().size(180.0))
-            .accessibility_label(format!("Editor: {}", selected.label()))
-            .debug_selector(|| "editor-choice".into()),
+                        .collect(),
+                )
+                .w(theme().size(180.0))
+                .accessibility_label(format!("Editor: {}", selected.label()))
+                .debug_selector(|| "editor-choice".into()),
+            ),
         )
         .when(choice == EditorChoice::Custom, |section| {
-            section
-                .child(setting_label(
+            section.child(
+                setting_row(
                     "Terminal command",
                     "Quote paths with spaces. Applies to new editor sessions.",
-                ))
-                .child(Input::new(&app.settings.editor_command_input))
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(Input::new(&app.settings.editor_command_input)),
+                ),
+            )
         })
         .into_any_element()
 }
@@ -471,12 +455,7 @@ fn toggle_setting(
     entity: WeakEntity<FarcasterApp>,
     toggle: fn(&mut FarcasterApp, &mut gpui::Context<FarcasterApp>),
 ) -> AnyElement {
-    div()
-        .flex()
-        .items_center()
-        .justify_start()
-        .gap(theme().space.md)
-        .child(setting_label(title, description))
+    setting_row(title, description)
         .child(
             Button::new(id)
                 .accessibility_label(title)
@@ -495,11 +474,9 @@ fn toggle_setting(
         .into_any_element()
 }
 
-fn setting_label(title: &'static str, description: &'static str) -> AnyElement {
+fn setting_label(title: impl Into<gpui::SharedString>, description: &'static str) -> AnyElement {
     div()
         .min_w_0()
-        .flex_1()
-        .max_w(theme().size(320.0))
         .flex()
         .flex_col()
         .gap(theme().space.xs)
@@ -508,7 +485,7 @@ fn setting_label(title: &'static str, description: &'static str) -> AnyElement {
                 .text_size(theme().type_scale.body)
                 .font_weight(gpui::FontWeight::MEDIUM)
                 .text_color(theme().colors.text)
-                .child(title),
+                .child(title.into()),
         )
         .when(!description.is_empty(), |label| {
             label.child(
@@ -521,17 +498,22 @@ fn setting_label(title: &'static str, description: &'static str) -> AnyElement {
         .into_any_element()
 }
 
+fn setting_row(title: impl Into<gpui::SharedString>, description: &'static str) -> gpui::Div {
+    div().flex().items_center().gap(theme().space.md).child(
+        div()
+            .w(gpui::relative(0.4))
+            .max_w(theme().size(320.0))
+            .flex_none()
+            .child(setting_label(title, description)),
+    )
+}
+
 fn transcript_font_size(size: gpui::Pixels, entity: WeakEntity<FarcasterApp>) -> AnyElement {
     use crate::app::ui::theme::TRANSCRIPT_FONT_SIZE_RANGE;
 
     let size = f32::from(size);
-    div()
+    setting_row("Transcript font size", "")
         .debug_selector(|| "settings-font-size".into())
-        .flex()
-        .items_center()
-        .justify_start()
-        .gap(theme().space.md)
-        .child(setting_label("Transcript font size", ""))
         .child(
             div()
                 .flex()

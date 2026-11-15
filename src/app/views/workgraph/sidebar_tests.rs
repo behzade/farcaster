@@ -43,6 +43,8 @@ fn plan_titles_keep_a_shared_column_for_numbers_and_completed_markers(
             updated_at: 0,
         },
         reached: number == 7,
+        root: number == 7,
+        prerequisites: Vec::new(),
         current: number == 725,
         detached: false,
     });

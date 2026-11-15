@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use super::{
     components::{render_create_form, render_plan_list, render_session_goal},
     contract::{PlanData, PlanLoadState},
-    core::{adjacent_node_number, create_form_valid, plan_rows},
+    core::{adjacent_node_number, create_form_valid, node_matches, plan_rows},
     layout::{BoardLayoutMode, board_layout},
 };
 use crate::{
@@ -392,11 +392,19 @@ impl WorkGraphBoardView {
         if self.showing_plans(data) {
             return self.render_catalog(data, layout, cx);
         }
-        let rows = data
+        let mut rows = data
             .snapshot
             .as_ref()
-            .map(|snapshot| plan_rows(snapshot, &data.graph, &search))
+            .map(|snapshot| plan_rows(snapshot, &data.graph, ""))
             .unwrap_or_default();
+        let progress = has_plan.then(|| {
+            format!(
+                "{} of {} completed",
+                rows.iter().filter(|row| row.reached).count(),
+                rows.len()
+            )
+        });
+        rows.retain(|row| node_matches(&row.node, &search));
         let plan_title = data
             .snapshot
             .as_ref()
@@ -408,6 +416,7 @@ impl WorkGraphBoardView {
             .flex_col()
             .child(render_board_header(
                 plan_title,
+                progress,
                 has_plan,
                 layout == BoardLayoutMode::Wide || self.selected.is_none(),
                 &self.search,
@@ -468,6 +477,7 @@ fn render_load_error(error: &str, entity: Entity<WorkGraphBoardView>) -> gpui::A
 
 fn render_board_header(
     plan_title: &str,
+    progress: Option<String>,
     has_plan: bool,
     show_list: bool,
     search: &Entity<InputState>,
@@ -522,6 +532,16 @@ fn render_board_header(
                         .app_tooltip(plan_title.to_owned())
                         .child(plan_title.to_owned()),
                 )
+                .when_some(progress, |title, progress| {
+                    title.child(
+                        div()
+                            .debug_selector(|| "workgraph-progress".into())
+                            .flex_none()
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.muted)
+                            .child(progress),
+                    )
+                })
                 .when(!show_list, |title| {
                     title.child(icon_button(
                         "workgraph-refresh",

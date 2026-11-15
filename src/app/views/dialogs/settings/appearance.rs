@@ -108,12 +108,8 @@ fn theme_list(themes: &ThemeSettings, entity: WeakEntity<FarcasterApp>) -> AnyEl
                 .flex_none()
                 .px(theme().space.sm)
                 .py(theme().space.sm)
-                .border_1()
-                .border_color(gpui::rgba(0x00000000))
+                .rounded(theme().size(4.0))
                 .selection_style(active)
-                .when(active, |row| {
-                    row.border_color(theme().colors.selected_border())
-                })
                 .when(editable, |row| {
                     row.role(gpui::Role::Button)
                         .aria_label(definition.name.clone())
@@ -127,7 +123,11 @@ fn theme_list(themes: &ThemeSettings, entity: WeakEntity<FarcasterApp>) -> AnyEl
                         .when(!active, |row| {
                             row.hover(|row| row.bg(theme().colors.surface))
                         })
-                        .focus_visible(|row| row.border_color(theme().colors.focus_border))
+                        .focus_visible(|row| {
+                            row.shadow(crate::app::ui::primitives::focus_outline(
+                                theme().colors.focus_border,
+                            ))
+                        })
                         .on_click(move |_, window, cx| {
                             if !active {
                                 let _ = select.update(cx, |this, cx| {
@@ -143,12 +143,15 @@ fn theme_list(themes: &ThemeSettings, entity: WeakEntity<FarcasterApp>) -> AnyEl
                 .child(
                     div()
                         .min_w_0()
-                        .flex_1()
+                        .w_full()
                         .flex()
-                        .flex_col()
-                        .gap(theme().space.xs)
+                        .items_center()
+                        .justify_between()
+                        .gap(theme().space.sm)
                         .child(
                             div()
+                                .min_w_0()
+                                .flex_1()
                                 .truncate()
                                 .text_size(theme().type_scale.body)
                                 .text_color(theme().colors.text)
@@ -156,6 +159,7 @@ fn theme_list(themes: &ThemeSettings, entity: WeakEntity<FarcasterApp>) -> AnyEl
                         )
                         .child(
                             div()
+                                .flex_none()
                                 .text_size(theme().type_scale.caption)
                                 .text_color(theme().colors.muted)
                                 .child(if active {
@@ -194,67 +198,69 @@ fn theme_preview(index: usize, definition: &ThemeDefinition) -> gpui::Div {
         .child(
             div()
                 .flex()
-                .justify_between()
+                .items_center()
                 .gap(theme().space.sm)
-                .child("Ready to review.")
-                .child(div().text_color(colors.link).child("Changes")),
-        )
-        .child(
-            div()
-                .flex()
-                .font_family(MONO_FONT_FAMILY)
                 .px(theme().space.sm)
                 .py(theme().space.xs)
                 .rounded(theme().size(3.0))
                 .bg(colors.panel)
-                .children(
-                    [
-                        ("let ", SyntaxKey::keyword),
-                        ("ready", SyntaxKey::primary),
-                        (" = ", SyntaxKey::operator),
-                        ("true", SyntaxKey::boolean),
-                        (";", SyntaxKey::punctuation),
-                    ]
-                    .into_iter()
-                    .map(|(text, token)| {
-                        div()
-                            .text_color(definition.color(ThemeToken::Syntax(token)))
-                            .child(text)
-                    }),
-                ),
-        )
-        .child(
-            div()
-                .px(theme().space.sm)
-                .py(theme().space.xs)
-                .rounded(theme().size(4.0))
-                .border_1()
-                .border_color(colors.focus_border)
-                .bg(colors.canvas)
-                .text_color(colors.muted)
-                .child("Search…"),
+                .child(
+                    div().flex().font_family(MONO_FONT_FAMILY).children(
+                        [
+                            ("let ", SyntaxKey::keyword),
+                            ("ready", SyntaxKey::primary),
+                            (" = ", SyntaxKey::operator),
+                            ("true", SyntaxKey::boolean),
+                            (";", SyntaxKey::punctuation),
+                        ]
+                        .into_iter()
+                        .map(|(text, token)| {
+                            div()
+                                .text_color(definition.color(ThemeToken::Syntax(token)))
+                                .child(text)
+                        }),
+                    ),
+                )
+                .child(div().ml_auto().text_color(colors.link).child("Changes")),
         )
         .child(
             div()
                 .flex()
-                .items_center()
-                .px(theme().space.sm)
-                .py(theme().space.xs)
-                .rounded(theme().size(4.0))
-                .border_1()
-                .border_color(colors.indicator)
-                .shadow(crate::app::ui::primitives::focus_outline(colors.indicator))
-                .bg(colors.canvas)
+                .gap(theme().space.sm)
                 .child(
                     div()
-                        .bg(colors.selection_background())
-                        .child("Selected text"),
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .px(theme().space.sm)
+                        .py(theme().space.xs)
+                        .rounded(theme().size(4.0))
+                        .border_1()
+                        .border_color(colors.focus_border)
+                        .bg(colors.canvas)
+                        .text_color(colors.muted)
+                        .child("Search…"),
                 )
                 .child(
                     div()
-                        .w(gpui::px(1.0))
-                        .h(theme().type_scale.caption)
-                        .bg(colors.text),
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .items_center()
+                        .px(theme().space.sm)
+                        .py(theme().space.xs)
+                        .rounded(theme().size(4.0))
+                        .border_1()
+                        .border_color(colors.indicator)
+                        .shadow(crate::app::ui::primitives::focus_outline(colors.indicator))
+                        .bg(colors.canvas)
+                        .child(div().bg(colors.selection_background()).child("Selected"))
+                        .child(
+                            div()
+                                .w(gpui::px(1.0))
+                                .h(theme().type_scale.caption)
+                                .bg(colors.text),
+                        ),
                 ),
         )
 }

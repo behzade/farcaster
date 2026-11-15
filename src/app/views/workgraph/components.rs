@@ -147,6 +147,11 @@ fn render_plan_row(
         .bg(theme().colors.panel)
         .selection_style(is_selected)
         .hover(|style| style.bg(theme().colors.highlight))
+        .ml(if row.root || row.detached {
+            px(0.0)
+        } else {
+            crate::app::ui::grid::tree_indent(1)
+        })
         .px(theme().space.sm)
         .py(theme().space.sm)
         .flex()
@@ -189,7 +194,7 @@ fn render_plan_row(
                 .child(
                     div()
                         .text_size(theme().type_scale.body)
-                        .font_weight(if row.current {
+                        .font_weight(if row.root || row.current {
                             FontWeight::SEMIBOLD
                         } else {
                             FontWeight::NORMAL
@@ -200,10 +205,23 @@ fn render_plan_row(
                 .child(
                     div()
                         .flex()
+                        .flex_wrap()
                         .items_center()
                         .gap(theme().space.xs)
                         .text_size(theme().type_scale.caption)
                         .text_color(theme().colors.subtle)
+                        .child(format!("#{number}"))
+                        .when(row.root, |meta| meta.child("· Starting task"))
+                        .when(!row.prerequisites.is_empty(), |meta| {
+                            meta.child(format!(
+                                "· After {}",
+                                row.prerequisites
+                                    .iter()
+                                    .map(|number| format!("#{number}"))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ))
+                        })
                         .when(row.current, |meta| {
                             meta.child(div().text_color(theme().colors.indicator).child("Current"))
                         })
