@@ -31,6 +31,8 @@ impl FarcasterApp {
         &self,
         entity: WeakEntity<Self>,
         suggestion_selection: usize,
+        completions_dismissed: bool,
+        suggestion_scroll: &gpui::ScrollHandle,
         footer_scroll: &gpui::ScrollHandle,
         status_scroll: &gpui::ScrollHandle,
         mode: Option<&str>,
@@ -60,22 +62,23 @@ impl FarcasterApp {
         let composer = self.composer.input.read(cx);
         let composer_text = composer.value().to_string();
         let composer_cursor = composer.cursor().min(composer_text.len());
-        let composer_value = composer_text.trim().to_owned();
+        let composer_value = composer_text.trim();
+        let composer_prefix = &composer_text[..composer_cursor];
         let command_suggestions = slash_commands::suggestions_for_harness(
-            composer_text.trim_start(),
+            composer_prefix.trim_start(),
             &self.snapshot.commands,
             self.active_harness(),
         )
         .into_iter()
         .chain(user_invocations::suggestions(
-            &composer_text[..composer_cursor],
+            composer_prefix,
             &self.snapshot.commands,
         ))
         .take(8)
         .collect::<Vec<_>>();
         let command_suggestion_count = command_suggestions.len();
         let exact_command = slash_commands::is_exact_for_harness(
-            &composer_value,
+            composer_value,
             &self.snapshot.commands,
             self.active_harness(),
         );
@@ -85,10 +88,7 @@ impl FarcasterApp {
             exact_command,
             self.snapshot.conversation.running,
         );
-        let mention_query = file_mentions::query_at_cursor(
-            &self.composer.input.read(cx).value(),
-            self.composer.input.read(cx).cursor(),
-        );
+        let mention_query = file_mentions::query_at_cursor(&composer_text, composer_cursor);
         let file_suggestions = mention_query
             .as_ref()
             .map(|query| file_mentions::matches(&self.composer.project_files, &query.text))
@@ -103,11 +103,64 @@ impl FarcasterApp {
         } else {
             file_suggestions.len()
         };
+        let invocation_query = user_invocations::invocation_query(composer_prefix);
+        let slash_query = composer_prefix
+            .trim_start()
+            .strip_prefix('/')
+            .filter(|query| !query.chars().any(char::is_whitespace));
+        let completion_open = focused
+            && !completions_dismissed
+            && (mention_query.is_some() || invocation_query.is_some() || slash_query.is_some());
+        let suggestion_count = if completion_open { suggestion_count } else { 0 };
+        let popup = completion_open.then(|| {
+            let is_file = mention_query.is_some();
+            let (title, query, empty) = if let Some(query) = &mention_query {
+                (
+                    "Files",
+                    query.text.clone(),
+                    self.composer
+                        .project_files_error
+                        .clone()
+                        .unwrap_or_else(|| "No matching files".into()),
+                )
+            } else if let Some(query) = invocation_query {
+                (
+                    "Skills & prompts",
+                    query.to_owned(),
+                    "No matching skills or prompts".into(),
+                )
+            } else {
+                (
+                    "Commands",
+                    slash_query.unwrap_or_default().to_owned(),
+                    if self.snapshot.commands.is_empty() {
+                        "Commands aren't available for this session".into()
+                    } else {
+                        "No matching commands".into()
+                    },
+                )
+            };
+            suggestions::CompletionMenu {
+                files: mention_query.map(|query| (query, file_suggestions)),
+                commands: command_suggestions,
+                query,
+                title,
+                empty,
+                selected: if is_file {
+                    mention_selection
+                } else {
+                    command_selection
+                },
+                scroll: suggestion_scroll.clone(),
+                app: entity.clone(),
+            }
+        });
         let actions = self.render_composer_actions(entity.clone(), primary_action);
         let input = editor::ComposerInput::new(
             self.composer.input.clone(),
             entity.clone(),
             suggestion_count,
+            popup,
         );
 
         let composer_focus = self.composer.focus.clone();
@@ -143,24 +196,6 @@ impl FarcasterApp {
                         attachments::render(self, entity.clone()),
                         |composer, attachments| composer.child(attachments),
                     )
-                    .when(!command_suggestions.is_empty(), |composer| {
-                        composer.child(suggestions::CommandMenu::new(
-                            command_suggestions,
-                            command_selection,
-                            entity.clone(),
-                        ))
-                    })
-                    .when_some(
-                        mention_query.filter(|_| !file_suggestions.is_empty()),
-                        |composer, query| {
-                            composer.child(suggestions::FileMentionMenu::new(
-                                file_suggestions,
-                                mention_selection,
-                                query,
-                                entity.clone(),
-                            ))
-                        },
-                    )
                     .child(input)
                     .when_some(widgets_below, |composer, widgets| composer.child(widgets)),
             )
@@ -170,6 +205,7 @@ impl FarcasterApp {
                     .flex_none()
                     .flex()
                     .items_center()
+                    .gap(theme().space.md)
                     .px(theme().space.md)
                     .rounded_b(crate::app::ui::primitives::surface_radius())
                     .child(self.render_composer_controls(entity.clone(), footer_scroll))

@@ -1,5 +1,5 @@
 use super::*;
-use gpui::{Context, InteractiveElement as _, Render, VisualTestContext, px};
+use gpui::{Context, Render, VisualTestContext, px};
 
 struct Harness {
     width: gpui::Pixels,
@@ -19,15 +19,19 @@ impl Render for Harness {
             .enumerate()
             .map(|(index, label)| {
                 let entity = entity.clone();
-                DropdownItem::new(label, move |_, cx| {
+                let item = DropdownItem::new(label, move |_, cx| {
                     let _ = entity.update(cx, |this, cx| {
                         this.selected = index;
                         cx.notify();
                     });
                 })
-                .icon(AppIcon::Code)
                 .selected(index == self.selected)
-                .disabled(index == 0)
+                .disabled(index == 0);
+                if index == 1 {
+                    item
+                } else {
+                    item.icon(AppIcon::Code)
+                }
             })
             .collect();
         div().size_full().child(
@@ -60,6 +64,23 @@ fn dropdown_matches_resized_trigger_and_blocks_disabled_choices(cx: &mut gpui::T
         let trigger = cx.debug_bounds("dropdown-trigger").unwrap();
         cx.simulate_click(trigger.center(), Default::default());
         draw(cx);
+        let icons: Vec<_> = [
+            "dropdown-menu-icon-0",
+            "dropdown-menu-icon-1",
+            "dropdown-menu-icon-2",
+        ]
+        .into_iter()
+        .map(|selector| cx.debug_bounds(selector).unwrap())
+        .collect();
+        for icon in &icons {
+            assert_eq!(icon.size.width, theme().icons.control);
+            assert_eq!(icon.size.height, theme().icons.control);
+            assert_eq!(
+                icon.left(),
+                icons[0].left(),
+                "iconless rows retain the icon column"
+            );
+        }
         cx.update(|window, _| {
             let menu = gpui_base::test_support::find(window, &[], &"popup-menu".into()).unwrap();
             assert!(

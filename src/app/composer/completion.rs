@@ -6,11 +6,6 @@ use crate::{
 
 use super::{file_mentions, slash_commands};
 
-pub(in crate::app) struct ComposerCompletion {
-    pub(in crate::app) snapshot: ComposerSnapshot,
-    pub(in crate::app) submit: bool,
-}
-
 #[cfg(test)]
 pub(in crate::app) fn resolve(
     text: &str,
@@ -18,7 +13,7 @@ pub(in crate::app) fn resolve(
     project_files: &[String],
     suggestion_selection: usize,
     commands: &[SlashCommand],
-) -> Option<ComposerCompletion> {
+) -> Option<ComposerSnapshot> {
     resolve_for_harness(
         text,
         cursor,
@@ -36,33 +31,26 @@ pub(in crate::app) fn resolve_for_harness(
     suggestion_selection: usize,
     commands: &[SlashCommand],
     harness: Option<Backend>,
-) -> Option<ComposerCompletion> {
+) -> Option<ComposerSnapshot> {
     if let Some(query) = file_mentions::query_at_cursor(text, cursor) {
         let matches = file_mentions::matches(project_files, &query.text);
         if let Some(path) = matches.get(suggestion_selection.min(matches.len().saturating_sub(1))) {
             let (text, cursor) = file_mentions::insert(text, &query, path);
-            return Some(ComposerCompletion {
-                snapshot: ComposerSnapshot::new(text, cursor, cursor..cursor),
-                submit: false,
-            });
+            return Some(ComposerSnapshot::new(text, cursor, cursor..cursor));
         }
     }
 
     let prefix = text.get(..cursor)?;
-    let suggestions = slash_commands::suggestions_for_harness(text.trim_start(), commands, harness)
-        .into_iter()
-        .chain(user_invocations::suggestions(prefix, commands))
-        .collect::<Vec<_>>();
+    let suggestions =
+        slash_commands::suggestions_for_harness(prefix.trim_start(), commands, harness)
+            .into_iter()
+            .chain(user_invocations::suggestions(prefix, commands))
+            .collect::<Vec<_>>();
     let suggestion =
         suggestions.get(suggestion_selection.min(suggestions.len().saturating_sub(1)))?;
-    let standalone = cursor == text.len() && text.split_whitespace().count() == 1;
-    let submit = standalone && suggestions.len() == 1 && suggestion.sigil == '$';
     let (text, cursor) =
         user_invocations::complete(text, cursor, suggestion.sigil, &suggestion.name);
-    Some(ComposerCompletion {
-        snapshot: ComposerSnapshot::new(text, cursor, cursor..cursor),
-        submit,
-    })
+    Some(ComposerSnapshot::new(text, cursor, cursor..cursor))
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 use gpui::{
     App, Entity, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton,
-    ParentElement as _, RenderOnce, Styled as _, WeakEntity, div, point, px,
+    ParentElement as _, RenderOnce, Styled as _, WeakEntity, div, point,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_component::ElementExt as _;
 use gpui_component::input::{
@@ -10,7 +11,8 @@ use gpui_component::input::{
 use super::super::FarcasterApp;
 use crate::app::ui::theme::{UI_FONT_FAMILY, theme, ui_font};
 use crate::app::{
-    COMPOSER_KEY_CONTEXT, ComposerCompletionNext, ComposerCompletionPrevious, ComposerHistoryNext,
+    COMPOSER_KEY_CONTEXT, ComposerCompletionAccept, ComposerCompletionDismiss,
+    ComposerCompletionNext, ComposerCompletionPrevious, ComposerHistoryNext,
     ComposerHistoryPrevious,
 };
 
@@ -19,6 +21,7 @@ pub(super) struct ComposerInput {
     composer: Entity<EditorState>,
     app: WeakEntity<FarcasterApp>,
     suggestion_count: usize,
+    popup: Option<super::suggestions::CompletionMenu>,
 }
 
 impl ComposerInput {
@@ -26,11 +29,13 @@ impl ComposerInput {
         composer: Entity<EditorState>,
         app: WeakEntity<FarcasterApp>,
         suggestion_count: usize,
+        popup: Option<super::suggestions::CompletionMenu>,
     ) -> Self {
         Self {
             composer,
             app,
             suggestion_count,
+            popup,
         }
     }
 }
@@ -70,6 +75,8 @@ impl RenderOnce for ComposerInput {
         let next_history_entity = self.app.clone();
         let previous_completion_entity = self.app.clone();
         let next_completion_entity = self.app.clone();
+        let accept_entity = self.app.clone();
+        let dismiss_entity = self.app.clone();
         let paste_entity = self.app.clone();
         let key_entity = self.app.clone();
         let cursor_entity = self.app.clone();
@@ -77,6 +84,9 @@ impl RenderOnce for ComposerInput {
         let suggestion_count = self.suggestion_count;
         let mut key_context = gpui::KeyContext::default();
         key_context.add(COMPOSER_KEY_CONTEXT);
+        if self.popup.is_some() {
+            key_context.add("CompletionPopup");
+        }
         if suggestion_count > 0 {
             key_context.add("Completions");
         }
@@ -154,6 +164,20 @@ impl RenderOnce for ComposerInput {
                 });
                 cx.stop_propagation();
             })
+            .on_action(move |_: &ComposerCompletionAccept, window, cx| {
+                let _ = accept_entity.update(cx, |this, cx| {
+                    this.accept_composer_completion(window, cx);
+                });
+                cx.stop_propagation();
+            })
+            .on_action(move |_: &ComposerCompletionDismiss, _, cx| {
+                let _ = dismiss_entity.update(cx, |this, cx| {
+                    this.views
+                        .composer
+                        .update(cx, |view, cx| view.dismiss_completions(cx));
+                });
+                cx.stop_propagation();
+            })
             .capture_key_down(move |_: &KeyDownEvent, _, cx| {
                 capture_after_input(key_entity.clone(), cx);
             })
@@ -161,19 +185,38 @@ impl RenderOnce for ComposerInput {
                 capture_after_input(cursor_entity.clone(), cx);
             })
             .child(
-                composer_editor(&self.composer, height).on_prepaint(move |bounds, _, cx| {
-                    // Kit adds padding inside the editor state, independently
-                    // of the outer frame's style. Even with line numbers off,
-                    // Editor keeps a 6px gutter and reserves 10px for the caret.
-                    // Match its wrap width so the editor grows before it scrolls.
-                    let padding = gpui_component::Size::default().input_px();
-                    let width =
-                        bounds.size.width - padding - padding.min(px(6.)) - px(6.) - px(10.);
-                    if measured.read(cx).width != Some(width) {
-                        measured.update(cx, |state, _| state.width = Some(width));
-                        cx.notify(current_view);
-                    }
-                }),
+                composer_editor(&self.composer, height)
+                    .relative()
+                    .when_some(self.popup, |editor, popup| {
+                        editor.child(
+                            gpui::deferred(
+                                div()
+                                    .absolute()
+                                    .top(gpui::relative(1.0))
+                                    .left(theme().space.sm + px(6.0))
+                                    .right(theme().space.sm)
+                                    .child(
+                                        gpui::anchored()
+                                            .snap_to_window_with_margin(theme().space.sm)
+                                            .child(popup),
+                                    ),
+                            )
+                            .with_priority(10),
+                        )
+                    })
+                    .on_prepaint(move |bounds, _, cx| {
+                        // Kit adds padding inside the editor state, independently
+                        // of the outer frame's style. Even with line numbers off,
+                        // Editor keeps a 6px gutter and reserves 10px for the caret.
+                        // Match its wrap width so the editor grows before it scrolls.
+                        let padding = gpui_component::Size::default().input_px();
+                        let width =
+                            bounds.size.width - padding - padding.min(px(6.)) - px(6.) - px(10.);
+                        if measured.read(cx).width != Some(width) {
+                            measured.update(cx, |state, _| state.width = Some(width));
+                            cx.notify(current_view);
+                        }
+                    }),
             )
     }
 }

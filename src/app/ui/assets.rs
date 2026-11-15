@@ -5,7 +5,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 78] = [
+const ICON_PATHS: [&str; 79] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -50,6 +50,7 @@ const ICON_PATHS: [&str; 78] = [
     "icons/phosphor/microscope.svg",
     "icons/phosphor/minus.svg",
     "icons/phosphor/paint-roller.svg",
+    "icons/phosphor/paperclip.svg",
     "icons/phosphor/pencil-simple.svg",
     "icons/phosphor/plus.svg",
     "icons/phosphor/question.svg",
@@ -244,6 +245,9 @@ impl AssetSource for AppAssets {
             )),
             "icons/phosphor/pencil-simple.svg" => Some(include_bytes!(
                 "../../../assets/phosphor-icons/pencil-simple.svg"
+            )),
+            "icons/phosphor/paperclip.svg" => Some(include_bytes!(
+                "../../../assets/phosphor-icons/paperclip.svg"
             )),
             "icons/phosphor/plus.svg" => {
                 Some(include_bytes!("../../../assets/phosphor-icons/plus.svg"))
@@ -462,6 +466,7 @@ pub(crate) enum AppIcon {
     Neovim,
     OpenCode,
     PaintRoller,
+    Paperclip,
     PencilSimple,
     Pi,
     Plus,
@@ -570,6 +575,7 @@ impl IconNamed for AppIcon {
             Self::Neovim => return "icons/workbench/neovim.svg".into(),
             Self::OpenCode => return "icons/workbench/opencode.svg".into(),
             Self::PaintRoller => "paint-roller",
+            Self::Paperclip => "paperclip",
             Self::PencilSimple => "pencil-simple",
             Self::Pi => return "icons/workbench/pi.svg".into(),
             Self::Plus => "plus",

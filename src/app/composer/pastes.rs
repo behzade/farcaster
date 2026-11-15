@@ -252,6 +252,22 @@ fn unique_paste_name() -> String {
     format!("pasted-text-{timestamp}-{sequence}.txt")
 }
 
+pub(super) fn store_attachment(source: &Path, content: String) -> Result<ComposerPaste, String> {
+    let directory = paste_directory()?.join(uuid::Uuid::new_v4().to_string());
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("create attachment directory: {error}"))?;
+    let path = directory.join(source.file_name().ok_or("File has no name")?);
+    let mut file =
+        open_private_file(&path).map_err(|error| format!("create attachment: {error}"))?;
+    file.write_all(content.as_bytes())
+        .map_err(|error| format!("write attachment: {error}"))?;
+    Ok(ComposerPaste {
+        path,
+        line_count: content.lines().count().max(1),
+        content,
+    })
+}
+
 #[cfg(test)]
 #[path = "pastes_tests.rs"]
 mod tests;

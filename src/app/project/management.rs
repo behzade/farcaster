@@ -106,6 +106,7 @@ impl FarcasterApp {
     pub(in crate::app) fn select_project(&mut self, project: PathBuf, cx: &mut Context<Self>) {
         if self.project.path != project {
             self.composer.project_files.clear();
+            self.composer.project_files_error = None;
             self.composer.project_files_project = None;
             self.composer.project_files_loading = None;
         }
@@ -126,6 +127,8 @@ impl FarcasterApp {
         let project = self.project.path.clone();
         if !self.project.repository.execution_allowed {
             self.composer.project_files.clear();
+            self.composer.project_files_error =
+                Some("Allow repository access to mention files".into());
             self.composer.project_files_project = Some(project);
             self.composer.project_files_loading = None;
             self.notify_composer(cx);
@@ -150,7 +153,16 @@ impl FarcasterApp {
                 }
                 if this.project.path == project && this.project.repository.preference == preference
                 {
-                    this.composer.project_files = files;
+                    match files {
+                        Ok(files) => {
+                            this.composer.project_files = files;
+                            this.composer.project_files_error = None;
+                        }
+                        Err(error) => {
+                            this.composer.project_files.clear();
+                            this.composer.project_files_error = Some(error);
+                        }
+                    }
                     this.composer.project_files_project = Some(project);
                     this.notify_composer(cx);
                 }

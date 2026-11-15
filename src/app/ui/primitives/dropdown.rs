@@ -1,6 +1,6 @@
 use gpui::{
-    App, ElementId, IntoElement as _, ParentElement as _, RenderOnce, SharedString,
-    StyleRefinement, Styled, Window, div,
+    App, ElementId, InteractiveElement as _, IntoElement as _, ParentElement as _, RenderOnce,
+    Role, SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled, Window, div,
 };
 use gpui_component::{Disableable as _, button::Button, menu::PopupMenuItem};
 use std::rc::Rc;
@@ -132,31 +132,64 @@ impl gpui::InteractiveElement for Dropdown {
 
 impl RenderOnce for Dropdown {
     fn render(self, _: &mut Window, _: &mut App) -> impl gpui::IntoElement {
-        let menu = self
-            .trigger
-            .dropdown_menu_with_anchor(self.anchor, move |menu, _, _| {
-                self.items.iter().fold(
-                    menu.check_side(gpui_component::Side::Right)
-                        .max_h(theme().size(320.0))
-                        .scrollable(true),
-                    |menu, item| {
-                        let on_select = item.on_select.clone();
-                        let disabled = item.disabled;
-                        menu.item(
-                            PopupMenuItem::new(item.label.clone())
-                                .when_some(item.icon, |item, icon| item.icon(icon))
-                                .checked(item.selected)
-                                .disabled(item.disabled)
-                                .on_click(move |_, window, cx| {
+        let has_icons = self.items.iter().any(|item| item.icon.is_some());
+        let menu =
+            self.trigger
+                .dropdown_menu_with_anchor(self.anchor, move |menu, _, _| {
+                    self.items.iter().enumerate().fold(
+                        menu.check_side(gpui_component::Side::Right)
+                            .max_h(theme().size(320.0))
+                            .scrollable(true),
+                        |menu, (index, item)| {
+                            let on_select = item.on_select.clone();
+                            let disabled = item.disabled;
+                            let label = item.label.clone();
+                            let icon = item.icon;
+                            let row = if has_icons {
+                                PopupMenuItem::element(move |_, _| {
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .h(theme().controls.menu_row)
+                                        .flex()
+                                        .items_center()
+                                        .gap(theme().space.sm)
+                                        .text_size(theme().type_scale.body)
+                                        .child(
+                                            div()
+                                                .debug_selector(move || {
+                                                    format!("dropdown-menu-icon-{index}").into()
+                                                })
+                                                .flex_none()
+                                                .size(theme().icons.control)
+                                                .children(icon.map(|icon| {
+                                                    app_icon(icon, AppIconSize::Control)
+                                                })),
+                                        )
+                                        .child(
+                                            div()
+                                                .id(("dropdown-menu-label", index))
+                                                .role(Role::Label)
+                                                .aria_value(label.clone())
+                                                .min_w_0()
+                                                .truncate()
+                                                .child(label.clone()),
+                                        )
+                                })
+                            } else {
+                                PopupMenuItem::new(label)
+                            };
+                            menu.item(row.checked(item.selected).disabled(item.disabled).on_click(
+                                move |_, window, cx| {
                                     // PopupMenu can confirm a disabled first row from the keyboard.
                                     if !disabled {
                                         on_select(window, cx);
                                     }
-                                }),
-                        )
-                    },
-                )
-            });
+                                },
+                            ))
+                        },
+                    )
+                });
         if self.auto_menu_width {
             menu.into_any_element()
         } else {

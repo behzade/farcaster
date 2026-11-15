@@ -46,15 +46,34 @@ fn footer_values_use_compact_stable_formatting() {
 }
 
 #[test]
-fn meaningful_usage_requires_a_nonzero_metric() {
-    assert!(!has_meaningful_usage(&ComposerUsage::default()));
-
-    let used = ComposerUsage {
-        aggregate: UsageSummary {
+fn worker_usage_requires_reported_tokens_or_cost() {
+    assert!(!has_reported_usage(&UsageSummary::default()));
+    for usage in [
+        UsageSummary {
             input: 1,
-            ..UsageSummary::default()
+            ..Default::default()
         },
-        ..ComposerUsage::default()
-    };
-    assert!(has_meaningful_usage(&used));
+        UsageSummary {
+            output: 1,
+            ..Default::default()
+        },
+        UsageSummary {
+            cache_read: 1,
+            ..Default::default()
+        },
+        UsageSummary {
+            cache_write: 1,
+            ..Default::default()
+        },
+        UsageSummary {
+            total: 1,
+            ..Default::default()
+        },
+        UsageSummary {
+            cost_micros: 1,
+            ..Default::default()
+        },
+    ] {
+        assert!(has_reported_usage(&usage));
+    }
 }

@@ -1,11 +1,10 @@
 use crate::app::ui::primitives::Popover;
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, FontWeight, InteractiveElement as _,
+    Animation, AnimationExt as _, AnyElement, Div, FontWeight, InteractiveElement as _,
     IntoElement as _, ParentElement as _, Styled as _, Transformation, WeakEntity, div, percentage,
     prelude::FluentBuilder as _,
 };
 
-use super::separator;
 use crate::app::FarcasterApp;
 use crate::{
     agents::SandboxState,
@@ -46,26 +45,11 @@ pub(in crate::app::views) fn render(
     let effort = identity.effort.unwrap_or("default");
     let shows_effort = !app.snapshot.available_thinking_levels().is_empty()
         || identity.effort.is_some_and(|effort| effort != "off");
-    let runtime_content = div()
+    let runtime_content = setting_content()
         .debug_selector(|| "composer-runtime-content".into())
-        .flex()
-        .items_center()
-        .text_size(theme().type_scale.body)
         .child(div().text_color(theme().colors.muted).child(provider_label))
-        .child(runtime_slash())
-        .child(
-            div()
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(theme().colors.text)
-                .child(model_label),
-        )
-        .when(shows_effort, |content| {
-            content.child(runtime_slash()).child(
-                div()
-                    .text_color(effort_color(effort))
-                    .child(effort_label(effort)),
-            )
-        });
+        .child(model_label)
+        .when(shows_effort, |content| content.child(effort_label(effort)));
     let runtime_entity = entity.clone();
     let content_entity = entity.clone();
     let runtime = Popover::new("runtime-popover")
@@ -80,9 +64,6 @@ pub(in crate::app::views) fn render(
                 ButtonTone::Quiet,
                 true,
             )
-            .when(app.editable_draft_harness().is_none(), |button| {
-                button.pl_0()
-            })
             .flex_none(),
         )
         .on_open_change(move |open, window, cx| {
@@ -96,12 +77,14 @@ pub(in crate::app::views) fn render(
         });
 
     div()
+        .debug_selector(|| "composer-runtime-controls".into())
         .flex_none()
         .flex()
         .items_center()
+        .gap(theme().space.md)
         .child(runtime)
         .when(app.snapshot.sandbox_controls_available(), |content| {
-            content.child(separator()).child(access_selector(
+            content.child(access_selector(
                 app.snapshot.access_mode,
                 app.snapshot.available_access_modes(),
                 app.snapshot.sandbox_state,
@@ -109,26 +92,6 @@ pub(in crate::app::views) fn render(
             ))
         })
         .into_any_element()
-}
-
-fn runtime_slash() -> AnyElement {
-    div()
-        .px(theme().space.sm)
-        .text_color(theme().colors.subtle)
-        .child("/")
-        .into_any_element()
-}
-
-fn effort_color(level: &str) -> gpui::Rgba {
-    match level.to_ascii_lowercase().as_str() {
-        "off" | "none" | "default" => theme().colors.subtle,
-        "minimal" => theme().colors.muted,
-        "low" => theme().colors.link,
-        "medium" => theme().colors.accent,
-        "high" => theme().colors.warning,
-        "xhigh" | "max" => theme().colors.error,
-        _ => theme().colors.accent,
-    }
 }
 
 fn effort_label(level: &str) -> String {
@@ -139,28 +102,38 @@ fn effort_label(level: &str) -> String {
     }
 }
 
+fn setting_content() -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(theme().space.sm)
+        .text_size(theme().type_scale.body)
+        .line_height(theme().type_scale.line_body)
+        .font_weight(FontWeight::NORMAL)
+        .text_color(theme().colors.text)
+}
+
 fn access_selector(
     selected: HarnessAccessMode,
     supported: Vec<HarnessAccessMode>,
     state: SandboxState,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
-    let content = div()
-        .flex()
-        .items_center()
-        .gap(theme().size(5.0))
+    let label = sandbox_state_label(state, selected);
+    let content = setting_content()
         .text_color(match state {
             SandboxState::Active(mode) => access_mode_color(mode),
+            SandboxState::Pending(_) | SandboxState::Checking => access_mode_color(selected),
             _ => theme().colors.muted,
         })
-        .child(app_icon(access_mode_icon(selected), AppIconSize::Inline))
-        .child(sandbox_state_label(state, selected))
+        .child(app_icon(access_mode_icon(selected), AppIconSize::Control))
+        .child(label.strip_prefix("Sandbox: ").unwrap_or(label))
         .when(matches!(state, SandboxState::Pending(_)), |this| {
-            this.child(app_icon(AppIcon::Hourglass, AppIconSize::Inline))
+            this.child(app_icon(AppIcon::Hourglass, AppIconSize::Control))
         })
         .when(state == SandboxState::Checking, |this| {
             this.child(
-                app_icon(AppIcon::SpinnerGap, AppIconSize::Inline).with_animation(
+                app_icon(AppIcon::SpinnerGap, AppIconSize::Control).with_animation(
                     "sandbox-applying",
                     Animation::new(std::time::Duration::from_millis(800)).repeat(),
                     |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
@@ -231,8 +204,7 @@ const fn access_mode_label(mode: HarnessAccessMode) -> &'static str {
 
 fn access_mode_color(mode: HarnessAccessMode) -> gpui::Rgba {
     match mode {
-        HarnessAccessMode::Sandboxed => theme().colors.muted,
-        HarnessAccessMode::Auto => theme().colors.muted,
+        HarnessAccessMode::Sandboxed | HarnessAccessMode::Auto => theme().colors.text,
         HarnessAccessMode::Full => theme().colors.warning,
     }
 }

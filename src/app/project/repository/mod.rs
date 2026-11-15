@@ -361,6 +361,7 @@ impl FarcasterApp {
             return;
         }
         self.composer.project_files.clear();
+        self.composer.project_files_error = None;
         self.composer.project_files_project = None;
         self.composer.project_files_loading = None;
         self.persist_repository_preferences(cx);
@@ -595,6 +596,7 @@ impl FarcasterApp {
 
     fn invalidate_repository_file_mentions(&mut self, cx: &mut Context<Self>) {
         self.composer.project_files.clear();
+        self.composer.project_files_error = None;
         self.composer.project_files_project = None;
         self.composer.project_files_loading = None;
         let input = self.composer.input.read(cx);

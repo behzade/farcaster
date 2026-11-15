@@ -1,11 +1,14 @@
 use super::super::FarcasterApp;
 use crate::sessions::{SessionSummary, UsageSummary};
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct ComposerUsage {
     pub context_used: Option<u64>,
     pub context_total: Option<u64>,
     pub context_percent: Option<f64>,
+    pub session: UsageSummary,
+    pub workers: UsageSummary,
+    pub worker_count: usize,
     pub aggregate: UsageSummary,
     pub cache_hit_rate: Option<f64>,
     pub weekly: Option<crate::agents::AccountUsageWindow>,
@@ -33,10 +36,18 @@ pub(super) fn composer_usage(app: &FarcasterApp) -> ComposerUsage {
         })
         .unwrap_or(session.usage)
     };
-    let mut aggregate = root.map(&usage_for).unwrap_or_default();
-    for (session, _) in &descendants {
-        aggregate.add(usage_for(session));
+    let session = root.map(&usage_for).unwrap_or_default();
+    let mut workers = UsageSummary::default();
+    let mut worker_count = 0;
+    for (worker, _) in &descendants {
+        let usage = usage_for(worker);
+        if has_reported_usage(&usage) {
+            workers.add(usage);
+            worker_count += 1;
+        }
     }
+    let mut aggregate = session;
+    aggregate.add(workers);
 
     let context = context_summary(visible_context_stats(
         &app.snapshot.stats,
@@ -60,6 +71,9 @@ pub(super) fn composer_usage(app: &FarcasterApp) -> ComposerUsage {
         context_used: context.used,
         context_total,
         context_percent,
+        session,
+        workers,
+        worker_count,
         aggregate,
         cache_hit_rate: app
             .snapshot
@@ -75,6 +89,15 @@ pub(super) fn composer_usage(app: &FarcasterApp) -> ComposerUsage {
     }
 }
 
+pub(super) fn has_reported_usage(usage: &UsageSummary) -> bool {
+    usage.input > 0
+        || usage.output > 0
+        || usage.cache_read > 0
+        || usage.cache_write > 0
+        || usage.total > 0
+        || usage.cost_micros > 0
+}
+
 fn live_usage(stats: &serde_json::Value) -> Option<UsageSummary> {
     let tokens = stats.get("tokens")?;
     let number = |key| tokens.get(key).and_then(serde_json::Value::as_u64);
@@ -86,15 +109,6 @@ fn live_usage(stats: &serde_json::Value) -> Option<UsageSummary> {
         total: number("totalTokens")?,
         cost_micros: 0,
     })
-}
-
-pub(super) fn has_meaningful_usage(usage: &ComposerUsage) -> bool {
-    usage.context_used.is_some_and(|value| value > 0)
-        || usage.aggregate.input > 0
-        || usage.aggregate.output > 0
-        || usage.aggregate.cost_micros > 0
-        || usage.cache_hit_rate.is_some()
-        || usage.weekly.is_some()
 }
 
 pub(super) fn format_tokens(value: u64) -> String {

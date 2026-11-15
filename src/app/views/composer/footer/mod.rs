@@ -1,19 +1,17 @@
 mod runtime;
+mod usage;
 
 #[cfg(test)]
 #[path = "footer_tests.rs"]
 mod tests;
 
-use crate::app::ui::primitives::AppTooltip as _;
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _, PathBuilder,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, canvas, div, point,
     prelude::FluentBuilder as _, px,
 };
 
-use super::super::usage::{
-    ComposerUsage, composer_usage, format_cost, format_tokens, has_meaningful_usage,
-};
+use super::super::usage::{ComposerUsage, composer_usage, format_tokens};
 use crate::{
     app::FarcasterApp,
     app::ui::assets::AppIcon,
@@ -28,27 +26,36 @@ impl FarcasterApp {
         entity: WeakEntity<Self>,
         scroll: &gpui::ScrollHandle,
     ) -> AnyElement {
-        let footer = div()
+        let settings = div()
+            .id("composer-settings")
+            .min_w_0()
+            .flex_1()
+            .flex()
+            .items_center()
+            .gap(theme().space.md)
+            .overflow_x_scroll()
+            .track_scroll(scroll)
+            .child(div().min_w_0().flex_1())
+            .when_some(self.editable_draft_harness(), |footer, harness| {
+                footer.child(super::start::harness_selector(
+                    harness,
+                    self.active_profile_id(),
+                    self.settings.harness_profiles.list().unwrap_or_default(),
+                    entity.clone(),
+                ))
+            })
+            .child(runtime::render(self, entity.clone()));
+
+        div()
             .id("composer-footer-controls")
             .min_w_0()
             .flex_1()
             .flex()
             .items_center()
-            .overflow_x_scroll()
-            .track_scroll(scroll)
-            .when_some(self.editable_draft_harness(), |footer, harness| {
-                footer
-                    .child(super::start::harness_selector(
-                        harness,
-                        self.active_profile_id(),
-                        self.settings.harness_profiles.list().unwrap_or_default(),
-                        entity.clone(),
-                    ))
-                    .child(separator())
-            })
-            .child(runtime::render(self, entity));
-
-        footer.child(div().min_w_0().flex_1()).into_any_element()
+            .gap(theme().space.md)
+            .child(super::attachments::attach_button(entity))
+            .child(settings)
+            .into_any_element()
     }
 
     pub(in crate::app::views) fn render_composer_status(
@@ -81,9 +88,11 @@ impl FarcasterApp {
                 )
             })
             .child(div().min_w_0().flex_1())
-            .when(has_meaningful_usage(&usage), |row| {
-                row.child(render_usage(&usage))
+            .when_some(context_value(&usage), |row, value| {
+                row.child(context_metric(&usage, value))
+                    .child(div().w(theme().space.md))
             })
+            .child(usage::render(usage))
             .into_any_element()
     }
 
@@ -94,10 +103,13 @@ impl FarcasterApp {
     ) -> AnyElement {
         let send_entity = entity.clone();
         let abort_entity = entity;
+        let send_size = theme().size(24.0);
         div()
             .flex_none()
+            .w(theme().controls.icon_button + send_size + theme().space.xs)
             .flex()
             .items_center()
+            .justify_end()
             .child(
                 div()
                     .flex_none()
@@ -141,7 +153,7 @@ impl FarcasterApp {
                                     });
                                 },
                             )
-                            .size(theme().size(24.0))
+                            .size(send_size)
                             .text_color(theme().colors.text),
                         )
                     }),
@@ -150,100 +162,7 @@ impl FarcasterApp {
     }
 }
 
-fn render_usage(usage: &ComposerUsage) -> AnyElement {
-    let mut row = div()
-        .flex_none()
-        .flex()
-        .items_center()
-        .font_family(MONO_FONT_FAMILY)
-        .text_size(theme().type_scale.caption)
-        .child(context_metric(usage));
-    if let Some(rate) = usage.cache_hit_rate {
-        row = row.child(separator()).child(labeled_metric(
-            "Cache hit",
-            "Cache hit rate",
-            format!("{rate:.0}%"),
-            theme().colors.success,
-            None,
-        ));
-    }
-    if usage.aggregate.input > 0 || usage.aggregate.output > 0 {
-        row = row.child(separator()).child(
-            div()
-                .flex_none()
-                .flex()
-                .items_center()
-                .gap(theme().space.xs)
-                .app_tooltip("Token totals for this session and its workers")
-                .child(
-                    div()
-                        .text_color(theme().colors.muted)
-                        .child("Session + workers"),
-                )
-                .when(usage.aggregate.input > 0, |tokens| {
-                    tokens.child(simple_metric(
-                        "In",
-                        "Session and worker input tokens",
-                        format_tokens(usage.aggregate.input),
-                        theme().colors.muted,
-                    ))
-                })
-                .when(usage.aggregate.output > 0, |tokens| {
-                    tokens.child(simple_metric(
-                        "Out",
-                        "Session and worker output tokens",
-                        format_tokens(usage.aggregate.output),
-                        theme().colors.text,
-                    ))
-                }),
-        );
-    }
-    if usage.aggregate.cost_micros > 0 {
-        row = row.child(separator()).child(simple_metric(
-            "Cost",
-            "Cost",
-            format_cost(usage.aggregate.cost_micros),
-            theme().colors.text,
-        ));
-    }
-    if let Some(weekly) = usage.weekly {
-        let remaining = weekly.remaining_percent.clamp(0.0, 100.0);
-        let value = format!("{remaining:.0}%");
-        let tooltip = weekly.resets_at.and_then(format_reset_time).map_or_else(
-            || format!("Weekly usage remaining: {value}"),
-            |reset| format!("Weekly usage remaining: {value} · resets {reset}"),
-        );
-        row = row.child(separator()).child(labeled_metric(
-            "Week left",
-            "Weekly usage remaining",
-            value,
-            weekly_color(remaining),
-            Some(tooltip),
-        ));
-    }
-    row.into_any_element()
-}
-
-fn format_reset_time(timestamp: i64) -> Option<String> {
-    let value = time::OffsetDateTime::from_unix_timestamp(timestamp).ok()?;
-    let format = time::format_description::parse_borrowed::<3>(
-        "[month repr:short] [day padding:none] at [hour]:[minute] UTC",
-    )
-    .ok()?;
-    value.format(&format).ok()
-}
-
-fn weekly_color(remaining: f64) -> gpui::Rgba {
-    if remaining <= 10.0 {
-        theme().colors.error
-    } else if remaining <= 25.0 {
-        theme().colors.warning
-    } else {
-        theme().colors.text
-    }
-}
-
-fn context_metric(usage: &ComposerUsage) -> AnyElement {
+fn context_metric(usage: &ComposerUsage, value: String) -> AnyElement {
     div()
         .flex_none()
         .flex()
@@ -261,19 +180,20 @@ fn context_metric(usage: &ComposerUsage) -> AnyElement {
                 .flex_none()
                 .whitespace_nowrap()
                 .text_color(theme().colors.text)
-                .child(context_value(usage)),
+                .child(value),
         )
         .into_any_element()
 }
 
-fn context_value(usage: &ComposerUsage) -> String {
+fn context_value(usage: &ComposerUsage) -> Option<String> {
     match (usage.context_used, usage.context_total) {
-        (Some(used), Some(total)) => format!("{}/{}", format_tokens(used), format_tokens(total)),
-        (Some(used), None) => format!("{} used", format_tokens(used)),
-        (None, Some(total)) => format!("{} capacity", format_tokens(total)),
-        (None, None) => usage
+        (Some(used), Some(total)) => {
+            Some(format!("{}/{}", format_tokens(used), format_tokens(total)))
+        }
+        (Some(used), None) => Some(format_tokens(used)),
+        (None, _) => usage
             .context_percent
-            .map_or_else(|| "unavailable".into(), |percent| format!("{percent:.0}%")),
+            .map(|percent| format!("{percent:.0}%")),
     }
 }
 
@@ -317,65 +237,6 @@ fn context_meter(percent: f64, color: gpui::Rgba) -> AnyElement {
             )
             .size_full(),
         )
-        .into_any_element()
-}
-
-fn labeled_metric(
-    label: &'static str,
-    accessible_label: &'static str,
-    value: String,
-    value_color: gpui::Rgba,
-    tooltip: Option<String>,
-) -> AnyElement {
-    let aria_label = format!("{accessible_label}: {value}");
-    div()
-        .id(accessible_label)
-        .aria_label(aria_label.clone())
-        .flex_none()
-        .flex()
-        .items_center()
-        .gap(theme().space.xs)
-        .whitespace_nowrap()
-        .child(
-            div()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(theme().colors.muted)
-                .child(label),
-        )
-        .child(div().text_color(value_color).child(value))
-        .when_some(tooltip, |metric, tooltip| metric.app_tooltip(tooltip))
-        .into_any_element()
-}
-
-fn simple_metric(
-    label: &'static str,
-    accessible_label: &'static str,
-    value: String,
-    value_color: gpui::Rgba,
-) -> AnyElement {
-    let aria_label = format!("{accessible_label}: {value}");
-    div()
-        .id(accessible_label)
-        .aria_label(aria_label.clone())
-        .flex_none()
-        .flex()
-        .items_center()
-        .gap(theme().space.xs)
-        .whitespace_nowrap()
-        .child(div().text_color(theme().colors.muted).child(label))
-        .app_tooltip(aria_label.clone())
-        .child(div().text_color(value_color).child(value))
-        .into_any_element()
-}
-
-pub(in crate::app::views) fn separator() -> AnyElement {
-    div()
-        .flex_none()
-        .px(theme().space.sm)
-        .text_align(gpui::TextAlign::Center)
-        .font_family(MONO_FONT_FAMILY)
-        .text_color(theme().colors.subtle)
-        .child("/")
         .into_any_element()
 }
 

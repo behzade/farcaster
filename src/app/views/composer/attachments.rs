@@ -1,4 +1,9 @@
-use crate::app::ui::primitives::{AppTooltip as _, ButtonPressExt as _};
+use crate::app::ui::{
+    assets::AppIcon,
+    primitives::{
+        AppIconSize, AppTooltip as _, ButtonPressExt as _, ButtonTone, icon_button_with_size,
+    },
+};
 use gpui::{
     AnyElement, App, ElementId, InteractiveElement as _, IntoElement as _, ParentElement as _,
     Styled as _, WeakEntity, div,
@@ -13,6 +18,21 @@ use super::super::{
     attachments::{format_bytes, image_card, open_card},
 };
 use crate::app::ui::theme::theme;
+
+pub(super) fn attach_button(entity: WeakEntity<FarcasterApp>) -> AnyElement {
+    icon_button_with_size(
+        "composer-attach",
+        AppIcon::Paperclip,
+        "Attach image or text",
+        AppIconSize::Control,
+        ButtonTone::Quiet,
+        move |window, cx| {
+            let _ = entity.update(cx, |app, cx| app.choose_composer_attachments(window, cx));
+        },
+    )
+    .debug_selector(|| "composer-attach".into())
+    .into_any_element()
+}
 
 pub(in crate::app::views) fn render(
     app: &FarcasterApp,
@@ -59,7 +79,11 @@ pub(in crate::app::views) fn render(
                 let remove = entity.clone();
                 open_card(
                     ("composer-paste", index),
-                    "Pasted text".into(),
+                    if paste.file_name().starts_with("pasted-text-") {
+                        "Pasted text".into()
+                    } else {
+                        paste.file_name().into()
+                    },
                     format!(
                         "{} lines · {}",
                         paste.line_count,

@@ -4,6 +4,7 @@ pub(in crate::app) struct ComposerState {
     pub(in crate::app) input: Entity<EditorState>,
     pub(in crate::app) decorations: TextDecorationCollection,
     pub(in crate::app) project_files: Vec<String>,
+    pub(in crate::app) project_files_error: Option<String>,
     pub(in crate::app) project_files_project: Option<PathBuf>,
     pub(in crate::app) project_files_loading: Option<PathBuf>,
     pub(in crate::app) sessions: ComposerSessions,

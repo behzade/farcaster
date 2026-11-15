@@ -1,0 +1,182 @@
+use crate::{
+    app::{
+        ui::{
+            primitives::{ButtonTone, Popover, dropdown_content_button, floating_surface},
+            theme::theme,
+        },
+        views::usage::{ComposerUsage, format_cost, format_tokens, has_reported_usage},
+    },
+    sessions::UsageSummary,
+};
+use gpui::{
+    AnyElement, FontWeight, IntoElement as _, ParentElement as _, Styled as _, div,
+    prelude::FluentBuilder as _,
+};
+
+pub(super) fn render(usage: ComposerUsage) -> AnyElement {
+    let content = div()
+        .flex()
+        .items_center()
+        .gap(theme().space.sm)
+        .child("Usage")
+        .when(usage.aggregate.cost_micros > 0, |row| {
+            row.child(
+                div()
+                    .text_color(theme().colors.muted)
+                    .child(format_cost(usage.aggregate.cost_micros)),
+            )
+        });
+    Popover::new("composer-usage-popover")
+        .anchor(gpui::Anchor::BottomRight)
+        .appearance(false)
+        .trigger(dropdown_content_button(
+            "composer-usage",
+            "Usage details",
+            content,
+            ButtonTone::Quiet,
+            true,
+        ))
+        .content(move |_, _, _| details(&usage))
+        .into_any_element()
+}
+
+fn details(usage: &ComposerUsage) -> AnyElement {
+    let scopes = if usage.worker_count > 0 {
+        vec![
+            ("Session".to_owned(), usage.session),
+            (format!("Workers ({})", usage.worker_count), usage.workers),
+            ("Total".into(), usage.aggregate),
+        ]
+    } else {
+        vec![("Session".to_owned(), usage.session)]
+    };
+    let mut tokens = div().flex().flex_col().gap(theme().space.sm).child(
+        div()
+            .flex()
+            .child(div().flex_1())
+            .children(scopes.iter().map(|(label, _)| {
+                div()
+                    .w(theme().size(76.0))
+                    .text_right()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(label.clone())
+            })),
+    );
+    for (label, metric) in [
+        ("Input", UsageMetric::Input),
+        ("Output", UsageMetric::Output),
+        ("Cache read", UsageMetric::CacheRead),
+        ("Cache write", UsageMetric::CacheWrite),
+        ("Cost", UsageMetric::Cost),
+    ] {
+        if matches!(
+            metric,
+            UsageMetric::CacheRead | UsageMetric::CacheWrite | UsageMetric::Cost
+        ) && scopes.iter().all(|(_, scope)| metric.value(scope) == 0)
+        {
+            continue;
+        }
+        tokens = tokens.child(
+            div()
+                .flex()
+                .items_center()
+                .child(div().flex_1().text_color(theme().colors.muted).child(label))
+                .children(scopes.iter().map(|(_, scope)| {
+                    let value = if has_reported_usage(scope) {
+                        metric.format(scope)
+                    } else {
+                        "—".into()
+                    };
+                    div().w(theme().size(76.0)).text_right().child(value)
+                })),
+        );
+    }
+    floating_surface()
+        .w(theme().size(360.0))
+        .rounded(theme().radius)
+        .p(theme().space.md)
+        .flex()
+        .flex_col()
+        .gap(theme().space.md)
+        .child(div().font_weight(FontWeight::SEMIBOLD).child("Usage"))
+        .child(div().text_size(theme().type_scale.caption).child(tokens))
+        .when_some(usage.cache_hit_rate, |body, rate| {
+            body.child(metric("Session cache hit", format!("{rate:.0}%")))
+        })
+        .when_some(usage.weekly, |body, weekly| {
+            body.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(theme().space.xs)
+                    .child(metric(
+                        "Weekly remaining",
+                        format!("{:.0}%", weekly.remaining_percent.clamp(0.0, 100.0)),
+                    ))
+                    .when_some(
+                        weekly.resets_at.and_then(format_reset_time),
+                        |body, time| {
+                            body.child(
+                                div()
+                                    .text_size(theme().type_scale.caption)
+                                    .text_color(theme().colors.muted)
+                                    .child(format!("Resets {time}")),
+                            )
+                        },
+                    ),
+            )
+        })
+        .into_any_element()
+}
+
+#[derive(Clone, Copy)]
+enum UsageMetric {
+    Input,
+    Output,
+    CacheRead,
+    CacheWrite,
+    Cost,
+}
+
+impl UsageMetric {
+    fn value(self, usage: &UsageSummary) -> u64 {
+        match self {
+            Self::Input => usage.input,
+            Self::Output => usage.output,
+            Self::CacheRead => usage.cache_read,
+            Self::CacheWrite => usage.cache_write,
+            Self::Cost => usage.cost_micros,
+        }
+    }
+    fn format(self, usage: &UsageSummary) -> String {
+        if matches!(self, Self::Cost) {
+            format_cost(self.value(usage))
+        } else {
+            format_tokens(self.value(usage))
+        }
+    }
+}
+
+fn metric(label: &str, value: String) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .gap(theme().space.md)
+        .child(
+            div()
+                .flex_1()
+                .text_color(theme().colors.muted)
+                .child(label.to_owned()),
+        )
+        .child(value)
+        .into_any_element()
+}
+
+fn format_reset_time(timestamp: i64) -> Option<String> {
+    let value = time::OffsetDateTime::from_unix_timestamp(timestamp).ok()?;
+    let format = time::format_description::parse_borrowed::<3>(
+        "[month repr:short] [day padding:none] at [hour]:[minute] UTC",
+    )
+    .ok()?;
+    value.format(&format).ok()
+}

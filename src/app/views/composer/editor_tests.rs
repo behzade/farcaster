@@ -222,10 +222,21 @@ fn composer_text_attachments_and_controls_share_an_inset(cx: &mut gpui::TestAppC
         cx,
         |cx, app, _, project| {
             cx.simulate_resize(gpui::size(px(1_400.), px(900.)));
-            for (text, attachment) in [("", false), ("one", false), ("one", true)] {
+            let mut settings_position = None;
+            for (text, attachment, running) in [
+                ("", false, false),
+                ("one", false, false),
+                ("", false, true),
+                ("one", false, true),
+                ("one", true, false),
+            ] {
                 cx.update(|window, cx| {
                     app.update(cx, |app, cx| {
                         app.sessions.selected_draft = None;
+                        std::sync::Arc::make_mut(
+                            &mut std::sync::Arc::make_mut(&mut app.snapshot).conversation,
+                        )
+                        .running = running;
                         if attachment {
                             app.composer.pastes.insert(
                                 app.composer.sessions.current_target().to_owned(),
@@ -267,7 +278,27 @@ fn composer_text_attachments_and_controls_share_an_inset(cx: &mut gpui::TestAppC
                 if let Some(text_left) = text_left {
                     assert_eq!(text_left, left, "rendered text inset");
                 }
-                assert_eq!(runtime.left(), left, "footer label inset");
+                let add = cx
+                    .debug_bounds("composer-attach")
+                    .expect("attachment control");
+                assert_eq!(add.left(), left, "first footer control inset");
+                assert!(
+                    runtime.left() >= add.right(),
+                    "runtime follows the add control"
+                );
+                let settings = cx
+                    .debug_bounds("composer-runtime-controls")
+                    .expect("runtime settings group");
+                let position = (settings.left(), settings.right());
+                assert_eq!(
+                    *settings_position.get_or_insert(position),
+                    position,
+                    "settings stay fixed when send/abort appear"
+                );
+                assert!(
+                    settings.left() - add.right() >= theme().space.md,
+                    "attachments stay separate from settings"
+                );
                 if attachment {
                     let card = cx
                         .debug_bounds("composer-attachment-card")
@@ -400,6 +431,93 @@ fn composer_clicks_focus_blank_space_and_keep_visible_text_in_place(cx: &mut gpu
                     px(0.),
                     "clicking visible text must not scroll it"
                 );
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn completion_popup_keeps_composer_size_and_tab_and_enter_only_insert(
+    cx: &mut gpui::TestAppContext,
+) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::completion_popup_keeps_composer_size_and_tab_and_enter_only_insert"
+        ),
+        cx,
+        |cx, app, runtime, _| {
+            cx.update(|window, cx| {
+                window.activate_window();
+                app.update(cx, |app, cx| {
+                    app.set_surface(crate::app::AppSurface::Chat, cx);
+                    std::sync::Arc::make_mut(&mut app.snapshot).commands =
+                        vec![crate::protocol::SlashCommand {
+                            name: "skill:review".into(),
+                            description: None,
+                            source: crate::protocol::SlashCommandSource::Skill,
+                        }];
+                    app.composer.focus.focus(window, cx);
+                    cx.notify();
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.run_until_parked();
+            let baseline = cx.debug_bounds("composer-frame").unwrap();
+            for key in ["tab", "enter"] {
+                cx.update(|window, cx| {
+                    app.read(cx)
+                        .composer
+                        .input
+                        .clone()
+                        .update(cx, |input, cx| input.set_value("", window, cx));
+                });
+                cx.simulate_input("$rev");
+                cx.update(|window, cx| {
+                    window.draw(cx).clear(cx);
+                });
+                cx.run_until_parked();
+                let frame = cx.debug_bounds("composer-frame").unwrap();
+                let popup = cx.debug_bounds("composer-completions").expect("popup");
+                assert_eq!(frame.size.height, baseline.size.height);
+                assert!(
+                    popup.top() > frame.top() && popup.bottom() <= frame.bottom(),
+                    "popup belongs inside the composer below its input line"
+                );
+                while runtime.try_recv_command().is_some() {}
+                cx.simulate_keystrokes(key);
+                cx.update(|_, cx| {
+                    assert_eq!(
+                        app.read(cx).composer.input.read(cx).value().as_ref(),
+                        "$review "
+                    )
+                });
+                assert!(
+                    runtime.try_recv_command().is_none(),
+                    "completion must not send a prompt"
+                );
+            }
+            cx.update(|window, cx| {
+                app.read(cx)
+                    .composer
+                    .input
+                    .clone()
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+            });
+            cx.simulate_input("$rev");
+            cx.simulate_keystrokes("escape");
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                assert!(app.read(cx).views.composer.read(cx).completions_dismissed());
+                assert_eq!(
+                    app.read(cx).composer.input.read(cx).value().as_ref(),
+                    "$rev"
+                );
+            });
+            assert!(cx.debug_bounds("composer-completions").is_none());
+            cx.simulate_input("i");
+            cx.update(|_, cx| {
+                assert!(!app.read(cx).views.composer.read(cx).completions_dismissed())
             });
         },
     );

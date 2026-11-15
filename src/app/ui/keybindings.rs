@@ -3,13 +3,14 @@ use crate::app::ui::keyboard::CopySelection;
 use crate::app::views::dialogs::send_to_chat::{NextCodeDestination, PreviousCodeDestination};
 use crate::app::workspace::{CycleWorkspaceBackward, CycleWorkspaceForward};
 use crate::app::{
-    AbortRun, AddProject, CloseCurrent, ComposerCompletionNext, ComposerCompletionPrevious,
-    ComposerHistoryNext, ComposerHistoryPrevious, DismissSurface, EscapePrefix, FocusComposer,
-    NewSession, NextSession, OVERLAY_KEY_CONTEXT, PICKER_KEY_CONTEXT, PickerBack, PreviousSession,
-    QuitApplication, ShowActionPicker, ShowEditor, ShowKeybindings, ShowTerminal, ShowWorkGraph,
-    SubmitFollowUp, SwitchSession0, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4,
-    SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9, WorkBack,
-    WorkCreateIssue, WorkDismiss, WorkFocusSearch, WorkNextIssue, WorkPreviousIssue,
+    AbortRun, AddProject, CloseCurrent, ComposerCompletionAccept, ComposerCompletionDismiss,
+    ComposerCompletionNext, ComposerCompletionPrevious, ComposerHistoryNext,
+    ComposerHistoryPrevious, DismissSurface, EscapePrefix, FocusComposer, NewSession, NextSession,
+    OVERLAY_KEY_CONTEXT, PICKER_KEY_CONTEXT, PickerBack, PreviousSession, QuitApplication,
+    ShowActionPicker, ShowEditor, ShowKeybindings, ShowTerminal, ShowWorkGraph, SubmitFollowUp,
+    SwitchSession0, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4, SwitchSession5,
+    SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9, WorkBack, WorkCreateIssue,
+    WorkDismiss, WorkFocusSearch, WorkNextIssue, WorkPreviousIssue,
 };
 use crate::app::{COMPOSER_KEY_CONTEXT, TRANSCRIPT_SELECTION_KEY_CONTEXT};
 use gpui::{KeyBinding, KeyBindingContextPredicate as Predicate, Unbind};
@@ -60,6 +61,7 @@ pub(crate) fn session_escape_condition() -> Predicate {
         PICKER_KEY_CONTEXT,
         "PopupMenu",
         "Popover",
+        "CompletionPopup",
     ]
     .into_iter()
     .fold(
@@ -411,10 +413,28 @@ fn registry_for_platform(prefix: &str) -> Vec<Command> {
             ComposerCompletionNext,
             "Composer",
             "Next completion",
+            [Shortcut::new("ctrl-n", composer_completions.clone())],
+        ),
+        Command::new(
+            ComposerCompletionAccept,
+            "Composer",
+            "Insert completion",
             [
-                Shortcut::new("ctrl-n", composer_completions.clone()),
-                Shortcut::new("tab", composer_completions),
+                Shortcut::new("tab", composer_completions.clone()),
+                Shortcut::new("enter", composer_completions),
             ],
+        ),
+        Command::new(
+            ComposerCompletionDismiss,
+            "Composer",
+            "Dismiss completions",
+            [Shortcut::new(
+                "escape",
+                input_in(Predicate::And(
+                    Box::new(named(COMPOSER_KEY_CONTEXT)),
+                    Box::new(named("CompletionPopup")),
+                )),
+            )],
         ),
         Command::new(
             FocusComposer,

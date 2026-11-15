@@ -269,6 +269,7 @@ impl FarcasterApp {
                 input: inputs.composer,
                 decorations: inputs.composer_decorations,
                 project_files: Vec::new(),
+                project_files_error: None,
                 project_files_project: None,
                 project_files_loading: None,
                 sessions: persisted.composer_sessions,

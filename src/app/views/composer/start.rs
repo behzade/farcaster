@@ -98,6 +98,5 @@ pub(super) fn harness_selector(
         .tone(ButtonTone::Quiet)
         .anchor(gpui::Anchor::BottomLeft)
         .auto_menu_width()
-        .pl_0()
         .text_color(theme().colors.text)
 }

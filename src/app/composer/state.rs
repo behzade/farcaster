@@ -41,6 +41,30 @@ impl FarcasterApp {
         });
     }
 
+    pub(in crate::app) fn accept_composer_completion(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.views.composer.read(cx).completions_dismissed() {
+            return false;
+        }
+        let input = self.composer.input.read(cx);
+        let Some(snapshot) = completion::resolve_for_harness(
+            &input.value(),
+            input.cursor(),
+            &self.composer.project_files,
+            self.views.composer.read(cx).suggestion_selection(),
+            &self.snapshot.commands,
+            self.active_harness(),
+        ) else {
+            return false;
+        };
+        self.apply_composer_snapshot(snapshot, window, cx);
+        self.composer.focus.focus(window, cx);
+        true
+    }
+
     pub(in crate::app) fn handle_composer_history_key(
         &mut self,
         key: &str,

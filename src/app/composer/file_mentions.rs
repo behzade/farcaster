@@ -20,12 +20,15 @@ pub(in crate::app) struct MentionQuery {
     pub(in crate::app) text: String,
 }
 
-pub(in crate::app) fn project_files(project: &Path, preference: BackendPreference) -> Vec<String> {
+pub(in crate::app) fn project_files(
+    project: &Path,
+    preference: BackendPreference,
+) -> Result<Vec<String>, String> {
     RepositoryBackend::discover(project, preference)
-        .ok()
-        .flatten()
-        .and_then(|backend| backend.list_project_files().ok())
-        .unwrap_or_default()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "This folder has no supported repository".to_owned())?
+        .list_project_files()
+        .map_err(|error| error.to_string())
 }
 
 pub(in crate::app) fn query_at_cursor(value: &str, cursor: usize) -> Option<MentionQuery> {
@@ -88,6 +91,39 @@ pub(in crate::app) fn matches(files: &[String], query: &str) -> Vec<String> {
         }
     });
     matches.into_iter().map(|(path, _)| path.clone()).collect()
+}
+
+pub(in crate::app) fn match_ranges(value: &str, query: &str) -> Vec<std::ops::Range<usize>> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let pattern = Atom::new(
+        query,
+        CaseMatching::Ignore,
+        Normalization::Smart,
+        AtomKind::Fuzzy,
+        false,
+    );
+    let mut indices = Vec::new();
+    FILE_MATCHER.with(|matcher| {
+        pattern.indices(
+            Utf32Str::new(value, &mut Vec::new()),
+            &mut matcher.borrow_mut(),
+            &mut indices,
+        );
+    });
+    let bytes = value
+        .char_indices()
+        .map(|(index, _)| index)
+        .chain([value.len()])
+        .collect::<Vec<_>>();
+    indices
+        .into_iter()
+        .filter_map(|index| {
+            let index = index as usize;
+            Some(*bytes.get(index)?..*bytes.get(index + 1)?)
+        })
+        .collect()
 }
 
 pub(in crate::app) fn insert(value: &str, query: &MentionQuery, path: &str) -> (String, usize) {

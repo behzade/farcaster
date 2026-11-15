@@ -27,8 +27,8 @@ mod workspace;
 use change_detection::*;
 pub(crate) use composer::ComposerImage;
 pub(crate) use composer::ComposerPaste;
+use composer::file_mentions;
 use composer::submissions::PendingSubmission;
-use composer::{completion as composer_completion, file_mentions};
 pub(crate) use navigation::{PICKER_KEY_CONTEXT, PickerScope, ProjectPickerIntent};
 use project::{registry as project_registry, repository};
 use session::{archive, status::roots_waiting_for_descendants};
@@ -137,6 +137,8 @@ actions!(
         ComposerHistoryNext,
         ComposerCompletionPrevious,
         ComposerCompletionNext,
+        ComposerCompletionAccept,
+        ComposerCompletionDismiss,
         ShowKeybindings,
         IncreaseTranscriptFontSize,
         DecreaseTranscriptFontSize,
