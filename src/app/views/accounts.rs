@@ -6,10 +6,7 @@ use crate::app::{
     FarcasterApp, RuntimeCommand,
     ui::{
         assets::AppIcon,
-        primitives::{
-            AppIconSize, ButtonTone, Popover, app_icon, button, dropdown_content_button,
-            floating_surface,
-        },
+        primitives::{AppIconSize, ButtonTone, Popover, app_icon, button, dropdown_content_button},
         theme::theme,
     },
     workspace::SettingsTab,
@@ -18,23 +15,101 @@ use gpui::{
     Anchor, AnyElement, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
+use gpui_component::ThemeStyled as _;
+
+fn provider_name(connection: &AccountConnection) -> &str {
+    match connection.source.provider.as_str() {
+        "openai" | "openai-codex" => "OpenAI",
+        "anthropic" => "Anthropic",
+        "google" | "google-gemini-cli" | "google-antigravity" => "Google",
+        "cursor" => "Cursor",
+        "opencode" => "OpenCode",
+        "opencode-go" => "OpenCode Go",
+        "xai" => "xAI",
+        provider => provider,
+    }
+}
+
+fn provider_icon(connection: &AccountConnection) -> AppIcon {
+    match connection.source.provider.as_str() {
+        "openai" | "openai-codex" => AppIcon::Codex,
+        "anthropic" => AppIcon::Claude,
+        "cursor" => AppIcon::Cursor,
+        "google" | "google-gemini-cli" | "google-antigravity" => AppIcon::Google,
+        "opencode" | "opencode-go" => AppIcon::OpenCode,
+        _ => AppIcon::Key,
+    }
+}
+
+fn plan_name(plan: &str) -> &str {
+    match plan {
+        "free" => "Free",
+        "plus" => "Plus",
+        "pro" => "Pro",
+        "max" => "Max",
+        "team" => "Team",
+        "enterprise" => "Enterprise",
+        _ => plan,
+    }
+}
 
 fn visible_connections(snapshot: &AccountsSnapshot) -> Vec<&AccountConnection> {
     let mut rows: Vec<_> = snapshot
         .connections
         .iter()
+        .filter(|c| c.available && c.auth != AccountAuthState::SignedOut)
         .filter(|c| {
-            c.available && c.source.incarnation.is_none() && c.auth != AccountAuthState::SignedOut
+            c.account_id
+                .as_deref()
+                .and_then(|id| snapshot.account(id))
+                .is_some_and(|account| {
+                    [
+                        account.identity.email.as_deref(),
+                        account.identity.principal_id.as_deref(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .any(|value| !value.trim().is_empty())
+                })
         })
         .collect();
     rows.sort_by_key(|c| {
+        std::cmp::Reverse((
+            c.auth != AccountAuthState::Unknown,
+            c.limits.iter().map(|l| l.observed_at).max().unwrap_or(0),
+            c.observed_at,
+            c.source.incarnation.is_none(),
+        ))
+    });
+    let mut distinct: Vec<&AccountConnection> = Vec::new();
+    for connection in rows {
+        if !distinct.iter().any(|other| {
+            connection.source.same_store(&other.source)
+                && connection.source.provider == other.source.provider
+                && (connection.account_id == other.account_id
+                    || connection
+                        .account_id
+                        .as_deref()
+                        .and_then(|id| snapshot.account(id))
+                        .zip(
+                            other
+                                .account_id
+                                .as_deref()
+                                .and_then(|id| snapshot.account(id)),
+                        )
+                        .is_some_and(|(a, b)| a.identity.same_store_identity(&b.identity)))
+        }) {
+            distinct.push(connection);
+        }
+    }
+    distinct.sort_by_key(|c| {
         (
             name(snapshot, c).to_lowercase(),
             c.source.backend.to_string(),
             c.source.profile_id.clone(),
         )
     });
-    rows
+    distinct
 }
 
 fn name(snapshot: &AccountsSnapshot, connection: &AccountConnection) -> String {
@@ -43,7 +118,7 @@ fn name(snapshot: &AccountsSnapshot, connection: &AccountConnection) -> String {
         .as_deref()
         .and_then(|id| snapshot.account(id))
         .map(|account| account.identity.display_name().to_owned())
-        .unwrap_or_else(|| connection.source.provider.clone())
+        .unwrap_or_else(|| provider_name(connection).to_owned())
 }
 
 fn weekly(connection: &AccountConnection) -> Option<&AccountLimit> {
@@ -66,59 +141,96 @@ fn percent(limit: &AccountLimit) -> String {
     )
 }
 
-pub(super) fn sidebar(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
-    let summary = visible_connections(&app.accounts)
-        .into_iter()
-        .filter(|c| !c.refresh_failed && c.auth != AccountAuthState::Unknown)
-        .filter_map(|c| {
-            weekly(c)
-                .filter(|l| l.is_fresh(account_now()))
-                .map(|l| (c, l))
-        })
+fn sidebar_summary(
+    snapshot: &AccountsSnapshot,
+) -> Option<(&AccountConnection, Option<&AccountLimit>)> {
+    let connections = visible_connections(snapshot);
+    connections
+        .iter()
+        .filter_map(|c| weekly(c).map(|l| (*c, l)))
         .min_by(|(_, a), (_, b)| {
             a.remaining_percent
                 .unwrap()
                 .total_cmp(&b.remaining_percent.unwrap())
         })
-        .map(|(c, limit)| (name(&app.accounts, c), percent(limit)));
+        .map(|(c, limit)| (c, Some(limit)))
+        .or_else(|| connections.first().map(|c| (*c, None)))
+}
+
+pub(super) fn sidebar(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
+    let summary = sidebar_summary(&app.accounts);
     let content = div()
         .w_full()
         .flex()
         .flex_col()
+        .gap(theme().space.xs)
         .items_start()
         .child(
             div()
-                .flex()
-                .items_center()
-                .gap(theme().space.sm)
-                .child(app_icon(AppIcon::UserFocus, AppIconSize::Control))
+                .debug_selector(|| "accounts-heading".into())
+                .h(theme().type_scale.line_body)
+                .w_full()
+                .text_size(theme().type_scale.caption)
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme().colors.muted)
                 .child("Accounts"),
         )
         .child(
             div()
-                .h(theme().type_scale.line_body)
+                .debug_selector(|| "accounts-summary".into())
+                .h(theme().type_scale.line_body * 2.0)
                 .w_full()
                 .min_w_0()
                 .flex()
-                .items_center()
-                .gap(theme().space.sm)
-                .text_size(theme().type_scale.caption)
-                .text_color(theme().colors.muted)
-                .when_some(summary, |row, (label, value)| {
+                .items_start()
+                .gap(theme().space.xs)
+                .when_some(summary, |row, (connection, value)| {
                     row.child(
+                        crate::app::ui::grid::icon_slot()
+                            .child(app_icon(provider_icon(connection), AppIconSize::Control)),
+                    )
+                    .child(
                         div()
                             .flex_1()
                             .min_w_0()
-                            .text_ellipsis()
-                            .overflow_hidden()
-                            .child(label),
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(theme().space.sm)
+                                    .child(
+                                        div()
+                                            .debug_selector(|| "accounts-provider".into())
+                                            .flex_1()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child(provider_name(connection).to_owned()),
+                                    )
+                                    .when_some(value, |row, limit| {
+                                        row.child(
+                                            div()
+                                                .flex_none()
+                                                .text_size(theme().type_scale.caption)
+                                                .text_color(theme().colors.muted)
+                                                .whitespace_nowrap()
+                                                .child(percent(limit)),
+                                        )
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .debug_selector(|| "accounts-identity".into())
+                                    .text_size(theme().type_scale.caption)
+                                    .text_color(theme().colors.muted)
+                                    .text_ellipsis()
+                                    .overflow_hidden()
+                                    .child(name(&app.accounts, connection)),
+                            ),
                     )
-                    .child(div().flex_none().whitespace_nowrap().child(value))
                 }),
         );
-    let open = entity.clone();
     div()
-        .px(theme().space.sm)
         .py(theme().space.xs)
         .child(
             Popover::new("accounts-popover")
@@ -133,15 +245,11 @@ pub(super) fn sidebar(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> A
                         true,
                     )
                     .w_full()
-                    .h(theme().type_scale.line_body * 2.0 + theme().space.sm * 2.0)
+                    .px(crate::app::ui::grid::sidebar_inset())
+                    .py(theme().space.xs)
+                    .h(theme().type_scale.line_body * 3.0 + theme().space.xs * 3.0)
                     .debug_selector(|| "accounts-trigger".into()),
                 )
-                .on_open_change(move |is_open, _, cx| {
-                    if *is_open {
-                        let _ = open
-                            .update(cx, |app, cx| app.send(RuntimeCommand::RefreshAccounts, cx));
-                    }
-                })
                 .content(move |state, window, cx| {
                     let Some(app) = entity.upgrade() else {
                         return div().into_any_element();
@@ -151,34 +259,47 @@ pub(super) fn sidebar(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> A
                     let manage = entity.clone();
                     let close = cx.entity().downgrade();
                     let _ = (state, window);
-                    floating_surface()
+                    div()
+                        .popover_style(cx)
                         .id("accounts-content")
                         .debug_selector(|| "accounts-content".into())
                         .w(theme().size(360.0))
                         .max_h(theme().size(420.0))
-                        .overflow_y_scroll()
-                        .p(theme().space.md)
+                        .p(theme().space.sm)
                         .flex()
                         .flex_col()
-                        .gap(theme().space.md)
-                        .children(
-                            visible_connections(&accounts)
-                                .into_iter()
-                                .map(|c| connection_row(&accounts, c, false, &profiles)),
+                        .gap(theme().space.sm)
+                        .child(
+                            div()
+                                .id("accounts-list")
+                                .debug_selector(|| "accounts-list".into())
+                                .max_h(theme().size(360.0))
+                                .overflow_y_scroll()
+                                .flex()
+                                .flex_col()
+                                .children(visible_connections(&accounts).into_iter().map(|c| {
+                                    div()
+                                        .px(theme().space.sm)
+                                        .py(theme().space.sm)
+                                        .child(connection_row(&accounts, c, false, &profiles))
+                                })),
                         )
-                        .child(button(
-                            "accounts-manage",
-                            "Manage accounts",
-                            ButtonTone::Quiet,
-                            true,
-                            move |window, cx| {
-                                let _ = close.update(cx, |state, cx| state.dismiss(window, cx));
-                                let _ = manage.update(cx, |app, cx| {
-                                    app.settings.tab = SettingsTab::Accounts;
-                                    app.open_settings(window, cx);
-                                });
-                            },
-                        ))
+                        .child(
+                            button(
+                                "accounts-manage",
+                                "Manage accounts",
+                                ButtonTone::Quiet,
+                                true,
+                                move |window, cx| {
+                                    let _ = close.update(cx, |state, cx| state.dismiss(window, cx));
+                                    let _ = manage.update(cx, |app, cx| {
+                                        app.settings.tab = SettingsTab::Accounts;
+                                        app.open_settings(window, cx);
+                                    });
+                                },
+                            )
+                            .debug_selector(|| "accounts-manage".into()),
+                        )
                         .into_any_element()
                 }),
         )
@@ -196,17 +317,16 @@ fn connection_row(
         .as_deref()
         .and_then(|id| snapshot.account(id))
         .map(|a| &a.identity);
-    let source = format!(
-        "{}{}",
-        crate::agents::backend_display_name(connection.source.backend),
-        connection
-            .source
-            .profile_id
-            .as_deref()
-            .and_then(|id| profiles.get(id).ok())
-            .map(|p| format!(" · {}", p.name))
-            .unwrap_or_default()
-    );
+    let metadata = connection
+        .source
+        .profile_id
+        .as_deref()
+        .and_then(|id| profiles.get(id).ok())
+        .map(|p| p.name)
+        .into_iter()
+        .chain(identity.and_then(|id| id.workspace.clone()))
+        .collect::<Vec<_>>()
+        .join(" · ");
     let mut row = div()
         .min_w_0()
         .flex()
@@ -215,35 +335,69 @@ fn connection_row(
         .child(
             div()
                 .min_w_0()
+                .flex()
+                .items_center()
+                .gap(theme().space.sm)
                 .text_size(theme().type_scale.body)
-                .font_weight(FontWeight::MEDIUM)
-                .text_ellipsis()
-                .overflow_hidden()
-                .child(name(snapshot, connection)),
-        )
-        .child(
-            div()
-                .text_size(theme().type_scale.caption)
-                .text_color(theme().colors.muted)
-                .child(source)
-                .children(
-                    identity
-                        .and_then(|id| id.workspace.as_ref())
-                        .map(|s| format!(" · {s}")),
+                .child(app_icon(provider_icon(connection), AppIconSize::Control))
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(provider_name(connection).to_owned()),
                 )
-                .children(
-                    identity
-                        .and_then(|id| id.plan.as_ref())
-                        .map(|s| format!(" · {s}")),
+                .when_some(identity.and_then(|id| id.plan.as_deref()), |row, plan| {
+                    row.child(
+                        div()
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.muted)
+                            .child(plan_name(plan).to_owned()),
+                    )
+                })
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(theme().type_scale.caption)
+                        .text_color(theme().colors.muted)
+                        .child(crate::agents::backend_display_name(
+                            connection.source.backend,
+                        )),
                 ),
-        );
+        )
+        .when_some(
+            identity
+                .and_then(|id| id.email.as_ref().or(id.label.as_ref()))
+                .filter(|label| {
+                    label.as_str() != connection.source.provider
+                        && label.as_str() != provider_name(connection)
+                }),
+            |row, label| {
+                row.child(
+                    div()
+                        .min_w_0()
+                        .text_size(theme().type_scale.caption)
+                        .text_color(theme().colors.muted)
+                        .text_ellipsis()
+                        .overflow_hidden()
+                        .child(label.clone()),
+                )
+            },
+        )
+        .when(!metadata.is_empty(), |row| {
+            row.child(
+                div()
+                    .text_size(theme().type_scale.caption)
+                    .text_color(theme().colors.muted)
+                    .child(metadata),
+            )
+        });
     let limits = if detail {
         connection.limits.iter().collect()
     } else {
         weekly(connection).into_iter().collect::<Vec<_>>()
     };
     for limit in limits {
-        let label = if limit.duration_seconds == Some(604800) {
+        let mut label = if limit.duration_seconds == Some(604800) {
             if detail {
                 format!("{} · {}", limit.label, percent(limit))
             } else {
@@ -271,23 +425,21 @@ fn connection_row(
                 limit.remaining_percent.unwrap_or_default()
             )
         };
-        let stale = connection.refresh_failed
-            || connection.auth == AccountAuthState::Unknown
-            || !limit.is_fresh(account_now());
+        let stale = connection.refresh_failed || connection.auth == AccountAuthState::Unknown;
+        if stale {
+            label.push_str(&format!(
+                " · {}",
+                observed_age(limit.observed_at, account_now())
+            ));
+        }
+        if let Some(time) = limit.resets_at.and_then(reset_time) {
+            label.push_str(&format!(" · resets {time}"));
+        }
         row = row.child(
             div()
                 .text_size(theme().type_scale.caption)
                 .text_color(theme().colors.muted)
-                .child(label)
-                .when(stale, |row| {
-                    row.child(format!(
-                        " · {}",
-                        observed_age(limit.observed_at, account_now())
-                    ))
-                })
-                .when_some(limit.resets_at.and_then(reset_time), |row, time| {
-                    row.child(format!(" · resets {time}"))
-                }),
+                .child(label),
         );
     }
     if detail {
@@ -361,6 +513,7 @@ pub(super) fn settings(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> 
                             &app.settings.harness_profiles,
                         ));
                     if connection.capabilities.logout
+                        && connection.source.incarnation.is_none()
                         && connection.auth == AccountAuthState::SignedIn
                         && let Some(identity) = connection
                             .account_id

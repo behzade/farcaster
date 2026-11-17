@@ -10,10 +10,7 @@ use std::{
     io::{BufReader, Write as _},
     path::Path,
     process::{Child, ChildStdin, Stdio},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    },
+    sync::mpsc,
     time::{Duration, Instant},
 };
 
@@ -22,7 +19,7 @@ pub(super) fn capabilities() -> AccountCapabilities {
         discover: true,
         identity: true,
         limits: true,
-        login: true,
+        login: false,
         logout: true,
         external_changes: false,
     }
@@ -198,7 +195,10 @@ pub(super) fn limits(value: &Value, now: i64) -> Vec<AccountLimit> {
     let buckets: Vec<_> = value["rateLimitsByLimitId"]
         .as_object()
         .map(|m| m.iter().map(|(id, v)| (id.as_str(), v)).collect())
-        .unwrap_or_else(|| vec![("codex", value.get("rateLimits").unwrap_or(value))]);
+        .unwrap_or_else(|| {
+            let bucket = value.get("rateLimits").unwrap_or(value);
+            vec![(bucket["limitId"].as_str().unwrap_or("codex"), bucket)]
+        });
     let mut result = Vec::new();
     for (id, bucket) in buckets {
         for slot in ["primary", "secondary"] {
@@ -253,44 +253,6 @@ pub(super) fn limits(value: &Value, now: i64) -> Vec<AccountLimit> {
         }
     }
     result
-}
-
-pub(super) fn login(
-    config: &AgentLaunchConfig,
-    project: &Path,
-    cancelled: &AtomicBool,
-    on_url: &dyn Fn(String),
-) -> Result<(), String> {
-    let mut process = AccountProcess::start(config, project)?;
-    let result = process.request("account/login/start", json!({"type":"chatgpt"}))?;
-    if let Some(url) = result["authUrl"].as_str() {
-        on_url(url.into());
-    }
-    let deadline = Instant::now() + Duration::from_secs(300);
-    while Instant::now() < deadline {
-        if cancelled.load(Ordering::Acquire) {
-            let _ = process.request("account/login/cancel", json!({"loginId":result["loginId"]}));
-            return Err("Sign-in cancelled".into());
-        }
-        match process.frames.recv_timeout(Duration::from_millis(100)) {
-            Ok(Ok(CodexInbound::Notification { method, params }))
-                if method == "account/login/completed"
-                    && params["loginId"] == result["loginId"] =>
-            {
-                return if params["success"] == true {
-                    Ok(())
-                } else {
-                    Err("Codex sign-in did not complete".into())
-                };
-            }
-            Ok(Err(error)) => return Err(error),
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err("Codex account connection closed".into());
-            }
-            _ => {}
-        }
-    }
-    Err("Codex sign-in timed out".into())
 }
 
 pub(super) fn logout(

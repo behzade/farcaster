@@ -158,14 +158,6 @@ impl RuntimeOwner {
             && self.snapshot.selected_session == session
             && self.snapshot.document_ready;
         let preserved_stats = resume_document.then(|| self.snapshot.stats.clone());
-        let preserved_account_usage = (self.snapshot.harness == self.harness
-            && self.snapshot.profile_id == self.process_command.profile_id)
-            .then(|| {
-                (
-                    self.snapshot.account_usage.clone(),
-                    self.snapshot.account_usage_observed_at,
-                )
-            });
         let preserve_transcript = preserve_transcript || resume_document;
         let keep_preview = preserve_transcript && self.snapshot.history_preview;
         let preserved_conversation =
@@ -272,11 +264,6 @@ impl RuntimeOwner {
             let snapshot = self.active_snapshot_mut();
             snapshot.stats = stats;
             snapshot.document_ready = true;
-        }
-        if let Some((usage, observed_at)) = preserved_account_usage {
-            let snapshot = self.active_snapshot_mut();
-            snapshot.account_usage = usage;
-            snapshot.account_usage_observed_at = observed_at;
         }
         if let Some((
             models,
@@ -494,8 +481,6 @@ impl RuntimeOwner {
                         event.kind(),
                         event.value(),
                     );
-                    let account_usage_changed =
-                        update_account_usage_from_event(snapshot, event.kind(), event.value());
                     let status = run_status(&snapshot.conversation);
                     let status_changed = snapshot.status != status;
                     snapshot.status = status.to_owned();
@@ -509,7 +494,6 @@ impl RuntimeOwner {
                             || context_changed
                             || tokens_changed
                             || goal_changed
-                            || account_usage_changed
                             || status_changed,
                         live_status_changed,
                     )

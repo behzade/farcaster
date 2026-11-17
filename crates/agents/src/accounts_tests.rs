@@ -96,7 +96,6 @@ fn partial_windows_preserve_other_windows_without_renewing_their_age() {
     state.apply(partial);
     assert_eq!(state.connections[0].limits.len(), 2);
     assert_eq!(state.connections[0].limits[0].observed_at, 100);
-    assert!(!state.connections[0].limits[0].is_fresh(2001));
     let mut logout = observation("", None, None, 300);
     logout.identity = None;
     logout.auth = AccountAuthState::SignedOut;
@@ -204,4 +203,84 @@ fn saved_project_duplicates_merge_without_rewriting_run_identity() {
             .iter()
             .all(|b| b.connection_id == loaded.connections[0].id)
     );
+}
+
+#[test]
+fn legacy_environment_connections_keep_history_without_remaining_available() {
+    let mut state = AccountsSnapshot::default();
+    let mut old = observation("me@example.com", Some("principal"), None, 100);
+    old.source.credential_source = "environment:ANTHROPIC_API_KEY".into();
+    state.apply(old.clone());
+    state.bind(
+        "run".into(),
+        &old.source,
+        100,
+        AccountBindingEvidence::ObservedAtStartup,
+    );
+    let old_account = state.bindings[0].account_id.clone();
+    state.normalize_connections();
+    assert!(!state.connections[0].available);
+    assert_eq!(state.bindings[0].account_id, old_account);
+    old.source.credential_source = "environment:[\"ANTHROPIC_API_KEY\",null]".into();
+    state.apply(old);
+    state.normalize_connections();
+    assert_eq!(state.connections.len(), 2);
+    assert!(state.connections[1].available);
+    assert_eq!(state.connections[1].account_id, old_account);
+    assert_eq!(state.accounts.len(), 1);
+}
+
+#[test]
+fn native_limits_follow_the_observed_identity_without_changing_auth_or_other_accounts() {
+    let mut state = AccountsSnapshot::default();
+    let current = observation("current@example.com", None, None, 100);
+    state.apply(current.clone());
+    let mut worker = current.clone();
+    worker.source.incarnation = Some("worker".into());
+    state.apply(worker.clone());
+    let mut other = worker.clone();
+    other.source.incarnation = Some("other-worker".into());
+    other.identity.as_mut().unwrap().email = Some("other@example.com".into());
+    state.apply(other);
+    let mut latest = worker.limits[0].clone();
+    latest.remaining_percent = Some(5.);
+    latest.observed_at = 200;
+    state.observe_limits(&worker.source, vec![latest.clone()]);
+    assert_eq!(state.connections[0].limits[0], latest);
+    assert_eq!(state.connections[1].limits[0], latest);
+    assert_eq!(state.connections[2].limits[0].observed_at, 100);
+    state.observe_limits(&worker.source, worker.limits.clone());
+    assert_eq!(state.connections[1].limits[0], latest);
+    state.connections[1].auth = AccountAuthState::Unknown;
+    latest.observed_at = 300;
+    state.observe_limits(&worker.source, vec![latest]);
+    assert_eq!(state.connections[0].limits[0].observed_at, 200);
+    assert_eq!(state.connections[1].auth, AccountAuthState::Unknown);
+}
+
+#[test]
+fn resumed_process_keeps_known_limits_only_after_matching_the_store_identity() {
+    let mut state = AccountsSnapshot::default();
+    let mut saved = observation("me@example.com", None, None, 100);
+    saved.identity.as_mut().unwrap().plan = Some("pro".into());
+    state.apply(saved.clone());
+    state.connections[0].auth = AccountAuthState::Unknown;
+    let mut resumed = saved;
+    resumed.source.incarnation = Some("resumed-process".into());
+    resumed.identity.as_mut().unwrap().plan = None;
+    resumed.complete_limits = false;
+    resumed.limits.clear();
+    resumed.observed_at = 200;
+    state.apply(resumed.clone());
+    assert_eq!(state.connections[1].limits, state.connections[0].limits);
+    assert_eq!(state.connections[1].limits[0].observed_at, 100);
+
+    resumed.source.incarnation = Some("other-account".into());
+    resumed.identity.as_mut().unwrap().email = Some("other@example.com".into());
+    state.apply(resumed.clone());
+    assert!(state.connections[2].limits.is_empty());
+    resumed.source.credential_source = "native:other-store".into();
+    resumed.identity.as_mut().unwrap().email = Some("me@example.com".into());
+    state.apply(resumed);
+    assert!(state.connections[3].limits.is_empty());
 }

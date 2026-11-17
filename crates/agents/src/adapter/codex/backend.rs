@@ -25,18 +25,6 @@ impl BackendAdapter for CodexAdapter {
     ) -> Result<crate::accounts::AccountDiscovery, String> {
         super::accounts::read(config, project)
     }
-    fn supports_sign_in(&self) -> bool {
-        true
-    }
-    fn sign_in(
-        &self,
-        config: &AgentLaunchConfig,
-        project: &Path,
-        cancelled: &std::sync::atomic::AtomicBool,
-        on_url: &dyn Fn(String),
-    ) -> Result<(), String> {
-        super::accounts::login(config, project, cancelled, on_url)
-    }
     fn logout_account(
         &self,
         config: &AgentLaunchConfig,

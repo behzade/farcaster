@@ -480,10 +480,7 @@ impl Supervisor {
                         if snapshot.profile_id != profile_id {
                             let snapshot = Arc::make_mut(&mut snapshot);
                             snapshot.profile_id = profile_id;
-                            snapshot.account_usage = Default::default();
-                            snapshot.account_usage_observed_at = None;
                         }
-                        self.restore_account_usage(Arc::make_mut(&mut snapshot));
                         self.configurations
                             .refresh_snapshot_catalog(Arc::make_mut(&mut snapshot));
                         if let Some(mode) = access_mode {

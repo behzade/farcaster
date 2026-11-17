@@ -39,7 +39,6 @@ impl SupervisorFixture {
                         ..RuntimeSnapshot::default()
                     }),
                 )]),
-                account_usage: HashMap::new(),
                 catalog_sessions: Vec::new(),
                 catalog_generation: 0,
                 actor_paths: HashMap::new(),
@@ -243,111 +242,6 @@ fn retirement_refreshes_history_only_when_the_document_revision_changes() {
     reconcile(&mut fixture, &session);
     assert!(matches!(actor.recv_timeout(Duration::from_secs(1)),
         Ok(RuntimeCommand::RefreshSessionDocument { path: refreshed, .. }) if refreshed == path));
-}
-
-#[test]
-fn account_usage_follows_the_profile_and_newest_observation_across_sessions() {
-    let mut fixture = SupervisorFixture::new("selected", PathBuf::from("/project"), None);
-    let selected = Arc::make_mut(
-        fixture
-            .supervisor
-            .latest
-            .get_mut("selected")
-            .expect("fixture value"),
-    );
-    selected.harness = Some(Backend::Codex);
-    selected.profile_id = Some("one".into());
-    let initial = Instant::now();
-    let snapshot = |harness, profile: &str, observed_at, remaining: Option<f64>| {
-        Arc::new(RuntimeSnapshot {
-            harness: Some(harness),
-            profile_id: Some(profile.into()),
-            account_usage_observed_at: observed_at,
-            account_usage: agents::AccountUsage {
-                weekly: remaining.map(|remaining_percent| agents::AccountUsageWindow {
-                    remaining_percent,
-                    resets_at: Some(1234),
-                }),
-            },
-            ..RuntimeSnapshot::default()
-        })
-    };
-    let send = |fixture: &mut SupervisorFixture, key: &str, snapshot| {
-        fixture.supervisor.handle_actor_event(
-            key.into(),
-            RuntimeEvent::Snapshot {
-                generation: 0,
-                snapshot,
-            },
-        )
-    };
-    send(
-        &mut fixture,
-        "older",
-        snapshot(Backend::Codex, "one", Some(initial), Some(68.0)),
-    );
-    assert!(fixture.drain().iter().any(|event| matches!(event,
-        RuntimeEvent::Snapshot { snapshot, .. } if snapshot.account_usage.weekly.is_some_and(|window| window.remaining_percent == 68.0)
-    )));
-    send(
-        &mut fixture,
-        "newer",
-        snapshot(
-            Backend::Codex,
-            "one",
-            Some(initial + Duration::from_secs(1)),
-            Some(60.0),
-        ),
-    );
-    send(
-        &mut fixture,
-        "older",
-        snapshot(Backend::Codex, "one", Some(initial), Some(68.0)),
-    );
-    send(
-        &mut fixture,
-        "unknown",
-        snapshot(Backend::Codex, "one", None, None),
-    );
-    for key in ["selected", "older", "unknown"] {
-        assert_eq!(
-            fixture.supervisor.latest[key]
-                .account_usage
-                .weekly
-                .map(|window| window.remaining_percent),
-            Some(60.0),
-            "{key} must use the newest account report"
-        );
-    }
-    for (harness, profile) in [(Backend::Codex, "two"), (Backend::Claude, "one")] {
-        send(
-            &mut fixture,
-            "other",
-            snapshot(harness, profile, None, None),
-        );
-        assert!(
-            fixture.supervisor.latest["other"]
-                .account_usage
-                .weekly
-                .is_none()
-        );
-    }
-    send(
-        &mut fixture,
-        "newer",
-        snapshot(
-            Backend::Codex,
-            "one",
-            Some(initial + Duration::from_secs(2)),
-            None,
-        ),
-    );
-    assert!(
-        fixture.supervisor.latest["selected"]
-            .account_usage
-            .weekly
-            .is_none()
-    );
 }
 
 #[test]

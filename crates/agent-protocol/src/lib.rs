@@ -107,30 +107,6 @@ pub struct SessionGoal {
     pub time_used_seconds: u64,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AccountUsage {
-    #[serde(default)]
-    pub weekly: Option<AccountUsageWindow>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AccountUsageWindow {
-    pub remaining_percent: f64,
-    #[serde(default)]
-    pub resets_at: Option<i64>,
-}
-
-impl AccountUsageWindow {
-    pub fn from_used_percent(used_percent: f64, resets_at: Option<i64>) -> Option<Self> {
-        used_percent.is_finite().then(|| Self {
-            remaining_percent: (100.0 - used_percent).clamp(0.0, 100.0),
-            resets_at,
-        })
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QueuedPrompt {
     pub id: i64,
@@ -174,7 +150,6 @@ pub enum SessionActivityKind {
     TurnEnded,
     SessionChanged,
     ServiceStatusChanged,
-    AccountUsageChanged,
     SessionGoalChanged,
     ChildSessionsChanged,
     Other(String),
@@ -204,7 +179,6 @@ impl SessionActivityKind {
             "turn_end" => Self::TurnEnded,
             "session_info_changed" => Self::SessionChanged,
             "service_status_changed" => Self::ServiceStatusChanged,
-            "account_usage_changed" => Self::AccountUsageChanged,
             "session_goal_changed" => Self::SessionGoalChanged,
             "child_sessions_changed" => Self::ChildSessionsChanged,
             other => Self::Other(other.to_owned()),

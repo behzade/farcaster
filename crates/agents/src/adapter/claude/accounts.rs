@@ -15,7 +15,15 @@ pub(super) fn capabilities() -> AccountCapabilities {
 pub(super) fn source(config: &AgentLaunchConfig, project: &Path) -> Result<AccountSource, String> {
     let launch = super::super::configuration_launch(config, Backend::Claude)?;
     let command = launch.command(project)?;
-    let env = |name| environment(&command, name);
+    Ok(source_from_command(config, project, &command))
+}
+
+fn source_from_command(
+    config: &AgentLaunchConfig,
+    project: &Path,
+    command: &std::process::Command,
+) -> AccountSource {
+    let env = |name| environment(command, name);
     let provider = [
         ("CLAUDE_CODE_USE_BEDROCK", "bedrock"),
         ("CLAUDE_CODE_USE_VERTEX", "vertex"),
@@ -25,27 +33,26 @@ pub(super) fn source(config: &AgentLaunchConfig, project: &Path) -> Result<Accou
     .find(|(key, _)| env(key).is_some_and(|v| v == "1"))
     .map(|(_, provider)| provider)
     .unwrap_or("anthropic");
-    let credential_source = if env("ANTHROPIC_API_KEY").is_some() {
-        "environment:ANTHROPIC_API_KEY".into()
-    } else if env("CLAUDE_CODE_OAUTH_TOKEN").is_some() {
-        "environment:CLAUDE_CODE_OAUTH_TOKEN".into()
-    } else {
-        format!(
-            "native:{}",
-            env("CLAUDE_CONFIG_DIR")
-                .map(std::path::PathBuf::from)
-                .or_else(|| env("HOME").map(|v| std::path::PathBuf::from(v).join(".claude")))
-                .unwrap_or_default()
-                .display()
-        )
-    };
-    Ok(super::super::accounts::source(
+    let credential_source = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
+        .into_iter()
+        .find_map(|name| super::super::accounts::environment_source(command, name, project))
+        .unwrap_or_else(|| {
+            format!(
+                "native:{}",
+                env("CLAUDE_CONFIG_DIR")
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| env("HOME").map(|v| std::path::PathBuf::from(v).join(".claude")))
+                    .unwrap_or_default()
+                    .display()
+            )
+        });
+    super::super::accounts::source(
         config,
         Backend::Claude,
         project,
         provider,
         credential_source,
-    ))
+    )
 }
 
 pub(super) fn read(config: &AgentLaunchConfig, project: &Path) -> Result<AccountDiscovery, String> {
@@ -210,6 +217,23 @@ pub(super) fn limits(value: &Value, now: i64) -> Vec<AccountLimit> {
         });
     }
     result
+}
+
+pub(super) fn event_limits(info: &Value, now: i64) -> Vec<AccountLimit> {
+    let Some(key) = info["rateLimitType"].as_str() else {
+        return Vec::new();
+    };
+    let Some(used) = info["utilization"]
+        .as_f64()
+        .filter(|p| p.is_finite() && (0.0..=1.0).contains(p))
+    else {
+        return Vec::new();
+    };
+    let mut windows = limits(&json!({key: {"utilization": used * 100.0}}), now);
+    for window in &mut windows {
+        window.resets_at = info["resetsAt"].as_i64();
+    }
+    windows
 }
 
 #[cfg(test)]

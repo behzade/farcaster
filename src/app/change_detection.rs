@@ -252,7 +252,6 @@ pub(in crate::app) fn composer_snapshot_changed(
         || previous.prompt_queue() != next.prompt_queue()
         || previous.conversation.average_cache_hit_rate != next.conversation.average_cache_hit_rate
         || previous.stats != next.stats
-        || previous.account_usage != next.account_usage
         || previous.pending_question != next.pending_question
         || previous.session_identity() != next.session_identity()
         || previous.selected_service_tier() != next.selected_service_tier()

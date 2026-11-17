@@ -49,28 +49,6 @@ fn blocks_borrows_array_content_and_normalizes_strings() {
 }
 
 #[test]
-fn seven_day_rate_limit_maps_to_neutral_weekly_usage() {
-    let mut events = Events::default();
-    events.message(&json!({
-        "type": "rate_limit_event",
-        "rate_limit_info": {
-            "rateLimitType": "seven_day",
-            "utilization": 0.32,
-            "resetsAt": 1_788_766_092_i64
-        }
-    }));
-
-    assert!(events.pending.iter().any(|event| matches!(
-        event,
-        WorkerEvent::Activity(WorkerActivity::AccountUsageChanged(usage))
-            if usage.weekly == Some(crate::AccountUsageWindow {
-                remaining_percent: 68.0,
-                resets_at: Some(1_788_766_092),
-            })
-    )));
-}
-
-#[test]
 fn per_block_assistant_envelopes_do_not_repeat_streamed_text() {
     let mut events = Events::default();
     events.start();

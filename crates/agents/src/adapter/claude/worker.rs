@@ -621,9 +621,13 @@ impl ClaudeSession {
         if frame["type"] == "rate_limit_event"
             && let Some(source) = self.account_source.clone()
         {
-            crate::accounts::publish_account_event(
-                crate::accounts::AccountEvent::LimitsInvalidated { source },
-            );
+            crate::accounts::publish_account_event(crate::accounts::AccountEvent::LimitsObserved {
+                source,
+                limits: super::accounts::event_limits(
+                    &frame["rate_limit_info"],
+                    crate::accounts::account_now(),
+                ),
+            });
         }
         if frame["type"] == "auth_status"
             && let Some(source) = self.account_source.clone()

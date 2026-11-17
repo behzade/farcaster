@@ -87,6 +87,7 @@ fn asset_source_serves_themeable_and_editor_brand_icons() {
         AppIcon::Codex,
         AppIcon::Copy,
         AppIcon::Cursor,
+        AppIcon::Google,
         AppIcon::Eye,
         AppIcon::Folder,
         AppIcon::FolderPlus,

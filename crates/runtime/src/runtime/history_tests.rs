@@ -19,11 +19,6 @@ fn background_refresh_updates_a_retired_document_without_losing_metrics() {
         "tokens": {"input": 100, "output": 20, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 120},
         "contextUsage": {"tokens": 120, "contextWindow": 1000, "percent": 12.0}
     });
-    owner.snapshot.account_usage.weekly = Some(agents::AccountUsageWindow {
-        remaining_percent: 68.0,
-        resets_at: None,
-    });
-    owner.snapshot.account_usage_observed_at = Some(Instant::now());
     conversation_mut(&mut owner.snapshot).average_cache_hit_rate = Some(30.0);
     let previous = owner.snapshot.clone();
     owner.apply_history(HistoryResult {
@@ -44,11 +39,6 @@ fn background_refresh_updates_a_retired_document_without_losing_metrics() {
     });
     assert_eq!(owner.snapshot.conversation.items[0].text, "new history");
     assert_eq!(owner.snapshot.stats, previous.stats);
-    assert_eq!(owner.snapshot.account_usage, previous.account_usage);
-    assert_eq!(
-        owner.snapshot.account_usage_observed_at,
-        previous.account_usage_observed_at
-    );
     assert_eq!(
         owner.snapshot.conversation.average_cache_hit_rate,
         Some(30.0)

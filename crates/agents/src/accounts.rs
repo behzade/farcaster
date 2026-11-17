@@ -32,6 +32,15 @@ impl AccountIdentity {
             && self.principal_id == other.principal_id
             && self.workspace_id == other.workspace_id
     }
+
+    /// Compare observations from the same credential source, without plan/label changes.
+    pub fn same_store_identity(&self, other: &Self) -> bool {
+        self.authority == other.authority
+            && self.principal_id == other.principal_id
+            && self.workspace_id == other.workspace_id
+            && self.email == other.email
+            && self.workspace == other.workspace
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -118,14 +127,6 @@ pub struct AccountLimit {
     pub observed_at: i64,
 }
 
-impl AccountLimit {
-    pub fn is_fresh(&self, now: i64) -> bool {
-        now >= self.observed_at
-            && now - self.observed_at <= 600
-            && self.resets_at.is_none_or(|reset| reset > now)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AccountObservation {
     pub source: AccountSource,
@@ -163,6 +164,29 @@ pub struct AccountConnection {
     pub observed_at: i64,
     pub last_attempt_at: i64,
     pub refresh_failed: bool,
+}
+
+impl AccountConnection {
+    fn merge_limits(&mut self, limits: Vec<AccountLimit>) {
+        for limit in limits {
+            if limit
+                .remaining_percent
+                .is_some_and(|p| !p.is_finite() || !(0.0..=100.0).contains(&p))
+            {
+                continue;
+            }
+            if let Some(old) = self.limits.iter_mut().find(|old| old.key == limit.key) {
+                if limit.observed_at >= old.observed_at {
+                    let mut limit = limit;
+                    limit.duration_seconds = limit.duration_seconds.or(old.duration_seconds);
+                    limit.resets_at = limit.resets_at.or(old.resets_at);
+                    *old = limit;
+                }
+            } else {
+                self.limits.push(limit);
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -205,6 +229,16 @@ impl AccountsSnapshot {
         }
         let mut connections: Vec<AccountConnection> = Vec::new();
         for mut connection in std::mem::take(&mut self.connections) {
+            // Older environment sources recorded only a variable name. Their
+            // origin cannot be recovered. Hide them but retain run history.
+            if connection
+                .source
+                .credential_source
+                .strip_prefix("environment:")
+                .is_some_and(|origin| !origin.starts_with('['))
+            {
+                connection.available = false;
+            }
             if let Some(current) = connections
                 .iter_mut()
                 .find(|c| c.source.key() == connection.source.key())
@@ -247,19 +281,37 @@ impl AccountsSnapshot {
                     previous
                         .and_then(|c| c.account_id.as_deref())
                         .and_then(|id| self.account(id))
-                        .filter(|a| {
-                            a.identity == *identity
-                                || (a.identity.authority == identity.authority
-                                    && a.identity.principal_id == identity.principal_id
-                                    && a.identity.workspace_id == identity.workspace_id
-                                    && a.identity.email == identity.email
-                                    && a.identity.workspace == identity.workspace)
-                        })
+                        .filter(|a| a.identity.same_store_identity(identity))
                 });
             existing
                 .map(|a| a.id.clone())
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
         });
+        let inherited_limits = if previous.is_none()
+            && !observation.complete_limits
+            && matches!(
+                observation.auth,
+                AccountAuthState::SignedIn | AccountAuthState::Configured
+            ) {
+            self.connections
+                .iter()
+                .filter(|connection| {
+                    connection.source.same_store(&observation.source)
+                        && connection.source.provider == observation.source.provider
+                        && connection
+                            .account_id
+                            .as_deref()
+                            .and_then(|id| self.account(id))
+                            .zip(observation.identity.as_ref())
+                            .is_some_and(|(known, current)| {
+                                known.identity.same_store_identity(current)
+                            })
+                })
+                .flat_map(|c| c.limits.clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
         if let Some(identity) = observation.identity {
             let id = account_id.clone().expect("identity has account id");
             if let Some(account) = self.accounts.iter_mut().find(|a| a.id == id) {
@@ -294,28 +346,8 @@ impl AccountsSnapshot {
                 .limits
                 .retain(|old| observation.limits.iter().any(|new| new.key == old.key));
         }
-        for limit in observation.limits {
-            if limit
-                .remaining_percent
-                .is_some_and(|p| !p.is_finite() || !(0.0..=100.0).contains(&p))
-            {
-                continue;
-            }
-            if let Some(old) = connection
-                .limits
-                .iter_mut()
-                .find(|old| old.key == limit.key)
-            {
-                if limit.observed_at >= old.observed_at {
-                    let mut limit = limit;
-                    limit.duration_seconds = limit.duration_seconds.or(old.duration_seconds);
-                    limit.resets_at = limit.resets_at.or(old.resets_at);
-                    *old = limit;
-                }
-            } else {
-                connection.limits.push(limit);
-            }
-        }
+        connection.merge_limits(inherited_limits);
+        connection.merge_limits(observation.limits);
         connection.available = true;
         connection.account_id = account_id;
         connection.source = observation.source;
@@ -324,6 +356,49 @@ impl AccountsSnapshot {
         connection.observed_at = observation.observed_at;
         connection.last_attempt_at = observation.observed_at;
         connection.refresh_failed = observation.limits_failed;
+    }
+
+    /// Limit events update known identities without changing authentication or run bindings.
+    pub fn observe_limits(&mut self, source: &AccountSource, limits: Vec<AccountLimit>) {
+        if limits.is_empty() {
+            return;
+        }
+        let Some(origin) = self.connections.iter().find(|c| {
+            c.source.key() == source.key()
+                && c.available
+                && matches!(
+                    c.auth,
+                    AccountAuthState::SignedIn | AccountAuthState::Configured
+                )
+        }) else {
+            return;
+        };
+        let identity = origin
+            .account_id
+            .as_deref()
+            .and_then(|id| self.account(id))
+            .map(|a| a.identity.clone());
+        let accounts = &self.accounts;
+        for connection in &mut self.connections {
+            let same_identity = identity.as_ref().is_some_and(|identity| {
+                accounts.iter().any(|account| {
+                    Some(&account.id) == connection.account_id.as_ref()
+                        && account.identity.same_store_identity(identity)
+                })
+            });
+            if connection.available
+                && matches!(
+                    connection.auth,
+                    AccountAuthState::SignedIn | AccountAuthState::Configured
+                )
+                && connection.source.same_store(source)
+                && connection.source.provider == source.provider
+                && (connection.source.key() == source.key() || same_identity)
+            {
+                connection.merge_limits(limits.clone());
+                connection.refresh_failed = false;
+            }
+        }
     }
 
     pub fn bind(
@@ -376,8 +451,9 @@ pub enum AccountEvent {
     AuthInvalidated {
         source: AccountSource,
     },
-    LimitsInvalidated {
+    LimitsObserved {
         source: AccountSource,
+        limits: Vec<AccountLimit>,
     },
     LoginChanged {
         backend: Backend,

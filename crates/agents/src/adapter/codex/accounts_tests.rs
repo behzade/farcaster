@@ -50,3 +50,12 @@ fn native_credits_are_not_percentages_or_verified_pool_ids() {
         })
     );
 }
+
+#[test]
+fn native_limit_notifications_use_the_named_bucket_key() {
+    let notification = json!({"rateLimits":{"limitId":"review", "secondary":{"usedPercent":42, "windowDurationMins":10080}}});
+    let windows = limits(&notification, 100);
+    assert_eq!(windows.len(), 1);
+    assert_eq!(windows[0].key, "review:secondary");
+    assert_eq!(windows[0].remaining_percent, Some(58.));
+}

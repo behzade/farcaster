@@ -180,11 +180,6 @@ fn idle_retirement_resumes_saved_session_and_delivers_next_prompt_once() {
                     "contextUsage": {"tokens": 120, "contextWindow": 1000, "percent": 12.0}
                 });
                 scenario.owner.snapshot.stats = stats.clone();
-                scenario.owner.snapshot.account_usage.weekly = Some(agents::AccountUsageWindow {
-                    remaining_percent: 68.0,
-                    resets_at: None,
-                });
-                let account_usage = scenario.owner.snapshot.account_usage.clone();
                 let now = Instant::now();
                 scenario.owner.poll_idle_retirement(now, false);
                 assert!(
@@ -200,7 +195,6 @@ fn idle_retirement_resumes_saved_session_and_delivers_next_prompt_once() {
                 scenario.owner.start_process(path.clone());
                 assert!(scenario.owner.snapshot.document_ready);
                 assert_eq!(scenario.owner.snapshot.stats, stats);
-                assert_eq!(scenario.owner.snapshot.account_usage, account_usage);
                 assert!(Arc::ptr_eq(
                     &scenario.owner.snapshot.conversation,
                     &transcript
@@ -253,12 +247,10 @@ fn idle_retirement_resumes_saved_session_and_delivers_next_prompt_once() {
                     );
                 }
                 drop(state);
-                let account_usage = scenario.owner.snapshot.account_usage.clone();
                 scenario.owner.snapshot.stats = stats;
                 scenario.owner.start_process(None);
                 assert!(!scenario.owner.snapshot.document_ready);
                 assert_eq!(scenario.owner.snapshot.stats, Value::Null);
-                assert_eq!(scenario.owner.snapshot.account_usage, account_usage);
             }
         },
     );

@@ -3,9 +3,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 use serde_json::Value;
 
-use super::super::{
-    AccountUsage, PeerMessage, SessionGoal, WorkerContext, WorkerInput, WorkerInputResponse,
-};
+use super::super::{PeerMessage, SessionGoal, WorkerContext, WorkerInput, WorkerInputResponse};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -202,7 +200,6 @@ pub enum WorkerActivity {
         error: Option<Value>,
         failure_reason: Option<Value>,
     },
-    AccountUsageChanged(AccountUsage),
     SessionGoalChanged(Option<SessionGoal>),
     ChildSessionsChanged {
         id: String,

@@ -66,7 +66,6 @@ const ICON_PATHS: [&str; 79] = [
     "icons/phosphor/trash.svg",
     "icons/phosphor/tray.svg",
     "icons/phosphor/upload-simple.svg",
-    "icons/phosphor/user-focus.svg",
     "icons/phosphor/warning-circle.svg",
     "icons/phosphor/x.svg",
     "icons/phosphor/x-circle.svg",
@@ -74,6 +73,7 @@ const ICON_PATHS: [&str; 79] = [
     "icons/workbench/claude.svg",
     "icons/workbench/codex.svg",
     "icons/workbench/cursor.svg",
+    "icons/workbench/google.svg",
     "icons/workbench/ghostty.svg",
     "icons/workbench/helix.svg",
     "icons/workbench/neovim.svg",
@@ -348,9 +348,6 @@ impl AssetSource for AppAssets {
             "icons/phosphor/upload-simple.svg" => Some(include_bytes!(
                 "../../../assets/phosphor-icons/upload-simple.svg"
             )),
-            "icons/phosphor/user-focus.svg" => Some(include_bytes!(
-                "../../../assets/phosphor-icons/user-focus.svg"
-            )),
             "icons/phosphor/warning-circle.svg" => Some(include_bytes!(
                 "../../../assets/phosphor-icons/warning-circle.svg"
             )),
@@ -363,6 +360,9 @@ impl AssetSource for AppAssets {
             }
             "icons/workbench/cursor.svg" => {
                 Some(include_bytes!("../../../assets/workbench-icons/cursor.svg"))
+            }
+            "icons/workbench/google.svg" => {
+                Some(include_bytes!("../../../assets/workbench-icons/google.svg"))
             }
             "icons/workbench/claude.svg" => {
                 Some(include_bytes!("../../../assets/workbench-icons/claude.svg"))
@@ -444,6 +444,7 @@ pub(crate) enum AppIcon {
     Codex,
     Copy,
     Cursor,
+    Google,
     DotsThree,
     DownloadSimple,
     Eraser,
@@ -481,7 +482,6 @@ pub(crate) enum AppIcon {
     TextAa,
     Trash,
     UploadSimple,
-    UserFocus,
     WarningCircle,
     Micro,
     Emacs,
@@ -550,6 +550,7 @@ impl IconNamed for AppIcon {
             Self::Codex => return "icons/workbench/codex.svg".into(),
             Self::Copy => "copy",
             Self::Cursor => return "icons/workbench/cursor.svg".into(),
+            Self::Google => return "icons/workbench/google.svg".into(),
             Self::DotsThree => "dots-three",
             Self::DownloadSimple => "download-simple",
             Self::Eraser => "eraser",
@@ -591,7 +592,6 @@ impl IconNamed for AppIcon {
             Self::TextAa => "text-aa",
             Self::Trash => "trash",
             Self::UploadSimple => "upload-simple",
-            Self::UserFocus => "user-focus",
             Self::WarningCircle => "warning-circle",
             Self::VsCode => return "icons/workbench/vscode.svg".into(),
             Self::Zed => return "icons/workbench/zed.svg".into(),

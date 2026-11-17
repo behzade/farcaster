@@ -1,5 +1,5 @@
 use super::*;
-use crate::{AccountUsage, AccountUsageWindow, Backend};
+use crate::Backend;
 
 #[test]
 fn main_and_child_launches_share_service_tier_settings() {
@@ -1725,26 +1725,6 @@ fn maps_codex_telemetry() {
             error: None,
             failure_reason: None,
         })
-    );
-
-    let limits = json!({
-        "primary": {
-            "usedPercent": 40,
-            "windowDurationMins": 10_080,
-            "resetsAt": 1_788_766_092
-        }
-    });
-    assert_eq!(
-        codex_telemetry(
-            CodexMethod::AccountRateLimitsUpdated,
-            &json!({"rateLimits": limits.clone()}),
-        ),
-        Some(WorkerActivity::AccountUsageChanged(AccountUsage {
-            weekly: Some(AccountUsageWindow {
-                remaining_percent: 60.0,
-                resets_at: Some(1_788_766_092),
-            }),
-        }))
     );
 }
 
@@ -4106,4 +4086,46 @@ fn completed_nested_mcp_call_exposes_serialized_images() {
             is_error: false
         })
     );
+}
+
+#[test]
+fn native_quota_notifications_publish_account_facts_and_ignore_old_read_responses() {
+    use crate::accounts::{AccountEvent, AccountSource, subscribe_accounts};
+    let events = subscribe_accounts(std::thread::current());
+    let mut session = test_session();
+    let source = AccountSource {
+        backend: Backend::Codex,
+        profile_id: None,
+        context: "/project".into(),
+        provider: "openai".into(),
+        credential_source: uuid::Uuid::new_v4().to_string(),
+        incarnation: Some("worker".into()),
+    };
+    session.account_source = Some(source.clone());
+    session.account_generation = 2;
+    session
+        .pending
+        .insert(CodexRequestId::Number(50), PendingRequest::AccountLimits(1));
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(50),
+        result: json!({"rateLimits":{"secondary":{"usedPercent":90}}}),
+    }));
+    session.queued_inbound.push_back(Ok(CodexInbound::Notification {
+        method: "account/rateLimits/updated".into(),
+        params: json!({"rateLimits":{"secondary":{"usedPercent":42,"windowDurationMins":10080}}}),
+    }));
+    let _ = session.poll();
+    let reports: Vec<_> = events
+        .try_iter()
+        .filter_map(|event| match event {
+            AccountEvent::LimitsObserved {
+                source: observed,
+                limits,
+            } if observed == source => Some(limits),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0][0].remaining_percent, Some(58.));
+    assert_eq!(reports[0][0].duration_seconds, Some(604800));
 }

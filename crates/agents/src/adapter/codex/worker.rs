@@ -666,6 +666,7 @@ fn supported_model_efforts(model: &Value) -> Vec<String> {
 
 enum PendingRequest {
     AccountIdentity(u64),
+    AccountLimits(u64),
     Command(commands::Request),
     Compact,
     LoadSkills,
@@ -1200,7 +1201,7 @@ impl WorkerSession for CodexWorkerSession {
 }
 
 impl CodexWorkerSession {
-    fn account_response(&self, generation: u64, result: &Value) {
+    fn account_response(&mut self, generation: u64, result: &Value) {
         if generation == self.account_generation
             && let Some(source) = self.account_source.clone()
         {
@@ -1212,6 +1213,21 @@ impl CodexWorkerSession {
                 ),
                 run_id: Some(format!("codex:{}", self.thread_id)),
                 evidence: crate::accounts::AccountBindingEvidence::ObservedAtStartup,
+            });
+            if !result["account"].is_null()
+                && let Ok(id) = self.request("account/rateLimits/read", Value::Null)
+            {
+                self.pending
+                    .insert(id, PendingRequest::AccountLimits(generation));
+            }
+        }
+    }
+
+    fn account_limits(&self, limits: &Value) {
+        if let Some(source) = self.account_source.clone() {
+            crate::accounts::publish_account_event(crate::accounts::AccountEvent::LimitsObserved {
+                source,
+                limits: super::accounts::limits(limits, crate::accounts::account_now()),
             });
         }
     }
@@ -1309,6 +1325,11 @@ impl CodexWorkerSession {
                 Ok(CodexInbound::Response { id, result }) => match self.pending.remove(&id) {
                     Some(PendingRequest::AccountIdentity(generation)) => {
                         self.account_response(generation, &result)
+                    }
+                    Some(PendingRequest::AccountLimits(generation)) => {
+                        if generation == self.account_generation {
+                            self.account_limits(&result);
+                        }
                     }
                     Some(PendingRequest::Command(request)) => {
                         self.command_response(request, Ok(result));
@@ -1506,7 +1527,9 @@ impl CodexWorkerSession {
                         self.record_prompt_ack(prompt.clone(), Err(error.message.clone().into()));
                     }
                     match self.pending.remove(&id) {
-                        Some(PendingRequest::AccountIdentity(_)) => continue,
+                        Some(
+                            PendingRequest::AccountIdentity(_) | PendingRequest::AccountLimits(_),
+                        ) => continue,
                         Some(PendingRequest::Command(request)) => {
                             self.command_response(request, Err(error.message));
                             return self.events.pop_front();
@@ -1675,12 +1698,8 @@ impl CodexWorkerSession {
                         self.refresh_account();
                         continue;
                     }
-                    if method == CodexMethod::AccountRateLimitsUpdated
-                        && let Some(source) = self.account_source.clone()
-                    {
-                        crate::accounts::publish_account_event(
-                            crate::accounts::AccountEvent::LimitsInvalidated { source },
-                        );
+                    if method == CodexMethod::AccountRateLimitsUpdated {
+                        self.account_limits(&params);
                     }
                     if method == CodexMethod::ServerRequestResolved {
                         if let Some(event) = self.resolve_input(&params) {
@@ -3133,26 +3152,8 @@ fn codex_telemetry(method: CodexMethod<'_>, params: &Value) -> Option<WorkerActi
                 .filter(|value| !value.is_null())
                 .cloned(),
         }),
-        CodexMethod::AccountRateLimitsUpdated => Some(WorkerActivity::AccountUsageChanged(
-            codex_account_usage(params.get("rateLimits")?),
-        )),
         _ => None,
     }
-}
-
-fn codex_account_usage(limits: &Value) -> crate::AccountUsage {
-    const WEEK_MINUTES: u64 = 7 * 24 * 60;
-    let weekly = ["primary", "secondary"]
-        .into_iter()
-        .filter_map(|key| limits.get(key))
-        .find(|window| window["windowDurationMins"].as_u64() == Some(WEEK_MINUTES))
-        .and_then(|window| {
-            crate::AccountUsageWindow::from_used_percent(
-                window["usedPercent"].as_f64()?,
-                window["resetsAt"].as_i64(),
-            )
-        });
-    crate::AccountUsage { weekly }
 }
 
 fn codex_child_event_outcome(item: &Value) -> Option<crate::ChildSessionOutcome> {

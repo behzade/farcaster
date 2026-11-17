@@ -21,8 +21,10 @@ pub(super) fn account_source(
     project: &Path,
     command: &Command,
 ) -> Result<crate::accounts::AccountSource, String> {
-    let source = if environment(command, "CURSOR_API_KEY").is_some() {
-        "environment:CURSOR_API_KEY".into()
+    let source = if let Some(source) =
+        super::super::accounts::environment_source(command, "CURSOR_API_KEY", project)
+    {
+        source
     } else {
         format!("native:{}", credential_path(config, command)?.display())
     };

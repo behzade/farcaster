@@ -1,6 +1,32 @@
 use super::*;
 
 #[test]
+fn environment_sources_share_inherited_credentials_but_separate_project_overrides() {
+    let parent = std::env::var_os("PATH").expect("test runner PATH");
+    let first = Path::new("/first-project");
+    let second = Path::new("/second-project");
+    let mut command = std::process::Command::new("unused");
+    command.env_clear().env("PATH", parent);
+    let inherited = environment_source(&command, "PATH", first).unwrap();
+    assert_eq!(
+        inherited,
+        environment_source(&command, "PATH", second).unwrap()
+    );
+    command.env("PATH", "fixture-credential-a");
+    let local = environment_source(&command, "PATH", first).unwrap();
+    command.env("PATH", "fixture-credential-b");
+    let other = environment_source(&command, "PATH", second).unwrap();
+    assert_ne!(local, other);
+    assert_ne!(local, inherited);
+    // Rotating an override keeps its connection origin stable.
+    assert_eq!(local, environment_source(&command, "PATH", first).unwrap());
+    assert!(!local.contains("fixture-credential"));
+    assert!(!other.contains("fixture-credential"));
+    command.env_remove("PATH");
+    assert!(environment_source(&command, "PATH", first).is_none());
+}
+
+#[test]
 fn discovery_identifies_the_store_even_when_missing_or_empty() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("auth.json");

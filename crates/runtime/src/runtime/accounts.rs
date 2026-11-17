@@ -13,12 +13,11 @@ pub(super) struct AccountService {
     reads: mpsc::Receiver<(String, ReadResult)>,
     sender: mpsc::Sender<(String, ReadResult)>,
     generation: u64,
-    pending: HashMap<String, u64>,
-    next_refresh: Instant,
-    last_refresh: Option<Instant>,
+    pending: HashSet<String>,
+    awaiting_identity: HashSet<String>,
+    refresh_requested: bool,
     dirty: bool,
     enabled: bool,
-    active: bool,
     project: Option<std::path::PathBuf>,
     profiles: Vec<agents::HarnessProfile>,
     proxy: Option<String>,
@@ -42,20 +41,11 @@ impl AccountService {
             }
         };
         snapshot.normalize_connections();
-        for connection in &mut snapshot.connections {
-            if connection.auth != AccountAuthState::SignedOut {
-                connection.auth = AccountAuthState::Unknown;
-            }
-        }
         for binding in &mut snapshot.bindings {
             if binding.ended_at.is_none() {
                 binding.ended_at = Some(account_now());
             }
         }
-        let active = snapshot
-            .connections
-            .iter()
-            .any(|c| c.available && c.source.incarnation.is_none());
         let (sender, reads) = mpsc::channel();
         Self {
             snapshot,
@@ -64,12 +54,11 @@ impl AccountService {
             reads,
             sender,
             generation: 0,
-            pending: HashMap::new(),
-            next_refresh: Instant::now(),
-            last_refresh: None,
+            pending: HashSet::new(),
+            awaiting_identity: HashSet::new(),
+            refresh_requested: false,
             dirty: true,
             enabled,
-            active,
             project: None,
             profiles: Vec::new(),
             proxy: None,
@@ -77,23 +66,22 @@ impl AccountService {
     }
 
     pub(super) fn refresh(&mut self) {
-        self.active = true;
         self.invalidate();
+        self.refresh_requested = true;
     }
 
     pub(super) fn invalidate(&mut self) {
         self.generation = self.generation.wrapping_add(1);
-        self.next_refresh = Instant::now();
+        self.refresh_requested |= !self.pending.is_empty();
     }
 
-    fn invalidate_connections(
-        &mut self,
-        matches: impl Fn(&agents::accounts::AccountConnection) -> bool,
-    ) {
+    fn await_identity(&mut self, matches: impl Fn(&agents::accounts::AccountConnection) -> bool) {
         let mut ids = HashSet::new();
-        for connection in &mut self.snapshot.connections {
+        for connection in &self.snapshot.connections {
             if matches(connection) {
-                connection.auth = AccountAuthState::Unknown;
+                // Guard identity-free events while the source is being checked.
+                // The check does not change any previously observed account facts.
+                self.awaiting_identity.insert(connection.id.clone());
                 ids.insert(connection.id.clone());
             }
         }
@@ -101,6 +89,17 @@ impl AccountService {
             if binding.ended_at.is_none() && ids.contains(&binding.connection_id) {
                 binding.ended_at = Some(account_now());
             }
+        }
+    }
+
+    fn observe(&mut self, observation: agents::accounts::AccountObservation) {
+        let key = observation.source.key();
+        let at = observation.observed_at;
+        self.snapshot.apply(observation);
+        if let Some(connection) = self.snapshot.connections.iter().find(|c| {
+            c.source.key() == key && c.observed_at == at && c.auth != AccountAuthState::Unknown
+        }) {
+            self.awaiting_identity.remove(&connection.id);
         }
     }
 
@@ -138,14 +137,14 @@ impl AccountService {
                 } => {
                     let source = observation.source.clone();
                     let at = observation.observed_at;
-                    self.snapshot.apply(observation);
+                    self.observe(observation);
                     if let Some(run_id) = run_id {
                         self.snapshot.bind(run_id, &source, at, evidence);
                     }
                     self.dirty = true;
                 }
                 AccountEvent::AuthInvalidated { source } => {
-                    self.invalidate_connections(|connection| {
+                    self.await_identity(|connection| {
                         connection.source.backend == source.backend
                             && connection.source.credential_source == source.credential_source
                     });
@@ -156,11 +155,9 @@ impl AccountService {
                     if let Some(connection) = self
                         .snapshot
                         .connections
-                        .iter_mut()
+                        .iter()
                         .find(|c| c.source == source)
                     {
-                        connection.available = false;
-                        connection.auth = AccountAuthState::Unknown;
                         for binding in &mut self.snapshot.bindings {
                             if binding.connection_id == connection.id && binding.ended_at.is_none()
                             {
@@ -170,11 +167,14 @@ impl AccountService {
                     }
                     self.dirty = true;
                 }
-                AccountEvent::LimitsInvalidated { .. } => {
-                    self.next_refresh = self.next_refresh.min(
-                        self.last_refresh
-                            .map_or_else(Instant::now, |at| at + Duration::from_secs(60)),
-                    );
+                AccountEvent::LimitsObserved { source, limits } => {
+                    if self.snapshot.connections.iter().any(|c| {
+                        c.source.key() == source.key() && self.awaiting_identity.contains(&c.id)
+                    }) {
+                        continue;
+                    }
+                    self.snapshot.observe_limits(&source, limits);
+                    self.dirty = true;
                 }
                 AccountEvent::LoginChanged {
                     backend,
@@ -189,7 +189,7 @@ impl AccountService {
                         })
                         .map(|c| c.source.credential_source.clone())
                         .collect();
-                    self.invalidate_connections(|c| {
+                    self.await_identity(|c| {
                         c.source.backend == backend
                             && (c.source.profile_id == profile_id
                                 || stores.contains(&c.source.credential_source))
@@ -202,7 +202,7 @@ impl AccountService {
         while let Ok((scope, (generation, result))) = self.reads.try_recv() {
             self.pending.remove(&scope);
             if generation != self.generation {
-                self.next_refresh = Instant::now();
+                self.refresh_requested = true;
                 continue;
             }
             match result {
@@ -227,7 +227,7 @@ impl AccountService {
                         }
                     }
                     for observation in discovery.observations {
-                        self.snapshot.apply(observation);
+                        self.observe(observation);
                     }
                 }
                 Err(_) => {
@@ -241,9 +241,8 @@ impl AccountService {
             }
             self.dirty = true;
         }
-        if self.enabled && self.active && Instant::now() >= self.next_refresh {
-            self.last_refresh = Some(Instant::now());
-            self.next_refresh = Instant::now() + Duration::from_secs(300);
+        if self.enabled && self.refresh_requested {
+            self.refresh_requested = false;
             let profiles = self.profiles.clone();
             let targets = Backend::ALL
                 .iter()
@@ -256,7 +255,7 @@ impl AccountService {
                 }
                 let scope = serde_json::to_string(&(backend, &profile_id))
                     .expect("account scope serializes");
-                if self.pending.contains_key(&scope) {
+                if self.pending.contains(&scope) {
                     continue;
                 }
                 let mut config = command.clone();
@@ -265,7 +264,7 @@ impl AccountService {
                 let generation = self.generation;
                 let tx = self.sender.clone();
                 let wake = thread::current();
-                self.pending.insert(scope.clone(), generation);
+                self.pending.insert(scope.clone());
                 thread::spawn(move || {
                     let result = agents::read_accounts(&config, backend, &project);
                     let _ = tx.send((scope, (generation, result)));

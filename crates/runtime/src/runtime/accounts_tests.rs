@@ -75,18 +75,33 @@ fn discovered(
 }
 
 #[test]
+fn accounts_legacy_environment_records_remain_hidden_without_starting_discovery() {
+    let directory = tempfile::tempdir().unwrap();
+    let state =
+        farcaster_storage::SharedStateStore::open_at(&directory.path().join("state.sqlite3"))
+            .unwrap();
+    let mut snapshot = AccountsSnapshot::default();
+    let mut old = observation("me@example.com", 100);
+    old.source.credential_source = "environment:ANTHROPIC_API_KEY".into();
+    snapshot.apply(old);
+    state.with(|state| state.save_accounts(&snapshot)).unwrap();
+    let service = AccountService::new(Some(state), false);
+    assert!(!service.refresh_requested);
+    assert!(!service.snapshot.connections[0].available);
+}
+
+#[test]
 fn accounts_discard_late_refresh_and_schedule_a_replacement() {
     let (mut service, _, tx, _) = service();
     let initial = observation("old@example.com", 100);
     let scope = source_scope(&initial.source);
-    service.pending.insert(scope.clone(), service.generation);
+    service.pending.insert(scope.clone());
     discovered(&service, initial.source.clone(), vec![initial]);
     service.invalidate();
-    service.next_refresh = Instant::now() + Duration::from_secs(300);
     service.tick(&AgentLaunchConfig::default(), Path::new("/project"), &tx);
     assert!(service.snapshot.connections.is_empty());
-    assert!(!service.pending.contains_key(&scope));
-    assert!(service.next_refresh <= Instant::now());
+    assert!(!service.pending.contains(&scope));
+    assert!(service.refresh_requested);
 }
 
 #[test]
@@ -111,13 +126,14 @@ fn accounts_transport_failure_keeps_last_success_and_its_age() {
 }
 
 #[test]
-fn accounts_login_invalidation_reaches_profiles_sharing_the_store() {
+fn accounts_login_check_preserves_facts_and_guards_profiles_sharing_the_store() {
     let (mut service, events, tx, _) = service();
     let initial = observation("old@example.com", 100);
     service.snapshot.apply(initial.clone());
     let mut profile = initial;
     profile.source.profile_id = Some("other".into());
     service.snapshot.apply(profile);
+    let known = service.snapshot.clone();
     events
         .send(AccountEvent::LoginChanged {
             backend: Backend::Codex,
@@ -125,13 +141,8 @@ fn accounts_login_invalidation_reaches_profiles_sharing_the_store() {
         })
         .unwrap();
     service.tick(&AgentLaunchConfig::default(), Path::new("/project"), &tx);
-    assert!(
-        service
-            .snapshot
-            .connections
-            .iter()
-            .all(|c| c.auth == AccountAuthState::Unknown)
-    );
+    assert_eq!(service.snapshot, known);
+    assert_eq!(service.awaiting_identity.len(), 2);
 }
 
 #[test]
@@ -241,4 +252,147 @@ fn accounts_empty_discovery_preserves_other_credential_stores_and_live_runs() {
             .iter()
             .all(|c| c.auth == AccountAuthState::SignedIn && !c.limits.is_empty())
     );
+}
+
+#[test]
+fn accounts_native_limits_update_without_starting_background_reads() {
+    let (mut service, events, tx, _) = service();
+    service.enabled = true;
+    let initial = observation("me@example.com", 100);
+    service.snapshot.apply(initial.clone());
+    service.invalidate();
+    service.tick(&AgentLaunchConfig::default(), Path::new("/project"), &tx);
+    assert!(service.pending.is_empty());
+    assert!(!service.refresh_requested);
+
+    let mut limit = initial.limits[0].clone();
+    limit.remaining_percent = Some(10.);
+    limit.observed_at = 200;
+    events
+        .send(AccountEvent::LimitsObserved {
+            source: initial.source,
+            limits: vec![limit],
+        })
+        .unwrap();
+    for _ in 0..3 {
+        service.tick(&AgentLaunchConfig::default(), Path::new("/project"), &tx);
+        assert!(service.pending.is_empty());
+        assert!(!service.refresh_requested);
+    }
+    assert_eq!(
+        service.snapshot.connections[0].limits[0].remaining_percent,
+        Some(10.)
+    );
+    assert_eq!(service.snapshot.connections[0].limits[0].observed_at, 200);
+}
+
+#[test]
+fn persisted_account_facts_do_not_expire_and_old_processes_do_not_become_live() {
+    let directory = tempfile::tempdir().unwrap();
+    let state =
+        farcaster_storage::SharedStateStore::open_at(&directory.path().join("state.sqlite3"))
+            .unwrap();
+    let mut snapshot = AccountsSnapshot::default();
+    let initial = observation("me@example.com", 100);
+    snapshot.apply(initial.clone());
+    let mut old_worker = initial;
+    old_worker.source.incarnation = Some("old-process".into());
+    snapshot.apply(old_worker);
+    let source = snapshot.connections[1].source.clone();
+    snapshot.bind(
+        "old-run".into(),
+        &source,
+        100,
+        AccountBindingEvidence::ObservedAtStartup,
+    );
+    state.with(|state| state.save_accounts(&snapshot)).unwrap();
+    let service = AccountService::new(Some(state), false);
+    assert_eq!(
+        service.snapshot.connections[0].auth,
+        AccountAuthState::SignedIn
+    );
+    assert_eq!(service.snapshot.connections[0].limits[0].observed_at, 100);
+    assert!(service.snapshot.connections[0].available);
+    assert!(service.snapshot.connections[1].available);
+    assert!(service.snapshot.bindings[0].ended_at.is_some());
+    assert!(!service.refresh_requested);
+}
+
+#[test]
+fn worker_disconnect_keeps_observed_account_facts_while_ending_run_binding() {
+    let (mut service, events, tx, _) = service();
+    let mut known = observation("me@example.com", 100);
+    known.source.incarnation = Some("idle-worker".into());
+    service.snapshot.apply(known.clone());
+    service.snapshot.bind(
+        "run".into(),
+        &known.source,
+        100,
+        AccountBindingEvidence::ObservedAtStartup,
+    );
+    events
+        .send(AccountEvent::Disconnected {
+            source: known.source,
+        })
+        .unwrap();
+    service.tick(&AgentLaunchConfig::default(), Path::new("/project"), &tx);
+    let connection = &service.snapshot.connections[0];
+    assert!(connection.available);
+    assert_eq!(connection.auth, AccountAuthState::SignedIn);
+    assert_eq!(connection.limits, known.limits);
+    assert!(service.snapshot.bindings[0].ended_at.is_some());
+    assert!(!service.refresh_requested);
+}
+
+#[test]
+fn native_auth_check_changes_no_facts_and_blocks_unattributed_limits_until_identity_arrives() {
+    let (mut service, events, tx, _) = service();
+    let config = AgentLaunchConfig::default();
+    let project = Path::new("/project");
+    let mut known = observation("me@example.com", 100);
+    known.source.incarnation = Some("process".into());
+    service.snapshot.apply(known.clone());
+    let facts = service.snapshot.clone();
+    events
+        .send(AccountEvent::AuthInvalidated {
+            source: known.source.clone(),
+        })
+        .unwrap();
+    let mut limit = known.limits[0].clone();
+    limit.observed_at = 200;
+    limit.remaining_percent = Some(10.);
+    events
+        .send(AccountEvent::LimitsObserved {
+            source: known.source.clone(),
+            limits: vec![limit.clone()],
+        })
+        .unwrap();
+    service.tick(&config, project, &tx);
+    assert_eq!(service.snapshot, facts);
+    assert!(!service.refresh_requested);
+
+    known.observed_at = 200;
+    known.complete_limits = false;
+    known.limits.clear();
+    events
+        .send(AccountEvent::Observed {
+            observation: known.clone(),
+            run_id: None,
+            evidence: AccountBindingEvidence::ObservedAtStartup,
+        })
+        .unwrap();
+    service.tick(&config, project, &tx);
+    assert_eq!(
+        service.snapshot.connections[0].limits,
+        facts.connections[0].limits
+    );
+    assert!(service.awaiting_identity.is_empty());
+    events
+        .send(AccountEvent::LimitsObserved {
+            source: known.source,
+            limits: vec![limit.clone()],
+        })
+        .unwrap();
+    service.tick(&config, project, &tx);
+    assert_eq!(service.snapshot.connections[0].limits, vec![limit]);
 }

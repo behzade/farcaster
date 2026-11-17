@@ -5,6 +5,17 @@ use crate::{
 };
 
 #[test]
+fn browser_sign_in_remains_specific_to_cursor() {
+    for backend in Backend::ALL {
+        assert_eq!(crate::supports_sign_in(backend), backend == Backend::Cursor);
+        assert_eq!(
+            super::super::accounts::account_capabilities(backend).login,
+            backend == Backend::Cursor
+        );
+    }
+}
+
+#[test]
 fn worker_delegation_preserves_modes_except_pi_parent_containment() {
     for backend in Backend::ALL {
         for mode in [Auto, Full, Sandboxed] {

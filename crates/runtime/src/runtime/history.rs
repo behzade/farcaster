@@ -74,7 +74,6 @@ impl RuntimeOwner {
     }
 
     fn bind_history_selection(&mut self, path: PathBuf, project: PathBuf) -> bool {
-        let previous_harness = self.harness;
         let profile_id = match configuration_for_target(
             &self.process_command,
             self.state.as_ref(),
@@ -101,10 +100,6 @@ impl RuntimeOwner {
         self.project = project.clone();
         self.snapshot.project = project;
         self.snapshot.selected_session = Some(path);
-        if previous_harness != self.harness || self.snapshot.profile_id != profile_id {
-            self.snapshot.account_usage = Default::default();
-            self.snapshot.account_usage_observed_at = None;
-        }
         self.snapshot.profile_id = profile_id;
         self.snapshot.status = "Loading history".into();
         self.snapshot.document_ready = false;
@@ -319,15 +314,6 @@ impl RuntimeOwner {
         } else {
             history_stats
         };
-        let account_matches = previous.harness == self.harness && previous.profile_id == profile_id;
-        let account_usage = if account_matches {
-            previous.account_usage.clone()
-        } else {
-            Default::default()
-        };
-        let account_usage_observed_at = previous
-            .account_usage_observed_at
-            .filter(|_| account_matches);
         let mut session = previous.session.as_ref().filter(|_| same_document).cloned();
         let history_preview = !same_document || previous.history_preview;
         let cache_hit_rate = previous
@@ -361,8 +347,6 @@ impl RuntimeOwner {
             models,
             stats,
             session,
-            account_usage,
-            account_usage_observed_at,
             auto_retry,
             history_preview,
             pending_question: history.pending_question.map(restored_question_request),

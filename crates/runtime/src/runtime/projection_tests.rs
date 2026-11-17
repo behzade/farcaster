@@ -6,35 +6,6 @@ use crate::agents::{
 use crate::runtime::tests::owner_without_process;
 
 #[test]
-fn account_usage_event_updates_the_runtime_snapshot() {
-    let mut snapshot = RuntimeSnapshot::default();
-    let event = json!({
-        "type": "account_usage_changed",
-        "usage": {
-            "weekly": {
-                "remainingPercent": 68.0,
-                "resetsAt": 1_788_766_092_i64
-            }
-        }
-    });
-
-    assert!(update_account_usage_from_event(
-        &mut snapshot,
-        &SessionActivityKind::AccountUsageChanged,
-        &event,
-    ));
-    assert_eq!(
-        snapshot
-            .account_usage
-            .weekly
-            .expect("fixture value")
-            .remaining_percent,
-        68.0
-    );
-    assert!(snapshot.account_usage_observed_at.is_some());
-}
-
-#[test]
 fn missing_usage_preserves_known_metrics() {
     let previous = json!({
         "tokens": {"input": 100, "output": 20, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 120},

@@ -51,6 +51,26 @@ pub(super) fn source(
     }
 }
 
+/// Identify the environment's origin, without retaining its credential value.
+pub(super) fn environment_source(
+    command: &std::process::Command,
+    name: &str,
+    project: &Path,
+) -> Option<String> {
+    let value = super::process_command::environment(command, name)?;
+    let origin = (std::env::var_os(name).as_ref() != Some(&value)).then(|| {
+        project
+            .canonicalize()
+            .unwrap_or_else(|_| project.to_owned())
+            .to_string_lossy()
+            .into_owned()
+    });
+    Some(format!(
+        "environment:{}",
+        serde_json::to_string(&(name, origin)).expect("environment origin serializes")
+    ))
+}
+
 /// Reads only the provider roster into the neutral model. Secret fields never leave this function.
 pub(super) fn stored_connections(
     config: &AgentLaunchConfig,
