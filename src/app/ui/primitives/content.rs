@@ -36,11 +36,7 @@ impl DiffColumns {
     }
 }
 
-pub(crate) fn folder_change_summary(
-    count: usize,
-    counts: Option<(usize, usize)>,
-    columns: DiffColumns,
-) -> Div {
+pub(crate) fn folder_change_summary(counts: Option<(usize, usize)>, columns: DiffColumns) -> Div {
     div()
         .flex_none()
         .whitespace_nowrap()
@@ -48,25 +44,18 @@ pub(crate) fn folder_change_summary(
         .items_center()
         .gap(theme().space.xs)
         .font_weight(FontWeight::MEDIUM)
-        .child(div().text_color(theme().colors.muted).child(format!(
-            "{count} {}",
-            if count == 1 { "file" } else { "files" }
-        )))
         .children(diff_count_columns(counts, true, columns))
 }
 
-pub(crate) fn change_group_label(label: String, count: usize) -> Div {
+pub(crate) fn change_group_label(label: String) -> Div {
     div()
         .min_w_0()
         .flex_1()
-        .flex()
-        .items_center()
-        .gap(theme().space.xs)
         .text_size(theme().type_scale.caption)
         .font_weight(FontWeight::NORMAL)
         .text_color(theme().colors.muted)
-        .child(div().min_w_0().truncate().child(label))
-        .child(div().flex_none().child(count.to_string()))
+        .truncate()
+        .child(label)
 }
 
 pub(crate) fn change_path_prefix(path: &std::path::Path) -> Div {

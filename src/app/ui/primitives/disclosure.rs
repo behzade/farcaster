@@ -64,7 +64,6 @@ pub(crate) fn disclosure_title_row(
 pub(crate) fn tree_folder_row(
     id: impl Into<ElementId>,
     label: String,
-    count: Option<usize>,
     depth: usize,
     expanded: bool,
     enabled: bool,
@@ -94,10 +93,7 @@ pub(crate) fn tree_folder_row(
             },
             AppIconSize::Inline,
         )))
-        .child(match count {
-            Some(count) => super::change_group_label(label, count),
-            None => div().min_w_0().flex_1().truncate().child(label),
-        });
+        .child(super::change_group_label(label));
     if !enabled {
         return row;
     }

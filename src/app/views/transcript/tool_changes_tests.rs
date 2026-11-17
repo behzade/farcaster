@@ -35,7 +35,6 @@ fn folder_and_file_diff_columns_share_the_same_right_edges(cx: &mut gpui::TestAp
                                         .when(folder, |row| {
                                             row.child(
                                                 crate::app::ui::primitives::folder_change_summary(
-                                                    25,
                                                     Some(counts),
                                                     columns,
                                                 ),
@@ -86,25 +85,20 @@ fn command_and_folder_focus_do_not_move_their_content(cx: &mut gpui::TestAppCont
                     crate::app::ui::primitives::tree_folder_row(
                         "folder-focus",
                         "src/app".into(),
-                        None,
                         2,
                         false,
                         true,
                         |_, _| {},
                     )
                     .track_focus(&self.1)
-                    .child(
-                        div()
-                            .debug_selector(|| "folder-count".into())
-                            .child("5 files"),
-                    ),
+                    .child(div().debug_selector(|| "folder-summary".into()).child("+5")),
                 )
         }
     }
     cx.update(gpui_component::init);
     let (view, cx) = cx.add_window_view(|_, cx| Rows(cx.focus_handle(), cx.focus_handle()));
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    let selectors = ["command-content", "folder-count"];
+    let selectors = ["command-content", "folder-summary"];
     let before = selectors.map(|s| cx.debug_bounds(s).unwrap());
     for command in [true, false] {
         cx.update(|window, cx| {

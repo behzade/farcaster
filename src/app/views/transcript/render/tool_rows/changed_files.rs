@@ -166,8 +166,8 @@ pub(super) fn render(
                     label,
                     depth,
                     open,
-                    count,
                     counts,
+                    ..
                 } => {
                     let entity = entity.clone();
                     let project = project.clone();
@@ -198,7 +198,7 @@ pub(super) fn render(
                         },
                         AppIconSize::Inline,
                     )))
-                    .child(crate::app::ui::primitives::change_group_label(label, count))
+                    .child(crate::app::ui::primitives::change_group_label(label))
                     .when(!open, |row| {
                         row.children(crate::app::ui::primitives::diff_count_columns(
                             counts, false, columns,

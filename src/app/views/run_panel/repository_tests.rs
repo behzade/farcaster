@@ -47,7 +47,6 @@ fn file_counts_and_labels_stay_aligned_during_hover_focus_and_selection(
                     crate::app::ui::primitives::tree_folder_row(
                         "folder",
                         "src/app".into(),
-                        Some(1),
                         self.depth,
                         false,
                         true,
@@ -55,7 +54,6 @@ fn file_counts_and_labels_stay_aligned_during_hover_focus_and_selection(
                     )
                     .child(
                         crate::app::ui::primitives::folder_change_summary(
-                            1,
                             Some((1, 0)),
                             crate::app::ui::primitives::DiffColumns::for_counts([(1, 0)]),
                         )

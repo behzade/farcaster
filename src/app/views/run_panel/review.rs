@@ -87,10 +87,10 @@ pub(in crate::app::views) fn render(
                     TreeRow::Folder {
                         path,
                         label,
-                        count,
                         counts,
                         depth,
                         open,
+                        ..
                     } => {
                         let project = active.project.clone();
                         let accessible = format!(
@@ -102,7 +102,6 @@ pub(in crate::app::views) fn render(
                         crate::app::ui::primitives::tree_folder_row(
                             format!("review-folder-{}", path.display()),
                             label,
-                            None,
                             depth,
                             open,
                             true,
@@ -116,7 +115,7 @@ pub(in crate::app::views) fn render(
                         .aria_label(accessible)
                         .when(!open, |row| {
                             row.child(crate::app::ui::primitives::folder_change_summary(
-                                count, counts, columns,
+                                counts, columns,
                             ))
                         })
                         .into_any_element()

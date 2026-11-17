@@ -214,10 +214,10 @@ impl FarcasterApp {
                     TreeRow::Folder {
                         path,
                         label,
-                        count,
                         counts,
                         depth,
                         open,
+                        ..
                     } => {
                         let project = self.project.repository.project.clone();
                         let path = path.clone();
@@ -231,7 +231,6 @@ impl FarcasterApp {
                             crate::app::ui::primitives::tree_folder_row(
                                 format!("repository-folder-{}", path.display()),
                                 label.clone(),
-                                Some(*count),
                                 *depth,
                                 *open,
                                 browser.query.trim().is_empty(),
