@@ -295,18 +295,16 @@ fn composer_text_attachments_and_controls_share_an_inset(cx: &mut gpui::TestAppC
                 let usage = cx
                     .debug_bounds("composer-usage-trigger")
                     .expect("usage control");
-                assert_eq!(usage.center().y, add.center().y, "usage shares the toolbar");
-                assert!(usage.right() < frame.right(), "usage stays in the composer");
-                if context {
-                    let status = cx.debug_bounds("composer-status").expect("context row");
-                    assert!(status.top() >= frame.bottom(), "context stays separate");
-                    assert_eq!(status.size.height, theme().type_scale.line_body);
-                } else {
-                    assert!(
-                        cx.debug_bounds("composer-status").is_none(),
-                        "no extra status row without context or an editor mode"
-                    );
-                }
+                let status = cx.debug_bounds("composer-status").expect("status row");
+                assert!(
+                    status.top() >= frame.bottom(),
+                    "status stays below the composer"
+                );
+                assert_eq!(status.size.height, theme().type_scale.line_body);
+                assert!(
+                    usage.top() >= frame.bottom(),
+                    "usage stays separate from message controls"
+                );
                 assert_eq!(
                     add.left() - frame.left(),
                     frame.bottom() - add.bottom(),

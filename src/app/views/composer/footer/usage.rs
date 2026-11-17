@@ -39,6 +39,8 @@ pub(super) fn render(usage: ComposerUsage, anchor: gpui::Anchor) -> AnyElement {
                 ButtonTone::Quiet,
                 true,
             )
+            .h(theme().type_scale.line_body)
+            .py(gpui::px(0.0))
             .px(theme().space.xs)
             .debug_selector(|| "composer-usage-trigger".into()),
         )
@@ -109,29 +111,6 @@ fn details(usage: &ComposerUsage) -> AnyElement {
         .when_some(usage.cache_hit_rate, |body, rate| {
             body.child(metric("Session cache hit", format!("{rate:.0}%")))
         })
-        .when_some(usage.weekly, |body, weekly| {
-            body.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(theme().space.xs)
-                    .child(metric(
-                        "Weekly remaining",
-                        format!("{:.0}%", weekly.remaining_percent.clamp(0.0, 100.0)),
-                    ))
-                    .when_some(
-                        weekly.resets_at.and_then(format_reset_time),
-                        |body, time| {
-                            body.child(
-                                div()
-                                    .text_size(theme().type_scale.caption)
-                                    .text_color(theme().colors.muted)
-                                    .child(format!("Resets {time}")),
-                            )
-                        },
-                    ),
-            )
-        })
         .into_any_element()
 }
 
@@ -176,13 +155,4 @@ fn metric(label: &str, value: String) -> AnyElement {
         )
         .child(value)
         .into_any_element()
-}
-
-fn format_reset_time(timestamp: i64) -> Option<String> {
-    let value = time::OffsetDateTime::from_unix_timestamp(timestamp).ok()?;
-    let format = time::format_description::parse_borrowed::<3>(
-        "[month repr:short] [day padding:none] at [hour]:[minute] UTC",
-    )
-    .ok()?;
-    value.format(&format).ok()
 }

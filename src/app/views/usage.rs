@@ -11,7 +11,6 @@ pub(super) struct ComposerUsage {
     pub worker_count: usize,
     pub aggregate: UsageSummary,
     pub cache_hit_rate: Option<f64>,
-    pub weekly: Option<crate::agents::AccountUsageWindow>,
 }
 
 pub(super) fn composer_usage(app: &FarcasterApp) -> ComposerUsage {
@@ -81,11 +80,6 @@ pub(super) fn composer_usage(app: &FarcasterApp) -> ComposerUsage {
             .average_cache_hit_rate
             .filter(|rate| rate.is_finite())
             .map(|rate| rate.clamp(0.0, 100.0)),
-        weekly: app
-            .snapshot
-            .account_usage
-            .weekly
-            .filter(|window| window.remaining_percent.is_finite()),
     }
 }
 

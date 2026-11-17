@@ -53,18 +53,7 @@ impl FarcasterApp {
             .flex()
             .items_center()
             .gap(theme().space.sm)
-            .child(
-                div()
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap(theme().space.xs)
-                    .child(super::attachments::attach_button(entity))
-                    .child(usage::render(
-                        composer_usage(self),
-                        gpui::Anchor::BottomLeft,
-                    )),
-            )
+            .child(super::attachments::attach_button(entity))
             .child(settings)
             .into_any_element()
     }
@@ -73,23 +62,15 @@ impl FarcasterApp {
         &self,
         scroll: &gpui::ScrollHandle,
         mode: Option<&str>,
-        standalone_usage: bool,
-    ) -> Option<AnyElement> {
+    ) -> AnyElement {
         let usage = composer_usage(self);
         let context = context_value(&usage);
-        if context.is_none() && mode.is_none() && !standalone_usage {
-            return None;
-        }
         let status = div()
             .id("composer-status")
             .debug_selector(|| "composer-status".into())
             .w_full()
             .min_w_0()
-            .h(if standalone_usage {
-                theme().controls.icon_button
-            } else {
-                theme().type_scale.line_body
-            })
+            .h(theme().type_scale.line_body)
             .flex_none()
             .flex()
             .items_center()
@@ -111,15 +92,12 @@ impl FarcasterApp {
                         .child(mode.to_owned()),
                 )
             })
-            .child(div().min_w_0().flex_1())
             .when_some(context, |row, value| {
                 row.child(context_metric(&usage, value))
             })
-            .when(standalone_usage, |row| {
-                row.gap(theme().space.sm)
-                    .child(usage::render(usage, gpui::Anchor::BottomRight))
-            });
-        Some(status.into_any_element())
+            .child(div().min_w_0().flex_1())
+            .child(usage::render(usage, gpui::Anchor::BottomRight));
+        status.into_any_element()
     }
 
     pub(in crate::app::views) fn render_composer_actions(
@@ -184,7 +162,6 @@ fn context_metric(usage: &ComposerUsage, value: String) -> AnyElement {
         .flex()
         .items_center()
         .gap(theme().space.sm)
-        .child(div().text_color(theme().colors.muted).child("Context"))
         .when_some(usage.context_percent, |metric, percent| {
             metric.child(context_meter(
                 percent.clamp(0.0, 100.0),

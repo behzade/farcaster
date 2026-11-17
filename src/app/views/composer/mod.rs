@@ -55,7 +55,7 @@ impl FarcasterApp {
                 .flex()
                 .flex_col()
                 .child(self.render_composer_request(entity, focused))
-                .children(self.render_composer_status(status_scroll, mode, true))
+                .child(self.render_composer_status(status_scroll, mode))
                 .into_any_element();
         }
 
@@ -229,7 +229,7 @@ impl FarcasterApp {
                 |body| body.child(self.render_composer_request(entity.clone(), focused)),
             )
             .child(composer)
-            .children(self.render_composer_status(status_scroll, mode, false))
+            .child(self.render_composer_status(status_scroll, mode))
             .into_any_element()
     }
 
