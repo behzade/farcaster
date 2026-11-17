@@ -48,7 +48,29 @@ pub(super) fn is_tool_kind(kind: &str) -> bool {
 pub(super) fn call(item: &Value, kind: &str) -> (String, Value) {
     match kind {
         "fileChange" => {
-            let changes = item.get("changes").cloned().unwrap_or_else(|| json!([]));
+            let mut changes = item.get("changes").cloned().unwrap_or_else(|| json!([]));
+            for change in changes.as_array_mut().into_iter().flatten() {
+                if change.pointer("/kind/type").and_then(Value::as_str) != Some("add") {
+                    continue;
+                }
+                let Some(content) = change.get("diff").and_then(Value::as_str) else {
+                    continue;
+                };
+                // Codex puts full file content in `diff` for additions.
+                let lines = content.split_terminator('\n');
+                let count = lines.clone().count();
+                let start = usize::from(count > 0);
+                let mut diff = format!("@@ -0,0 +{start},{count} @@\n");
+                for line in lines {
+                    diff.push('+');
+                    diff.push_str(line);
+                    diff.push('\n');
+                }
+                if !content.is_empty() && !content.ends_with('\n') {
+                    diff.push_str("\\ No newline at end of file\n");
+                }
+                change["diff"] = Value::String(diff);
+            }
             let path = changes
                 .as_array()
                 .and_then(|changes| changes.first())

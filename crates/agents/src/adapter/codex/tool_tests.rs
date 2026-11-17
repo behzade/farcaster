@@ -80,6 +80,34 @@ fn file_change_metadata_keeps_every_target() {
 }
 
 #[test]
+fn added_files_project_content_as_patches_without_changing_native_data() {
+    for (content, expected) in [
+        ("", "@@ -0,0 +0,0 @@\n"),
+        ("\n", "@@ -0,0 +1,1 @@\n+\n"),
+        ("one\ntwo\n", "@@ -0,0 +1,2 @@\n+one\n+two\n"),
+        ("one\r\n", "@@ -0,0 +1,1 @@\n+one\r\n"),
+        (
+            "+literal\n-literal",
+            "@@ -0,0 +1,2 @@\n++literal\n+-literal\n\\ No newline at end of file\n",
+        ),
+    ] {
+        let update = json!({
+            "path":"existing.rs", "kind":{"type":"update","move_path":null},
+            "diff":"@@ -1 +1 @@\n-old\n+new\n"
+        });
+        let item = json!({"type":"fileChange", "changes":[
+            {"path":"new.rs", "kind":{"type":"add"}, "diff":content},
+            update
+        ]});
+        let projection = project(&item, "fileChange");
+        assert_eq!(projection.args["changes"][0]["diff"], expected);
+        assert_eq!(projection.args["changes"][1], update);
+        assert_eq!(projection.metadata.targets, ["new.rs", "existing.rs"]);
+        assert_eq!(projection.metadata.native, Some(item));
+    }
+}
+
+#[test]
 fn sleep_projection_reports_the_wait_duration() {
     let item = json!({
         "type":"sleep",
