@@ -118,10 +118,7 @@ impl StateStore {
                     |row| row.get::<_, i64>(0),
                 )
                 .map_err(|error| format!("read legacy pi-gpui schema version: {error}"))?;
-            if !matches!(
-                version,
-                7 | 11 | 12 | 13 | 14 | 15 | 17 | 18 | 19 | 20 | 21 | SCHEMA_VERSION
-            ) {
+            if !matches!(version, 7 | 11..=15 | 17..=SCHEMA_VERSION) {
                 return Err(format!(
                     "legacy pi-gpui state schema {version} is not supported by this build"
                 ));

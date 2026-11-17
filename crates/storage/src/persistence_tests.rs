@@ -754,6 +754,41 @@ fn legacy_pi_gpui_v7_state_import_restores_archives_once() -> Result<(), Box<dyn
 }
 
 #[test]
+fn legacy_pi_gpui_recent_schema_import_preserves_drafts() -> Result<(), Box<dyn std::error::Error>>
+{
+    for version in 22..=crate::SCHEMA_VERSION {
+        let temp = tempdir()?;
+        let legacy_path = temp.path().join("gui-state.sqlite3");
+        let legacy = Connection::open(&legacy_path)?;
+        legacy.execute_batch(include_str!("schema.sql"))?;
+        legacy.execute(
+            "INSERT INTO meta(key, value) VALUES('schema_version', ?1)",
+            [version.to_string()],
+        )?;
+        if version == 22 {
+            legacy.execute_batch("DROP TABLE account_state;")?;
+        }
+        legacy.execute_batch(
+            "INSERT INTO projects(id, path, added_ms) VALUES(1, '/project', 1);
+             INSERT INTO sessions(id, project_id, harness, locator, modified_ms, archived_at, created_ms)
+               VALUES(1, 1, 'pi', '/session.jsonl', 1, 1, 1);
+             INSERT INTO composer_sessions(session_id, text, cursor, selection_start, selection_end, history_json, updated_ms)
+               VALUES(1, 'legacy draft', 12, 12, 12, '[]', 1);",
+        )?;
+        drop(legacy);
+
+        let mut destination = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+        destination.import_legacy_pi_gpui_state(&legacy_path)?;
+        assert!(destination.cached_sessions("")?[0].archived);
+        assert_eq!(
+            destination.load_composer_sessions()?[0].text,
+            "legacy draft"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
