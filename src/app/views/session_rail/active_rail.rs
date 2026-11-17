@@ -459,6 +459,7 @@ impl FarcasterApp {
                     )
                     .child(div().flex_none().pt(theme().space.sm).child(archived_panel)),
             )
+            .child(super::super::accounts::sidebar(self, entity.clone()))
             .child(
                 div()
                     .debug_selector(|| "session-sidebar-footer".into())

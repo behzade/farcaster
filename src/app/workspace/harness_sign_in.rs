@@ -12,6 +12,7 @@ pub(in crate::app) struct HarnessSignInState {
     pub url: Option<String>,
     pub message: Option<String>,
     pub failed: bool,
+    pub signing_out: bool,
     task: Option<Task<()>>,
 }
 
@@ -38,7 +39,7 @@ impl FarcasterApp {
         profile_id: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        if self.settings.sign_in.active.is_some() {
+        if self.settings.sign_in.active.is_some() || self.settings.sign_in.signing_out {
             return;
         }
         let result = (|| {
@@ -103,7 +104,8 @@ impl FarcasterApp {
                                                         cx,
                                                     );
                                                 }
-                                                "Signed in. You can start a session.".into()
+                                                this.send(RuntimeCommand::RefreshAccounts, cx);
+                                                "Sign-in completed.".into()
                                             }
                                             Err(error) => error,
                                         });
@@ -122,6 +124,57 @@ impl FarcasterApp {
                 }));
             }
         }
+        cx.notify();
+    }
+
+    pub(in crate::app) fn sign_out_account(
+        &mut self,
+        source: crate::agents::accounts::AccountSource,
+        identity: crate::agents::accounts::AccountIdentity,
+        cx: &mut Context<Self>,
+    ) {
+        if self.settings.sign_in.active.is_some() || self.settings.sign_in.signing_out {
+            return;
+        }
+        let result = (|| {
+            Ok::<_, String>(AgentLaunchConfig {
+                profiles: self.settings.harness_profiles.clone(),
+                profile_id: source.profile_id.clone(),
+                app_proxy: crate::app::persistence::open()?.load_network_proxy()?,
+                ..Default::default()
+            })
+        })();
+        let config = match result {
+            Ok(config) => config,
+            Err(error) => {
+                self.settings.sign_in.message = Some(error);
+                self.settings.sign_in.failed = true;
+                cx.notify();
+                return;
+            }
+        };
+        let project = std::path::PathBuf::from(&source.context);
+        self.settings.sign_in.signing_out = true;
+        self.settings.sign_in.message = None;
+        self.settings.sign_in.task = Some(cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    crate::agents::logout_account(&config, &source, &identity, &project)
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                this.settings.sign_in.signing_out = false;
+                this.settings.sign_in.failed = result.is_err();
+                this.settings.sign_in.message = Some(
+                    result
+                        .err()
+                        .unwrap_or_else(|| "Signed out of the shared CLI login.".into()),
+                );
+                this.send(RuntimeCommand::RefreshAccounts, cx);
+                cx.notify();
+            });
+        }));
         cx.notify();
     }
 

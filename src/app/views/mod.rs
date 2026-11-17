@@ -1,3 +1,4 @@
+mod accounts;
 mod app_state;
 mod attachments;
 mod composer;

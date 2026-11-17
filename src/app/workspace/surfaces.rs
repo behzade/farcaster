@@ -988,6 +988,7 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.send(crate::app::RuntimeCommand::RefreshAccounts, cx);
         if self.route_overlay_action(window, cx, Self::open_settings) {
             return;
         }

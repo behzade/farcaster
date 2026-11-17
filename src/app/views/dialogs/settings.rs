@@ -3,7 +3,7 @@ use crate::app::ui::primitives::SelectionStyle as _;
 use gpui_component::Selectable as _;
 mod appearance;
 mod harness_profiles;
-mod harness_sign_in;
+pub(in crate::app::views) mod harness_sign_in;
 mod worker_tasks;
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _,
@@ -42,6 +42,7 @@ pub(in crate::app::views) fn render(
         SettingsTab::Workers => worker_tasks::render(app, entity.clone(), cx),
         SettingsTab::Appearance => appearance::render(app, entity.clone()),
         SettingsTab::Connections => connections(app, entity.clone()),
+        SettingsTab::Accounts => super::super::accounts::settings(app, entity.clone()),
     };
     modal(
         "settings",
@@ -338,7 +339,6 @@ fn connections(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEleme
         .flex_col()
         .gap(theme().size(24.0))
         .child(harness_profiles::render(app, entity.clone()))
-        .child(harness_sign_in::render(app, entity.clone()))
         .child(toggle_setting(
             "builtin-mcp-toggle",
             "Built-in MCP",

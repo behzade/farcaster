@@ -1,11 +1,14 @@
 use super::*;
 
-pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
+pub(in crate::app::views) fn render(
+    app: &FarcasterApp,
+    entity: WeakEntity<FarcasterApp>,
+) -> AnyElement {
     let mut rows = div()
         .flex()
         .flex_col()
         .gap(theme().space.sm)
-        .child(setting_label("Harness sign-in", ""));
+        .child(setting_label("Sign in", ""));
     let mut targets = crate::agents::Backend::ALL
         .into_iter()
         .filter(|backend| crate::agents::supports_sign_in(*backend))
@@ -29,7 +32,7 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
             ),
             "Sign in",
             ButtonTone::Quiet,
-            app.settings.sign_in.active.is_none(),
+            app.settings.sign_in.active.is_none() && !app.settings.sign_in.signing_out,
             move |_, cx| {
                 let _ = sign_in.update(cx, |this, cx| {
                     this.sign_in_harness(backend, profile_id.clone(), cx)
