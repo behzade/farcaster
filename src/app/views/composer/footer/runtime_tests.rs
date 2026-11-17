@@ -6,8 +6,8 @@ fn sandbox_labels_and_colors_distinguish_unrestricted_access() {
     assert_eq!(access_mode_label(Sandboxed), "Sandbox: On");
     assert_eq!(access_mode_label(Full), "Sandbox: Off");
     assert_eq!(access_mode_label(Auto), "Sandbox: Auto");
-    assert_eq!(access_mode_color(Sandboxed), theme().colors.text);
-    assert_eq!(access_mode_color(Auto), theme().colors.text);
+    assert_eq!(access_mode_color(Sandboxed), theme().colors.muted);
+    assert_eq!(access_mode_color(Auto), theme().colors.muted);
     assert_eq!(access_mode_color(Full), theme().colors.warning);
 }
 

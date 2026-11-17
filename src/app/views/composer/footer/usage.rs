@@ -9,11 +9,11 @@ use crate::{
     sessions::UsageSummary,
 };
 use gpui::{
-    AnyElement, FontWeight, IntoElement as _, ParentElement as _, Styled as _, div,
-    prelude::FluentBuilder as _,
+    AnyElement, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
+    Styled as _, div, prelude::FluentBuilder as _,
 };
 
-pub(super) fn render(usage: ComposerUsage) -> AnyElement {
+pub(super) fn render(usage: ComposerUsage, anchor: gpui::Anchor) -> AnyElement {
     let content = div()
         .flex()
         .items_center()
@@ -29,15 +29,19 @@ pub(super) fn render(usage: ComposerUsage) -> AnyElement {
             )
         });
     Popover::new("composer-usage-popover")
-        .anchor(gpui::Anchor::BottomRight)
+        .anchor(anchor)
         .appearance(false)
-        .trigger(dropdown_content_button(
-            "composer-usage",
-            "Usage details",
-            content,
-            ButtonTone::Quiet,
-            true,
-        ))
+        .trigger(
+            dropdown_content_button(
+                "composer-usage",
+                "Usage details",
+                content,
+                ButtonTone::Quiet,
+                true,
+            )
+            .px(theme().space.xs)
+            .debug_selector(|| "composer-usage-trigger".into()),
+        )
         .content(move |_, _, _| details(&usage))
         .into_any_element()
 }

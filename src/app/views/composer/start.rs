@@ -96,6 +96,7 @@ pub(super) fn harness_selector(
     }
     Dropdown::new("draft-harness", label, items)
         .tone(ButtonTone::Quiet)
+        .px(theme().space.xs)
         .anchor(gpui::Anchor::BottomLeft)
         .auto_menu_width()
         .text_color(theme().colors.text)

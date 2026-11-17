@@ -33,7 +33,6 @@ impl FarcasterApp {
             .flex_1()
             .flex()
             .items_center()
-            .gap(theme().space.md)
             .overflow_x_scroll()
             .track_scroll(scroll)
             .child(div().min_w_0().flex_1())
@@ -53,8 +52,19 @@ impl FarcasterApp {
             .flex_1()
             .flex()
             .items_center()
-            .gap(theme().space.md)
-            .child(super::attachments::attach_button(entity))
+            .gap(theme().space.sm)
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(theme().space.xs)
+                    .child(super::attachments::attach_button(entity))
+                    .child(usage::render(
+                        composer_usage(self),
+                        gpui::Anchor::BottomLeft,
+                    )),
+            )
             .child(settings)
             .into_any_element()
     }
@@ -63,17 +73,27 @@ impl FarcasterApp {
         &self,
         scroll: &gpui::ScrollHandle,
         mode: Option<&str>,
-    ) -> AnyElement {
+        standalone_usage: bool,
+    ) -> Option<AnyElement> {
         let usage = composer_usage(self);
-        div()
+        let context = context_value(&usage);
+        if context.is_none() && mode.is_none() && !standalone_usage {
+            return None;
+        }
+        let status = div()
             .id("composer-status")
+            .debug_selector(|| "composer-status".into())
             .w_full()
             .min_w_0()
-            .h(theme().controls.icon_button)
+            .h(if standalone_usage {
+                theme().controls.icon_button
+            } else {
+                theme().type_scale.line_body
+            })
             .flex_none()
             .flex()
             .items_center()
-            .px(theme().space.sm)
+            .px(theme().space.md)
             .text_size(theme().type_scale.caption)
             .line_height(theme().type_scale.line_body)
             .text_color(theme().colors.muted)
@@ -92,12 +112,14 @@ impl FarcasterApp {
                 )
             })
             .child(div().min_w_0().flex_1())
-            .when_some(context_value(&usage), |row, value| {
+            .when_some(context, |row, value| {
                 row.child(context_metric(&usage, value))
-                    .child(div().w(theme().space.md))
             })
-            .child(usage::render(usage))
-            .into_any_element()
+            .when(standalone_usage, |row| {
+                row.gap(theme().space.sm)
+                    .child(usage::render(usage, gpui::Anchor::BottomRight))
+            });
+        Some(status.into_any_element())
     }
 
     pub(in crate::app::views) fn render_composer_actions(

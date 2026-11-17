@@ -81,6 +81,7 @@ pub(in crate::app::views) fn render(
                 ButtonTone::Quiet,
                 true,
             )
+            .px(theme().space.xs)
             .flex_none(),
         )
         .on_open_change(move |open, window, cx| {
@@ -98,7 +99,6 @@ pub(in crate::app::views) fn render(
         .flex_none()
         .flex()
         .items_center()
-        .gap(theme().space.md)
         .child(runtime)
         .when(app.snapshot.sandbox_controls_available(), |content| {
             content.child(access_selector(
@@ -123,7 +123,7 @@ fn setting_content() -> Div {
     div()
         .flex()
         .items_center()
-        .gap(theme().space.sm)
+        .gap(theme().space.xs)
         .text_size(theme().type_scale.body)
         .line_height(theme().type_scale.line_body)
         .font_weight(FontWeight::NORMAL)
@@ -174,6 +174,8 @@ fn access_selector(
             .collect(),
     )
     .tone(ButtonTone::Quiet)
+    .px(theme().space.xs)
+    .auto_menu_width()
     .anchor(gpui::Anchor::BottomLeft)
     .accessibility_label(sandbox_state_tooltip(state, selected))
     .disabled(supported.len() < 2)
@@ -221,7 +223,7 @@ const fn access_mode_label(mode: HarnessAccessMode) -> &'static str {
 
 fn access_mode_color(mode: HarnessAccessMode) -> gpui::Rgba {
     match mode {
-        HarnessAccessMode::Sandboxed | HarnessAccessMode::Auto => theme().colors.text,
+        HarnessAccessMode::Sandboxed | HarnessAccessMode::Auto => theme().colors.muted,
         HarnessAccessMode::Full => theme().colors.warning,
     }
 }

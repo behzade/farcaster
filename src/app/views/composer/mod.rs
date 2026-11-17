@@ -55,7 +55,7 @@ impl FarcasterApp {
                 .flex()
                 .flex_col()
                 .child(self.render_composer_request(entity, focused))
-                .child(self.render_composer_status(status_scroll, mode))
+                .children(self.render_composer_status(status_scroll, mode, true))
                 .into_any_element();
         }
 
@@ -206,7 +206,7 @@ impl FarcasterApp {
                     .flex_none()
                     .flex()
                     .items_center()
-                    .gap(theme().space.md)
+                    .gap(theme().space.sm)
                     .child(self.render_composer_controls(entity.clone(), footer_scroll))
                     .child(actions),
             );
@@ -229,7 +229,7 @@ impl FarcasterApp {
                 |body| body.child(self.render_composer_request(entity.clone(), focused)),
             )
             .child(composer)
-            .child(self.render_composer_status(status_scroll, mode))
+            .children(self.render_composer_status(status_scroll, mode, false))
             .into_any_element()
     }
 

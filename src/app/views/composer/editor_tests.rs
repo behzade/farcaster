@@ -223,12 +223,13 @@ fn composer_text_attachments_and_controls_share_an_inset(cx: &mut gpui::TestAppC
         |cx, app, _, project| {
             cx.simulate_resize(gpui::size(px(1_400.), px(900.)));
             let mut settings_position = None;
-            for (text, attachment, running) in [
-                ("", false, false),
-                ("one", false, false),
-                ("", false, true),
-                ("one", false, true),
-                ("one", true, false),
+            for (text, attachment, running, context) in [
+                ("", false, false, false),
+                ("one", false, false, false),
+                ("", false, true, false),
+                ("one", false, true, false),
+                ("one", false, false, true),
+                ("one", true, false, false),
             ] {
                 cx.update(|window, cx| {
                     app.update(cx, |app, cx| {
@@ -237,6 +238,11 @@ fn composer_text_attachments_and_controls_share_an_inset(cx: &mut gpui::TestAppC
                             &mut std::sync::Arc::make_mut(&mut app.snapshot).conversation,
                         )
                         .running = running;
+                        std::sync::Arc::make_mut(&mut app.snapshot).stats = if context {
+                            serde_json::json!({"contextUsage": {"tokens": 25_000, "contextWindow": 200_000}})
+                        } else {
+                            serde_json::Value::Null
+                        };
                         if attachment {
                             app.composer.pastes.insert(
                                 app.composer.sessions.current_target().to_owned(),
@@ -286,6 +292,21 @@ fn composer_text_attachments_and_controls_share_an_inset(cx: &mut gpui::TestAppC
                 let add = cx
                     .debug_bounds("composer-attach")
                     .expect("attachment control");
+                let usage = cx
+                    .debug_bounds("composer-usage-trigger")
+                    .expect("usage control");
+                assert_eq!(usage.center().y, add.center().y, "usage shares the toolbar");
+                assert!(usage.right() < frame.right(), "usage stays in the composer");
+                if context {
+                    let status = cx.debug_bounds("composer-status").expect("context row");
+                    assert!(status.top() >= frame.bottom(), "context stays separate");
+                    assert_eq!(status.size.height, theme().type_scale.line_body);
+                } else {
+                    assert!(
+                        cx.debug_bounds("composer-status").is_none(),
+                        "no extra status row without context or an editor mode"
+                    );
+                }
                 assert_eq!(
                     add.left() - frame.left(),
                     frame.bottom() - add.bottom(),
