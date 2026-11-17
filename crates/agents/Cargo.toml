@@ -12,7 +12,7 @@ test-support = ["dep:farcaster-conversation"]
 [dependencies]
 agent-client-protocol = "2.1.0"
 async-channel = "2.5.0"
-base64 = "0.22.1"
+base64 = "0.23.1"
 blocking = "1.6.2"
 claude-sdk-types = { path = "../claude-sdk-types", features = ["cli-compat"] }
 farcaster-access = { path = "../access" }

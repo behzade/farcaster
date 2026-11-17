@@ -10,7 +10,7 @@ license = "GPL-3.0-or-later"
 test-support = []
 
 [dependencies]
-base64 = "0.22.1"
+base64 = "0.23.1"
 farcaster-agent-protocol = { path = "../agent-protocol" }
 farcaster-utility = { path = "../utility" }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
