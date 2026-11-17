@@ -13,36 +13,23 @@ use gpui::{
     Styled as _, div, prelude::FluentBuilder as _,
 };
 
-pub(super) fn render(usage: ComposerUsage, anchor: gpui::Anchor) -> AnyElement {
-    let content = div()
-        .flex()
-        .items_center()
-        .gap(theme().space.sm)
-        .text_size(theme().type_scale.caption)
-        .text_color(theme().colors.muted)
-        .child("Usage")
-        .when(usage.aggregate.cost_micros > 0, |row| {
-            row.child(
-                div()
-                    .text_color(theme().colors.muted)
-                    .child(format_cost(usage.aggregate.cost_micros)),
-            )
-        });
+pub(super) fn render(usage: ComposerUsage, content: AnyElement) -> AnyElement {
     Popover::new("composer-usage-popover")
-        .anchor(anchor)
+        .anchor(gpui::Anchor::BottomLeft)
         .appearance(false)
         .trigger(
             dropdown_content_button(
-                "composer-usage",
+                "composer-context",
                 "Usage details",
                 content,
                 ButtonTone::Quiet,
                 true,
             )
+            .dropdown_caret(false)
             .h(theme().type_scale.line_body)
             .py(gpui::px(0.0))
-            .px(theme().space.xs)
-            .debug_selector(|| "composer-usage-trigger".into()),
+            .px(gpui::px(0.0))
+            .debug_selector(|| "composer-context-trigger".into()),
         )
         .content(move |_, _, _| details(&usage))
         .into_any_element()
@@ -100,6 +87,7 @@ fn details(usage: &ComposerUsage) -> AnyElement {
         );
     }
     floating_surface()
+        .debug_selector(|| "composer-usage-details".into())
         .w(theme().size(360.0))
         .rounded(theme().radius)
         .p(theme().space.md)

@@ -229,7 +229,7 @@ fn composer_text_attachments_and_controls_share_an_inset(cx: &mut gpui::TestAppC
                 ("", false, true, false),
                 ("one", false, true, false),
                 ("one", false, false, true),
-                ("one", true, false, false),
+                ("one", true, false, true),
             ] {
                 cx.update(|window, cx| {
                     app.update(cx, |app, cx| {
@@ -292,19 +292,18 @@ fn composer_text_attachments_and_controls_share_an_inset(cx: &mut gpui::TestAppC
                 let add = cx
                     .debug_bounds("composer-attach")
                     .expect("attachment control");
-                let usage = cx
-                    .debug_bounds("composer-usage-trigger")
-                    .expect("usage control");
+                assert!(cx.debug_bounds("composer-usage-trigger").is_none());
+                let context_trigger = cx.debug_bounds("composer-context-trigger");
+                assert_eq!(context_trigger.is_some(), context);
                 let status = cx.debug_bounds("composer-status").expect("status row");
                 assert!(
                     status.top() >= frame.bottom(),
                     "status stays below the composer"
                 );
                 assert_eq!(status.size.height, theme().type_scale.line_body);
-                assert!(
-                    usage.top() >= frame.bottom(),
-                    "usage stays separate from message controls"
-                );
+                if let Some(context) = context_trigger {
+                    assert!(context.top() >= frame.bottom());
+                }
                 assert_eq!(
                     add.left() - frame.left(),
                     frame.bottom() - add.bottom(),
@@ -352,6 +351,12 @@ fn composer_text_attachments_and_controls_share_an_inset(cx: &mut gpui::TestAppC
                     assert_eq!(input.top(), frame.top() + theme().border + theme().space.md);
                 }
             }
+            let context = cx
+                .debug_bounds("composer-context-trigger")
+                .expect("context control");
+            cx.simulate_click(context.center(), Default::default());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            assert!(cx.debug_bounds("composer-usage-details").is_some());
         },
     );
 }

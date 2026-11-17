@@ -93,10 +93,9 @@ impl FarcasterApp {
                 )
             })
             .when_some(context, |row, value| {
-                row.child(context_metric(&usage, value))
-            })
-            .child(div().min_w_0().flex_1())
-            .child(usage::render(usage, gpui::Anchor::BottomRight));
+                let metric = context_metric(&usage, value);
+                row.child(usage::render(usage, metric))
+            });
         status.into_any_element()
     }
 
@@ -161,6 +160,7 @@ fn context_metric(usage: &ComposerUsage, value: String) -> AnyElement {
         .flex_none()
         .flex()
         .items_center()
+        .text_size(theme().type_scale.caption)
         .gap(theme().space.sm)
         .when_some(usage.context_percent, |metric, percent| {
             metric.child(context_meter(
