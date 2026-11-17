@@ -1,3 +1,4 @@
+use super::super::process_command::environment;
 use crate::{AgentLaunchConfig, Backend, accounts::*};
 use serde_json::{Value, json};
 use std::path::Path;
@@ -14,7 +15,7 @@ pub(super) fn capabilities() -> AccountCapabilities {
 pub(super) fn source(config: &AgentLaunchConfig, project: &Path) -> Result<AccountSource, String> {
     let launch = super::super::configuration_launch(config, Backend::Claude)?;
     let command = launch.command(project)?;
-    let env = |name| super::super::accounts::environment(&command, name);
+    let env = |name| environment(&command, name);
     let provider = [
         ("CLAUDE_CODE_USE_BEDROCK", "bedrock"),
         ("CLAUDE_CODE_USE_VERTEX", "vertex"),
@@ -47,10 +48,7 @@ pub(super) fn source(config: &AgentLaunchConfig, project: &Path) -> Result<Accou
     ))
 }
 
-pub(super) fn read(
-    config: &AgentLaunchConfig,
-    project: &Path,
-) -> Result<Vec<AccountObservation>, String> {
+pub(super) fn read(config: &AgentLaunchConfig, project: &Path) -> Result<AccountDiscovery, String> {
     let launch = super::super::configuration_launch(config, Backend::Claude)?;
     let source = source(config, project)?;
     let mut process = super::process::Process::spawn(
@@ -74,7 +72,10 @@ pub(super) fn read(
     } else {
         observation.limits_failed = true;
     }
-    Ok(vec![observation])
+    Ok(AccountDiscovery {
+        source: observation.source.clone(),
+        observations: vec![observation],
+    })
 }
 
 pub(super) fn observation(

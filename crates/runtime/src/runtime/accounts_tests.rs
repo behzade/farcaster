@@ -54,16 +54,33 @@ fn service() -> (
     )
 }
 
+fn discovered(
+    service: &AccountService,
+    source: AccountSource,
+    observations: Vec<AccountObservation>,
+) {
+    service
+        .sender
+        .send((
+            source_scope(&source),
+            (
+                service.generation,
+                Ok(AccountDiscovery {
+                    source,
+                    observations,
+                }),
+            ),
+        ))
+        .unwrap();
+}
+
 #[test]
 fn accounts_discard_late_refresh_and_schedule_a_replacement() {
     let (mut service, _, tx, _) = service();
     let initial = observation("old@example.com", 100);
     let scope = source_scope(&initial.source);
     service.pending.insert(scope.clone(), service.generation);
-    service
-        .sender
-        .send((scope.clone(), (service.generation, Ok(vec![initial]))))
-        .unwrap();
+    discovered(&service, initial.source.clone(), vec![initial]);
     service.invalidate();
     service.next_refresh = Instant::now() + Duration::from_secs(300);
     service.tick(&AgentLaunchConfig::default(), Path::new("/project"), &tx);
@@ -150,5 +167,78 @@ fn accounts_run_observation_does_not_replace_the_next_launch_account() {
     assert_eq!(
         service.snapshot.connections[0].auth,
         AccountAuthState::SignedIn
+    );
+}
+
+#[test]
+fn accounts_login_switch_and_logout_replace_shared_store_across_projects() {
+    let (mut service, events, tx, _) = service();
+    let config = AgentLaunchConfig::default();
+    let project = Path::new("/other-project");
+    let initial = observation("old@example.com", 100);
+    service.snapshot.apply(initial.clone());
+    let mut next = initial;
+    next.source.context = "/other-project".into();
+    next.observed_at = 200;
+    service.snapshot.apply(next.clone());
+    service.tick(&config, project, &tx);
+    events
+        .send(AccountEvent::LoginChanged {
+            backend: Backend::Codex,
+            profile_id: None,
+        })
+        .unwrap();
+    service.tick(&config, project, &tx);
+    next.identity.as_mut().unwrap().email = Some("new@example.com".into());
+    next.observed_at = 300;
+    discovered(&service, next.source.clone(), vec![next.clone()]);
+    service.tick(&config, project, &tx);
+    assert_eq!(service.snapshot.connections.len(), 1);
+    let current = &service.snapshot.connections[0];
+    assert_eq!(
+        service
+            .snapshot
+            .account(current.account_id.as_deref().unwrap())
+            .unwrap()
+            .identity
+            .email
+            .as_deref(),
+        Some("new@example.com")
+    );
+
+    discovered(&service, next.source, vec![]);
+    service.tick(&config, project, &tx);
+    assert_eq!(service.snapshot.connections.len(), 1);
+    assert_eq!(
+        service.snapshot.connections[0].auth,
+        AccountAuthState::SignedOut
+    );
+    assert!(service.snapshot.connections[0].account_id.is_none());
+    assert!(service.snapshot.connections[0].limits.is_empty());
+}
+
+#[test]
+fn accounts_empty_discovery_preserves_other_credential_stores_and_live_runs() {
+    let (mut service, _, tx, _) = service();
+    let initial = observation("me@example.com", 100);
+    service.snapshot.apply(initial.clone());
+    let mut other = initial.clone();
+    other.source.credential_source = "native:other-home".into();
+    service.snapshot.apply(other);
+    let mut running = initial.clone();
+    running.source.incarnation = Some("running".into());
+    service.snapshot.apply(running);
+    let mut source = initial.source;
+    source.context = "/other-project".into();
+    discovered(&service, source, vec![]);
+    service.tick(&AgentLaunchConfig::default(), Path::new("/project"), &tx);
+    assert_eq!(
+        service.snapshot.connections[0].auth,
+        AccountAuthState::SignedOut
+    );
+    assert!(
+        service.snapshot.connections[1..]
+            .iter()
+            .all(|c| c.auth == AccountAuthState::SignedIn && !c.limits.is_empty())
     );
 }

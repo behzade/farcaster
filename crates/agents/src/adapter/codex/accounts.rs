@@ -1,3 +1,4 @@
+use super::super::process_command::environment;
 use super::{
     connection::read_message,
     contract::{CodexInbound, CodexRequestId},
@@ -110,11 +111,10 @@ impl AccountProcess {
 pub(super) fn source(config: &AgentLaunchConfig, project: &Path) -> Result<AccountSource, String> {
     let launch = super::super::configuration_launch(config, Backend::Codex)?;
     let command = launch.command(project)?;
-    let home = super::super::accounts::environment(&command, "CODEX_HOME")
+    let home = environment(&command, "CODEX_HOME")
         .map(std::path::PathBuf::from)
         .or_else(|| {
-            super::super::accounts::environment(&command, "HOME")
-                .map(|p| std::path::PathBuf::from(p).join(".codex"))
+            environment(&command, "HOME").map(|p| std::path::PathBuf::from(p).join(".codex"))
         });
     let credential_source = format!("native:{}", home.unwrap_or_default().display());
     Ok(super::super::accounts::source(
@@ -126,10 +126,7 @@ pub(super) fn source(config: &AgentLaunchConfig, project: &Path) -> Result<Accou
     ))
 }
 
-pub(super) fn read(
-    config: &AgentLaunchConfig,
-    project: &Path,
-) -> Result<Vec<AccountObservation>, String> {
+pub(super) fn read(config: &AgentLaunchConfig, project: &Path) -> Result<AccountDiscovery, String> {
     let source = source(config, project)?;
     let mut process = AccountProcess::start(config, project)?;
     let account = process.request("account/read", json!({"refreshToken":false}))?;
@@ -147,7 +144,10 @@ pub(super) fn read(
     observation.complete_limits = limits.is_some();
     observation.limits_failed = limits.is_none();
     observation.limits = limits.unwrap_or_default();
-    Ok(vec![observation])
+    Ok(AccountDiscovery {
+        source: observation.source.clone(),
+        observations: vec![observation],
+    })
 }
 
 pub(super) fn observation(source: AccountSource, account: &Value, now: i64) -> AccountObservation {

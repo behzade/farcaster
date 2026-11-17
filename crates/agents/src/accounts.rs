@@ -58,7 +58,7 @@ pub struct AccountCapabilities {
 pub struct AccountSource {
     pub backend: Backend,
     pub profile_id: Option<String>,
-    /// Non-secret key for the effective launch environment, owned by the adapter.
+    /// Project where the adapter resolved this source; provenance, not identity.
     pub context: String,
     pub provider: String,
     pub credential_source: String,
@@ -77,11 +77,17 @@ impl AccountSource {
         serde_json::to_string(&(
             self.backend,
             &self.profile_id,
-            &self.context,
+            &self.credential_source,
             &self.provider,
             &self.incarnation,
         ))
         .expect("account source serializes")
+    }
+
+    pub fn same_store(&self, other: &Self) -> bool {
+        self.backend == other.backend
+            && self.profile_id == other.profile_id
+            && self.credential_source == other.credential_source
     }
 }
 
@@ -133,6 +139,12 @@ pub struct AccountObservation {
     pub capabilities: AccountCapabilities,
 }
 
+/// Complete discovery of one credential store, including when it has no accounts.
+pub struct AccountDiscovery {
+    pub source: AccountSource,
+    pub observations: Vec<AccountObservation>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Account {
     pub id: String,
@@ -167,6 +179,8 @@ pub struct RunAccountBinding {
     pub observed_at: i64,
     pub ended_at: Option<i64>,
     pub evidence: AccountBindingEvidence,
+    #[serde(default)]
+    pub project: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -177,6 +191,42 @@ pub struct AccountsSnapshot {
 }
 
 impl AccountsSnapshot {
+    /// Fold older project-scoped records into their credential-source connection.
+    pub fn normalize_connections(&mut self) {
+        for binding in &mut self.bindings {
+            if binding.project.is_empty()
+                && let Some(connection) = self
+                    .connections
+                    .iter()
+                    .find(|c| c.id == binding.connection_id)
+            {
+                binding.project = connection.source.context.clone();
+            }
+        }
+        let mut connections: Vec<AccountConnection> = Vec::new();
+        for mut connection in std::mem::take(&mut self.connections) {
+            if let Some(current) = connections
+                .iter_mut()
+                .find(|c| c.source.key() == connection.source.key())
+            {
+                for binding in &mut self.bindings {
+                    if binding.connection_id == connection.id {
+                        binding.connection_id = current.id.clone();
+                    }
+                }
+                if (connection.observed_at, connection.last_attempt_at)
+                    >= (current.observed_at, current.last_attempt_at)
+                {
+                    connection.id = current.id.clone();
+                    *current = connection;
+                }
+            } else {
+                connections.push(connection);
+            }
+        }
+        self.connections = connections;
+    }
+
     pub fn account(&self, id: &str) -> Option<&Account> {
         self.accounts.iter().find(|a| a.id == id)
     }
@@ -310,6 +360,7 @@ impl AccountsSnapshot {
             observed_at: at,
             ended_at: None,
             evidence,
+            project: source.context.clone(),
         });
     }
 }

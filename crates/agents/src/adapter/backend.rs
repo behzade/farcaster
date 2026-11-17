@@ -32,8 +32,8 @@ pub(super) trait BackendAdapter: Sync {
         &self,
         _config: &AgentLaunchConfig,
         _project: &Path,
-    ) -> Result<Vec<crate::accounts::AccountObservation>, String> {
-        Ok(Vec::new())
+    ) -> Result<crate::accounts::AccountDiscovery, String> {
+        Err("This adapter does not support account discovery".into())
     }
     fn logout_account(
         &self,

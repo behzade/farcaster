@@ -270,7 +270,11 @@ function makeAgent() {
 fn installed_sdk_helper_creates_resumes_and_reads_its_own_store() -> Result<(), String> {
     let dir = tempfile::tempdir().map_err(|error| error.to_string())?;
     let start = |temporary_store: Option<&Path>| {
-        let mut environment = std::process::Command::new("node");
+        let mut environment = AgentLaunchConfig {
+            program: "node".into(),
+            ..Default::default()
+        }
+        .command(dir.path())?;
         environment
             .env("HOME", dir.path())
             .env_remove("CURSOR_API_KEY");

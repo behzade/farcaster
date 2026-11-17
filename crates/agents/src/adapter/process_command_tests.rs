@@ -1,6 +1,65 @@
 use super::*;
 
 #[test]
+fn command_records_inherited_environment_explicitly() {
+    let directory = tempfile::tempdir().unwrap();
+    let command = AgentLaunchConfig {
+        program: "/usr/bin/env".into(),
+        ..Default::default()
+    }
+    .command_with_environment(directory.path(), None)
+    .unwrap();
+    assert_eq!(environment(&command, "PATH"), std::env::var_os("PATH"));
+    assert_eq!(environment(&command, "HOME"), std::env::var_os("HOME"));
+}
+
+#[test]
+fn captured_environment_is_authoritative_and_profile_directory_wins() {
+    assert!(std::env::var_os("PATH").is_some());
+    let directory = tempfile::tempdir().unwrap();
+    let profile = crate::HarnessProfile {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "fixture".into(),
+        backend: crate::Backend::Codex,
+        executable: "/usr/bin/env".into(),
+        data_directory: Some(directory.path().join("profile")),
+    };
+    let profiles = std::sync::Arc::new(crate::HarnessProfiles::default());
+    profiles.replace(vec![profile.clone()]).unwrap();
+    let mut config = AgentLaunchConfig {
+        profiles,
+        profile_id: Some(profile.id),
+        ..Default::default()
+    };
+    let captured = vec![
+        ("HOME".into(), "/fixture/home".into()),
+        ("CODEX_HOME".into(), "/fixture/captured-codex".into()),
+    ];
+    let mut command = config
+        .command_with_environment(directory.path(), Some(captured))
+        .unwrap();
+    assert!(environment(&command, "PATH").is_none());
+    assert_eq!(environment(&command, "HOME"), Some("/fixture/home".into()));
+    assert_eq!(
+        environment(&command, "CODEX_HOME"),
+        profile.data_directory.map(|p| p.into_os_string())
+    );
+    let output = command.output().unwrap();
+    assert!(output.status.success());
+    let child = String::from_utf8(output.stdout).unwrap();
+    assert!(!child.lines().any(|line| line.starts_with("PATH=")));
+    assert!(child.lines().any(|line| line == "HOME=/fixture/home"));
+
+    config.profile_id = None;
+    config.program = "sh".into();
+    assert!(
+        config
+            .command_with_environment(directory.path(), Some(vec![]))
+            .is_err()
+    );
+}
+
+#[test]
 fn command_sets_app_proxy_without_a_captured_environment() -> Result<(), String> {
     let project = tempfile::tempdir().map_err(|error| error.to_string())?;
     let proxy = "http://127.0.0.1:8118";

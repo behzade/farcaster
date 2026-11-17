@@ -1,6 +1,10 @@
 use crate::{AgentLaunchConfig, Backend, accounts::*};
 use std::path::Path;
 
+#[cfg(test)]
+#[path = "accounts_tests.rs"]
+mod tests;
+
 pub fn account_capabilities(backend: Backend) -> AccountCapabilities {
     super::for_backend(backend).account_capabilities()
 }
@@ -9,7 +13,7 @@ pub fn read_accounts(
     config: &AgentLaunchConfig,
     backend: Backend,
     project: &Path,
-) -> Result<Vec<AccountObservation>, String> {
+) -> Result<AccountDiscovery, String> {
     config.validate_profile_backend(backend)?;
     super::for_backend(backend).read_accounts(config, project)
 }
@@ -47,27 +51,29 @@ pub(super) fn source(
     }
 }
 
-pub(super) fn environment(
-    command: &std::process::Command,
-    name: &str,
-) -> Option<std::ffi::OsString> {
-    match command.get_envs().find(|(key, _)| *key == name) {
-        Some((_, value)) => value.map(std::ffi::OsString::from),
-        None => std::env::var_os(name),
-    }
-}
-
 /// Reads only the provider roster into the neutral model. Secret fields never leave this function.
 pub(super) fn stored_connections(
     config: &AgentLaunchConfig,
     backend: Backend,
     project: &Path,
     path: &Path,
-) -> Result<Vec<AccountObservation>, String> {
+) -> Result<AccountDiscovery, String> {
     use std::io::Read as _;
+    let source = source(
+        config,
+        backend,
+        project,
+        "",
+        format!("native:{}", path.display()),
+    );
     let file = match std::fs::File::open(path) {
         Ok(file) => file,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(AccountDiscovery {
+                source,
+                observations: Vec::new(),
+            });
+        }
         Err(_) => return Err("Account credential store could not be read".into()),
     };
     let mut bytes = Vec::new();
@@ -82,17 +88,14 @@ pub(super) fn stored_connections(
     let values = value
         .as_object()
         .ok_or("Account credential store format is unsupported")?;
-    Ok(values
+    let observations = values
         .iter()
         .filter(|(_, v)| matches!(v["type"].as_str(), Some("oauth" | "api_key" | "api")))
         .map(|(provider, _)| AccountObservation {
-            source: source(
-                config,
-                backend,
-                project,
-                provider,
-                format!("native:{}", path.display()),
-            ),
+            source: AccountSource {
+                provider: provider.clone(),
+                ..source.clone()
+            },
             identity: None,
             auth: AccountAuthState::Configured,
             limits: Vec::new(),
@@ -104,5 +107,9 @@ pub(super) fn stored_connections(
                 ..Default::default()
             },
         })
-        .collect())
+        .collect();
+    Ok(AccountDiscovery {
+        source,
+        observations,
+    })
 }

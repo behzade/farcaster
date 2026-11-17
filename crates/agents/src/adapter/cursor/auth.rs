@@ -1,5 +1,4 @@
 use std::{
-    ffi::OsString,
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -11,6 +10,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use super::super::process_command::environment;
 use crate::AgentLaunchConfig;
 use serde::Deserialize;
 
@@ -33,13 +33,6 @@ pub(super) fn account_source(
         "cursor",
         source,
     ))
-}
-
-pub(super) fn environment(command: &Command, name: &str) -> Option<OsString> {
-    match command.get_envs().find(|(key, _)| *key == name) {
-        Some((_, value)) => value.map(OsString::from),
-        None => std::env::var_os(name),
-    }
 }
 
 fn credential_path(config: &AgentLaunchConfig, command: &Command) -> Result<PathBuf, String> {
@@ -144,7 +137,7 @@ pub(super) fn sdk_command(
         self::environment(&environment, "PATH").as_deref(),
     )?;
     let mut command = Command::new(node);
-    command.current_dir(project);
+    command.current_dir(project).env_clear();
     for (key, value) in environment.get_envs() {
         match value {
             Some(value) => {

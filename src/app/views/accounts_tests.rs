@@ -82,8 +82,4 @@ fn accounts_same_email_in_different_stores_remains_distinct() {
     let mut snapshot = accounts(2);
     snapshot.accounts[1].identity.email = snapshot.accounts[0].identity.email.clone();
     assert_eq!(visible_connections(&snapshot).len(), 2);
-    let mut repeated = snapshot.connections[0].clone();
-    repeated.source.context = "/other-project".into();
-    snapshot.connections.push(repeated);
-    assert_eq!(visible_connections(&snapshot).len(), 2);
 }

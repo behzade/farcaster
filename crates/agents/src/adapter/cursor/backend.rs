@@ -26,28 +26,33 @@ impl BackendAdapter for CursorAdapter {
         &self,
         config: &AgentLaunchConfig,
         project: &Path,
-    ) -> Result<Vec<crate::accounts::AccountObservation>, String> {
+    ) -> Result<crate::accounts::AccountDiscovery, String> {
         let config = self.launch_configuration(config);
         let command = config.command(project)?;
         let configured = super::auth::api_key(&config, &command)?.is_some();
         let source = super::auth::account_source(&config, project, &command)?;
-        Ok(vec![crate::accounts::AccountObservation {
-            source,
-            identity: None,
-            auth: if configured {
-                crate::accounts::AccountAuthState::Configured
-            } else {
-                crate::accounts::AccountAuthState::SignedOut
-            },
-            limits: Vec::new(),
-            complete_limits: true,
-            limits_failed: false,
-            observed_at: crate::accounts::account_now(),
-            capabilities: self.account_capabilities(),
-        }])
+        Ok(crate::accounts::AccountDiscovery {
+            source: source.clone(),
+            observations: vec![crate::accounts::AccountObservation {
+                source,
+                identity: None,
+                auth: if configured {
+                    crate::accounts::AccountAuthState::Configured
+                } else {
+                    crate::accounts::AccountAuthState::SignedOut
+                },
+                limits: Vec::new(),
+                complete_limits: true,
+                limits_failed: false,
+                observed_at: crate::accounts::account_now(),
+                capabilities: self.account_capabilities(),
+            }],
+        })
     }
     fn sign_in_required(&self, config: &AgentLaunchConfig) -> bool {
-        super::auth::sign_in_required(config, &std::process::Command::new("node"))
+        let mut command = std::process::Command::new("node");
+        command.env_clear().envs(std::env::vars_os());
+        super::auth::sign_in_required(config, &command)
     }
     fn supports_sign_in(&self) -> bool {
         true

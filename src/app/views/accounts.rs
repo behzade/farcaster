@@ -20,32 +20,13 @@ use gpui::{
 };
 
 fn visible_connections(snapshot: &AccountsSnapshot) -> Vec<&AccountConnection> {
-    let mut rows: Vec<&AccountConnection> = Vec::new();
-    for connection in snapshot.connections.iter().filter(|c| {
-        c.available && c.source.incarnation.is_none() && c.auth != AccountAuthState::SignedOut
-    }) {
-        let identity = |c: &AccountConnection| {
-            c.account_id
-                .as_deref()
-                .and_then(|id| snapshot.account(id))
-                .map(|a| &a.identity)
-        };
-        // The same native credential source may be observed from several projects.
-        // Collapse duplicate presentation only; do not merge account IDs or quota pools.
-        if let Some(row) = rows.iter_mut().find(|c| {
-            c.source.backend == connection.source.backend
-                && c.source.profile_id == connection.source.profile_id
-                && c.source.provider == connection.source.provider
-                && c.source.credential_source == connection.source.credential_source
-                && identity(c) == identity(connection)
-        }) {
-            if connection.observed_at > row.observed_at {
-                *row = connection;
-            }
-        } else {
-            rows.push(connection);
-        }
-    }
+    let mut rows: Vec<_> = snapshot
+        .connections
+        .iter()
+        .filter(|c| {
+            c.available && c.source.incarnation.is_none() && c.auth != AccountAuthState::SignedOut
+        })
+        .collect();
     rows.sort_by_key(|c| {
         (
             name(snapshot, c).to_lowercase(),

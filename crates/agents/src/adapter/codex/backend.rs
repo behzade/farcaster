@@ -22,7 +22,7 @@ impl BackendAdapter for CodexAdapter {
         &self,
         config: &AgentLaunchConfig,
         project: &Path,
-    ) -> Result<Vec<crate::accounts::AccountObservation>, String> {
+    ) -> Result<crate::accounts::AccountDiscovery, String> {
         super::accounts::read(config, project)
     }
     fn supports_sign_in(&self) -> bool {

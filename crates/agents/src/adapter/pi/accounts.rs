@@ -1,18 +1,13 @@
+use super::super::process_command::environment;
 use crate::{AgentLaunchConfig, Backend, accounts::*};
 use std::path::{Path, PathBuf};
 
-pub(super) fn read(
-    config: &AgentLaunchConfig,
-    project: &Path,
-) -> Result<Vec<AccountObservation>, String> {
+pub(super) fn read(config: &AgentLaunchConfig, project: &Path) -> Result<AccountDiscovery, String> {
     let launch = super::launch_configuration(config);
     let command = launch.command(project)?;
-    let root = super::super::accounts::environment(&command, "PI_CODING_AGENT_DIR")
+    let root = environment(&command, "PI_CODING_AGENT_DIR")
         .map(PathBuf::from)
-        .or_else(|| {
-            super::super::accounts::environment(&command, "HOME")
-                .map(|h| PathBuf::from(h).join(".pi/agent"))
-        })
+        .or_else(|| environment(&command, "HOME").map(|h| PathBuf::from(h).join(".pi/agent")))
         .ok_or("Pi credential directory unavailable")?;
     super::super::accounts::stored_connections(
         config,

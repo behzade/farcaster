@@ -4,10 +4,7 @@ use agents::accounts::{
 };
 use std::path::Path;
 
-type ReadResult = (
-    u64,
-    Result<Vec<agents::accounts::AccountObservation>, String>,
-);
+type ReadResult = (u64, Result<agents::accounts::AccountDiscovery, String>);
 
 pub(super) struct AccountService {
     snapshot: AccountsSnapshot,
@@ -44,6 +41,7 @@ impl AccountService {
                 AccountsSnapshot::default()
             }
         };
+        snapshot.normalize_connections();
         for connection in &mut snapshot.connections {
             if connection.auth != AccountAuthState::SignedOut {
                 connection.auth = AccountAuthState::Unknown;
@@ -112,6 +110,10 @@ impl AccountService {
         project: &Path,
         tx: &supervisor::UiEventSender,
     ) {
+        if self.project.as_deref() != Some(project) {
+            self.project = Some(project.to_owned());
+            self.invalidate();
+        }
         if let Ok(profiles) = command.profiles.list()
             && (profiles != self.profiles || command.app_proxy != self.proxy)
         {
@@ -204,19 +206,27 @@ impl AccountService {
                 continue;
             }
             match result {
-                Ok(observations) => {
-                    let keys: HashSet<_> = observations.iter().map(|o| o.source.key()).collect();
+                Ok(discovery) => {
+                    let keys: HashSet<_> = discovery
+                        .observations
+                        .iter()
+                        .map(|o| o.source.key())
+                        .collect();
                     // A complete discovery can remove a credential without removing its history.
                     for connection in &mut self.snapshot.connections {
                         if connection.source.incarnation.is_none()
-                            && source_scope(&connection.source) == scope
+                            && connection.source.same_store(&discovery.source)
                             && !keys.contains(&connection.source.key())
                         {
                             connection.auth = AccountAuthState::SignedOut;
+                            connection.account_id = None;
                             connection.limits.clear();
+                            connection.observed_at = account_now();
+                            connection.last_attempt_at = connection.observed_at;
+                            connection.refresh_failed = false;
                         }
                     }
-                    for observation in observations {
+                    for observation in discovery.observations {
                         self.snapshot.apply(observation);
                     }
                 }
@@ -231,10 +241,6 @@ impl AccountService {
             }
             self.dirty = true;
         }
-        if self.project.as_deref() != Some(project) {
-            self.project = Some(project.to_owned());
-            self.invalidate();
-        }
         if self.enabled && self.active && Instant::now() >= self.next_refresh {
             self.last_refresh = Some(Instant::now());
             self.next_refresh = Instant::now() + Duration::from_secs(300);
@@ -248,9 +254,8 @@ impl AccountService {
                 if !agents::account_capabilities(backend).discover {
                     continue;
                 }
-                let scope =
-                    serde_json::to_string(&(backend, &profile_id, project.to_string_lossy()))
-                        .expect("account scope serializes");
+                let scope = serde_json::to_string(&(backend, &profile_id))
+                    .expect("account scope serializes");
                 if self.pending.contains_key(&scope) {
                     continue;
                 }
@@ -284,8 +289,7 @@ impl AccountService {
 }
 
 fn source_scope(source: &agents::accounts::AccountSource) -> String {
-    serde_json::to_string(&(source.backend, &source.profile_id, &source.context))
-        .expect("account scope serializes")
+    serde_json::to_string(&(source.backend, &source.profile_id)).expect("account scope serializes")
 }
 
 #[cfg(test)]

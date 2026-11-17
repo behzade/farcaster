@@ -121,3 +121,87 @@ fn complete_snapshot_keeps_known_metadata_for_sparse_matching_windows() {
     assert_eq!(state.connections[0].limits[0].resets_at, Some(2000));
     assert_eq!(state.connections[0].limits[0].observed_at, 200);
 }
+
+#[test]
+fn connections_follow_credential_stores_across_projects() {
+    let mut state = AccountsSnapshot::default();
+    let initial = observation("me@example.com", None, None, 100);
+    state.apply(initial.clone());
+    state.bind(
+        "run".into(),
+        &initial.source,
+        100,
+        AccountBindingEvidence::ObservedAtStartup,
+    );
+    let connection_id = state.connections[0].id.clone();
+    let account_id = state.connections[0].account_id.clone();
+    let mut next = initial.clone();
+    next.source.context = "/other-project".into();
+    next.observed_at = 200;
+    state.apply(next.clone());
+    assert_eq!(state.connections.len(), 1);
+    assert_eq!(state.connections[0].id, connection_id);
+    assert_eq!(state.connections[0].account_id, account_id);
+    assert_eq!(state.bindings[0].project, "/project");
+
+    next.source.credential_source = "native:other-home".into();
+    state.apply(next);
+    assert_eq!(state.connections.len(), 2);
+    assert_ne!(state.connections[1].account_id, account_id);
+
+    let mut switched = observation("new@example.com", None, None, 300);
+    switched.source.context = "/other-project".into();
+    switched.limits.clear();
+    state.apply(switched);
+    assert_eq!(state.connections.len(), 2);
+    assert_eq!(state.connections[0].id, connection_id);
+    assert_ne!(state.connections[0].account_id, account_id);
+    assert_eq!(state.bindings[0].account_id, account_id);
+    assert!(state.connections[0].limits.is_empty());
+}
+
+#[test]
+fn saved_project_duplicates_merge_without_rewriting_run_identity() {
+    let mut old = AccountsSnapshot::default();
+    let first = observation("old@example.com", None, None, 100);
+    old.apply(first.clone());
+    old.bind(
+        "first".into(),
+        &first.source,
+        100,
+        AccountBindingEvidence::ObservedAtStartup,
+    );
+    let old_account = old.bindings[0].account_id.clone();
+    let mut second = observation("new@example.com", None, None, 200);
+    second.source.context = "/other-project".into();
+    let mut other = AccountsSnapshot::default();
+    other.apply(second.clone());
+    other.bind(
+        "second".into(),
+        &second.source,
+        200,
+        AccountBindingEvidence::ObservedAtStartup,
+    );
+    let new_account = other.bindings[0].account_id.clone();
+    old.accounts.extend(other.accounts);
+    old.connections.extend(other.connections);
+    old.bindings.extend(other.bindings);
+    let mut json = serde_json::to_value(old).unwrap();
+    for binding in json["bindings"].as_array_mut().unwrap() {
+        binding.as_object_mut().unwrap().remove("project");
+    }
+    let mut loaded: AccountsSnapshot = serde_json::from_value(json).unwrap();
+    loaded.normalize_connections();
+    assert_eq!(loaded.connections.len(), 1);
+    assert_eq!(loaded.connections[0].account_id, new_account);
+    assert_eq!(loaded.bindings[0].account_id, old_account);
+    assert_eq!(loaded.bindings[1].account_id, new_account);
+    assert_eq!(loaded.bindings[0].project, "/project");
+    assert_eq!(loaded.bindings[1].project, "/other-project");
+    assert!(
+        loaded
+            .bindings
+            .iter()
+            .all(|b| b.connection_id == loaded.connections[0].id)
+    );
+}
