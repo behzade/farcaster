@@ -16,6 +16,25 @@ use serde::Deserialize;
 
 const LOGIN_HELPER: &str = include_str!("auth.mjs");
 
+pub(super) fn account_source(
+    config: &AgentLaunchConfig,
+    project: &Path,
+    command: &Command,
+) -> Result<crate::accounts::AccountSource, String> {
+    let source = if environment(command, "CURSOR_API_KEY").is_some() {
+        "environment:CURSOR_API_KEY".into()
+    } else {
+        format!("native:{}", credential_path(config, command)?.display())
+    };
+    Ok(super::super::accounts::source(
+        config,
+        crate::Backend::Cursor,
+        project,
+        "cursor",
+        source,
+    ))
+}
+
 pub(super) fn environment(command: &Command, name: &str) -> Option<OsString> {
     match command.get_envs().find(|(key, _)| *key == name) {
         Some((_, value)) => value.map(OsString::from),

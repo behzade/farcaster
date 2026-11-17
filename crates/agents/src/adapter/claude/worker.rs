@@ -69,7 +69,14 @@ impl WorkerSessionFactory for ClaudeWorkerFactory {
             !launch.ephemeral,
             launch.service_tier.as_deref(),
         )?;
-        let (mut worker, _) = attach(process, caller, &id, launch.access_mode, None)?;
+        let (mut worker, _) = attach(
+            process,
+            caller,
+            &id,
+            launch.access_mode,
+            None,
+            super::accounts::source(&command, &launch.project).ok(),
+        )?;
         if let Some(model) = launch.model {
             worker.select_model(
                 launch.provider.as_deref().unwrap_or(BACKEND.as_str()),
@@ -141,7 +148,14 @@ pub fn spawn_main(
         launch.service_tier.as_deref(),
     )?;
     let path = main_session::caller_session_path(command, BACKEND, &id);
-    let (worker, mut metadata) = attach(process, caller, &id, command.access_mode, path)?;
+    let (worker, mut metadata) = attach(
+        process,
+        caller,
+        &id,
+        command.access_mode,
+        path,
+        super::accounts::source(command, &launch.project).ok(),
+    )?;
     metadata.service_tier = launch.service_tier.clone();
     Ok((Box::new(worker), id, metadata))
 }
@@ -211,6 +225,10 @@ fn initialize(
         modes.insert(0, json!({"id":permission_mode(access),"name":name}));
     }
     Ok(MainSessionMetadata {
+        account: super::accounts::identity(
+            &serde_json::to_value(response.account).expect("SDK account serializes"),
+            "anthropic",
+        ),
         models,
         efforts,
         commands,
@@ -225,10 +243,37 @@ fn attach(
     id: &str,
     access: HarnessAccessMode,
     locator: Option<std::path::PathBuf>,
+    account_source: Option<crate::accounts::AccountSource>,
 ) -> Result<(ClaudeSession, MainSessionMetadata), String> {
     let metadata = initialize(&mut process, access)?;
+    let account_source = account_source.map(crate::accounts::AccountSource::for_run);
     caller.bind_with_locator(id.to_owned(), locator);
+    if let Some(source) = account_source.clone() {
+        let mut identity = metadata.account.clone();
+        if let Some(identity) = &mut identity {
+            identity.authority = source.provider.clone();
+        }
+        crate::accounts::publish_account_event(crate::accounts::AccountEvent::Observed {
+            observation: crate::accounts::AccountObservation {
+                source,
+                auth: if identity.as_ref().is_some_and(|id| id.email.is_some()) {
+                    crate::accounts::AccountAuthState::SignedIn
+                } else {
+                    crate::accounts::AccountAuthState::Unknown
+                },
+                identity,
+                limits: Vec::new(),
+                complete_limits: false,
+                limits_failed: false,
+                observed_at: crate::accounts::account_now(),
+                capabilities: super::accounts::capabilities(),
+            },
+            run_id: Some(format!("claude:{id}")),
+            evidence: crate::accounts::AccountBindingEvidence::ObservedAtStartup,
+        });
+    }
     let worker = ClaudeSession {
+        account_source,
         process,
         caller,
         id: id.into(),
@@ -269,6 +314,7 @@ struct Interrupt {
 }
 
 struct ClaudeSession {
+    account_source: Option<crate::accounts::AccountSource>,
     process: Process,
     caller: CallerIdentity,
     id: String,
@@ -571,6 +617,20 @@ impl ClaudeSession {
         }
         if frame["type"] == "user" && frame["session_id"].as_str() == Some(self.id.as_str()) {
             self.receive_prompt(string(&frame, "uuid"));
+        }
+        if frame["type"] == "rate_limit_event"
+            && let Some(source) = self.account_source.clone()
+        {
+            crate::accounts::publish_account_event(
+                crate::accounts::AccountEvent::LimitsInvalidated { source },
+            );
+        }
+        if frame["type"] == "auth_status"
+            && let Some(source) = self.account_source.clone()
+        {
+            crate::accounts::publish_account_event(
+                crate::accounts::AccountEvent::AuthInvalidated { source },
+            );
         }
         match string(&frame, "type") {
             "control_request" => self.control(&frame)?,
@@ -941,3 +1001,13 @@ impl WorkerSession for ClaudeSession {
 #[cfg(test)]
 #[path = "worker_tests.rs"]
 mod tests;
+
+impl Drop for ClaudeSession {
+    fn drop(&mut self) {
+        if let Some(source) = self.account_source.take() {
+            crate::accounts::publish_account_event(crate::accounts::AccountEvent::Disconnected {
+                source,
+            });
+        }
+    }
+}

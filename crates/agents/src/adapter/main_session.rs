@@ -21,6 +21,7 @@ use crate::{
 
 #[derive(Default)]
 pub(super) struct MainSessionMetadata {
+    pub account: Option<crate::accounts::AccountIdentity>,
     pub session_name: Option<String>,
     pub service_tier: Option<String>,
     pub service_tiers: Vec<String>,

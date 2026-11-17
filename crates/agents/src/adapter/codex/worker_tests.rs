@@ -889,6 +889,8 @@ fn test_session() -> CodexWorkerSession {
     );
     let (_sender, incoming) = mpsc::channel();
     CodexWorkerSession {
+        account_source: None,
+        account_generation: 0,
         caller_identity,
         child: std::process::Command::new("true")
             .spawn()

@@ -19,6 +19,19 @@ pub(in crate::adapter) struct PiAdapter;
 static HISTORY: HistoryCache<PathBuf, FileStamp, LoadedHistory> = HistoryCache::new();
 
 impl BackendAdapter for PiAdapter {
+    fn account_capabilities(&self) -> crate::accounts::AccountCapabilities {
+        crate::accounts::AccountCapabilities {
+            discover: true,
+            ..Default::default()
+        }
+    }
+    fn read_accounts(
+        &self,
+        config: &AgentLaunchConfig,
+        project: &Path,
+    ) -> Result<Vec<crate::accounts::AccountObservation>, String> {
+        super::accounts::read(config, project)
+    }
     fn descriptor(&self) -> AgentBackendDescriptor {
         super::descriptor()
     }

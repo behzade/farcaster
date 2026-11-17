@@ -25,6 +25,25 @@ pub(super) static STANDARD_SERVICE_TIER: LazyLock<[String; 1]> =
 mod tests;
 
 pub(super) trait BackendAdapter: Sync {
+    fn account_capabilities(&self) -> crate::accounts::AccountCapabilities {
+        crate::accounts::AccountCapabilities::default()
+    }
+    fn read_accounts(
+        &self,
+        _config: &AgentLaunchConfig,
+        _project: &Path,
+    ) -> Result<Vec<crate::accounts::AccountObservation>, String> {
+        Ok(Vec::new())
+    }
+    fn logout_account(
+        &self,
+        _config: &AgentLaunchConfig,
+        _source: &crate::accounts::AccountSource,
+        _identity: &crate::accounts::AccountIdentity,
+        _project: &Path,
+    ) -> Result<(), String> {
+        Err("This adapter does not support sign-out".into())
+    }
     /// Return locally verifiable fork ancestry for repairing older catalog rows.
     fn fork_source(
         &self,

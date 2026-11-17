@@ -15,6 +15,37 @@ use std::{
 pub(in crate::adapter) struct CodexAdapter;
 
 impl BackendAdapter for CodexAdapter {
+    fn account_capabilities(&self) -> crate::accounts::AccountCapabilities {
+        super::accounts::capabilities()
+    }
+    fn read_accounts(
+        &self,
+        config: &AgentLaunchConfig,
+        project: &Path,
+    ) -> Result<Vec<crate::accounts::AccountObservation>, String> {
+        super::accounts::read(config, project)
+    }
+    fn supports_sign_in(&self) -> bool {
+        true
+    }
+    fn sign_in(
+        &self,
+        config: &AgentLaunchConfig,
+        project: &Path,
+        cancelled: &std::sync::atomic::AtomicBool,
+        on_url: &dyn Fn(String),
+    ) -> Result<(), String> {
+        super::accounts::login(config, project, cancelled, on_url)
+    }
+    fn logout_account(
+        &self,
+        config: &AgentLaunchConfig,
+        source: &crate::accounts::AccountSource,
+        identity: &crate::accounts::AccountIdentity,
+        project: &Path,
+    ) -> Result<(), String> {
+        super::accounts::logout(config, source, identity, project)
+    }
     fn fork_source(&self, path: &Path, profile: Option<&crate::HarnessProfile>) -> Option<String> {
         // A custom executable without a saved data directory may use an unknown home.
         let directory = match profile {

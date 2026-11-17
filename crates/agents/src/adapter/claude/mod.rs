@@ -1,3 +1,4 @@
+mod accounts;
 mod backend;
 use crate::Backend;
 pub(super) use backend::ClaudeAdapter;

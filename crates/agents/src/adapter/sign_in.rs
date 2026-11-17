@@ -61,6 +61,10 @@ pub fn sign_in(
             if result.is_ok() {
                 super::catalog_cache::invalidate(&config, backend);
             }
+            crate::accounts::publish_account_event(crate::accounts::AccountEvent::LoginChanged {
+                backend,
+                profile_id: config.profile_id.clone(),
+            });
             let _ = sender.try_send(SignInEvent::Finished(result));
         })
         .map_err(|error| format!("Start sign-in: {error}"))?;

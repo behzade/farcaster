@@ -132,7 +132,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             caller_identity.select_model(provider, model);
         }
         caller_identity.set_effort(effort.as_deref());
-        Ok(Box::new(CodexWorkerSession {
+        let mut worker = CodexWorkerSession {
             caller_identity,
             child,
             writer: Some(writer),
@@ -180,7 +180,13 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             events: VecDeque::from([WorkerEvent::SessionChanged { locator: thread_id }]),
             turn_error: None,
             retrying: false,
-        }))
+            account_source: super::accounts::source(&command, &launch.project)
+                .ok()
+                .map(crate::accounts::AccountSource::for_run),
+            account_generation: 0,
+        };
+        worker.refresh_account();
+        Ok(Box::new(worker))
     }
 }
 
@@ -311,6 +317,10 @@ pub fn spawn_main(
         })
         .collect();
     let mut session = CodexWorkerSession {
+        account_source: super::accounts::source(command, &launch.project)
+            .ok()
+            .map(crate::accounts::AccountSource::for_run),
+        account_generation: 0,
         caller_identity,
         child,
         writer: Some(writer),
@@ -359,6 +369,7 @@ pub fn spawn_main(
         turn_error: None,
         retrying: false,
     };
+    session.refresh_account();
     let goal_request =
         session.request("thread/goal/get", json!({"threadId": thread_id.clone()}))?;
     session
@@ -654,6 +665,7 @@ fn supported_model_efforts(model: &Value) -> Vec<String> {
 }
 
 enum PendingRequest {
+    AccountIdentity(u64),
     Command(commands::Request),
     Compact,
     LoadSkills,
@@ -776,6 +788,8 @@ enum ApprovalReply {
 }
 
 struct CodexWorkerSession {
+    account_source: Option<crate::accounts::AccountSource>,
+    account_generation: u64,
     caller_identity: crate::core::CallerIdentity,
     child: Child,
     writer: Option<ChildStdin>,
@@ -1186,6 +1200,32 @@ impl WorkerSession for CodexWorkerSession {
 }
 
 impl CodexWorkerSession {
+    fn account_response(&self, generation: u64, result: &Value) {
+        if generation == self.account_generation
+            && let Some(source) = self.account_source.clone()
+        {
+            crate::accounts::publish_account_event(crate::accounts::AccountEvent::Observed {
+                observation: super::accounts::observation(
+                    source,
+                    &result["account"],
+                    crate::accounts::account_now(),
+                ),
+                run_id: Some(format!("codex:{}", self.thread_id)),
+                evidence: crate::accounts::AccountBindingEvidence::ObservedAtStartup,
+            });
+        }
+    }
+
+    fn refresh_account(&mut self) {
+        self.account_generation = self.account_generation.wrapping_add(1);
+        if self.account_source.is_some()
+            && let Ok(id) = self.request("account/read", json!({"refreshToken":false}))
+        {
+            self.pending
+                .insert(id, PendingRequest::AccountIdentity(self.account_generation));
+        }
+    }
+
     fn poll_event(&mut self) -> Option<WorkerEvent> {
         if self.abort_failure.is_some() {
             return None;
@@ -1267,6 +1307,9 @@ impl CodexWorkerSession {
             }
             match inbound {
                 Ok(CodexInbound::Response { id, result }) => match self.pending.remove(&id) {
+                    Some(PendingRequest::AccountIdentity(generation)) => {
+                        self.account_response(generation, &result)
+                    }
                     Some(PendingRequest::Command(request)) => {
                         self.command_response(request, Ok(result));
                         if let Some(event) = self.events.pop_front() {
@@ -1463,6 +1506,7 @@ impl CodexWorkerSession {
                         self.record_prompt_ack(prompt.clone(), Err(error.message.clone().into()));
                     }
                     match self.pending.remove(&id) {
+                        Some(PendingRequest::AccountIdentity(_)) => continue,
                         Some(PendingRequest::Command(request)) => {
                             self.command_response(request, Err(error.message));
                             return self.events.pop_front();
@@ -1622,6 +1666,22 @@ impl CodexWorkerSession {
                 Ok(CodexInbound::Notification { method, params }) => {
                     let method_name = method.as_str();
                     let method = CodexMethod::parse(method_name);
+                    if method == CodexMethod::AccountUpdated {
+                        if let Some(source) = self.account_source.clone() {
+                            crate::accounts::publish_account_event(
+                                crate::accounts::AccountEvent::AuthInvalidated { source },
+                            );
+                        }
+                        self.refresh_account();
+                        continue;
+                    }
+                    if method == CodexMethod::AccountRateLimitsUpdated
+                        && let Some(source) = self.account_source.clone()
+                    {
+                        crate::accounts::publish_account_event(
+                            crate::accounts::AccountEvent::LimitsInvalidated { source },
+                        );
+                    }
                     if method == CodexMethod::ServerRequestResolved {
                         if let Some(event) = self.resolve_input(&params) {
                             return Some(event);
@@ -2914,6 +2974,11 @@ impl CodexWorkerSession {
 
 impl Drop for CodexWorkerSession {
     fn drop(&mut self) {
+        if let Some(source) = self.account_source.take() {
+            crate::accounts::publish_account_event(crate::accounts::AccountEvent::Disconnected {
+                source,
+            });
+        }
         let _ = self.close();
     }
 }

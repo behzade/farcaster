@@ -1,5 +1,7 @@
 use crate::Backend;
+mod accounts;
 mod acp;
+pub use accounts::{account_capabilities, logout_account, read_accounts};
 mod antigravity;
 mod auxiliary;
 mod backend;

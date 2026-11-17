@@ -1,3 +1,4 @@
+mod accounts;
 mod backend;
 pub(super) use backend::CodexAdapter;
 mod catalog;

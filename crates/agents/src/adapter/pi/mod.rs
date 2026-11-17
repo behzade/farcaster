@@ -1,3 +1,4 @@
+mod accounts;
 mod backend;
 pub(super) use backend::PiAdapter;
 pub(super) mod deletion;

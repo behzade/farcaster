@@ -3,6 +3,7 @@ extern crate self as agents;
 #[cfg(any(test, feature = "test-support"))]
 use farcaster_conversation as conversation;
 
+pub mod accounts;
 mod adapter;
 pub mod builtin_mcp;
 pub use farcaster_agent_protocol as contract;
@@ -17,6 +18,7 @@ pub use adapter::project_shell_environment;
 #[cfg(feature = "test-support")]
 pub use adapter::set_test_project_environment;
 pub use adapter::{SignIn, SignInEvent, sign_in, sign_in_required, supports_sign_in};
+pub use adapter::{account_capabilities, logout_account, read_accounts};
 pub use adapter::{
     annotate_history_message, app_shell_environment, apply_project_trust, available_access_modes,
     backend_display_name, backend_statuses, default_login_shell, delete_session_family,

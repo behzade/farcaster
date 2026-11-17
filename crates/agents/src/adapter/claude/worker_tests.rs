@@ -285,7 +285,7 @@ fn session(command: &AgentLaunchConfig, project: &Path) -> ClaudeSession {
     let id = TEST_SESSION_ID;
     let process = Process::spawn(command, project, id, false, None, None, true, None)
         .expect("test operation should succeed");
-    attach(process, caller, id, command.access_mode, None)
+    attach(process, caller, id, command.access_mode, None, None)
         .expect("test operation should succeed")
         .0
 }

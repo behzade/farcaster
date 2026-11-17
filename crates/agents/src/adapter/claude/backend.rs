@@ -11,6 +11,16 @@ use std::{path::Path, sync::Arc};
 pub(in crate::adapter) struct ClaudeAdapter;
 
 impl BackendAdapter for ClaudeAdapter {
+    fn account_capabilities(&self) -> crate::accounts::AccountCapabilities {
+        super::accounts::capabilities()
+    }
+    fn read_accounts(
+        &self,
+        config: &AgentLaunchConfig,
+        project: &Path,
+    ) -> Result<Vec<crate::accounts::AccountObservation>, String> {
+        super::accounts::read(config, project)
+    }
     fn descriptor(&self) -> AgentBackendDescriptor {
         super::descriptor()
     }
