@@ -458,6 +458,7 @@ impl Supervisor {
             | RuntimeEvent::SessionDeleted { .. }
             | RuntimeEvent::SessionStatus { .. }
             | RuntimeEvent::SessionReset { .. }
+            | RuntimeEvent::AccountsChanged(_)
             | RuntimeEvent::HistoryReset { .. } => {}
         }
     }

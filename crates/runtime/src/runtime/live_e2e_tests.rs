@@ -137,6 +137,7 @@ impl RuntimeTrace {
             | RuntimeEvent::ExtensionUiDismissed { .. }
             | RuntimeEvent::SessionStatus { .. }
             | RuntimeEvent::ImportPreview { .. }
+            | RuntimeEvent::AccountsChanged(_)
             | RuntimeEvent::ImportPreviewFailed { .. } => {}
         }
         Ok(())

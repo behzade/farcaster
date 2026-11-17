@@ -35,6 +35,7 @@ pub enum RuntimeSignal {
 #[derive(Clone)]
 #[allow(dead_code)]
 pub enum RuntimeCommand {
+    RefreshAccounts,
     Prompt {
         submission_id: String,
         target: String,
@@ -188,6 +189,7 @@ pub enum RuntimeCommand {
 
 #[derive(Clone, Debug)]
 pub enum RuntimeEvent {
+    AccountsChanged(Arc<agents::accounts::AccountsSnapshot>),
     SessionTarget(crate::sessions::SessionTarget),
     SystemNotification {
         title: String,

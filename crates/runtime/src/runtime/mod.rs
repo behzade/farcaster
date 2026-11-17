@@ -1,5 +1,6 @@
 use crate::agents::Backend;
 mod access_mode;
+mod accounts;
 pub mod catalog;
 mod command_queue;
 mod commands;

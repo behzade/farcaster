@@ -192,6 +192,7 @@ pub(crate) struct ImagePreview {
 pub(crate) struct FarcasterApp {
     runtime: RuntimeHandle,
     pub(crate) snapshot: Arc<RuntimeSnapshot>,
+    accounts: Arc<crate::agents::accounts::AccountsSnapshot>,
     runtime_generation: u64,
     project: project::ProjectState,
     sessions: session::SessionState,

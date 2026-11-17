@@ -426,6 +426,7 @@ impl RuntimeOwner {
             RuntimeCommand::CommitImport { sessions } => self.commit_import(sessions),
             RuntimeCommand::LoadConfiguration { .. }
             | RuntimeCommand::StartTask { .. }
+            | RuntimeCommand::RefreshAccounts
             | RuntimeCommand::Shutdown => {}
         }
     }

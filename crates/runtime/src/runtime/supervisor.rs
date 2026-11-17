@@ -49,7 +49,7 @@ pub(super) struct UiEventSender {
 }
 
 impl UiEventSender {
-    fn send(&self, event: RuntimeEvent) -> Result<(), ()> {
+    pub(super) fn send(&self, event: RuntimeEvent) -> Result<(), ()> {
         self.events.send(event).map_err(|_| ())?;
         let _ = self.wake.try_send(());
         Ok(())
@@ -442,6 +442,7 @@ struct Supervisor {
     selected_session: Option<PathBuf>,
     generation: u64,
     latest: HashMap<String, Arc<RuntimeSnapshot>>,
+    accounts: super::accounts::AccountService,
     account_usage: HashMap<(Backend, Option<String>), (Instant, crate::agents::AccountUsage)>,
     catalog_sessions: Vec<SessionSummary>,
     catalog_generation: u64,
@@ -640,7 +641,10 @@ impl Supervisor {
             }
         }
         let selected_session = initial_session.as_ref().map(|target| target.path.clone());
+        let accounts =
+            super::accounts::AccountService::new(catalog_state.clone(), refresh_configuration);
         Self {
+            accounts,
             host,
             process_command,
             command_rx,
@@ -681,6 +685,11 @@ impl Supervisor {
     fn run(mut self) {
         let mut running = true;
         while running {
+            self.accounts.tick(
+                &self.process_command,
+                &self.selected_project,
+                &self.event_tx,
+            );
             self.drain_configuration_updates();
             self.drain_actor_events();
             running = self.process_next_command();

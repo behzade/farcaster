@@ -199,6 +199,7 @@ impl FarcasterApp {
 
         let mut this = Self {
             runtime,
+            accounts: Arc::default(),
             snapshot: Arc::new(RuntimeSnapshot {
                 status: "Starting".into(),
                 project: project.clone(),

@@ -119,6 +119,10 @@ struct DirtyRegions {
 impl DirtyRegions {
     fn observe(&mut self, app: &FarcasterApp, event: &RuntimeEvent) {
         match event {
+            RuntimeEvent::AccountsChanged(_) => {
+                self.rail = true;
+                self.root = true;
+            }
             RuntimeEvent::Snapshot { snapshot, .. } => {
                 let roots = SessionRootIndex::new(&app.sessions.visible);
                 self.rail |= session_rail_snapshot_changed(&roots, &app.snapshot, snapshot);
@@ -965,6 +969,7 @@ impl FarcasterApp {
                 self.apply_import_preview_failed(generation, harness, message, cx);
                 dirty.root = true;
             }
+            RuntimeEvent::AccountsChanged(accounts) => self.accounts = accounts,
             RuntimeEvent::Stopped => Arc::make_mut(&mut self.snapshot).status = "Stopped".into(),
             RuntimeEvent::Snapshot { .. }
             | RuntimeEvent::RefreshCatalog

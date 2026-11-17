@@ -265,7 +265,12 @@ impl Supervisor {
         ) {
             Ok(RuntimeCommand::Shutdown) => false,
             Ok(command) => {
+                if matches!(command, RuntimeCommand::RefreshAccounts) {
+                    self.accounts.refresh();
+                    return true;
+                }
                 if matches!(command, RuntimeCommand::SystemWake) {
+                    self.accounts.invalidate();
                     for actor in self.actors.values() {
                         actor.send(command.clone());
                     }
@@ -525,7 +530,7 @@ impl Supervisor {
             }
             Err(mpsc::TryRecvError::Empty) => {
                 self.drain_signals();
-                thread::park();
+                thread::park_timeout(Duration::from_secs(30));
                 true
             }
             Err(mpsc::TryRecvError::Disconnected) => false,

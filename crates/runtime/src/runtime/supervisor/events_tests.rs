@@ -15,6 +15,7 @@ impl SupervisorFixture {
         let (_, configuration_rx) = mpsc::channel();
         let fixture = Self {
             supervisor: Supervisor {
+                accounts: super::super::accounts::AccountService::new(None, false),
                 host: crate::test_support::host(),
                 process_command: AgentLaunchConfig::default(),
                 command_rx,
