@@ -12,10 +12,15 @@ use crate::app::{
             LayoutMode, chat_column, composer_bottom_clearance, shows_left_inline,
             shows_right_inline,
         },
-        primitives::{AppTooltip as _, RaisedEdge, raised_edge_shadow},
+        primitives::{
+            AppTooltip as _, RaisedEdge, activates_button, icon_control, on_press_control,
+            raised_edge_shadow,
+        },
         theme::theme,
     },
 };
+
+const SIDEBAR_EDGE_WIDTH: f32 = 16.0;
 
 impl FarcasterApp {
     pub(super) fn render_chat_main(
@@ -126,6 +131,19 @@ impl FarcasterApp {
                     .relative()
                     .flex_1()
                     .min_h_0()
+                    // Keep the edge targets outside embedded native views, which
+                    // draw above GPUI and receive their own pointer events.
+                    .when(native_surface, |center| {
+                        center
+                            .when(
+                                shows_left_inline(mode) && self.workspace.session_rail_hidden,
+                                |center| center.pl(theme().size(SIDEBAR_EDGE_WIDTH)),
+                            )
+                            .when(
+                                shows_right_inline(mode) && self.workspace.run_panel_hidden,
+                                |center| center.pr(theme().size(SIDEBAR_EDGE_WIDTH)),
+                            )
+                    })
                     .child(main)
                     .when(
                         native_surface
@@ -190,6 +208,7 @@ impl FarcasterApp {
         accessibility_active: bool,
     ) -> AnyElement {
         div()
+            .relative()
             .size_full()
             .flex()
             .when(
@@ -230,7 +249,7 @@ impl FarcasterApp {
             .when(
                 shows_right_inline(mode) && !self.workspace.run_panel_hidden,
                 |shell| {
-                    let resize = entity;
+                    let resize = entity.clone();
                     shell.child(
                         div()
                             .relative()
@@ -267,6 +286,14 @@ impl FarcasterApp {
                     )
                 },
             )
+            .when(
+                shows_left_inline(mode) && self.workspace.session_rail_hidden,
+                |shell| shell.child(expand_sidebar_control(Sidebar::Sessions, entity.clone())),
+            )
+            .when(
+                shows_right_inline(mode) && self.workspace.run_panel_hidden,
+                |shell| shell.child(expand_sidebar_control(Sidebar::SourceControl, entity)),
+            )
             .into_any_element()
     }
 }
@@ -300,5 +327,59 @@ fn resize_handle(
                 .opacity(0.0)
                 .bg(theme().colors.muted)
                 .group_hover(id, |line| line.opacity(1.0)),
+        )
+}
+
+fn expand_sidebar_control(
+    sidebar: Sidebar,
+    entity: WeakEntity<FarcasterApp>,
+) -> impl gpui::IntoElement {
+    let (group, id, label) = match sidebar {
+        Sidebar::Sessions => ("session-rail-edge", "toggle-session-rail", "Show sessions"),
+        Sidebar::SourceControl => ("run-panel-edge", "toggle-run-panel", "Show source control"),
+    };
+    let click = entity.clone();
+    let expand = move |entity: &WeakEntity<FarcasterApp>, cx: &mut gpui::App| {
+        let _ = entity.update(cx, |app, cx| match sidebar {
+            Sidebar::Sessions => app.toggle_session_rail(cx),
+            Sidebar::SourceControl => app.toggle_run_panel(cx),
+        });
+    };
+    div()
+        .id(group)
+        .debug_selector(move || group.into())
+        .absolute()
+        .top(crate::app::ui::grid::header_height())
+        .bottom_0()
+        .when(matches!(sidebar, Sidebar::Sessions), |edge| edge.left_0())
+        .when(matches!(sidebar, Sidebar::SourceControl), |edge| {
+            edge.right_0()
+        })
+        .w(theme().size(SIDEBAR_EDGE_WIDTH))
+        .flex()
+        .items_center()
+        .justify_center()
+        .group(group)
+        .child(
+            on_press_control(
+                icon_control(id, label)
+                    .debug_selector(move || id.into())
+                    .w(theme().size(8.0))
+                    .h(theme().size(96.0))
+                    .max_h_full()
+                    .rounded(theme().size(4.0))
+                    .bg(theme().colors.muted)
+                    .opacity(0.0)
+                    .group_hover(group, |button| button.opacity(1.0))
+                    .focus_visible(|button| button.opacity(1.0))
+                    .hover(|button| button.bg(theme().colors.text)),
+                move |_, cx| expand(&click, cx),
+            )
+            .on_key_down(move |event, _, cx| {
+                if activates_button(event) {
+                    cx.stop_propagation();
+                    expand(&entity, cx);
+                }
+            }),
         )
 }

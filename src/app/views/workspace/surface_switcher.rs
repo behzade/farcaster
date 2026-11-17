@@ -2,10 +2,7 @@ use crate::app::ui::primitives::SelectionStyle as _;
 use crate::{
     app::ui::assets::AppIcon,
     app::ui::layout::{TRAFFIC_LIGHT_INSET, shows_left_inline},
-    app::ui::primitives::{
-        AppIconSize, AppTooltip as _, ButtonTone, app_icon, icon_button, icon_control,
-        on_press_control,
-    },
+    app::ui::primitives::{AppIconSize, AppTooltip as _, app_icon, icon_control, on_press_control},
     app::ui::theme::theme,
     app::workspace::editor::effective_editor_choice,
     app::{AppSurface, FarcasterApp, views::session_rail::project_label},
@@ -54,7 +51,6 @@ impl FarcasterApp {
         });
 
         let bar_entity = entity.clone();
-        let rail_toggle = entity.clone();
         div()
             .id("workspace-bar")
             .debug_selector(|| "workspace-bar".into())
@@ -75,20 +71,6 @@ impl FarcasterApp {
                     app.set_workspace_bar_hovered(*hovered, cx);
                 });
             })
-            .when(
-                shows_left_inline(mode) && self.workspace.session_rail_hidden,
-                |bar| {
-                    bar.child(icon_button(
-                        "toggle-session-rail",
-                        AppIcon::SidebarLeft,
-                        "Show sessions",
-                        ButtonTone::Quiet,
-                        move |_, cx| {
-                            let _ = rail_toggle.update(cx, |this, cx| this.toggle_session_rail(cx));
-                        },
-                    ))
-                },
-            )
             .child(
                 div()
                     .debug_selector(|| "workspace-breadcrumb".into())
