@@ -26,6 +26,7 @@ use crate::{
     sessions::{DraftSession, SessionSummary, UsageSummary},
 };
 
+mod accounts;
 mod backend;
 mod composer;
 mod composer_worker;
@@ -72,7 +73,7 @@ pub use session_state::SessionStateChanges;
 pub use session_writer::SessionStateWriter;
 pub use snapshot::snapshot_database;
 
-const SCHEMA_VERSION: i64 = 22;
+const SCHEMA_VERSION: i64 = 23;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 const LEGACY_PI_GPUI_IMPORT_KEY: &str = "legacy_pi_gpui_state_imported";
 const REPOSITORY_BACKENDS: [&str; 3] = ["auto", "git", "jj"];
