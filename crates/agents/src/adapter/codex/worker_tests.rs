@@ -562,7 +562,9 @@ fn patch_updates_refresh_changes_and_targets_without_starting_another_tool() {
         panic!("expected patch metadata update");
     };
     assert_eq!(id, "patch-1");
-    assert_eq!(args["changes"], changes);
+    let mut projected = changes.clone();
+    projected[1]["diff"] = json!("@@ -0,0 +1,1 @@\n++added\n\\ No newline at end of file\n");
+    assert_eq!(args["changes"], projected);
     assert_eq!(metadata.targets, ["/project/a.rs", "/project/b.rs"]);
     assert_eq!(metadata.category, Some(crate::ToolCategory::Change));
     assert_eq!(session.poll(), None);
