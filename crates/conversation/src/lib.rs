@@ -26,6 +26,7 @@ mod attachments;
 #[path = "conversation/delivery.rs"]
 mod delivery;
 pub use delivery::{PendingReceipt, PendingReceiptRef};
+pub use farcaster_agent_protocol::CacheUsage;
 #[cfg(test)]
 #[path = "conversation/delivery_tests.rs"]
 mod delivery_tests;

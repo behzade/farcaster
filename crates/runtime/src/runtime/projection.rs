@@ -304,6 +304,8 @@ impl RuntimeOwner {
                 conversation_mut(self.active_snapshot_mut()).running = running;
                 if !running {
                     self.active_snapshot_mut().status = "Stopped".into();
+                    self.active_snapshot_mut().last_outcome = Some(SessionOutcome::Stopped);
+                    self.publish_session_metadata();
                 }
                 self.maybe_send_deferred_prompt();
                 if self.parked_snapshot.is_none() {
@@ -430,13 +432,8 @@ impl RuntimeOwner {
                             zlog::error!("Annotate prompt deliveries: {error}");
                         }
                     }
-                    let previous_cache_hit_rate =
-                        self.active_snapshot().conversation.average_cache_hit_rate;
                     let conversation = conversation_mut(self.active_snapshot_mut());
                     conversation.replace_history(&messages);
-                    conversation.average_cache_hit_rate = conversation
-                        .average_cache_hit_rate
-                        .or(previous_cache_hit_rate);
                     if let Some(prompt) = &mut self.pending_prompt {
                         prompt.item = None;
                     }
@@ -498,7 +495,10 @@ impl RuntimeOwner {
                 self.active_snapshot_mut().status = "Accepted".into();
                 self.send(SessionCommand::LoadState);
             }
-            Payload::Abort => self.active_snapshot_mut().status = "Stopping".into(),
+            Payload::Abort => {
+                self.active_snapshot_mut().status = "Stopping".into();
+                self.active_snapshot_mut().run_outcome = Some(SessionOutcome::Stopped);
+            }
             Payload::Compact => self.send(SessionCommand::LoadState),
             Payload::Rename => {
                 self.active_snapshot_mut().status = "Session named".into();

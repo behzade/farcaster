@@ -17,6 +17,21 @@ fn stopped_session_context_survives_history_selection_and_reopening() {
     owner.active_session = Some(path.clone());
     owner.snapshot.selected_session = Some(path.clone());
     owner.snapshot.stats = metrics.clone();
+    owner.snapshot.document_ready = true;
+    owner.snapshot.session_goal = Some(agents::SessionGoal {
+        objective: "Fix preview".into(),
+        status: "active".into(),
+        token_budget: Some(900),
+        tokens_used: 80,
+        time_used_seconds: 10,
+    });
+    owner.snapshot.last_outcome = Some(SessionOutcome::Failed);
+    owner.snapshot.prefill_service_tier = Some("priority".into());
+    conversation_mut(&mut owner.snapshot).restore_cache_usage(crate::conversation::CacheUsage {
+        read_tokens: 100,
+        prompt_tokens: 200,
+    });
+    let facts = owner.snapshot.session_facts();
     owner.publish_session_metadata();
     drop(owner);
     let (mut restored, _) = crate::runtime::tests::owner_without_process(project.clone());
@@ -44,6 +59,13 @@ fn stopped_session_context_survives_history_selection_and_reopening() {
             }),
         });
         assert_eq!(restored.snapshot.stats, metrics);
+        assert_eq!(restored.snapshot.session_goal, facts.goal);
+        assert_eq!(semantic_status(&restored.snapshot), RunStatus::Failed);
+        assert_eq!(restored.snapshot.selected_service_tier(), Some("priority"));
+        assert_eq!(
+            restored.snapshot.conversation.cache_usage(),
+            facts.cache_usage
+        );
         assert!(restored.snapshot.document_ready);
         assert_eq!(restored.snapshot.conversation.items[0].text, "done");
         assert!(!restored.snapshot.connected);
@@ -66,7 +88,10 @@ fn background_refresh_updates_a_retired_document_without_losing_metrics() {
         "tokens": {"input": 100, "output": 20, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 120},
         "contextUsage": {"tokens": 120, "contextWindow": 1000, "percent": 12.0}
     });
-    conversation_mut(&mut owner.snapshot).average_cache_hit_rate = Some(30.0);
+    conversation_mut(&mut owner.snapshot).restore_cache_usage(crate::conversation::CacheUsage {
+        read_tokens: 30,
+        prompt_tokens: 100,
+    });
     let previous = owner.snapshot.clone();
     owner.apply_history(HistoryResult {
         generation: owner.history_generation,

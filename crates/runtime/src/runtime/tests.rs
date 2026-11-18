@@ -475,13 +475,42 @@ fn direct_resume_restores_metrics_before_history_and_accepts_new_reports() {
         farcaster_storage::SharedStateStore::open_at(&temp.path().join("state.sqlite3")).unwrap();
     let metrics = json!({"contextUsage":{"tokens":120,"contextWindow":1000,"percent":12.0}});
     state
-        .with(|store| store.save_session_metrics(Backend::Pi, temp.path(), &session, &metrics))
+        .with(|store| {
+            store.save_session_facts(
+                Backend::Pi,
+                temp.path(),
+                &session,
+                &SessionFacts {
+                    metrics: metrics.clone(),
+                    goal: Some(agents::SessionGoal {
+                        objective: "Finish UI".into(),
+                        status: "active".into(),
+                        ..Default::default()
+                    }),
+                    outcome: Some(SessionOutcome::Stopped),
+                    cache_usage: crate::conversation::CacheUsage {
+                        read_tokens: 100,
+                        prompt_tokens: 200,
+                    },
+                    ..Default::default()
+                },
+            )
+        })
         .unwrap();
     let (mut owner, _) = owner_without_process(temp.path().to_owned());
     owner.state = Some(state.clone());
     owner.process_command = AgentLaunchConfig::test_script(&script, vec!["history-control".into()]);
     owner.start_process(Some(session.clone()));
     assert_eq!(owner.snapshot.stats, metrics);
+    assert_eq!(owner.snapshot.last_outcome, Some(SessionOutcome::Stopped));
+    assert_eq!(
+        owner.snapshot.session_goal.as_ref().unwrap().objective,
+        "Finish UI"
+    );
+    assert_eq!(
+        owner.snapshot.conversation.average_cache_hit_rate,
+        Some(50.0)
+    );
     assert!(
         !owner.snapshot.document_ready,
         "metrics do not imply loaded history"
@@ -491,8 +520,9 @@ fn direct_resume_restores_metrics_before_history_and_accepts_new_reports() {
     });
     assert_eq!(
         state
-            .with(|store| store.load_session_metrics(Backend::Pi, &session))
-            .unwrap()["contextUsage"]["tokens"],
+            .with(|store| store.load_session_facts(Backend::Pi, &session))
+            .unwrap()
+            .metrics["contextUsage"]["tokens"],
         4096
     );
 }

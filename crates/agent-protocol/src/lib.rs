@@ -53,6 +53,13 @@ pub struct DiscoveredUsage {
     pub cost_micros: u64,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheUsage {
+    pub read_tokens: u64,
+    pub prompt_tokens: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SessionMetadata {
     pub harness: Backend,

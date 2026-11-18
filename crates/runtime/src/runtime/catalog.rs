@@ -28,10 +28,10 @@ impl RuntimeOwner {
         let snapshot = self.active_snapshot();
         if let (Some(state), Some(path)) = (&self.state, &self.active_session)
             && let Err(error) = state.with(|store| {
-                store.save_session_metrics(harness, &self.project, path, &snapshot.stats)
+                store.save_session_facts(harness, &self.project, path, &snapshot.session_facts())
             })
         {
-            zlog::warn!("Save session metrics: {error}");
+            zlog::warn!("Save session facts: {error}");
         }
         let (Some(path), Some(session)) = (&self.active_session, &snapshot.session) else {
             return;

@@ -1,6 +1,5 @@
 use super::*;
 use crate::agents::Backend;
-use std::path::Path;
 
 fn restored_question_request(question: crate::sessions::RestoredQuestion) -> ExtensionUiRequest {
     if question.options.is_empty() {
@@ -90,7 +89,7 @@ impl RuntimeOwner {
             self.pending_session_controls = PendingSessionControls::default();
         }
         self.bind_external_session_identity(&path);
-        let stats = self.session_metrics(&path);
+        let facts = self.session_facts(&path);
         if self.parked_snapshot.is_none()
             && self.snapshot.selected_session.as_deref() != Some(path.as_path())
             && (self.process.is_some()
@@ -105,33 +104,12 @@ impl RuntimeOwner {
         self.snapshot.profile_id = profile_id;
         self.snapshot.status = "Loading history".into();
         self.snapshot.document_ready = false;
-        self.snapshot.stats = stats;
         self.snapshot.session = None;
         self.snapshot.conversation = Default::default();
+        self.snapshot.restore_session_facts(facts);
         self.transcript_changed_from = Some(0);
         self.publish();
         true
-    }
-
-    pub(super) fn session_metrics(&self, path: &Path) -> Value {
-        let saved = match self
-            .state
-            .as_ref()
-            .zip(self.harness)
-            .map(|(state, harness)| state.with(|store| store.load_session_metrics(harness, path)))
-        {
-            Some(Ok(stats)) => stats,
-            Some(Err(error)) => {
-                zlog::warn!("Load session metrics: {error}");
-                Value::Null
-            }
-            None => Value::Null,
-        };
-        if self.snapshot.selected_session.as_deref() == Some(path) {
-            projection::stable_session_stats(&saved, self.snapshot.stats.clone(), false)
-        } else {
-            saved
-        }
     }
 
     pub(super) fn refresh_session_document(&mut self, path: PathBuf, project: PathBuf) {
@@ -320,7 +298,7 @@ impl RuntimeOwner {
                 zlog::error!("Annotate saved prompt deliveries: {error}");
             }
         }
-        let reported_stats = self.session_metrics(&result.path);
+        let facts = self.session_facts(&result.path);
         if self.parked_snapshot.is_none() && !same_document {
             self.parked_snapshot = Some(std::mem::take(&mut self.snapshot));
         }
@@ -333,13 +311,9 @@ impl RuntimeOwner {
         let auto_retry = previous.auto_retry;
         let models = previous.models.clone();
         let history_stats = historical_context_stats(&history.messages, &models);
-        let stats = projection::stable_session_stats(&history_stats, reported_stats, false);
+        let stats = projection::stable_session_stats(&history_stats, facts.metrics.clone(), false);
         let mut session = previous.session.as_ref().filter(|_| same_document).cloned();
         let history_preview = !same_document || previous.history_preview;
-        let cache_hit_rate = previous
-            .conversation
-            .average_cache_hit_rate
-            .filter(|_| same_document);
         let prefill_model =
             HarnessConfigurationStore::history_model(&models, history.model.as_ref());
         if let Some(session) = &mut session {
@@ -352,8 +326,7 @@ impl RuntimeOwner {
         }
         let mut conversation = ConversationState::default();
         conversation.replace_history(&history.messages);
-        conversation.average_cache_hit_rate =
-            conversation.average_cache_hit_rate.or(cache_hit_rate);
+        conversation.restore_cache_usage(facts.cache_usage);
         drop(projection);
         self.transcript_changed_from = Some(0);
         self.snapshot = RuntimeSnapshot {
@@ -366,12 +339,15 @@ impl RuntimeOwner {
             conversation: Arc::new(conversation),
             models,
             stats,
+            session_goal: facts.goal,
+            last_outcome: facts.outcome,
             session,
             auto_retry,
             history_preview,
             pending_question: history.pending_question.map(restored_question_request),
             prefill_model,
             prefill_thinking_level: history.thinking_level,
+            prefill_service_tier: facts.service_tier,
             ..RuntimeSnapshot::default()
         };
         self.snapshot.access_mode = self.process_command.access_mode;

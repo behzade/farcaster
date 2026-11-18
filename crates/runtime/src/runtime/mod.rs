@@ -5,6 +5,7 @@ pub mod catalog;
 mod command_queue;
 mod commands;
 mod documents;
+mod facts;
 mod history;
 mod idle;
 mod launch_context;
@@ -36,10 +37,7 @@ use projection::{
     update_tokens_from_event,
 };
 use session_loop::run;
-use status::{
-    failure_details, failure_summary, notification_target, run_status, semantic_status,
-    session_badge_status,
-};
+use status::{failure_details, failure_summary, notification_target, run_status, semantic_status};
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -67,7 +65,7 @@ use crate::{
     },
     sessions::{self, LoadedHistory, SessionSummary, session_family_for_path},
 };
-use farcaster_storage::{SharedStateStore, StateStore};
+use farcaster_storage::{SessionFacts, SessionOutcome, SharedStateStore, StateStore};
 use session_controls::PendingSessionControls;
 use session_identity::HarnessConfigurationStore;
 pub use session_identity::SessionIdentity;

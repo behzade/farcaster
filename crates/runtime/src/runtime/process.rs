@@ -157,10 +157,10 @@ impl RuntimeOwner {
             && session.is_some()
             && self.snapshot.selected_session == session
             && self.snapshot.document_ready;
-        let preserved_stats = session
+        let preserved_facts = session
             .as_deref()
             .filter(|_| fork.is_none())
-            .map(|path| self.session_metrics(path));
+            .map(|path| self.session_facts(path));
         let preserve_transcript = preserve_transcript || resume_document;
         let keep_preview = preserve_transcript && self.snapshot.history_preview;
         let preserved_conversation =
@@ -262,10 +262,10 @@ impl RuntimeOwner {
             }
         }
         self.active_snapshot_mut().profile_id = self.process_command.profile_id.clone();
-        if let Some(stats) = preserved_stats {
+        if let Some(facts) = preserved_facts {
             self.resumed_usage_pending = true;
             let snapshot = self.active_snapshot_mut();
-            snapshot.stats = stats;
+            snapshot.restore_session_facts(facts);
             snapshot.document_ready = resume_document;
         }
         if let Some((
@@ -459,7 +459,7 @@ impl RuntimeOwner {
                     && self.parked_snapshot.is_none();
                 let previewing = self.parked_snapshot.is_some();
                 let previous_live_status =
-                    previewing.then(|| session_badge_status(&self.active_snapshot().conversation));
+                    previewing.then(|| semantic_status(self.active_snapshot()));
                 let (changed_from, snapshot_changed, live_status_changed) = {
                     let snapshot = self.active_snapshot_mut();
                     let (changed_from, conversation_state_changed) =
@@ -484,12 +484,44 @@ impl RuntimeOwner {
                         event.kind(),
                         event.value(),
                     );
+                    match event.kind() {
+                        SessionActivityKind::AgentStarted => snapshot.run_outcome = None,
+                        SessionActivityKind::MessageEnded
+                            if event
+                                .value()
+                                .pointer("/message/role")
+                                .and_then(Value::as_str)
+                                == Some("assistant") =>
+                        {
+                            snapshot.run_outcome = Some(
+                                match event
+                                    .value()
+                                    .pointer("/message/stopReason")
+                                    .and_then(Value::as_str)
+                                {
+                                    Some("aborted") => SessionOutcome::Stopped,
+                                    Some("error") => SessionOutcome::Failed,
+                                    _ => SessionOutcome::Done,
+                                },
+                            );
+                        }
+                        SessionActivityKind::AgentSettled => {
+                            snapshot.last_outcome =
+                                Some(snapshot.run_outcome.unwrap_or_else(|| {
+                                    if snapshot.conversation.ended_in_error() {
+                                        SessionOutcome::Failed
+                                    } else {
+                                        SessionOutcome::Done
+                                    }
+                                }));
+                        }
+                        _ => {}
+                    }
                     let status = run_status(&snapshot.conversation);
                     let status_changed = snapshot.status != status;
                     snapshot.status = status.to_owned();
-                    let live_status_changed = previous_live_status.is_some_and(|status| {
-                        status != session_badge_status(&snapshot.conversation)
-                    });
+                    let live_status_changed = previous_live_status
+                        .is_some_and(|status| status != semantic_status(snapshot));
                     (
                         changed_from,
                         changed_from.is_some()
@@ -511,7 +543,10 @@ impl RuntimeOwner {
                 if session_starting {
                     self.send(SessionCommand::LoadState);
                 }
-                if event.kind() == &SessionActivityKind::AgentStarted {
+                if matches!(
+                    event.kind(),
+                    SessionActivityKind::AgentStarted | SessionActivityKind::SessionGoalChanged
+                ) {
                     self.publish_session_metadata();
                 }
                 if event.kind() == &SessionActivityKind::SessionChanged {
@@ -632,6 +667,9 @@ impl RuntimeOwner {
         self.finish_current_prompt(false);
         self.normal_prompt_in_flight = false;
         conversation_mut(self.active_snapshot_mut()).running = false;
+        if !preserve_history {
+            self.active_snapshot_mut().last_outcome = Some(SessionOutcome::Failed);
+        }
         self.publish_session_metadata();
         self.process_command.access_mode = self
             .access_mode_changes
@@ -749,7 +787,7 @@ impl RuntimeOwner {
             .active_session
             .clone()
             .or_else(|| active_snapshot.selected_session.clone());
-        snapshot.live_status = session_badge_status(&active_snapshot.conversation);
+        snapshot.live_status = semantic_status(active_snapshot);
         snapshot.transcript_changed_from = self.transcript_changed_from.take();
         self.review_projection.apply(&mut snapshot);
         let _ = self.event_tx.send(RuntimeEvent::Snapshot {

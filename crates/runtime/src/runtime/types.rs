@@ -302,6 +302,8 @@ pub struct RuntimeSnapshot {
     pub modes: Vec<AgentMode>,
     pub selected_mode: Option<String>,
     pub session_goal: Option<crate::agents::SessionGoal>,
+    pub last_outcome: Option<farcaster_storage::SessionOutcome>,
+    pub run_outcome: Option<farcaster_storage::SessionOutcome>,
     pub stats: Value,
     pub commands: Vec<SlashCommand>,
     pub stderr: String,

@@ -70,6 +70,7 @@ pub use editor_setting::EditorChoice;
 use identity::{bind_locator, ensure_locator_session, ensure_project, target_for_session};
 pub use relocation::relocate_snapshot_session_locators;
 pub use session_controls::SessionControlSelection;
+pub use session_metrics::{SessionFacts, SessionOutcome};
 pub use session_state::SessionStateChanges;
 pub use session_writer::SessionStateWriter;
 pub use snapshot::snapshot_database;

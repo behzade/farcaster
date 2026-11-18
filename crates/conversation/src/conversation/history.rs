@@ -3,7 +3,25 @@ use base64::Engine as _;
 use std::borrow::Cow;
 
 impl ConversationState {
+    pub fn cache_usage(&self) -> CacheUsage {
+        CacheUsage {
+            read_tokens: self.cache_read_tokens,
+            prompt_tokens: self.prompt_tokens,
+        }
+    }
+
+    /// Keep the full observed totals when a history response has less usage.
+    pub fn restore_cache_usage(&mut self, usage: CacheUsage) {
+        if usage.prompt_tokens > self.prompt_tokens {
+            self.cache_read_tokens = usage.read_tokens;
+            self.prompt_tokens = usage.prompt_tokens;
+            self.average_cache_hit_rate =
+                Some(usage.read_tokens as f64 / usage.prompt_tokens as f64 * 100.0);
+        }
+    }
+
     pub fn replace_history(&mut self, messages: &[Value]) {
+        let previous_usage = self.cache_usage();
         let history_is_empty = messages.is_empty();
         let history_ids = messages
             .iter()
@@ -63,6 +81,7 @@ impl ConversationState {
             }
             self.project_history_message(message);
         }
+        self.restore_cache_usage(previous_usage);
         for (_, id, _) in retained {
             if let Some(entry) = self.submitted_users.get(&id)
                 && entry.is_visible()

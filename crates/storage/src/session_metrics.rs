@@ -1,27 +1,43 @@
 use super::*;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionOutcome {
+    Done,
+    Failed,
+    Stopped,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SessionFacts {
+    pub metrics: serde_json::Value,
+    pub goal: Option<agents::SessionGoal>,
+    pub outcome: Option<SessionOutcome>,
+    pub cache_usage: farcaster_agent_protocol::CacheUsage,
+    pub service_tier: Option<String>,
+}
+
 impl StateStore {
-    /// Retain reported session metrics independently of the backend process.
-    pub fn save_session_metrics(
+    /// Retain observed session facts independently of the backend process.
+    pub fn save_session_facts(
         &mut self,
         harness: Backend,
         project: &Path,
         session: &Path,
-        stats: &serde_json::Value,
+        facts: &SessionFacts,
     ) -> Result<(), String> {
         let mut metrics: serde_json::Map<String, serde_json::Value> =
             ["tokens", "totalCost", "contextUsage"]
                 .into_iter()
                 .filter_map(|key| {
-                    stats
+                    facts
+                        .metrics
                         .get(key)
                         .filter(|value| !value.is_null())
                         .map(|value| (key.to_owned(), value.clone()))
                 })
                 .collect();
-        if metrics.is_empty() {
-            return Ok(());
-        }
         let locator = sessions::normalize_session_path(session);
         let tx = self
             .connection
@@ -54,7 +70,11 @@ impl StateStore {
                 }
             }
         }
-        let body = serde_json::json!({"type":"session_metrics", "metrics":metrics}).to_string();
+        let mut record = serde_json::to_value(facts)
+            .map_err(|error| format!("encode session facts: {error}"))?;
+        record["type"] = "session_metrics".into();
+        record["metrics"] = metrics.into();
+        let body = record.to_string();
         if previous.as_deref() != Some(&body) {
             tx.execute(
                 "INSERT INTO session_events(session_id,seq,t,schema_version,body)
@@ -67,11 +87,11 @@ impl StateStore {
             .map_err(|error| format!("commit session metrics: {error}"))
     }
 
-    pub fn load_session_metrics(
+    pub fn load_session_facts(
         &self,
         harness: Backend,
         session: &Path,
-    ) -> Result<serde_json::Value, String> {
+    ) -> Result<SessionFacts, String> {
         let locator = sessions::normalize_session_path(session);
         let body: Option<String> = self
             .connection
@@ -85,12 +105,23 @@ impl StateStore {
             )
             .optional()
             .map_err(|error| format!("load session metrics: {error}"))?;
-        let Some(body) = body else {
-            return Ok(serde_json::Value::Null);
-        };
-        let mut record: serde_json::Value = serde_json::from_str(&body)
-            .map_err(|error| format!("decode session metrics: {error}"))?;
-        Ok(record["metrics"].take())
+        let record: serde_json::Value = body
+            .map(|body| serde_json::from_str(&body))
+            .transpose()
+            .map_err(|error| format!("decode session facts: {error}"))?
+            .unwrap_or_else(|| serde_json::json!({}));
+        let mut facts: SessionFacts = serde_json::from_value(record.clone())
+            .map_err(|error| format!("decode session facts: {error}"))?;
+        // Older records saved this observation only in session_models.
+        if record.get("serviceTier").is_none() {
+            facts.service_tier = self.connection.query_row(
+                "SELECT m.service_tier FROM session_models m JOIN sessions s ON s.id=m.session_id
+                 WHERE s.harness=?1 AND s.locator=?2",
+                params![harness.as_str(), locator.to_string_lossy()],
+                |row| row.get(0),
+            ).optional().map_err(|error| format!("load observed service tier: {error}"))?.flatten();
+        }
+        Ok(facts)
     }
 }
 
