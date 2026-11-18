@@ -1,7 +1,7 @@
 use crate::{
     app::{
         ui::{
-            primitives::{ButtonTone, Popover, dropdown_content_button, floating_surface},
+            primitives::{ButtonTone, Popover, dropdown_content_button},
             theme::theme,
         },
         views::usage::{ComposerUsage, format_cost, format_tokens, has_reported_usage},
@@ -9,9 +9,10 @@ use crate::{
     sessions::UsageSummary,
 };
 use gpui::{
-    AnyElement, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
+    AnyElement, App, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
     Styled as _, div, prelude::FluentBuilder as _,
 };
+use gpui_component::ThemeStyled as _;
 
 pub(super) fn render(usage: ComposerUsage, content: AnyElement) -> AnyElement {
     Popover::new("composer-usage-popover")
@@ -31,11 +32,11 @@ pub(super) fn render(usage: ComposerUsage, content: AnyElement) -> AnyElement {
             .px(gpui::px(0.0))
             .debug_selector(|| "composer-context-trigger".into()),
         )
-        .content(move |_, _, _| details(&usage))
+        .content(move |_, _, cx| details(&usage, cx))
         .into_any_element()
 }
 
-fn details(usage: &ComposerUsage) -> AnyElement {
+fn details(usage: &ComposerUsage, cx: &App) -> AnyElement {
     let scopes = if usage.worker_count > 0 {
         vec![
             ("Session".to_owned(), usage.session),
@@ -86,10 +87,10 @@ fn details(usage: &ComposerUsage) -> AnyElement {
                 })),
         );
     }
-    floating_surface()
+    div()
+        .popover_style(cx)
         .debug_selector(|| "composer-usage-details".into())
         .w(theme().size(360.0))
-        .rounded(theme().radius)
         .p(theme().space.md)
         .flex()
         .flex_col()
