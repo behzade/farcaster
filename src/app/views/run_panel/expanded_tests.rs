@@ -84,6 +84,15 @@ fn expanded_workers_keep_the_main_row_and_restore_sections_on_navigation(
                     app.lifecycle.pending_session_switch = None;
                     app.sessions.selected_draft = None;
                     Arc::make_mut(&mut app.snapshot).selected_session = Some(root.clone());
+                    app.activity.background_jobs = vec![
+                        crate::protocol::BackgroundJob {
+                            name: "Background job".into(),
+                            command: "test".into(),
+                            state: crate::protocol::BackgroundJobState::Running,
+                            exit_code: None,
+                        };
+                        12
+                    ];
                     app.project.repository.backend =
                         crate::repository::RepositoryBackend::discover(
                             project,
@@ -148,6 +157,27 @@ fn expanded_workers_keep_the_main_row_and_restore_sections_on_navigation(
                 .iter()
                 .map(|selector| cx.debug_bounds(selector).unwrap())
                 .collect();
+            cx.simulate_click(recent_before[0].center(), Default::default());
+            draw(cx);
+            cx.update(|window, cx| {
+                assert_eq!(
+                    app.read(cx)
+                        .lifecycle
+                        .pending_session_switch
+                        .as_ref()
+                        .map(|(path, _)| path.as_path()),
+                    Some(project.join("b.jsonl").as_path())
+                );
+                window.simulate_next_frame(cx);
+                let panel = app.read(cx).views.run_panel.clone();
+                panel.update(cx, |_, cx| cx.notify());
+            });
+            draw(cx);
+            assert_eq!(
+                cx.debug_bounds(recent_selectors[0]).unwrap(),
+                recent_before[0],
+                "clicking a worker in the collapsed list must keep the row in place"
+            );
             assert!(cx.debug_bounds("run-panel-repository").is_some());
             let show = cx.debug_bounds("show-more-workers").unwrap();
             cx.simulate_click(show.center(), Default::default());
@@ -287,6 +317,7 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
                 .unwrap();
             let root = project.join("root.jsonl");
             let oldest = project.join("worker-0000.jsonl");
+            let clicked = project.join("worker-0487.jsonl");
             let sessions: Vec<_> = std::iter::once(("root".to_owned(), None, 0))
                 .chain((0..500).map(|i| (format!("worker-{i:04}"), Some("root".to_owned()), i)))
                 .map(|(id, parent, age)| {
@@ -316,6 +347,7 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
                         );
                     }
                     std::fs::write(&oldest, "{}").unwrap();
+                    std::fs::write(&clicked, "{}").unwrap();
                     app.sessions.visible = sessions.clone().into();
                     app.sessions.all = sessions.into();
                     app.lifecycle.pending_session_switch = None;
@@ -361,7 +393,7 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
             let distance_selector = Box::leak(
                 format!(
                     "agent-card-{}",
-                    crate::agent_activity::agent_activity_key(&project.join("worker-0487.jsonl"))
+                    crate::agent_activity::agent_activity_key(&clicked)
                 )
                 .into_boxed_str(),
             );
@@ -394,9 +426,42 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
                 "wheel distance must include offscreen rows"
             );
 
+            let list_top = cx.debug_bounds("run-panel-main-heading").unwrap().bottom()
+                + crate::app::ui::theme::theme().space.xs;
+            cx.simulate_event(gpui::ScrollEvent {
+                position: pointer,
+                delta: gpui::ScrollDelta::Pixels(gpui::point(
+                    gpui::px(0.0),
+                    list_top + gpui::px(2.0) - after_scroll.center().y,
+                )),
+                ..Default::default()
+            });
+            draw(cx);
+            let clipped_row = cx.debug_bounds(distance_selector).unwrap();
+            assert!(clipped_row.top() < list_top && clipped_row.center().y > list_top);
+            cx.simulate_click(clipped_row.center(), Default::default());
+            draw(cx);
+            cx.update(|_, cx| {
+                assert_eq!(
+                    app.read(cx)
+                        .lifecycle
+                        .pending_session_switch
+                        .as_ref()
+                        .map(|(path, _)| path),
+                    Some(&clicked)
+                );
+            });
+            assert_eq!(
+                cx.debug_bounds(distance_selector).unwrap(),
+                clipped_row,
+                "clicking a partially visible worker must keep the row in place"
+            );
+            super::worker_list::PREPARATIONS.with(|count| count.set(0));
+
             // Keyboard navigation can select a worker far outside the current viewport.
             cx.update(|_, cx| {
                 app.update(cx, |app, cx| {
+                    app.lifecycle.pending_session_switch = None;
                     Arc::make_mut(&mut app.snapshot).selected_session = Some(oldest.clone());
                     app.views.run_panel.update(cx, |_, cx| cx.notify());
                 });

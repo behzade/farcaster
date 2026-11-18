@@ -226,13 +226,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.select_session_restoring_center(
-            path,
-            project,
-            USER_SESSION_SWITCH_RESTORES_CENTER,
-            window,
-            cx,
-        );
+        self.select_session_with_worker_reveal(path, project, true, window, cx);
     }
 
     pub(in crate::app) fn select_session_and_focus(
@@ -246,11 +240,22 @@ impl FarcasterApp {
         self.recover_keyboard_focus(window, cx);
     }
 
-    pub(in crate::app) fn select_session_restoring_center(
+    pub(in crate::app) fn select_clicked_worker(
         &mut self,
         path: PathBuf,
         project: PathBuf,
-        restore_center: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_session_with_worker_reveal(path, project, false, window, cx);
+        self.recover_keyboard_focus(window, cx);
+    }
+
+    fn select_session_with_worker_reveal(
+        &mut self,
+        path: PathBuf,
+        project: PathBuf,
+        reveal_worker: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -277,7 +282,7 @@ impl FarcasterApp {
         .map(|session| session.id.clone());
         let Some(target) = self.backend_target_for_path(&path, cx) else {
             self.retry_after_session_refresh(path.clone(), window, cx, move |this, window, cx| {
-                this.select_session_restoring_center(path, project, restore_center, window, cx);
+                this.select_session_with_worker_reveal(path, project, reveal_worker, window, cx);
             });
             return;
         };
@@ -286,7 +291,7 @@ impl FarcasterApp {
         self.switch_composer_target(session_target(&path), window, cx);
         self.sessions.selected_draft = None;
         self.select_project(project.clone(), cx);
-        if restore_center {
+        if USER_SESSION_SWITCH_RESTORES_CENTER {
             self.restore_center_surface(project.clone(), window, cx);
         }
         if let Some((_, timing)) = self.lifecycle.pending_session_switch.take() {
@@ -296,6 +301,9 @@ impl FarcasterApp {
             path.clone(),
             crate::app::infrastructure::performance::Timing::new("switch.session_total"),
         ));
+        self.views.run_panel.update(cx, |view, _| {
+            view.preserve_worker_scroll_for((!reveal_worker).then(|| path.clone()));
+        });
         self.send_project_command(
             &project,
             RuntimeCommand::SelectSession {

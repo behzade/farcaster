@@ -126,9 +126,13 @@ impl FarcasterApp {
             .items_stretch()
             .focus(|card| card.bg(theme().colors.highlight))
             .cursor_pointer()
-            .on_click(move |_, window, cx| {
+            .on_click(move |event, window, cx| {
                 let _ = entity.update(cx, |this, cx| {
-                    this.select_session_and_focus(path.clone(), project.clone(), window, cx);
+                    if matches!(event, gpui::ClickEvent::Keyboard(_)) {
+                        this.select_session_and_focus(path.clone(), project.clone(), window, cx);
+                    } else {
+                        this.select_clicked_worker(path.clone(), project.clone(), window, cx);
+                    }
                 });
             })
             .on_key_down(move |event, window, cx| {

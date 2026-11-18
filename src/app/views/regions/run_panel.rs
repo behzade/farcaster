@@ -29,6 +29,7 @@ pub(crate) struct RunPanelView {
     review_id: Option<u64>,
     expanded_workers_root: Option<std::path::PathBuf>,
     last_selected: Option<std::path::PathBuf>,
+    preserve_worker_scroll_for: Option<std::path::PathBuf>,
     reveal_selected: bool,
     worker_profiles_generation: Option<u64>,
     saved_worker_profiles: super::super::run_panel::WorkerProfileNames,
@@ -57,6 +58,7 @@ impl RunPanelView {
             review_id: None,
             expanded_workers_root: None,
             last_selected: None,
+            preserve_worker_scroll_for: None,
             reveal_selected: false,
             worker_profiles_generation: None,
             saved_worker_profiles: Default::default(),
@@ -113,6 +115,10 @@ impl RunPanelView {
 
     pub(crate) fn workers_expanded_for(&self, root: &std::path::Path) -> bool {
         self.expanded_workers_root.as_deref() == Some(root)
+    }
+
+    pub(in crate::app) fn preserve_worker_scroll_for(&mut self, path: Option<std::path::PathBuf>) {
+        self.preserve_worker_scroll_for = path;
     }
 }
 
@@ -179,17 +185,21 @@ impl Render for RunPanelView {
         {
             self.expanded_workers_root = None;
         }
-        let reveal_worker = self.last_selected != selected || self.reveal_selected;
-        if reveal_worker {
-            self.last_selected = selected;
-            self.reveal_selected = false;
-            if self.expanded_workers_root.is_none()
-                && root.is_some()
-                && self.last_selected.is_some()
-            {
-                self.activity_anchor.scroll_to(window, cx);
-            }
+        let preserve_scroll = self
+            .preserve_worker_scroll_for
+            .take()
+            .is_some_and(|path| selected.as_ref() == Some(&path));
+        let reveal_selected = std::mem::take(&mut self.reveal_selected);
+        let reveal_worker = (self.last_selected != selected || reveal_selected) && !preserve_scroll;
+        // The main agent sits outside the worker list and has no scroll anchor.
+        if reveal_worker
+            && self.expanded_workers_root.is_none()
+            && root.is_some()
+            && selected != root
+        {
+            self.activity_anchor.scroll_to(window, cx);
         }
+        self.last_selected = selected;
         if self.search.is_none() {
             let input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter files…"));
             self.search_subscription =
