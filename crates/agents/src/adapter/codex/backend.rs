@@ -34,6 +34,43 @@ impl BackendAdapter for CodexAdapter {
     ) -> Result<(), String> {
         super::accounts::logout(config, source, identity, project)
     }
+    fn historical_worker_status(
+        &self,
+        path: &Path,
+        profile: Option<&crate::HarnessProfile>,
+    ) -> Option<crate::WorkerStatus> {
+        let id = super::super::main_session::external_session_locator(Backend::Codex, path)?;
+        let home = match profile {
+            Some(profile) => profile.data_directory.clone()?,
+            None => std::env::var_os("CODEX_HOME")
+                .map(PathBuf::from)
+                .or_else(|| {
+                    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex"))
+                })?,
+        };
+        let db = std::env::var_os("CODEX_SQLITE_HOME")
+            .map(PathBuf::from)
+            .unwrap_or(home);
+        let db = rusqlite::Connection::open_with_flags(
+            db.join("thread_history_1.sqlite"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .ok()?;
+        let status: String = db
+            .query_row(
+                "SELECT status FROM thread_turns WHERE thread_id=?1
+                 ORDER BY rollout_ordinal DESC LIMIT 1",
+                [id],
+                |row| row.get(0),
+            )
+            .ok()?;
+        match status.as_str() {
+            "completed" => Some(crate::WorkerStatus::Idle),
+            "failed" => Some(crate::WorkerStatus::Failed),
+            "interrupted" => Some(crate::WorkerStatus::Stopped),
+            _ => None,
+        }
+    }
     fn fork_source(&self, path: &Path, profile: Option<&crate::HarnessProfile>) -> Option<String> {
         // A custom executable without a saved data directory may use an unknown home.
         let directory = match profile {

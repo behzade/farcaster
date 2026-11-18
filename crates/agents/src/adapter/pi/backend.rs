@@ -195,6 +195,13 @@ impl BackendAdapter for PiAdapter {
     ) -> Result<Vec<SessionSummary>, String> {
         super::session_files::discover(query).map(|result| result.sessions)
     }
+    fn historical_worker_status(
+        &self,
+        path: &Path,
+        _profile: Option<&crate::HarnessProfile>,
+    ) -> Option<crate::WorkerStatus> {
+        super::session_files::worker_status(path)
+    }
     fn fork_source(&self, path: &Path, _profile: Option<&crate::HarnessProfile>) -> Option<String> {
         super::session_files::fork_source(path)
     }

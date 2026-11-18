@@ -44,6 +44,13 @@ pub(super) trait BackendAdapter: Sync {
     ) -> Result<(), String> {
         Err("This adapter does not support sign-out".into())
     }
+    fn historical_worker_status(
+        &self,
+        _path: &Path,
+        _profile: Option<&crate::HarnessProfile>,
+    ) -> Option<crate::WorkerStatus> {
+        None
+    }
     /// Return locally verifiable fork ancestry for repairing older catalog rows.
     fn fork_source(
         &self,

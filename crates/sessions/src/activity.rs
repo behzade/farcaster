@@ -85,6 +85,14 @@ impl AgentActivity {
         }
     }
 
+    pub fn from_worker_outcome(session: &SessionSummary, outcome: Option<AgentOutcome>) -> Self {
+        let mut activity = Self::limited_fallback(session);
+        activity.lifecycle = outcome.map_or(AgentLifecycle::Unknown, AgentLifecycle::Completed);
+        activity.explicit_outcome = outcome.is_some();
+        activity.ended = outcome.map(|_| session.modified);
+        activity
+    }
+
     pub fn from_worker_status(
         session: &SessionSummary,
         status: WorkerStatus,

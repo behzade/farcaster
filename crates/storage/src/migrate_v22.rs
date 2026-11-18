@@ -1,18 +1,7 @@
 use super::*;
 
 pub(super) fn migrate(tx: &Transaction<'_>) -> Result<(), String> {
-    let profiles: Vec<agents::HarnessProfile> = tx
-        .query_row(
-            "SELECT value FROM meta WHERE key='harness_profiles'",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(|error| error.to_string())?
-        .map(|json| serde_json::from_str(&json))
-        .transpose()
-        .map_err(|error| format!("read fork migration profiles: {error}"))?
-        .unwrap_or_default();
+    let profiles = super::settings::read_harness_profiles(tx)?;
     let has_fork_source = tx
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_table_info('sessions')
@@ -60,27 +49,13 @@ pub(super) fn migrate(tx: &Transaction<'_>) -> Result<(), String> {
             continue;
         };
         let locator = Path::new(&locator);
-        let locator_profile = agents::profile_id_from_locator(locator);
-        if profile_id
-            .as_ref()
-            .zip(locator_profile.as_ref())
-            .is_some_and(|(stored, locator)| stored != locator)
-        {
-            continue;
-        }
-        let profile_id = profile_id.or(locator_profile);
-        let profile = if let Some(profile_id) = profile_id {
-            let Some(profile) = profiles
-                .iter()
-                .find(|profile| profile.id == profile_id && profile.backend == harness)
-            else {
-                continue;
-            };
-            Some(profile)
-        } else {
-            None
-        };
-        let Some(source) = agents::session_fork_source(harness, locator, profile) else {
+        let Some(source) = super::settings::read_profile_history(
+            &profiles,
+            harness,
+            locator,
+            profile_id,
+            agents::session_fork_source,
+        ) else {
             continue;
         };
         if parent.as_deref() != Some(source.as_str()) {

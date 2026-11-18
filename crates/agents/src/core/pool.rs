@@ -36,7 +36,10 @@ pub struct WorkerPool {
     inner: Arc<PoolInner>,
 }
 
+type StatusSink = Arc<dyn Fn(farcaster_sessions::AppSessionId, WorkerStatus) + Send + Sync>;
+
 struct PoolInner {
+    status_sink: std::sync::OnceLock<StatusSink>,
     factories: BTreeMap<Backend, Arc<dyn WorkerSessionFactory>>,
     allowed_projects: Mutex<BTreeSet<std::path::PathBuf>>,
     app_proxy: Mutex<Option<String>>,
@@ -133,6 +136,7 @@ impl WorkerPool {
         let (updates, update_receiver) = async_channel::unbounded();
         Ok(Self {
             inner: Arc::new(PoolInner {
+                status_sink: Default::default(),
                 factories,
                 allowed_projects: Mutex::new(BTreeSet::from([allowed_project])),
                 app_proxy: Mutex::new(None),
@@ -143,6 +147,13 @@ impl WorkerPool {
                 state: Mutex::new(PoolState::default()),
             }),
         })
+    }
+
+    pub fn set_status_sink(&self, sink: StatusSink) -> Result<(), String> {
+        self.inner
+            .status_sink
+            .set(sink)
+            .map_err(|_| "worker status sink already installed".into())
     }
 
     pub fn updates(&self) -> async_channel::Receiver<()> {

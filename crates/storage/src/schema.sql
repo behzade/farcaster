@@ -57,7 +57,8 @@ CREATE TABLE session_events (
 CREATE TABLE worker_families (
   child_id INTEGER PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
   execution_json TEXT,
-  routing_json TEXT
+  routing_json TEXT,
+  last_status TEXT CHECK(last_status IN ('done','failed','stopped','active'))
 );
 CREATE TABLE outbox (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

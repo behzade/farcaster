@@ -208,8 +208,13 @@ impl RuntimeOwner {
         let Some(state) = &self.state else {
             return;
         };
-        let event = match state.with(|store| crate::sessions::cached_sessions(store, "")) {
-            Ok(sessions) => self.catalog_event(sessions),
+        let event = match state.with(|store| {
+            Ok((
+                crate::sessions::cached_sessions(store, "")?,
+                store.worker_outcomes()?,
+            ))
+        }) {
+            Ok((sessions, outcomes)) => self.catalog_event(sessions, outcomes),
             Err(message) => RuntimeEvent::SessionsFailed {
                 generation: self.session_generation,
                 message,
@@ -218,11 +223,27 @@ impl RuntimeOwner {
         let _ = self.event_tx.send(event);
     }
 
-    fn catalog_event(&self, all_sessions: Vec<SessionSummary>) -> RuntimeEvent {
-        let worker_activities = worker_activities(
+    fn catalog_event(
+        &self,
+        all_sessions: Vec<SessionSummary>,
+        outcomes: std::collections::BTreeMap<i64, Option<crate::agent_activity::AgentOutcome>>,
+    ) -> RuntimeEvent {
+        let mut worker_activities = worker_activities(
             &all_sessions,
             self.host.worker_snapshots().unwrap_or_default(),
         );
+        for session in &all_sessions {
+            let Some(outcome) = outcomes.get(&session.app_session_id) else {
+                continue;
+            };
+            let key = crate::agent_activity::agent_activity_key(&session.path);
+            if worker_activities.get(&key).is_some_and(|activity| {
+                activity.lifecycle != crate::agent_activity::AgentLifecycle::Unknown
+            }) {
+                continue;
+            }
+            worker_activities.insert(key, AgentActivity::from_worker_outcome(session, *outcome));
+        }
         RuntimeEvent::Sessions {
             generation: self.session_generation,
             sessions: crate::sessions::filter_session_tree(

@@ -28,6 +28,7 @@ pub(super) fn spawn(
     parent: Option<WorkerParent>,
     updates: async_channel::Sender<()>,
     cleanup_confirmed: Arc<AtomicBool>,
+    save_status: impl Fn(WorkerStatus) + Send + 'static,
 ) -> Result<(mpsc::Sender<RunCommand>, thread::JoinHandle<()>), String> {
     let (commands, receiver) = mpsc::channel();
     let handle = thread::Builder::new()
@@ -41,6 +42,7 @@ pub(super) fn spawn(
                 parent,
                 &updates,
                 &cleanup_confirmed,
+                save_status,
             )
         })
         .map_err(|error| format!("start worker thread: {error}"))?;
@@ -55,6 +57,7 @@ fn run(
     parent: Option<WorkerParent>,
     updates: &async_channel::Sender<()>,
     cleanup_confirmed: &AtomicBool,
+    save_status: impl Fn(WorkerStatus),
 ) {
     let (responses, response_rx) = mpsc::channel::<crate::WorkerInputResponse>();
     let mut input_leases = Vec::new();
@@ -67,6 +70,13 @@ fn run(
                 let _ = session.abort();
                 let close_error = session.close().err();
                 cleanup_confirmed.store(close_error.is_none(), Ordering::SeqCst);
+                if turn_active {
+                    save_status(if close_error.is_some() {
+                        WorkerStatus::Failed
+                    } else {
+                        WorkerStatus::Stopped
+                    });
+                }
                 slot.release();
                 update(&snapshot, |current| {
                     if let Some(error) = close_error {
@@ -113,10 +123,12 @@ fn run(
         while let Some(event) = session.poll() {
             match event {
                 WorkerEvent::Started => {
+                    save_status(WorkerStatus::Running);
                     turn_active = true;
                     refresh_inputs(&snapshot, &approvals, &questions, turn_active);
                 }
                 WorkerEvent::Settled { output } => {
+                    save_status(WorkerStatus::Idle);
                     if std::mem::replace(&mut turn_active, false)
                         && !output.trim().is_empty()
                         && let Some(parent) = &parent
@@ -199,6 +211,9 @@ fn run(
             }
         }
     };
+    if turn_active {
+        save_status(WorkerStatus::Failed);
+    }
     let error = close_failed(&mut *session, &snapshot, error, cleanup_confirmed);
     slot.release();
     if let Some(parent) = &parent {

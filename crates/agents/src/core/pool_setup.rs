@@ -267,6 +267,14 @@ impl super::WorkerPool {
             {
                 record.session_binding = binding;
             }
+            let binding = record.session_binding.clone();
+            let sink = self.inner.status_sink.get().cloned();
+            let save_status = move |status| {
+                let key = binding.lock().ok().and_then(|b| b.as_ref()?.key.clone());
+                if let (Some(sink), Some(farcaster_sessions::SessionKey::App(id))) = (&sink, key) {
+                    sink(id, status);
+                }
+            };
             let (commands, handle) = match run::spawn(
                 &reserved.id,
                 session,
@@ -275,6 +283,7 @@ impl super::WorkerPool {
                 reserved.parent,
                 self.inner.updates.clone(),
                 cleanup_confirmed,
+                save_status,
             ) {
                 Ok(spawned) => spawned,
                 Err(error) => {

@@ -196,10 +196,11 @@ pub(super) fn merge_session(tx: &Transaction<'_>, keep: i64, other: i64) -> Resu
         "INSERT INTO session_models SELECT ?1, provider, model, effort, service_tier
            FROM session_models WHERE session_id=?2
          ON CONFLICT(session_id) DO NOTHING",
-        "INSERT INTO worker_families(child_id, execution_json, routing_json)
-         SELECT ?1, execution_json, routing_json FROM worker_families WHERE child_id=?2
+        "INSERT INTO worker_families(child_id, execution_json, routing_json, last_status)
+         SELECT ?1, execution_json, routing_json, last_status FROM worker_families WHERE child_id=?2
          ON CONFLICT(child_id) DO UPDATE SET
-           routing_json=COALESCE(worker_families.routing_json, excluded.routing_json)",
+           routing_json=COALESCE(worker_families.routing_json, excluded.routing_json),
+           last_status=COALESCE(worker_families.last_status, excluded.last_status)",
         "UPDATE session_ops SET session_id=?1 WHERE session_id=?2",
         "UPDATE session_turns SET session_id=?1 WHERE session_id=?2",
         "UPDATE session_reviews SET session_id=?1 WHERE session_id=?2",

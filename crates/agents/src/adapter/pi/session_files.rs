@@ -545,6 +545,20 @@ fn discover_in_cached(
     })
 }
 
+pub(super) fn worker_status(path: &Path) -> Option<crate::WorkerStatus> {
+    use farcaster_sessions::activity::{AgentLifecycle, AgentOutcome};
+    let (_, activity) = parse_candidate(path).ok()??;
+    if activity.limited || !activity.explicit_outcome {
+        return None;
+    }
+    match activity.lifecycle {
+        AgentLifecycle::Completed(AgentOutcome::Complete) => Some(crate::WorkerStatus::Idle),
+        AgentLifecycle::Completed(AgentOutcome::Failed) => Some(crate::WorkerStatus::Failed),
+        AgentLifecycle::Completed(AgentOutcome::Incomplete) => Some(crate::WorkerStatus::Stopped),
+        _ => None,
+    }
+}
+
 fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)>, String> {
     farcaster_sessions::count_parse();
     let file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;

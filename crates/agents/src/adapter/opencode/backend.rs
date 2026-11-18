@@ -28,6 +28,46 @@ impl BackendAdapter for OpenCodeAdapter {
     ) -> Result<crate::accounts::AccountDiscovery, String> {
         super::accounts::read(config, project)
     }
+    fn historical_worker_status(
+        &self,
+        path: &Path,
+        profile: Option<&crate::HarnessProfile>,
+    ) -> Option<crate::WorkerStatus> {
+        if profile.is_some() {
+            return None;
+        }
+        let id = super::super::main_session::external_session_locator(Backend::OpenCode, path)?;
+        let database = std::env::var_os("OPENCODE_DB")
+            .map(PathBuf::from)
+            .or_else(|| {
+                let root = std::env::var_os("XDG_DATA_HOME")
+                    .map(PathBuf::from)
+                    .or_else(|| {
+                        std::env::var_os("HOME")
+                            .map(|home| PathBuf::from(home).join(".local/share"))
+                    })?;
+                Some(root.join("opencode/opencode.db"))
+            })?;
+        let db = rusqlite::Connection::open_with_flags(
+            database,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .ok()?;
+        let outcome: String = db
+            .query_row(
+                "SELECT idle_outcome FROM session_v2
+                 WHERE id=?1 AND time_idle >= COALESCE(time_busy,0)",
+                [id],
+                |row| row.get(0),
+            )
+            .ok()?;
+        match outcome.as_str() {
+            "succeeded" => Some(crate::WorkerStatus::Idle),
+            "failed" => Some(crate::WorkerStatus::Failed),
+            "interrupted" => Some(crate::WorkerStatus::Stopped),
+            _ => None,
+        }
+    }
     fn descriptor(&self) -> AgentBackendDescriptor {
         super::descriptor()
     }

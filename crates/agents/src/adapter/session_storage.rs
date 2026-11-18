@@ -188,6 +188,14 @@ pub fn discover_sessions_for_profile(
     for_backend(harness).discover_sessions_for_profile(config, root.as_deref(), query)
 }
 
+pub fn historical_worker_status(
+    harness: Backend,
+    path: &Path,
+    profile: Option<&crate::HarnessProfile>,
+) -> Option<crate::WorkerStatus> {
+    for_backend(harness).historical_worker_status(path, profile)
+}
+
 pub fn session_fork_source(
     harness: Backend,
     path: &Path,
