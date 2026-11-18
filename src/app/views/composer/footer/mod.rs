@@ -11,7 +11,7 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 
-use super::super::usage::{ComposerUsage, composer_usage, format_tokens};
+use super::super::usage::{ComposerUsage, composer_usage};
 use super::ComposerAction;
 use crate::{
     app::FarcasterApp,
@@ -27,6 +27,8 @@ impl FarcasterApp {
         entity: WeakEntity<Self>,
         scroll: &gpui::ScrollHandle,
     ) -> AnyElement {
+        let usage = composer_usage(self);
+        let context = context_value(&usage);
         let settings = div()
             .id("composer-settings")
             .min_w_0()
@@ -43,6 +45,10 @@ impl FarcasterApp {
                     self.settings.harness_profiles.list().unwrap_or_default(),
                     entity.clone(),
                 ))
+            })
+            .when_some(context, |row, value| {
+                let ring = context_meter(usage.context_percent);
+                row.child(usage::render(usage, ring, value))
             })
             .child(runtime::render(self, entity.clone()));
 
@@ -63,8 +69,9 @@ impl FarcasterApp {
         scroll: &gpui::ScrollHandle,
         mode: Option<&str>,
     ) -> AnyElement {
-        let usage = composer_usage(self);
-        let context = context_value(&usage);
+        let Some(mode) = mode else {
+            return div().into_any_element();
+        };
         let status = div()
             .id("composer-status")
             .debug_selector(|| "composer-status".into())
@@ -80,22 +87,16 @@ impl FarcasterApp {
             .text_color(theme().colors.muted)
             .overflow_x_scroll()
             .track_scroll(scroll)
-            .when_some(mode, |row, mode| {
-                row.child(
-                    div()
-                        .flex_none()
-                        .pr(theme().space.sm)
-                        .font_family(MONO_FONT_FAMILY)
-                        .text_size(theme().type_scale.caption)
-                        .text_color(theme().colors.indicator)
-                        .whitespace_nowrap()
-                        .child(mode.to_owned()),
-                )
-            })
-            .when_some(context, |row, value| {
-                let metric = context_metric(&usage, value);
-                row.child(usage::render(usage, metric))
-            });
+            .child(
+                div()
+                    .flex_none()
+                    .pr(theme().space.sm)
+                    .font_family(MONO_FONT_FAMILY)
+                    .text_size(theme().type_scale.caption)
+                    .text_color(theme().colors.indicator)
+                    .whitespace_nowrap()
+                    .child(mode.to_owned()),
+            );
         status.into_any_element()
     }
 
@@ -155,89 +156,78 @@ impl FarcasterApp {
     }
 }
 
-fn context_metric(usage: &ComposerUsage, value: String) -> AnyElement {
-    div()
-        .flex_none()
-        .flex()
-        .items_center()
-        .text_size(theme().type_scale.caption)
-        .gap(theme().space.sm)
-        .when_some(usage.context_percent, |metric, percent| {
-            metric.child(context_meter(
-                percent.clamp(0.0, 100.0),
-                context_color(Some(percent)),
-            ))
-        })
-        .child(
-            div()
-                .flex_none()
-                .whitespace_nowrap()
-                .text_color(theme().colors.text)
-                .child(value),
-        )
-        .into_any_element()
-}
-
 fn context_value(usage: &ComposerUsage) -> Option<String> {
-    match (usage.context_used, usage.context_total) {
-        (Some(used), Some(total)) => {
-            Some(format!("{}/{}", format_tokens(used), format_tokens(total)))
-        }
-        (Some(used), None) => Some(format_tokens(used)),
-        (None, _) => usage
-            .context_percent
-            .map(|percent| format!("{percent:.0}%")),
+    let count = match (usage.context_used, usage.context_total) {
+        (Some(used), Some(total)) => Some(format!("{used} / {total} tokens")),
+        (Some(used), None) => Some(format!("{used} tokens")),
+        _ => None,
+    };
+    match (count, usage.context_percent) {
+        (Some(count), Some(percent)) => Some(format!("{count} · {percent:.0}%")),
+        (Some(count), None) => Some(count),
+        (None, Some(percent)) => Some(format!("{percent:.0}%")),
+        (None, None) => None,
     }
 }
 
-fn context_meter(percent: f64, color: gpui::Rgba) -> AnyElement {
-    div()
-        .size(theme().size(14.0))
-        .flex_none()
-        .rounded_full()
-        .overflow_hidden()
-        .border(theme().border)
-        .border_color(theme().colors.border)
-        .bg(theme().colors.border)
-        .child(
-            canvas(
-                |bounds, _, _| bounds,
-                move |bounds, _, window, _| {
-                    if percent <= 0.0 {
-                        return;
-                    }
-                    let radius = f32::from(bounds.size.width.min(bounds.size.height)) / 2.0;
-                    let center_x = f32::from(bounds.origin.x) + radius;
-                    let center_y = f32::from(bounds.origin.y) + radius;
-                    let fraction = (percent / 100.0) as f32;
-                    let steps = (fraction * 32.0).ceil().max(1.0) as usize;
-                    let mut points = Vec::with_capacity(steps + 2);
-                    points.push(point(px(center_x), px(center_y)));
-                    for step in 0..=steps {
-                        let progress = fraction * step as f32 / steps as f32;
-                        let angle = -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * progress;
-                        points.push(point(
-                            px(center_x + radius * angle.cos()),
-                            px(center_y + radius * angle.sin()),
-                        ));
-                    }
-                    let mut builder = PathBuilder::fill();
-                    builder.add_polygon(&points, true);
-                    if let Ok(path) = builder.build() {
-                        window.paint_path(path, color);
-                    }
-                },
-            )
-            .size_full(),
-        )
-        .into_any_element()
+fn context_meter(percent: Option<f64>) -> AnyElement {
+    canvas(
+        |bounds, _, _| bounds,
+        move |bounds, _, window, _| {
+            let size = f32::from(bounds.size.width.min(bounds.size.height));
+            // Match the circle and stroke in the app's 256-unit Phosphor icons.
+            let stroke = size * 16.0 / 256.0;
+            let radius = size * 96.0 / 256.0;
+            let center = bounds.center();
+            let point_at = |progress: f32| {
+                let angle = -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * progress;
+                point(
+                    center.x + px(radius * angle.cos()),
+                    center.y + px(radius * angle.sin()),
+                )
+            };
+            let mut paint_arc = |fraction: f32, color| {
+                let steps = (fraction * 64.0).ceil().max(1.0) as usize;
+                let mut path = PathBuilder::stroke(px(stroke));
+                path.move_to(point_at(0.0));
+                for step in 1..=steps {
+                    path.line_to(point_at(fraction * step as f32 / steps as f32));
+                }
+                if let Ok(path) = path.build() {
+                    window.paint_path(path, color);
+                }
+            };
+            paint_arc(1.0, theme().colors.border);
+            if let Some(percent) = percent.filter(|percent| *percent > 0.0) {
+                let fraction = (percent.clamp(0.0, 100.0) / 100.0) as f32;
+                let color = context_color(percent);
+                paint_arc(fraction, color);
+                for end in [point_at(0.0), point_at(fraction)] {
+                    window.paint_quad(
+                        gpui::fill(
+                            gpui::Bounds::new(
+                                end - point(px(stroke / 2.0), px(stroke / 2.0)),
+                                gpui::size(px(stroke), px(stroke)),
+                            ),
+                            color,
+                        )
+                        .corner_radii(px(stroke / 2.0)),
+                    );
+                }
+            }
+        },
+    )
+    .size(theme().icons.control)
+    .flex_none()
+    .into_any_element()
 }
 
-fn context_color(percent: Option<f64>) -> gpui::Rgba {
-    match percent {
-        Some(percent) if percent > 90.0 => theme().colors.error,
-        Some(percent) if percent > 70.0 => theme().colors.warning,
-        Some(_) => theme().colors.success,
-        None => theme().colors.border,
+fn context_color(percent: f64) -> gpui::Rgba {
+    if percent > 90.0 {
+        theme().colors.error
+    } else if percent > 70.0 {
+        theme().colors.warning
+    } else {
+        theme().colors.text
     }
 }

@@ -295,14 +295,21 @@ fn composer_text_attachments_and_controls_share_an_inset(cx: &mut gpui::TestAppC
                 assert!(cx.debug_bounds("composer-usage-trigger").is_none());
                 let context_trigger = cx.debug_bounds("composer-context-trigger");
                 assert_eq!(context_trigger.is_some(), context);
-                let status = cx.debug_bounds("composer-status").expect("status row");
                 assert!(
-                    status.top() >= frame.bottom(),
-                    "status stays below the composer"
+                    cx.debug_bounds("composer-status").is_none(),
+                    "no extra status row without a mode"
                 );
-                assert_eq!(status.size.height, theme().type_scale.line_body);
                 if let Some(context) = context_trigger {
-                    assert!(context.top() >= frame.bottom());
+                    assert_eq!(context.top(), add.top(), "context shares the control row");
+                    assert_eq!(
+                        context.size, add.size,
+                        "context uses the shared target size"
+                    );
+                    assert!(context.bottom() < frame.bottom());
+                    assert!(
+                        context.right() <= runtime.left(),
+                        "context precedes model identity"
+                    );
                 }
                 assert_eq!(
                     add.left() - frame.left(),

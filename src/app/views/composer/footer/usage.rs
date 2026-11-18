@@ -14,22 +14,22 @@ use gpui::{
 };
 use gpui_component::ThemeStyled as _;
 
-pub(super) fn render(usage: ComposerUsage, content: AnyElement) -> AnyElement {
+pub(super) fn render(usage: ComposerUsage, content: AnyElement, value: String) -> AnyElement {
     Popover::new("composer-usage-popover")
         .anchor(gpui::Anchor::BottomLeft)
         .appearance(false)
         .trigger(
             dropdown_content_button(
                 "composer-context",
-                "Usage details",
+                format!("Context · {value}"),
                 content,
                 ButtonTone::Quiet,
                 true,
             )
             .dropdown_caret(false)
-            .h(theme().type_scale.line_body)
-            .py(gpui::px(0.0))
-            .px(gpui::px(0.0))
+            .size(theme().controls.icon_button)
+            .p(gpui::px(0.0))
+            .flex_none()
             .debug_selector(|| "composer-context-trigger".into()),
         )
         .content(move |_, _, cx| details(&usage, cx))
