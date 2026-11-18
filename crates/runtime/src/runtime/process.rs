@@ -120,6 +120,7 @@ impl RuntimeOwner {
         self.startup_state_loaded = false;
         self.startup_history_loaded = false;
         self.resumed_usage_pending = false;
+        self.backend_activity = Default::default();
         self.normal_prompt_in_flight = false;
         self.invalidate_auto_title_generation();
         self.title_generation.new_session = false;
@@ -227,14 +228,6 @@ impl RuntimeOwner {
         self.process_command.access_mode = self
             .access_mode_changes
             .take_requested_mode(self.process_command.access_mode);
-        let Some(mode) = self
-            .access_mode_changes
-            .resolve_available(self.process_command.access_mode, &available_access_modes)
-        else {
-            self.fail("No access mode is available for this model".into());
-            return;
-        };
-        self.process_command.access_mode = mode;
         let status = if fork.is_some() {
             "Forking session".into()
         } else {
@@ -289,6 +282,14 @@ impl RuntimeOwner {
             snapshot.prefill_service_tier = tier;
             snapshot.pending_initial_service_tier = pending_tier;
         }
+        let Some(mode) = self
+            .access_mode_changes
+            .resolve_available(self.process_command.access_mode, &available_access_modes)
+        else {
+            self.fail("No access mode is available for this model".into());
+            return;
+        };
+        self.process_command.access_mode = mode;
         self.snapshot.sandbox_adapter = sandbox_adapter;
         self.access_mode_changes.applying = true;
         let _ = self.event_tx.send(RuntimeEvent::SessionReset {
@@ -429,12 +430,6 @@ impl RuntimeOwner {
                 SnapshotChange::None
             }
             SessionEvent::Activity(event) => {
-                if matches!(
-                    event.kind(),
-                    SessionActivityKind::AgentStarted | SessionActivityKind::CompactionStarted
-                ) {
-                    self.resumed_usage_pending = false;
-                }
                 if event.kind() == &SessionActivityKind::PromptDelivery {
                     let Some(delivery) = event.prompt_delivery() else {
                         zlog::warn!("Ignoring malformed prompt delivery event");
@@ -449,6 +444,21 @@ impl RuntimeOwner {
                     self.apply_prompt_delivery_receipt(delivery);
                 }
                 let settled = event.kind() == &SessionActivityKind::AgentSettled;
+                match event.kind() {
+                    SessionActivityKind::AgentStarted => {
+                        self.resumed_usage_pending = false;
+                        self.backend_activity.turn = ActivityObservation::Started;
+                    }
+                    SessionActivityKind::CompactionStarted => {
+                        self.resumed_usage_pending = false;
+                        self.backend_activity.compaction = ActivityObservation::Started;
+                    }
+                    SessionActivityKind::CompactionFinished => {
+                        self.backend_activity.compaction = ActivityObservation::Idle
+                    }
+                    SessionActivityKind::AgentSettled => self.backend_activity = Default::default(),
+                    _ => {}
+                }
                 let conversation = &self.active_snapshot().conversation;
                 let notify_completion = settled
                     && conversation.running
@@ -666,9 +676,17 @@ impl RuntimeOwner {
         }
         self.finish_current_prompt(false);
         self.normal_prompt_in_flight = false;
-        conversation_mut(self.active_snapshot_mut()).running = false;
-        if !preserve_history {
+        let activity = std::mem::take(&mut self.backend_activity);
+        if activity.turn.is_active() || activity.compaction.is_active() {
+            if let Some(row) = conversation_mut(self.active_snapshot_mut()).settle_run() {
+                self.transcript_changed_from = Some(
+                    self.transcript_changed_from
+                        .map_or(row, |previous| previous.min(row)),
+                );
+            }
             self.active_snapshot_mut().last_outcome = Some(SessionOutcome::Failed);
+        } else {
+            conversation_mut(self.active_snapshot_mut()).running = false;
         }
         self.publish_session_metadata();
         self.process_command.access_mode = self

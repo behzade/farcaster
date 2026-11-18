@@ -1433,6 +1433,26 @@ fn assert_deferred_interrupt(start: CodexInbound) {
 }
 
 #[test]
+fn confirmed_start_precedes_a_failed_deferred_interrupt() {
+    let (mut session, _reader) = writable_test_session();
+    session.send("work".into(), WorkerSendMode::Prompt).unwrap();
+    session.abort().unwrap();
+    session.writer.take();
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(1),
+        result: json!({"turn": {"id": "turn-1", "status": "inProgress"}}),
+    }));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(
+            WorkerActivity::ThinkingStarted { .. }
+        ))
+    ));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Failed(_))));
+}
+
+#[test]
 fn abort_before_turn_id_interrupts_after_start_response() {
     assert_deferred_interrupt(CodexInbound::Response {
         id: CodexRequestId::Number(1),
@@ -1648,8 +1668,9 @@ fn answer_before_reasoning_uses_a_separate_content_slot() {
     let mut session = test_session();
 
     for turn_id in ["turn-1", "turn-2"] {
-        assert!(session.begin_turn(turn_id));
-        assert!(!session.begin_turn(turn_id));
+        session.begin_turn(turn_id);
+        session.begin_turn(turn_id);
+        assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
         assert!(matches!(
             session.poll(),
             Some(WorkerEvent::Activity(WorkerActivity::ThinkingStarted {
@@ -3171,7 +3192,7 @@ fn apply_steering_claims_all_queued_inputs_and_fans_out_batch_delivery() {
         id: CodexRequestId::Number(7),
         result: json!({"turn":{"id":"turn-2","status":"inProgress"}}),
     }));
-    let _ = session.poll();
+    assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
     assert!(matches!(session.poll_prompt_ack(), Some((id, Ok(()))) if id == "steer-1"));
     assert!(matches!(
         session.poll(),
@@ -3179,7 +3200,6 @@ fn apply_steering_claims_all_queued_inputs_and_fans_out_batch_delivery() {
             WorkerActivity::ThinkingStarted { .. }
         ))
     ));
-    assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
     session
         .queued_inbound
         .push_back(Ok(CodexInbound::Notification {

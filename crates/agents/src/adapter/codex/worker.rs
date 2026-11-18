@@ -1363,13 +1363,9 @@ impl CodexWorkerSession {
                                 });
                             }
                         };
-                        let started = self.begin_turn(&turn.id);
                         self.capture_handoff_target(&turn.id);
-                        if let Err(error) = self.interrupt_started_turn_if_requested() {
-                            return Some(WorkerEvent::Failed(error));
-                        }
-                        if started {
-                            return Some(WorkerEvent::Started);
+                        if let Some(event) = self.observe_turn_start(&turn.id, false) {
+                            return Some(event);
                         }
                     }
                     Some(PendingRequest::LoadGoal) => {
@@ -1473,14 +1469,10 @@ impl CodexWorkerSession {
                         for submission_id in admitted {
                             self.record_prompt_ack(submission_id, Ok(()));
                         }
-                        if let Some(turn) = started_turn {
-                            let started = self.begin_turn(&turn.id);
-                            if let Err(error) = self.interrupt_started_turn_if_requested() {
-                                return Some(WorkerEvent::Failed(error));
-                            }
-                            if started {
-                                self.events.push_back(WorkerEvent::Started);
-                            }
+                        if let Some(turn) = started_turn
+                            && let Some(event) = self.observe_turn_start(&turn.id, false)
+                        {
+                            return Some(event);
                         }
                     }
                     Some(PendingRequest::AbortCleanup { target_turn, phase }) => {
@@ -1755,16 +1747,9 @@ impl CodexWorkerSession {
                     match method {
                         CodexMethod::TurnStarted => {
                             if let Some(turn_id) = params["turn"]["id"].as_str() {
-                                let started = self.begin_turn(turn_id);
                                 self.capture_handoff_target(turn_id);
-                                if let Err(error) = self.maybe_submit_handoff() {
-                                    return Some(WorkerEvent::Failed(error));
-                                }
-                                if let Err(error) = self.interrupt_started_turn_if_requested() {
-                                    return Some(WorkerEvent::Failed(error));
-                                }
-                                if started {
-                                    return Some(WorkerEvent::Started);
+                                if let Some(event) = self.observe_turn_start(turn_id, true) {
+                                    return Some(event);
                                 }
                             } else {
                                 log_bad_codex_notification(
@@ -2712,7 +2697,20 @@ impl CodexWorkerSession {
         Err(format!("Codex did not {operation} within 15 seconds"))
     }
 
-    fn begin_turn(&mut self, turn_id: &str) -> bool {
+    fn observe_turn_start(&mut self, turn_id: &str, submit_handoff: bool) -> Option<WorkerEvent> {
+        self.begin_turn(turn_id);
+        let handoff = if submit_handoff {
+            self.maybe_submit_handoff()
+        } else {
+            Ok(())
+        };
+        if let Err(error) = handoff.and_then(|()| self.interrupt_started_turn_if_requested()) {
+            self.events.push_back(WorkerEvent::Failed(error));
+        }
+        self.events.pop_front()
+    }
+
+    fn begin_turn(&mut self, turn_id: &str) {
         let is_new = self.current_turn.as_deref() != Some(turn_id);
         if is_new && let Some(previous) = self.current_turn.clone() {
             self.clear_turn_inputs(&self.thread_id.clone(), &previous);
@@ -2721,6 +2719,7 @@ impl CodexWorkerSession {
         self.caller_identity
             .set_activity(WorkerActivityState::Working);
         if is_new {
+            self.events.push_back(WorkerEvent::Started);
             self.output.clear();
             self.reasoning_started = false;
             self.turn_error = None;
@@ -2732,7 +2731,6 @@ impl CodexWorkerSession {
                     }));
             }
         }
-        is_new
     }
 
     fn activity(&self) -> WorkerActivityState {

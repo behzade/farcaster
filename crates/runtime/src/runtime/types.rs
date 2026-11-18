@@ -290,6 +290,8 @@ pub struct RuntimeSnapshot {
     pub prefill_model: Option<Model>,
     pub pending_initial_model: bool,
     pub prefill_thinking_level: Option<String>,
+    /// Last tier reported by this session, including an explicit default.
+    pub observed_service_tier: Option<String>,
     pub prefill_service_tier: Option<String>,
     pub pending_initial_service_tier: bool,
     pub selected_session: Option<PathBuf>,

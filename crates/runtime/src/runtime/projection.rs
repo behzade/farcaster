@@ -271,11 +271,7 @@ impl RuntimeOwner {
             }
             self.finish_current_prompt(rollback);
             if outcome == crate::agents::PromptOutcome::DeliveryUnknown {
-                let running = self
-                    .active_snapshot()
-                    .session
-                    .as_ref()
-                    .is_some_and(|session| session.is_streaming);
+                let running = self.backend_activity.turn.is_active();
                 conversation_mut(self.active_snapshot_mut()).running = running;
                 if !running {
                     self.active_snapshot_mut().status = "Done".into();
@@ -296,11 +292,7 @@ impl RuntimeOwner {
             if is_prompt_response
                 && error.kind == crate::agents::SessionResponseErrorKind::Cancelled
             {
-                let running = self
-                    .active_snapshot()
-                    .session
-                    .as_ref()
-                    .is_some_and(|session| session.is_streaming);
+                let running = self.backend_activity.turn.is_active();
                 conversation_mut(self.active_snapshot_mut()).running = running;
                 if !running {
                     self.active_snapshot_mut().status = "Stopped".into();
@@ -345,13 +337,12 @@ impl RuntimeOwner {
                 }
             }
             if is_prompt_response {
-                let running = self
-                    .active_snapshot()
-                    .session
-                    .as_ref()
-                    .is_some_and(|session| session.is_streaming);
+                let running = self.backend_activity.turn.is_active();
                 conversation_mut(self.active_snapshot_mut()).running = running;
                 self.maybe_send_deferred_prompt();
+                if self.backend_activity.turn == ActivityObservation::Sampled {
+                    self.send(SessionCommand::LoadState);
+                }
             }
             if self.parked_snapshot.is_none() {
                 self.publish();
@@ -374,9 +365,14 @@ impl RuntimeOwner {
                     .map(|path| crate::sessions::normalize_session_path(&path))
                     .or_else(|| self.active_session.clone());
                 self.active_session = selected_session.clone();
+                // An idle sample can arrive between a start event and its settlement.
+                self.backend_activity.turn.sample(state.is_streaming);
+                self.backend_activity.compaction.sample(state.is_compacting);
+                let run_active = self.backend_activity.turn.is_active();
                 let snapshot = self.active_snapshot_mut();
+                snapshot.observed_service_tier = state.service_tier.clone();
                 snapshot.selected_session = selected_session;
-                conversation_mut(snapshot).running = state.is_streaming || normal_prompt_in_flight;
+                conversation_mut(snapshot).running = run_active || normal_prompt_in_flight;
                 snapshot.session = Some(*state);
                 let model_confirmed = snapshot
                     .session

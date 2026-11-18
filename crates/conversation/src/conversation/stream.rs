@@ -1,6 +1,21 @@
 use super::*;
 
 impl ConversationState {
+    /// Finish the current run and return the transcript row changed by an interrupted compaction.
+    pub fn settle_run(&mut self) -> Option<usize> {
+        let changed = self
+            .compacting
+            .then(|| self.compaction_notice(CompactionState::Interrupted, None));
+        self.running = false;
+        if let Some(start) = self.run_started_at.take() {
+            self.completed_runs.push(start..self.items.len());
+        }
+        self.settled = true;
+        self.retrying = false;
+        self.compacting = false;
+        changed
+    }
+
     #[allow(dead_code)]
     pub fn reduce(&mut self, event: &Value) -> Option<usize> {
         self.reduce_with_projection(event, true).0
@@ -71,19 +86,7 @@ impl ConversationState {
                     self.retrying = true;
                 }
             }
-            "agent_settled" => {
-                if self.compacting {
-                    compaction_changed =
-                        Some(self.compaction_notice(CompactionState::Interrupted, None));
-                }
-                self.running = false;
-                if let Some(start) = self.run_started_at.take() {
-                    self.completed_runs.push(start..self.items.len());
-                }
-                self.settled = true;
-                self.retrying = false;
-                self.compacting = false;
-            }
+            "agent_settled" => compaction_changed = self.settle_run(),
             "message_start" => self.start_message(event.get("message")),
             "message_update" => {
                 incremental_content_changed =

@@ -103,6 +103,32 @@ enum SnapshotChange {
     Immediate,
 }
 
+#[derive(Default)]
+struct BackendActivity {
+    turn: ActivityObservation,
+    compaction: ActivityObservation,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum ActivityObservation {
+    #[default]
+    Idle,
+    Sampled,
+    Started,
+}
+
+impl ActivityObservation {
+    fn is_active(self) -> bool {
+        self != Self::Idle
+    }
+
+    fn sample(&mut self, active: bool) {
+        if *self != Self::Started {
+            *self = if active { Self::Sampled } else { Self::Idle };
+        }
+    }
+}
+
 struct RuntimeOwner {
     host: Arc<dyn RuntimeHost>,
     review_projection: reviews::ReviewProjection,
@@ -132,6 +158,8 @@ struct RuntimeOwner {
     parked_snapshot: Option<RuntimeSnapshot>,
     queued_prompts: VecDeque<crate::agents::QueuedPrompt>,
     saved_prompts: VecDeque<crate::agents::QueuedPrompt>,
+    /// Set from backend activity or session state. The composer can show a run earlier.
+    backend_activity: BackendActivity,
     normal_prompt_in_flight: bool,
     pending_session_controls: PendingSessionControls,
     access_mode_changes: AccessModeChangeState,

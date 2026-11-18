@@ -26,7 +26,7 @@ fn stopped_session_context_survives_history_selection_and_reopening() {
         time_used_seconds: 10,
     });
     owner.snapshot.last_outcome = Some(SessionOutcome::Failed);
-    owner.snapshot.prefill_service_tier = Some("priority".into());
+    owner.snapshot.observed_service_tier = Some("priority".into());
     conversation_mut(&mut owner.snapshot).restore_cache_usage(crate::conversation::CacheUsage {
         read_tokens: 100,
         prompt_tokens: 200,

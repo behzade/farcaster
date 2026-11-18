@@ -8,7 +8,7 @@ impl RuntimeSnapshot {
             goal: self.session_goal.clone(),
             outcome: self.last_outcome,
             cache_usage: self.conversation.cache_usage(),
-            service_tier: self.selected_service_tier().map(str::to_owned),
+            service_tier: self.observed_service_tier.clone(),
         }
     }
 
@@ -19,6 +19,7 @@ impl RuntimeSnapshot {
         if facts.cache_usage.prompt_tokens > self.conversation.cache_usage().prompt_tokens {
             conversation_mut(self).restore_cache_usage(facts.cache_usage);
         }
+        self.observed_service_tier = facts.service_tier.clone();
         self.prefill_service_tier = facts.service_tier;
     }
 }

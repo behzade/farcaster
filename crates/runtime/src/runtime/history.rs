@@ -298,7 +298,7 @@ impl RuntimeOwner {
                 zlog::error!("Annotate saved prompt deliveries: {error}");
             }
         }
-        let facts = self.session_facts(&result.path);
+        let mut facts = self.session_facts(&result.path);
         if self.parked_snapshot.is_none() && !same_document {
             self.parked_snapshot = Some(std::mem::take(&mut self.snapshot));
         }
@@ -311,7 +311,7 @@ impl RuntimeOwner {
         let auto_retry = previous.auto_retry;
         let models = previous.models.clone();
         let history_stats = historical_context_stats(&history.messages, &models);
-        let stats = projection::stable_session_stats(&history_stats, facts.metrics.clone(), false);
+        facts.metrics = projection::stable_session_stats(&history_stats, facts.metrics, false);
         let mut session = previous.session.as_ref().filter(|_| same_document).cloned();
         let history_preview = !same_document || previous.history_preview;
         let prefill_model =
@@ -326,7 +326,6 @@ impl RuntimeOwner {
         }
         let mut conversation = ConversationState::default();
         conversation.replace_history(&history.messages);
-        conversation.restore_cache_usage(facts.cache_usage);
         drop(projection);
         self.transcript_changed_from = Some(0);
         self.snapshot = RuntimeSnapshot {
@@ -338,18 +337,15 @@ impl RuntimeOwner {
             selected_session: Some(result.path),
             conversation: Arc::new(conversation),
             models,
-            stats,
-            session_goal: facts.goal,
-            last_outcome: facts.outcome,
             session,
             auto_retry,
             history_preview,
             pending_question: history.pending_question.map(restored_question_request),
             prefill_model,
             prefill_thinking_level: history.thinking_level,
-            prefill_service_tier: facts.service_tier,
             ..RuntimeSnapshot::default()
         };
+        self.snapshot.restore_session_facts(facts);
         self.snapshot.access_mode = self.process_command.access_mode;
         if self.process.is_none() {
             self.restore_saved_session_controls();

@@ -51,6 +51,7 @@ pub(super) fn run(
         parked_snapshot: None,
         queued_prompts: VecDeque::new(),
         saved_prompts: VecDeque::new(),
+        backend_activity: Default::default(),
         normal_prompt_in_flight: false,
         pending_session_controls: PendingSessionControls::default(),
         access_mode_changes: AccessModeChangeState::default(),
