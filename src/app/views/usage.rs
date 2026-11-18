@@ -48,10 +48,7 @@ pub(super) fn composer_usage(app: &FarcasterApp) -> ComposerUsage {
     let mut aggregate = session;
     aggregate.add(workers);
 
-    let context = context_summary(visible_context_stats(
-        &app.snapshot.stats,
-        app.snapshot.conversation.running,
-    ));
+    let context = context_summary(&app.snapshot.stats);
     let model_window = app
         .snapshot
         .session_identity()
@@ -129,21 +126,8 @@ struct ContextSummary {
     total: Option<u64>,
 }
 
-fn visible_context_stats(stats: &serde_json::Value, running: bool) -> Option<&serde_json::Value> {
+fn context_summary(stats: &serde_json::Value) -> ContextSummary {
     let context = stats.get("contextUsage");
-    let meaningful = context
-        .and_then(|context| context.get("tokens"))
-        .and_then(serde_json::Value::as_u64)
-        .is_some_and(|tokens| tokens > 0)
-        || context
-            .and_then(|context| context.get("percent"))
-            .and_then(serde_json::Value::as_f64)
-            .is_some_and(|percent| percent.is_finite() && percent > 0.0);
-    (!running || meaningful).then_some(stats)
-}
-
-fn context_summary(stats: Option<&serde_json::Value>) -> ContextSummary {
-    let context = stats.and_then(|stats| stats.get("contextUsage"));
     let used = context
         .and_then(|context| context.get("tokens"))
         .and_then(serde_json::Value::as_u64);

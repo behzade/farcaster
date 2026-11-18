@@ -157,7 +157,10 @@ impl RuntimeOwner {
             && session.is_some()
             && self.snapshot.selected_session == session
             && self.snapshot.document_ready;
-        let preserved_stats = resume_document.then(|| self.snapshot.stats.clone());
+        let preserved_stats = session
+            .as_deref()
+            .filter(|_| fork.is_none())
+            .map(|path| self.session_metrics(path));
         let preserve_transcript = preserve_transcript || resume_document;
         let keep_preview = preserve_transcript && self.snapshot.history_preview;
         let preserved_conversation =
@@ -263,7 +266,7 @@ impl RuntimeOwner {
             self.resumed_usage_pending = true;
             let snapshot = self.active_snapshot_mut();
             snapshot.stats = stats;
-            snapshot.document_ready = true;
+            snapshot.document_ready = resume_document;
         }
         if let Some((
             models,

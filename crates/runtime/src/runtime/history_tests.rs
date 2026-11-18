@@ -5,6 +5,53 @@ const ONE_PIXEL_PNG: &str =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 #[test]
+fn stopped_session_context_survives_history_selection_and_reopening() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().to_owned();
+    let path = project.join("session.jsonl");
+    let state =
+        farcaster_storage::SharedStateStore::open_at(&project.join("state.sqlite3")).unwrap();
+    let metrics = json!({"contextUsage":{"tokens":120,"contextWindow":1000,"percent":12.0}});
+    let (mut owner, _) = crate::runtime::tests::owner_without_process(project.clone());
+    owner.state = Some(state.clone());
+    owner.active_session = Some(path.clone());
+    owner.snapshot.selected_session = Some(path.clone());
+    owner.snapshot.stats = metrics.clone();
+    owner.publish_session_metadata();
+    drop(owner);
+    let (mut restored, _) = crate::runtime::tests::owner_without_process(project.clone());
+    restored.state = Some(state);
+    assert!(restored.bind_history_selection(path.clone(), project.clone()));
+    assert_eq!(restored.snapshot.stats, metrics);
+    for (kind, usage) in [
+        (HistoryLoadKind::Selection, Value::Null),
+        (HistoryLoadKind::DocumentRefresh, json!({"totalTokens":99})),
+    ] {
+        restored.apply_history(HistoryResult {
+            generation: restored.history_generation,
+            path: path.clone(),
+            project: project.clone(),
+            kind,
+            result: Ok(LoadedHistory {
+                messages: vec![json!({
+                    "role":"assistant", "content":[{"type":"text","text":"done"}], "usage":usage
+                })]
+                .into(),
+                model: None,
+                thinking_level: None,
+                pending_question: None,
+                prompt_deliveries: None,
+            }),
+        });
+        assert_eq!(restored.snapshot.stats, metrics);
+        assert!(restored.snapshot.document_ready);
+        assert_eq!(restored.snapshot.conversation.items[0].text, "done");
+        assert!(!restored.snapshot.connected);
+        assert!(!restored.snapshot.conversation.running);
+    }
+}
+
+#[test]
 fn background_refresh_updates_a_retired_document_without_losing_metrics() {
     let project = PathBuf::from("/project");
     let path = PathBuf::from("/sessions/retired.jsonl");

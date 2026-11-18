@@ -462,6 +462,42 @@ fn access_mode_changes_during_a_response_keep_latest_and_allow_cancel() {
 }
 
 #[test]
+fn direct_resume_restores_metrics_before_history_and_accepts_new_reports() {
+    let temp = tempdir().unwrap();
+    let script = temp.path().join("fake-pi.sh");
+    fs::write(
+        &script,
+        include_str!("../../../../tests/fixtures/fake-pi.sh"),
+    )
+    .unwrap();
+    let session = temp.path().join("session.jsonl");
+    let state =
+        farcaster_storage::SharedStateStore::open_at(&temp.path().join("state.sqlite3")).unwrap();
+    let metrics = json!({"contextUsage":{"tokens":120,"contextWindow":1000,"percent":12.0}});
+    state
+        .with(|store| store.save_session_metrics(Backend::Pi, temp.path(), &session, &metrics))
+        .unwrap();
+    let (mut owner, _) = owner_without_process(temp.path().to_owned());
+    owner.state = Some(state.clone());
+    owner.process_command = AgentLaunchConfig::test_script(&script, vec!["history-control".into()]);
+    owner.start_process(Some(session.clone()));
+    assert_eq!(owner.snapshot.stats, metrics);
+    assert!(
+        !owner.snapshot.document_ready,
+        "metrics do not imply loaded history"
+    );
+    drive_process_until(&mut owner, |owner| {
+        owner.snapshot.stats.pointer("/contextUsage/tokens") == Some(&json!(4096))
+    });
+    assert_eq!(
+        state
+            .with(|store| store.load_session_metrics(Backend::Pi, &session))
+            .unwrap()["contextUsage"]["tokens"],
+        4096
+    );
+}
+
+#[test]
 fn access_mode_change_restarts_and_resumes_the_idle_session() -> Result<(), String> {
     let temp = tempdir().map_err(|error| error.to_string())?;
     let script = temp.path().join("fake-pi.sh");

@@ -53,6 +53,7 @@ mod relocation;
 mod reviews;
 mod schema;
 mod session_controls;
+mod session_metrics;
 mod session_state;
 #[path = "sessions.rs"]
 mod session_storage;
