@@ -22,23 +22,55 @@ fn fixture() -> (tempfile::TempDir, Connection, PathBuf) {
 }
 
 fn scope() -> Scope {
-    Scope::new(&Command::new("codex"), None, None)
+    let mut scope = Scope::new(&Command::new("codex"), None, None);
+    scope
+        .inherited_env
+        .retain(|(key, _)| key != "CODEX_SQLITE_HOME");
+    scope
+}
+
+fn rpc_results(results: impl IntoIterator<Item = serde_json::Value>) -> Cursor<String> {
+    Cursor::new(
+        results
+            .into_iter()
+            .enumerate()
+            .map(|(index, result)| format!("{}\n", json!({"id":index + 1,"result":result})))
+            .collect(),
+    )
 }
 
 #[test]
-fn hit_skips_thread_read_and_preserves_full_history() {
-    let (home, _db, _) = fixture();
-    let response = json!({"id": 1, "result": {"thread": {"turns": [{"items": [
-        {"type":"userMessage", "clientId":"farcaster-normal-codex-cli-prompt", "content":[{"type":"text", "text":"hello"}]},
-        {"type":"agentMessage", "text":"answer"}
-    ]}]}}});
+fn hit_skips_preview_and_thread_read_and_preserves_full_history() {
+    let (home, db, _) = fixture();
+    db.execute("UPDATE threads SET history_mode='paginated'", [])
+        .unwrap();
+    std::fs::write(home.path().join("thread_history_1.sqlite"), "").unwrap();
+    let recent = json!({"items":[{"type":"agentMessage", "text":"answer"}]});
+    let page = json!({"data":[recent], "nextCursor":"earlier"});
+    let response = json!({"thread": {"turns": [{"items": [
+        {"type":"userMessage", "clientId":"farcaster-normal-codex-cli-prompt", "content":[{"type":"text", "text":"hello"}]}
+    ]}, recent]}});
     let mut requests = Vec::new();
-    let mut connection =
-        super::super::CodexConnection::new(Cursor::new(format!("{response}\n")), &mut requests);
+    let mut connection = super::super::CodexConnection::new(
+        rpc_results([
+            json!({"data":[]}),
+            json!({"config":{}}),
+            page,
+            response,
+            json!({"data":[]}),
+            json!({"config":{}}),
+        ]),
+        &mut requests,
+    );
+    let mut previews = Vec::new();
     for _ in 0..2 {
-        let history = load(home.path(), "thread", scope(), || {
-            super::super::read_history(&mut connection, home.path(), "thread")
-        })
+        let history = super::super::load_history_with_client(
+            &mut connection,
+            home.path(),
+            "thread",
+            scope(),
+            Some(&mut |messages| previews.push(messages)),
+        )
         .unwrap();
         assert_eq!(history.messages.len(), 2);
         assert_eq!(history.messages[1]["content"][0]["text"], "answer");
@@ -50,11 +82,27 @@ fn hit_skips_thread_read_and_preserves_full_history() {
         assert!(!delivery.absence_is_not_delivered);
     }
     drop(connection);
+    assert_eq!(previews.len(), 1);
+    assert_eq!(previews[0].len(), 1);
+    assert_eq!(previews[0][0]["content"][0]["text"], "answer");
     let requests = String::from_utf8(requests).unwrap();
-    assert_eq!(requests.lines().count(), 1);
-    let request: serde_json::Value = serde_json::from_str(requests.trim()).unwrap();
+    let mut requests = requests
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap());
+    assert_eq!(requests.next().unwrap()["method"], "thread/loaded/list");
+    assert_eq!(requests.next().unwrap()["method"], "config/read");
+    let preview = requests.next().unwrap();
+    assert_eq!(preview["method"], "thread/turns/list");
+    assert_eq!(
+        preview["params"],
+        json!({"threadId":"thread","limit":1,"sortDirection":"desc","itemsView":"summary"})
+    );
+    let request = requests.next().unwrap();
     assert_eq!(request["method"], "thread/read");
     assert_eq!(request["params"]["includeTurns"], true);
+    assert_eq!(requests.next().unwrap()["method"], "thread/loaded/list");
+    assert_eq!(requests.next().unwrap()["method"], "config/read");
+    assert!(requests.next().is_none());
 }
 
 fn counted_load(home: &Path, scope: Scope, calls: &Cell<usize>) {
@@ -68,6 +116,81 @@ fn counted_load(home: &Path, scope: Scope, calls: &Cell<usize>) {
         })
     })
     .unwrap();
+}
+
+#[test]
+fn only_confirmed_paginated_history_in_the_effective_home_requests_a_preview() {
+    let other_home = tempfile::tempdir().unwrap();
+    for (mode, config, env_override) in [
+        ("legacy", Some(json!({"config":{}})), false),
+        ("unknown", None, false),
+        ("paginated", None, true),
+        (
+            "paginated",
+            Some(json!({"config":{"sqlite_home":other_home.path()}})),
+            false,
+        ),
+        (
+            "paginated",
+            Some(json!({"config":{"sqlite_home":"."}})),
+            false,
+        ),
+        ("paginated", Some(json!({})), false),
+    ] {
+        let (home, db, _) = fixture();
+        db.execute("UPDATE threads SET history_mode=?1", [mode])
+            .unwrap();
+        let mut scope = scope();
+        if env_override {
+            scope.env.push((
+                "CODEX_SQLITE_HOME".into(),
+                Some(other_home.path().as_os_str().into()),
+            ));
+        }
+        let mut replies = Vec::new();
+        if let Some(config) = config {
+            replies.extend([json!({"data":[]}), config]);
+        }
+        replies
+            .push(json!({"thread":{"turns":[{"items":[{"type":"agentMessage","text":"full"}]}]}}));
+        let mut connection = super::super::CodexConnection::new(rpc_results(replies), Vec::new());
+        let history = super::super::load_history_with_client(
+            &mut connection,
+            home.path(),
+            "thread",
+            scope,
+            Some(&mut |_| panic!("unexpected preview for {mode}")),
+        )
+        .unwrap();
+        assert_eq!(history.messages[0]["content"][0]["text"], "full");
+        let sent = String::from_utf8(connection.into_writer()).unwrap();
+        assert!(!sent.contains("thread/turns/list"), "{mode}: {sent}");
+        assert!(sent.contains("thread/read"), "{mode}: {sent}");
+    }
+}
+
+#[test]
+fn preview_followed_by_a_failed_full_read_does_not_fill_the_cache() {
+    let (home, _db, _) = fixture();
+    let page =
+        json!({"id":1,"result":{"data":[{"items":[{"type":"agentMessage","text":"recent"}]}]}});
+    let error = json!({"id":2,"error":{"code":-1,"message":"full read failed"}});
+    let mut connection =
+        super::super::CodexConnection::new(Cursor::new(format!("{page}\n{error}\n")), Vec::new());
+    let mut previews = Vec::new();
+    let result = load(home.path(), "thread", scope(), || {
+        super::super::read_history(
+            &mut connection,
+            home.path(),
+            "thread",
+            Some(&mut |messages| previews.push(messages)),
+        )
+    });
+    assert!(result.is_err_and(|error| error.contains("full read failed")));
+    assert_eq!(previews.len(), 1);
+    let calls = Cell::new(0);
+    counted_load(home.path(), scope(), &calls);
+    assert_eq!(calls.get(), 1);
 }
 
 #[test]

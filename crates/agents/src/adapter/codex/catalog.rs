@@ -223,34 +223,49 @@ fn delete_session_using(
 }
 
 pub fn load_history(path: &Path) -> Result<DiscoveredHistory, String> {
-    load_history_using(None, path, None)
+    load_history_using(None, path, None, None)
 }
 
 pub(super) fn load_history_with_config(
     config: &crate::AgentLaunchConfig,
     path: &Path,
     project: &Path,
+    preview: Option<&mut dyn FnMut(Vec<Value>)>,
 ) -> Result<DiscoveredHistory, String> {
-    load_history_using(Some(config), path, Some(project))
+    load_history_using(Some(config), path, Some(project), preview)
 }
 
 fn load_history_using(
     config: Option<&crate::AgentLaunchConfig>,
     path: &Path,
     project: Option<&Path>,
+    preview: Option<&mut dyn FnMut(Vec<Value>)>,
 ) -> Result<DiscoveredHistory, String> {
     let locator = external_session_locator(Backend::Codex, path)
         .ok_or_else(|| format!("invalid Codex session locator: {}", path.display()))?;
     with_connection_and_home_and_scope_using(config, project, |connection, codex_home, scope| {
-        if scope.has_sqlite_home_override()
-            || !history_cache::has_revision(codex_home, &locator)
-            || !can_cache_persisted_history(connection, codex_home)
-        {
-            return read_history(connection, codex_home, &locator);
-        }
-        history_cache::load(codex_home, &locator, scope, || {
-            read_history(connection, codex_home, &locator)
-        })
+        load_history_with_client(connection, codex_home, &locator, scope, preview)
+    })
+}
+
+fn load_history_with_client<R: std::io::BufRead, W: std::io::Write>(
+    connection: &mut CodexConnection<R, W>,
+    home: &Path,
+    locator: &str,
+    scope: history_cache::Scope,
+    preview: Option<&mut dyn FnMut(Vec<Value>)>,
+) -> Result<DiscoveredHistory, String> {
+    if scope.has_sqlite_home_override() {
+        return read_history(connection, home, locator, None);
+    }
+    let preview = preview.filter(|_| history_cache::is_paginated(home, locator));
+    if (preview.is_none() && !history_cache::has_revision(home, locator))
+        || !can_cache_persisted_history(connection, home)
+    {
+        return read_history(connection, home, locator, None);
+    }
+    history_cache::load(home, locator, scope, || {
+        read_history(connection, home, locator, preview)
     })
 }
 
@@ -275,10 +290,12 @@ fn can_cache_persisted_history<R: std::io::BufRead, W: std::io::Write>(
         };
         Ok(match config.get("sqlite_home") {
             None | Some(Value::Null) => true,
-            Some(Value::String(path)) => std::fs::canonicalize(path)
-                .ok()
-                .zip(std::fs::canonicalize(home).ok())
-                .is_some_and(|(left, right)| left == right),
+            Some(Value::String(path)) if Path::new(path).is_absolute() => {
+                std::fs::canonicalize(path)
+                    .ok()
+                    .zip(std::fs::canonicalize(home).ok())
+                    .is_some_and(|(left, right)| left == right)
+            }
             _ => false,
         })
     };
@@ -290,12 +307,19 @@ fn read_history<R: std::io::BufRead, W: std::io::Write>(
     connection: &mut CodexConnection<R, W>,
     codex_home: &Path,
     locator: &str,
+    preview: Option<&mut dyn FnMut(Vec<Value>)>,
 ) -> Result<DiscoveredHistory, String> {
+    if let Some(preview) = preview
+        && let Ok(messages) = recent_turn_messages(connection, locator)
+        && !messages.is_empty()
+    {
+        preview(messages);
+    }
     let id = connection.send_request(
         "thread/read",
         json!({"threadId": locator, "includeTurns": true}),
     )?;
-    let response: Value = connection.wait_response(&id)?;
+    let response = connection.wait_response_value(&id)?;
     let thread = response.get("thread").unwrap_or(&response);
     let mut messages = Vec::new();
     let mut delivered = Vec::new();
@@ -332,6 +356,24 @@ fn read_history<R: std::io::BufRead, W: std::io::Write>(
             absence_is_not_delivered: false,
         }),
     })
+}
+
+fn recent_turn_messages<R: std::io::BufRead, W: std::io::Write>(
+    connection: &mut CodexConnection<R, W>,
+    locator: &str,
+) -> Result<Vec<Value>, String> {
+    let id = connection.send_request(
+        "thread/turns/list",
+        json!({"threadId": locator, "limit": 1, "sortDirection": "desc", "itemsView": "summary"}),
+    )?;
+    let page = connection.wait_response_value(&id)?;
+    Ok(page
+        .pointer("/data/0/items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(history_messages)
+        .collect())
 }
 
 fn delivered_submission_id(item: &Value) -> Option<&str> {

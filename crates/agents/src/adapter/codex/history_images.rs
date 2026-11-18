@@ -32,17 +32,22 @@ impl Shortened {
     }
 
     fn consider(&mut self, data: &str, mime: &str) {
-        if data.len() != self.length
+        if self.ambiguous
+            || data.len() != self.length
             || !data.starts_with(&self.prefix)
             || !data.ends_with(&self.suffix)
+            || self
+                .image
+                .as_ref()
+                .is_some_and(|(previous, _)| previous == data)
             || base64::engine::general_purpose::STANDARD
                 .decode(data)
                 .is_err()
         {
             return;
         }
-        if let Some((previous, _)) = &self.image {
-            self.ambiguous |= previous != data;
+        if self.image.is_some() {
+            self.ambiguous = true;
         } else {
             self.image = Some((data.into(), mime.into()));
         }
@@ -71,22 +76,31 @@ pub(super) fn restore(messages: &mut [Value], thread: &Value, home: &Path, locat
             }
         }
     }
-    if missing.is_empty() {
+    let Some(shortest) = missing.iter().map(|(_, _, image)| image.length).min() else {
         return;
-    }
+    };
     let mut read = || -> Option<()> {
         let home = home.canonicalize().ok()?;
         let path = Path::new(thread["path"].as_str()?).canonicalize().ok()?;
         if !path.starts_with(&home) {
             return None;
         }
-        let mut lines = std::io::BufReader::new(File::open(path).ok()?).lines();
-        let header: Value = serde_json::from_str(&lines.next()?.ok()?).ok()?;
+        let mut reader = std::io::BufReader::new(File::open(path).ok()?);
+        let mut line = String::new();
+        reader.read_line(&mut line).ok()?;
+        let header: Value = serde_json::from_str(&line).ok()?;
         if header["type"] != "session_meta" || header["payload"]["id"] != locator {
             return None;
         }
-        for line in lines {
-            let Ok(line) = line else { return None };
+        loop {
+            line.clear();
+            if reader.read_line(&mut line).ok()? == 0 {
+                break;
+            }
+            // JSON escaping can only make an ASCII base64 string longer on disk.
+            if line.len() < shortest {
+                continue;
+            }
             let Ok(record) = serde_json::from_str::<Value>(&line) else {
                 continue;
             };

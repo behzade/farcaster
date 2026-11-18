@@ -143,7 +143,7 @@ impl BackendAdapter for CodexAdapter {
         launch: SessionLaunch,
     ) -> Result<Box<dyn SessionTransport>, String> {
         let history = launch_history(&launch, |path| {
-            super::catalog::load_history_with_config(config, path, &launch.project)
+            super::catalog::load_history_with_config(config, path, &launch.project, None)
         })?;
         let command = self.launch_configuration(config);
         let (worker, locator, metadata) = super::spawn_main(&command, &launch, history.as_ref())?;
@@ -185,14 +185,17 @@ impl BackendAdapter for CodexAdapter {
         path: &Path,
         project: &Path,
     ) -> Result<farcaster_sessions::LoadedHistory, String> {
-        let history = super::catalog::load_history_with_config(config, path, project)?;
-        Ok(farcaster_sessions::LoadedHistory {
-            messages: history.messages,
-            model: history.model,
-            thinking_level: history.thinking_level,
-            pending_question: None,
-            prompt_deliveries: history.prompt_deliveries,
-        })
+        super::catalog::load_history_with_config(config, path, project, None).map(loaded_history)
+    }
+    fn load_history_with_preview(
+        &self,
+        config: &AgentLaunchConfig,
+        path: &Path,
+        project: &Path,
+        preview: &mut dyn FnMut(Vec<serde_json::Value>),
+    ) -> Result<farcaster_sessions::LoadedHistory, String> {
+        super::catalog::load_history_with_config(config, path, project, Some(preview))
+            .map(loaded_history)
     }
     fn move_family(
         &self,
@@ -219,6 +222,16 @@ impl BackendAdapter for CodexAdapter {
         _path: &Path,
     ) -> Result<Option<PathBuf>, String> {
         super::catalog::delete_session_with_config(config, id).map(|_| None)
+    }
+}
+
+fn loaded_history(history: DiscoveredHistory) -> farcaster_sessions::LoadedHistory {
+    farcaster_sessions::LoadedHistory {
+        messages: history.messages,
+        model: history.model,
+        thinking_level: history.thinking_level,
+        pending_question: None,
+        prompt_deliveries: history.prompt_deliveries,
     }
 }
 

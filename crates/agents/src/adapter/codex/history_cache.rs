@@ -79,15 +79,32 @@ pub(super) fn load(
     )
 }
 
-fn revision(home: &Path, thread: &str) -> Option<Revision> {
+fn state_database(home: &Path) -> Option<Connection> {
     if !home.is_absolute() {
         return None;
     }
-    let connection = Connection::open_with_flags(
+    Connection::open_with_flags(
         home.join("state_5.sqlite"),
         OpenFlags::SQLITE_OPEN_READ_ONLY,
     )
-    .ok()?;
+    .ok()
+}
+
+pub(super) fn is_paginated(home: &Path, thread: &str) -> bool {
+    state_database(home)
+        .and_then(|db| {
+            db.query_row(
+                "SELECT history_mode = 'paginated' FROM threads WHERE id = ?1",
+                [thread],
+                |row| row.get(0),
+            )
+            .ok()
+        })
+        .unwrap_or(false)
+}
+
+fn revision(home: &Path, thread: &str) -> Option<Revision> {
+    let connection = state_database(home)?;
     let (rollout, mode, identity): (String, String, Identity) = connection
         .query_row(
             "SELECT rollout_path, history_mode, model_provider, model, reasoning_effort FROM threads WHERE id = ?1",

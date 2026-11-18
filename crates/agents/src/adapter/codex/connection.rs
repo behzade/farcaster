@@ -72,6 +72,11 @@ impl<R: BufRead, W: Write> CodexConnection<R, W> {
     }
 
     pub fn wait_response<T: DeserializeOwned>(&mut self, id: &CodexRequestId) -> Result<T, String> {
+        serde_json::from_value(self.wait_response_value(id)?)
+            .map_err(|error| format!("decode Codex app-server response: {error}"))
+    }
+
+    pub(super) fn wait_response_value(&mut self, id: &CodexRequestId) -> Result<Value, String> {
         if let Some(index) = self
             .queued
             .iter()
@@ -282,10 +287,9 @@ fn matches_response(message: &CodexInbound, expected: &CodexRequestId) -> bool {
     )
 }
 
-fn decode_response<T: DeserializeOwned>(message: CodexInbound) -> Result<T, String> {
+fn decode_response(message: CodexInbound) -> Result<Value, String> {
     match message {
-        CodexInbound::Response { result, .. } => serde_json::from_value(result)
-            .map_err(|error| format!("decode Codex app-server response: {error}")),
+        CodexInbound::Response { result, .. } => Ok(result),
         CodexInbound::Error { error, .. } => Err(format!(
             "Codex app-server error {}: {}",
             error.code, error.message

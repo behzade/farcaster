@@ -80,6 +80,22 @@ fn leaves_ambiguous_mismatched_and_intact_images_alone() {
 }
 
 #[test]
+fn restores_a_smaller_image_when_the_large_one_is_missing() {
+    let home = tempfile::tempdir().unwrap();
+    let thread = fixture(
+        home.path(),
+        "thread",
+        &["AQID!AUGBwgJCgsM", "AQIDBAUGBwgJCgsM", "AQID?AUGBwgJCgsM"],
+    );
+    let large = "AQID…1000000 chars truncated…CgsM";
+    let mut history = messages(large);
+    history.extend(messages("AQID…8 chars truncated…CgsM"));
+    restore(&mut history, &thread, home.path(), "thread");
+    assert_eq!(history[1]["content"][1]["data"], large);
+    assert_eq!(history[3]["content"][1]["data"], "AQIDBAUGBwgJCgsM");
+}
+
+#[test]
 fn refuses_another_thread_or_profile_rollout() {
     let home = tempfile::tempdir().unwrap();
     let other = tempfile::tempdir().unwrap();

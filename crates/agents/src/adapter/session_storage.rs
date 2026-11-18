@@ -146,6 +146,17 @@ pub fn load_session_history_for_profile(
     profile_history_adapter(config, harness, path)?.load_history_for_profile(config, path, project)
 }
 
+pub fn load_session_history_with_preview(
+    config: &crate::AgentLaunchConfig,
+    harness: Backend,
+    path: &Path,
+    project: &Path,
+    preview: &mut dyn FnMut(Vec<serde_json::Value>),
+) -> Result<LoadedHistory, String> {
+    profile_history_adapter(config, harness, path)?
+        .load_history_with_preview(config, path, project, preview)
+}
+
 fn profile_history_adapter(
     config: &crate::AgentLaunchConfig,
     harness: Backend,

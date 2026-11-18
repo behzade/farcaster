@@ -265,6 +265,47 @@ fn discovery_requests_native_agent_sources_explicitly() {
 }
 
 #[test]
+fn optional_last_turn_never_replaces_the_full_history_read() {
+    let home = tempfile::tempdir().unwrap();
+    let turn = |text: &str| json!({"items":[{"type":"agentMessage","text":text}]});
+    let full = json!({"id":2,"result":{"thread":{"turns":[turn("final")]}}});
+    for (page, expected_preview) in [
+        (
+            json!({"id":1,"result":{"data":[turn("recent")],"nextCursor":null}}),
+            true,
+        ),
+        (
+            json!({"id":1,"result":{"data":[],"nextCursor":null}}),
+            false,
+        ),
+        (json!({"id":1,"result":{"data":[{"items":[]}]}}), false),
+        (
+            json!({"id":1,"error":{"code":-32601,"message":"method not found"}}),
+            false,
+        ),
+    ] {
+        let mut connection = CodexConnection::new(
+            std::io::Cursor::new(format!("{page}\n{full}\n")),
+            Vec::new(),
+        );
+        let mut previews = Vec::new();
+        let history = read_history(
+            &mut connection,
+            home.path(),
+            "thread",
+            Some(&mut |messages| previews.push(messages)),
+        )
+        .unwrap();
+        assert_eq!(previews.len(), usize::from(expected_preview));
+        if expected_preview {
+            assert_eq!(previews[0][0]["content"][0]["text"], "recent");
+        }
+        assert_eq!(history.messages.len(), 1);
+        assert_eq!(history.messages[0]["content"][0]["text"], "final");
+    }
+}
+
+#[test]
 fn translates_thread_messages() {
     assert_eq!(
         history_messages(&json!({

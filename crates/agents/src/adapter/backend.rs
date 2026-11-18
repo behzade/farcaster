@@ -243,6 +243,15 @@ pub(super) trait BackendAdapter: Sync {
     ) -> Result<LoadedHistory, String> {
         self.load_history(path, project)
     }
+    fn load_history_with_preview(
+        &self,
+        config: &AgentLaunchConfig,
+        path: &Path,
+        project: &Path,
+        _preview: &mut dyn FnMut(Vec<serde_json::Value>),
+    ) -> Result<LoadedHistory, String> {
+        self.load_history_for_profile(config, path, project)
+    }
     fn move_family(
         &self,
         _family: &[SessionSummary],
