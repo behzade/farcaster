@@ -116,10 +116,7 @@ impl ConversationState {
                     }
                 }
             }
-            "compaction_start" => {
-                self.compacting = true;
-                compaction_changed = Some(self.compaction_notice(CompactionState::Running, None));
-            }
+            "compaction_start" => self.compacting = true,
             "compaction_end" => {
                 self.compacting = false;
                 let error = event
@@ -127,23 +124,21 @@ impl ConversationState {
                     .and_then(Value::as_str)
                     .filter(|error| !error.trim().is_empty());
                 let status = if event.get("aborted").and_then(Value::as_bool) == Some(true) {
-                    CompactionState::Aborted
-                } else if error.is_some() {
-                    CompactionState::Failed
+                    Some(CompactionState::Aborted)
                 } else {
-                    CompactionState::Complete
+                    error.map(|_| CompactionState::Failed)
                 };
-                compaction_changed = Some(self.compaction_notice(status, error));
+                compaction_changed = status.map(|status| self.compaction_notice(status, error));
             }
             "auto_retry_start"
             | "summarization_retry_scheduled"
             | "summarization_retry_attempt_start" => {
                 self.retrying = true;
-                self.notice(retry_notice(event));
+                self.push_notice(TranscriptKind::Notice, "Run", retry_notice(event));
             }
             "auto_retry_end" | "summarization_retry_finished" => {
                 self.retrying = false;
-                self.notice(retry_notice(event));
+                self.push_notice(TranscriptKind::Notice, "Run", retry_notice(event));
             }
             "extension_error" => self.push_extension_error(text_field(event, "error")),
             "turn_start" | "turn_end" => {}
@@ -451,16 +446,25 @@ impl ConversationState {
         })));
     }
 
-    fn notice(&mut self, text: String) {
+    fn compaction_notice(&mut self, status: CompactionState, error: Option<&str>) -> usize {
+        let text = match error {
+            Some(error) => format!("{}: {error}", status.label()),
+            None => status.label().to_owned(),
+        };
+        self.push_notice(TranscriptKind::Compaction(status), "Context", text)
+    }
+
+    fn push_notice(&mut self, kind: TranscriptKind, label: &str, text: String) -> usize {
+        let index = self.items.len();
         self.items.push(Arc::new(TranscriptItem {
-            kind: TranscriptKind::Notice,
-            label: "Run".into(),
+            is_error: kind == TranscriptKind::Compaction(CompactionState::Failed),
+            kind,
+            label: label.into(),
             text,
             images: Arc::default(),
             files: Arc::default(),
             stream_chunks: Arc::default(),
             streaming: false,
-            is_error: false,
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
@@ -468,38 +472,6 @@ impl ConversationState {
             tool_review: None,
             invocation: None,
         }));
-    }
-
-    fn compaction_notice(&mut self, status: CompactionState, error: Option<&str>) -> usize {
-        let pending = self
-            .items
-            .rposition(|item| item.kind == TranscriptKind::Compaction(CompactionState::Running));
-        let index = pending.unwrap_or(self.items.len());
-        let text = match error {
-            Some(error) => format!("{}: {error}", status.label()),
-            None => status.label().to_owned(),
-        };
-        let item = Arc::new(TranscriptItem {
-            kind: TranscriptKind::Compaction(status),
-            label: "Context".into(),
-            text,
-            images: Arc::default(),
-            files: Arc::default(),
-            stream_chunks: Arc::default(),
-            streaming: status == CompactionState::Running,
-            is_error: status == CompactionState::Failed,
-            tool_call_id: None,
-            tool_output: String::new(),
-            tool_presentation: None,
-            tool_details: None,
-            tool_review: None,
-            invocation: None,
-        });
-        if pending.is_some() {
-            self.items.set(index, item);
-        } else {
-            self.items.push(item);
-        }
         index
     }
 

@@ -27,8 +27,6 @@ pub(super) fn render_compaction(font_scale: f32, key: usize, item: &TranscriptIt
         unreachable!()
     };
     let (icon, color) = match status {
-        CompactionState::Running => (AppIcon::ArrowsClockwise, theme().colors.muted),
-        CompactionState::Complete => (AppIcon::Check, theme().colors.muted),
         CompactionState::Failed => (AppIcon::WarningCircle, theme().colors.error),
         CompactionState::Aborted | CompactionState::Interrupted => {
             (AppIcon::Stop, theme().colors.muted)

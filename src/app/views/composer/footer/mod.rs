@@ -27,8 +27,6 @@ impl FarcasterApp {
         entity: WeakEntity<Self>,
         scroll: &gpui::ScrollHandle,
     ) -> AnyElement {
-        let usage = composer_usage(self);
-        let context = context_value(&usage);
         let settings = div()
             .id("composer-settings")
             .min_w_0()
@@ -46,9 +44,9 @@ impl FarcasterApp {
                     entity.clone(),
                 ))
             })
-            .when_some(context, |row, value| {
-                let ring = context_meter(usage.context_percent);
-                row.child(usage::render(usage, ring, value))
+            .child(usage::UsageControl {
+                usage: composer_usage(self),
+                compacting: self.snapshot.conversation.compacting,
             })
             .child(runtime::render(self, entity.clone()));
 

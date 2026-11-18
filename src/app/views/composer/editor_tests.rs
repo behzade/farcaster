@@ -361,6 +361,26 @@ fn composer_text_attachments_and_controls_share_an_inset(cx: &mut gpui::TestAppC
             let context = cx
                 .debug_bounds("composer-context-trigger")
                 .expect("context control");
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let snapshot = std::sync::Arc::make_mut(&mut app.snapshot);
+                    snapshot.stats = serde_json::Value::Null;
+                    std::sync::Arc::make_mut(&mut snapshot.conversation).compacting = true;
+                    app.notify_composer(cx);
+                });
+                window.draw(cx).clear(cx);
+            });
+            assert_eq!(cx.debug_bounds("composer-context-trigger"), Some(context));
+            let hint = (0..64)
+                .find_map(|_| {
+                    cx.update(|window, cx| {
+                        window.focus_next(cx);
+                        window.draw(cx).clear(cx);
+                    });
+                    cx.debug_bounds("composer-compaction-focus-hint")
+                })
+                .expect("keyboard focus shows the compaction tooltip");
+            assert!(hint.bottom() <= context.top());
             cx.simulate_click(context.center(), Default::default());
             cx.update(|window, cx| window.draw(cx).clear(cx));
             assert!(cx.debug_bounds("composer-usage-details").is_some());

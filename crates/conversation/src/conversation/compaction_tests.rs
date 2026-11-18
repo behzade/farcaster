@@ -2,26 +2,21 @@ use super::*;
 use serde_json::json;
 
 #[test]
-fn compaction_updates_one_row_without_moving_interleaved_messages() {
+fn routine_compaction_only_changes_activity() {
     let mut state = ConversationState::default();
-    assert_eq!(state.reduce(&json!({"type":"compaction_start"})), Some(0));
-    let before = state.clone();
-    state.push_local_user("Next task".into(), 0, false);
-    assert_eq!(state.reduce(&json!({"type":"compaction_end"})), Some(0));
-    assert_eq!(state.items.len(), 2);
-    assert_eq!(
-        state.items[0].kind,
-        TranscriptKind::Compaction(CompactionState::Complete)
-    );
-    assert_eq!(state.items[0].text, "Context compacted");
-    assert!(!state.items[0].streaming);
+    let start = json!({"type":"compaction_start"});
+    let end = json!({"type":"compaction_end"});
+    for error in [json!(null), json!("  ")] {
+        let end = json!({"type":"compaction_end", "errorMessage":error});
+        assert_eq!(state.reduce_deferred_with_change(&end), (None, false));
+    }
+    assert_eq!(state.reduce_deferred_with_change(&start), (None, true));
+    assert_eq!(state.reduce_deferred_with_change(&start), (None, false));
+    assert!(state.compacting);
+    assert!(state.items.is_empty());
+    assert_eq!(state.reduce_deferred_with_change(&end), (None, true));
     assert!(!state.compacting);
-    assert_eq!(state.items[1].text, "Next task");
-    assert_eq!(
-        before.items[0].kind,
-        TranscriptKind::Compaction(CompactionState::Running)
-    );
-    assert!(before.items[0].streaming);
+    assert!(state.items.is_empty());
 }
 
 #[test]
@@ -37,16 +32,6 @@ fn compaction_keeps_failures_and_cancellations_distinct() {
             CompactionState::Aborted,
             "Compaction cancelled",
         ),
-        (
-            json!({"errorMessage":null}),
-            CompactionState::Complete,
-            "Context compacted",
-        ),
-        (
-            json!({"errorMessage":"  "}),
-            CompactionState::Complete,
-            "Context compacted",
-        ),
     ] {
         let mut state = ConversationState::default();
         state.reduce(&json!({"type":"compaction_start","reason":"manual"}));
@@ -59,23 +44,6 @@ fn compaction_keeps_failures_and_cancellations_distinct() {
         assert_eq!(state.items[0].is_error, status == CompactionState::Failed);
         assert!(!state.items[0].streaming);
     }
-}
-
-#[test]
-fn terminal_compaction_without_start_is_visible_and_new_cycles_keep_their_own_rows() {
-    let mut state = ConversationState::default();
-    state.reduce(&json!({"type":"compaction_end"}));
-    state.reduce(&json!({"type":"compaction_start"}));
-    state.reduce(&json!({"type":"compaction_start"}));
-    assert_eq!(state.items.len(), 2);
-    state.reduce(&json!({"type":"compaction_end"}));
-    assert_eq!(state.items.len(), 2);
-    assert!(
-        state
-            .items
-            .iter()
-            .all(|item| item.kind == TranscriptKind::Compaction(CompactionState::Complete))
-    );
 }
 
 #[test]

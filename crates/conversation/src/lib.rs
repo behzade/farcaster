@@ -73,8 +73,6 @@ pub enum TranscriptKind {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CompactionState {
-    Running,
-    Complete,
     Aborted,
     Failed,
     Interrupted,
@@ -83,8 +81,6 @@ pub enum CompactionState {
 impl CompactionState {
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Running => "Compacting context…",
-            Self::Complete => "Context compacted",
             Self::Aborted => "Compaction cancelled",
             Self::Failed => "Compaction failed",
             Self::Interrupted => "Compaction interrupted",

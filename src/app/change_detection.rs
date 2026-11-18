@@ -249,6 +249,7 @@ pub(in crate::app) fn composer_snapshot_changed(
         || previous.selected_session != next.selected_session
         || previous.commands != next.commands
         || previous.conversation.running != next.conversation.running
+        || previous.conversation.compacting != next.conversation.compacting
         || previous.prompt_queue() != next.prompt_queue()
         || previous.conversation.average_cache_hit_rate != next.conversation.average_cache_hit_rate
         || previous.stats != next.stats

@@ -449,6 +449,8 @@ fn composer_and_run_panel_track_their_rendered_snapshot_inputs() {
     let previous = RuntimeSnapshot::default();
     let mut composer_status = previous.clone();
     composer_status.status = "Working".into();
+    let mut compacting = previous.clone();
+    Arc::make_mut(&mut compacting.conversation).compacting = true;
     let mut composer_usage = previous.clone();
     Arc::make_mut(&mut composer_usage.conversation).average_cache_hit_rate = Some(0.5);
     let mut composer_context = previous.clone();
@@ -465,6 +467,7 @@ fn composer_and_run_panel_track_their_rendered_snapshot_inputs() {
 
     assert!(!composer_snapshot_changed(&previous, &composer_status));
     assert!(!run_panel_snapshot_changed(&previous, &composer_status));
+    assert!(composer_snapshot_changed(&previous, &compacting));
     assert!(composer_snapshot_changed(&previous, &composer_usage));
     assert!(!run_panel_snapshot_changed(&previous, &composer_usage));
     assert!(composer_snapshot_changed(&previous, &composer_context));

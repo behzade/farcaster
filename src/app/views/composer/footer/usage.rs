@@ -1,7 +1,8 @@
 use crate::{
     app::{
         ui::{
-            primitives::{ButtonTone, Popover, dropdown_content_button},
+            assets::AppIcon,
+            primitives::{AppIconSize, ButtonTone, Popover, app_icon, dropdown_content_button},
             theme::theme,
         },
         views::usage::{ComposerUsage, format_cost, format_tokens, has_reported_usage},
@@ -9,31 +10,85 @@ use crate::{
     sessions::UsageSummary,
 };
 use gpui::{
-    AnyElement, App, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    Styled as _, div, prelude::FluentBuilder as _,
+    Animation, AnimationExt as _, AnyElement, App, FontWeight, InteractiveElement as _,
+    IntoElement, ParentElement as _, Styled as _, Transformation, div, percentage,
+    prelude::FluentBuilder as _,
 };
 use gpui_component::ThemeStyled as _;
 
-pub(super) fn render(usage: ComposerUsage, content: AnyElement, value: String) -> AnyElement {
-    Popover::new("composer-usage-popover")
-        .anchor(gpui::Anchor::BottomLeft)
-        .appearance(false)
-        .trigger(
-            dropdown_content_button(
-                "composer-context",
+const COMPACTING_LABEL: &str = "Compacting context…";
+
+#[derive(IntoElement)]
+pub(super) struct UsageControl {
+    pub(super) usage: ComposerUsage,
+    pub(super) compacting: bool,
+}
+
+impl gpui::RenderOnce for UsageControl {
+    fn render(self, window: &mut gpui::Window, cx: &mut App) -> impl IntoElement {
+        let Self { usage, compacting } = self;
+        let (label, content) = if compacting {
+            let spinner = app_icon(AppIcon::SpinnerGap, AppIconSize::Control)
+                .text_color(theme().colors.indicator)
+                .with_animation(
+                    "context-compacting",
+                    Animation::new(std::time::Duration::from_millis(1400)).repeat(),
+                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                );
+            (COMPACTING_LABEL.to_owned(), spinner.into_any_element())
+        } else if let Some(value) = super::context_value(&usage) {
+            (
                 format!("Context · {value}"),
-                content,
-                ButtonTone::Quiet,
-                true,
+                super::context_meter(usage.context_percent),
             )
-            .dropdown_caret(false)
-            .size(theme().controls.icon_button)
-            .p(gpui::px(0.0))
+        } else {
+            return gpui::Empty.into_any_element();
+        };
+        let focus = window
+            .use_keyed_state("composer-usage-focus", cx, |_, cx| cx.focus_handle())
+            .read(cx)
+            .clone();
+        let popover = Popover::new("composer-usage-popover")
+            .anchor(gpui::Anchor::BottomLeft)
+            .appearance(false)
+            .trigger(
+                dropdown_content_button(
+                    "composer-context",
+                    label,
+                    content,
+                    ButtonTone::Quiet,
+                    true,
+                )
+                .track_focus(&focus)
+                .dropdown_caret(false)
+                .size(theme().controls.icon_button)
+                .p(gpui::px(0.0))
+                .flex_none()
+                .debug_selector(|| "composer-context-trigger".into()),
+            )
+            .content(move |_, _, cx| details(&usage, cx));
+        div()
+            .relative()
             .flex_none()
-            .debug_selector(|| "composer-context-trigger".into()),
-        )
-        .content(move |_, _, cx| details(&usage, cx))
-        .into_any_element()
+            .child(popover)
+            .when(compacting && focus.is_focused(window), |slot| {
+                slot.child(
+                    gpui::deferred(
+                        div()
+                            .absolute()
+                            .debug_selector(|| "composer-compaction-focus-hint".into())
+                            .bottom(theme().controls.icon_button + theme().space.xs)
+                            .whitespace_nowrap()
+                            .child(
+                                gpui_component::tooltip::Tooltip::new(COMPACTING_LABEL)
+                                    .build(window, cx),
+                            ),
+                    )
+                    .with_priority(200),
+                )
+            })
+            .into_any_element()
+    }
 }
 
 fn details(usage: &ComposerUsage, cx: &App) -> AnyElement {
