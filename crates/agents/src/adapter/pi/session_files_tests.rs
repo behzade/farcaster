@@ -758,6 +758,25 @@ fn history_follows_the_current_branch_and_projects_display_entries() {
 }
 
 #[test]
+fn active_branch_handles_duplicate_ids_cycles_and_missing_ids() {
+    use serde_json::json;
+
+    let mut entries = vec![
+        json!({"id":"a"}),
+        json!({"id":"b","parentId":"a"}),
+        json!({"id":"a","parentId":"b"}),
+        json!({"id":"leaf","parentId":"b"}),
+    ];
+    assert_eq!(active_branch_indices(&entries), [2, 1, 3]);
+
+    entries.push(json!({"id":"orphan","parentId":"missing"}));
+    assert_eq!(active_branch_indices(&entries), [4]);
+
+    entries.push(json!({}));
+    assert_eq!(active_branch_indices(&entries), [0, 1, 2, 3, 4, 5]);
+}
+
+#[test]
 fn display_history_keeps_messages_before_compaction() {
     let entries = vec![
         serde_json::json!({"type":"message","id":"one","parentId":null,"message":{"role":"user","content":"summarized"}}),
@@ -812,7 +831,7 @@ fn loaded_history_is_not_truncated_at_the_catalog_scan_limit() -> TestResult {
 }
 
 #[test]
-fn unanswered_request_user_input_is_restored_from_history() {
+fn unanswered_request_user_input_is_restored_from_history() -> TestResult {
     let entries = vec![
         serde_json::json!({
             "type":"message","id":"one","parentId":null,
@@ -826,10 +845,15 @@ fn unanswered_request_user_input_is_restored_from_history() {
             "customType":"farcaster-application-exit","content":"interrupted","display":true
         }),
     ];
-    let branch = active_branch_entries(&entries);
+    let directory = tempdir()?;
+    let path = directory.path().join("question.jsonl");
+    let mut file = fs::File::create(&path)?;
+    for entry in entries {
+        writeln!(file, "{entry}")?;
+    }
 
     assert_eq!(
-        pending_question_from_branch(&branch),
+        load_history(&path)?.pending_question,
         Some(RestoredQuestion {
             id: "restored-question:question-1".into(),
             title: "Run this command?".into(),
@@ -837,15 +861,13 @@ fn unanswered_request_user_input_is_restored_from_history() {
         })
     );
 
-    let mut answered = entries;
-    answered.push(serde_json::json!({
+    let answer = serde_json::json!({
         "type":"message","id":"three","parentId":"two",
         "message":{"role":"toolResult","toolCallId":"question-1","toolName":"request_user_input"}
-    }));
-    assert_eq!(
-        pending_question_from_branch(&active_branch_entries(&answered)),
-        None
-    );
+    });
+    writeln!(file, "{answer}")?;
+    assert_eq!(load_history(&path)?.pending_question, None);
+    Ok(())
 }
 
 #[test]

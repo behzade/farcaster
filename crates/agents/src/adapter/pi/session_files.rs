@@ -138,18 +138,26 @@ pub fn load_history(path: &Path) -> Result<LoadedHistory, String> {
             entries.push(entry);
         }
     }
-    let branch = active_branch_entries(&entries);
-    let (model, thinking_level) = session_settings(&branch);
+    let branch = active_branch_indices(&entries);
+    let branch_entries = branch.iter().map(|&index| &entries[index]);
+    let (model, thinking_level) = session_settings(branch_entries.clone());
+    let pending_question = pending_question_from_branch(branch_entries);
+    let messages = branch
+        .into_iter()
+        .filter_map(|index| take_entry_message(&mut entries[index]))
+        .collect::<Vec<_>>();
     Ok(LoadedHistory {
-        messages: project_display_history_from_branch(&branch).into(),
+        messages: messages.into(),
         model,
         thinking_level: Some(thinking_level),
-        pending_question: pending_question_from_branch(&branch),
+        pending_question,
         prompt_deliveries: None,
     })
 }
 
-fn session_settings(branch: &[&Value]) -> (Option<(String, String)>, String) {
+fn session_settings<'a>(
+    branch: impl Iterator<Item = &'a Value>,
+) -> (Option<(String, String)>, String) {
     let mut model = None;
     let mut thinking_level = "off".to_owned();
     for entry in branch {
@@ -194,10 +202,12 @@ fn is_application_exit(entry: &Value) -> bool {
     )
 }
 
-fn pending_question_from_branch(branch: &[&Value]) -> Option<RestoredQuestion> {
+fn pending_question_from_branch<'a>(
+    branch: impl DoubleEndedIterator<Item = &'a Value>,
+) -> Option<RestoredQuestion> {
     let mut answered = HashSet::new();
     let mut application_exited = false;
-    for entry in branch.iter().rev() {
+    for entry in branch.rev() {
         if entry.get("type").and_then(Value::as_str) == Some("custom_message")
             && is_application_exit(entry)
         {
@@ -277,86 +287,76 @@ fn pending_question_from_branch(branch: &[&Value]) -> Option<RestoredQuestion> {
 }
 
 pub fn project_display_history(entries: &[Value]) -> Vec<Value> {
-    project_display_history_from_branch(&active_branch_entries(entries))
-}
-
-fn project_display_history_from_branch(branch: &[&Value]) -> Vec<Value> {
-    branch
-        .iter()
-        .filter_map(|entry| entry_message(entry))
+    active_branch_indices(entries)
+        .into_iter()
+        .filter_map(|index| {
+            let entry = &entries[index];
+            entry_message(entry.get("type")?.as_str()?, |key| entry.get(key).cloned())
+        })
         .collect()
 }
 
-fn active_branch_entries(entries: &[Value]) -> Vec<&Value> {
+fn active_branch_indices(entries: &[Value]) -> Vec<usize> {
+    let Some(mut current) = entries.len().checked_sub(1) else {
+        return Vec::new();
+    };
+    if entries[current].get("id").and_then(Value::as_str).is_none() {
+        return (0..entries.len()).collect();
+    }
     let by_id = entries
         .iter()
-        .filter_map(|entry| {
+        .enumerate()
+        .filter_map(|(index, entry)| {
             entry
                 .get("id")
                 .and_then(Value::as_str)
-                .map(|id| (id, entry))
+                .map(|id| (id, index))
         })
         .collect::<HashMap<_, _>>();
-    let Some(mut current) = entries.last() else {
-        return Vec::new();
-    };
-    if current.get("id").and_then(Value::as_str).is_none() {
-        return entries.iter().collect();
-    }
     let mut branch = Vec::new();
     let mut seen = HashSet::new();
-    while let Some(id) = current.get("id").and_then(Value::as_str) {
+    while let Some(id) = entries[current].get("id").and_then(Value::as_str) {
         if !seen.insert(id) {
             break;
         }
         branch.push(current);
-        let Some(parent) = current.get("parentId").and_then(Value::as_str) else {
+        let Some(parent) = entries[current].get("parentId").and_then(Value::as_str) else {
             break;
         };
-        let Some(entry) = by_id.get(parent) else {
+        let Some(&index) = by_id.get(parent) else {
             break;
         };
-        current = entry;
+        current = index;
     }
     branch.reverse();
     branch
 }
 
-fn entry_message(entry: &Value) -> Option<Value> {
-    match entry.get("type").and_then(Value::as_str)? {
+fn take_entry_message(entry: &mut Value) -> Option<Value> {
+    let kind = entry.get_mut("type")?.take();
+    entry_message(kind.as_str()?, |key| entry.get_mut(key).map(Value::take))
+}
+
+fn entry_message(kind: &str, mut field: impl FnMut(&str) -> Option<Value>) -> Option<Value> {
+    match kind {
         "message" => {
-            let mut message = entry.get("message").cloned()?;
+            let mut message = field("message")?;
             crate::annotate_history_message(Backend::Pi, &mut message);
             Some(message)
         }
         "custom_message" => Some(json_object([
             ("role", Value::String("custom".into())),
-            (
-                "customType",
-                entry.get("customType").cloned().unwrap_or(Value::Null),
-            ),
-            (
-                "content",
-                entry.get("content").cloned().unwrap_or(Value::Null),
-            ),
-            (
-                "display",
-                entry.get("display").cloned().unwrap_or(Value::Bool(true)),
-            ),
+            ("customType", field("customType").unwrap_or(Value::Null)),
+            ("content", field("content").unwrap_or(Value::Null)),
+            ("display", field("display").unwrap_or(Value::Bool(true))),
         ])),
         "branch_summary" => Some(json_object([
             ("role", Value::String("branchSummary".into())),
-            (
-                "summary",
-                entry.get("summary").cloned().unwrap_or(Value::Null),
-            ),
+            ("summary", field("summary").unwrap_or(Value::Null)),
         ])),
         "compaction" => Some(json_object([
             ("role", Value::String("compactionSummary".into())),
-            (
-                "summary",
-                entry.get("summary").cloned().unwrap_or(Value::Null),
-            ),
+            ("summary", field("summary").unwrap_or(Value::Null)),
         ])),
         _ => None,
     }
@@ -700,9 +700,10 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
     append_bounded(&mut search, &title);
     append_bounded(&mut search, &project.to_string_lossy());
     let session_path = normalize_session_path(path);
-    let branch_entries = active_branch_entries(&activity_entries);
-    let (model, thinking_level) = session_settings(&branch_entries);
-    for entry in &branch_entries {
+    let branch = active_branch_indices(&activity_entries);
+    let branch_entries = branch.iter().map(|&index| &activity_entries[index]);
+    let (model, thinking_level) = session_settings(branch_entries.clone());
+    for entry in branch_entries {
         activity.observe_entry(entry);
     }
     let mut activity = activity.finish(
