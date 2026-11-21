@@ -175,37 +175,23 @@ impl Render for TranscriptView {
             return gpui::div().into_any_element();
         };
         let app = app.read(cx);
-        if let Some((label, excerpt)) = loading_excerpt(app) {
+        if app.lifecycle.pending_session_switch.is_some()
+            || (!app.snapshot.document_ready
+                && app.snapshot.status == "Loading history"
+                && app.snapshot.conversation.items.is_empty())
+        {
             let theme = crate::app::ui::theme::theme();
-            let mut column = crate::app::ui::layout::chat_column()
-                .py(theme.space.md)
-                .flex()
-                .flex_col()
-                .gap(theme.space.sm)
+            return gpui::div()
+                .debug_selector(|| "transcript-loading".into())
+                .size_full()
+                .bg(theme.colors.canvas)
                 .child(
-                    gpui::div()
+                    crate::app::ui::layout::chat_column()
+                        .py(theme.space.md)
                         .text_size(theme.type_scale.body_small)
                         .text_color(theme.colors.muted)
-                        .child(label),
-                );
-            if !excerpt.is_empty() {
-                let text = match excerpt.char_indices().nth(1600) {
-                    Some((end, _)) => format!("{}…", &excerpt[..end]),
-                    None => excerpt.to_owned(),
-                };
-                column = column.child(
-                    gpui::div()
-                        .text_size(self.font_size)
-                        .text_color(theme.colors.text)
-                        .child(text),
-                );
-            }
-            return gpui::div()
-                .debug_selector(move || label.into())
-                .size_full()
-                .overflow_hidden()
-                .bg(theme.colors.canvas)
-                .child(column)
+                        .child("Loading history…"),
+                )
                 .into_any_element();
         }
         let viewport = window.viewport_size();
@@ -224,39 +210,5 @@ impl Render for TranscriptView {
             self.markdown_cache.clone(),
             self.app.clone(),
         )
-    }
-}
-
-// Keep partial history out of the transcript list. Its item offsets, saved reading
-// position, composer recall, and actions all belong to the complete document.
-pub(super) fn loading_excerpt(app: &FarcasterApp) -> Option<(&'static str, &str)> {
-    if app.sessions.selected_draft.is_some() {
-        return None;
-    }
-    let snapshot = &app.snapshot;
-    let row = if app.lifecycle.pending_session_switch.is_some() {
-        // Until the runtime acknowledges the request its reply belongs to the previous selection.
-        app.sidebar_catalog_row(&app.sessions.all)
-    } else {
-        if snapshot.document_ready
-            || snapshot.status != "Loading history"
-            || !snapshot.conversation.items.is_empty()
-        {
-            return None;
-        }
-        if let Some(reply) = snapshot.loading_reply.as_deref() {
-            return Some(("Latest reply · Loading history…", reply));
-        }
-        snapshot
-            .selected_session
-            .as_deref()
-            .and_then(|path| snapshot.catalog_row_at(&app.sessions.all, path))
-    };
-    match row
-        .map(|row| row.first_user_message.as_str())
-        .filter(|text| !text.is_empty())
-    {
-        Some(text) => Some(("First message · Loading history…", text)),
-        None => Some(("Loading history…", "")),
     }
 }

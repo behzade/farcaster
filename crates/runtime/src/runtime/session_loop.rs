@@ -81,7 +81,7 @@ pub(super) fn run(
             owner.publish();
         }
         while let Ok(result) = history_rx.try_recv() {
-            owner.apply_history_update(result);
+            owner.apply_history(result);
         }
         while let Ok(result) = owner.title_generation.receiver.try_recv() {
             owner.apply_generated_session_title(result);

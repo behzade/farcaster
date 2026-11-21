@@ -179,12 +179,9 @@ fn refresh_history_preserves_config_and_selects_profile_from_locator() {
     owner.history_tx = sender;
     for kind in [HistoryLoadKind::Selection, HistoryLoadKind::DocumentRefresh] {
         owner.refresh_history(locator.clone(), temp.path().into(), kind);
-        let HistoryUpdate::Complete(result) = receiver
+        let result = receiver
             .recv_timeout(std::time::Duration::from_secs(5))
-            .expect("history worker result")
-        else {
-            panic!("unexpected preview")
-        };
+            .expect("history worker result");
         assert_eq!(result.path, locator);
         assert_eq!(result.project, temp.path());
         let history = result
@@ -648,7 +645,7 @@ fn reopened_accepted_queue_receipts_stay_off_transcript_until_delivery()
 }
 
 #[test]
-fn reselect_keeps_in_flight_history_and_failure_dismisses_its_reply() {
+fn reselect_keeps_in_flight_history_and_displays_load_failure() {
     let temp = tempfile::tempdir().unwrap();
     let project = temp.path().to_path_buf();
     let path = project.join(Backend::Codex.as_str()).join("native-id");
@@ -659,12 +656,6 @@ fn reselect_keeps_in_flight_history_and_failure_dismisses_its_reply() {
     assert_eq!(owner.session_id.as_deref(), Some("native-id"));
     owner.history_generation = 2;
     owner.history_selection_generation = Some(2);
-    for (generation, text) in [(2, "recent"), (1, "stale")] {
-        owner.apply_history_update(HistoryUpdate::RecentReply {
-            generation,
-            text: text.into(),
-        });
-    }
     owner.apply_command(RuntimeCommand::SelectSession {
         path: path.clone(),
         harness: Backend::Codex,
@@ -674,7 +665,6 @@ fn reselect_keeps_in_flight_history_and_failure_dismisses_its_reply() {
         request: Some(3),
     });
     assert_eq!(owner.history_generation, 2);
-    assert_eq!(owner.snapshot.loading_reply.as_deref(), Some("recent"));
     assert!(owner.snapshot.conversation.items.is_empty());
     owner.apply_history(HistoryResult {
         generation: 2,
@@ -683,11 +673,6 @@ fn reselect_keeps_in_flight_history_and_failure_dismisses_its_reply() {
         kind: HistoryLoadKind::Selection,
         result: Err("fixture error".into()),
     });
-    owner.apply_history_update(HistoryUpdate::RecentReply {
-        generation: 2,
-        text: "late".into(),
-    });
-    assert!(owner.snapshot.loading_reply.is_none());
     assert!(!owner.snapshot.document_ready);
     assert_eq!(owner.snapshot.status, "Could not load history");
     assert!(

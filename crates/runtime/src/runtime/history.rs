@@ -1,30 +1,6 @@
 use super::*;
 use crate::agents::Backend;
 
-fn recent_reply(messages: &[Value]) -> Option<Arc<str>> {
-    let text = messages
-        .iter()
-        .rev()
-        .filter(|message| message["role"] == "assistant")
-        .find_map(|message| {
-            message["content"]
-                .as_array()?
-                .iter()
-                .rev()
-                .filter(|block| block["type"] == "text")
-                .find_map(|block| {
-                    block["text"]
-                        .as_str()
-                        .filter(|text| !text.trim().is_empty())
-                })
-        })?;
-    // A preview must remain cheap even if the final answer is a single large block.
-    Some(match text.char_indices().nth(1600) {
-        Some((end, _)) => format!("{}…", &text[..end]).into(),
-        None => text.into(),
-    })
-}
-
 fn restored_question_request(question: crate::sessions::RestoredQuestion) -> ExtensionUiRequest {
     if question.options.is_empty() {
         ExtensionUiRequest::Input {
@@ -131,7 +107,6 @@ impl RuntimeOwner {
         self.snapshot.selected_session = Some(path);
         self.snapshot.profile_id = profile_id;
         self.snapshot.status = "Loading history".into();
-        self.snapshot.loading_reply = None;
         self.snapshot.document_ready = false;
         self.snapshot.session = None;
         self.snapshot.conversation = Default::default();
@@ -184,36 +159,18 @@ impl RuntimeOwner {
                     .ok_or_else(|| "Choose a backend before loading history.".to_owned())
                     .and_then(|harness| {
                         let config = config?;
-                        if kind == HistoryLoadKind::Selection {
-                            agents::load_session_history_with_preview(
-                                &config,
-                                harness,
-                                &path,
-                                &project,
-                                &mut |messages| {
-                                    if let Some(text) = recent_reply(&messages) {
-                                        let _ = sender
-                                            .send(HistoryUpdate::RecentReply { generation, text });
-                                        wake.unpark();
-                                    }
-                                },
-                            )
-                        } else {
-                            agents::load_session_history_for_profile(
-                                &config, harness, &path, &project,
-                            )
-                        }
+                        agents::load_session_history_for_profile(&config, harness, &path, &project)
                     });
                 if let Ok(history) = &result {
                     operation.set_work(history.messages.len());
                 }
-                let _ = sender.send(HistoryUpdate::Complete(HistoryResult {
+                let _ = sender.send(HistoryResult {
                     generation,
                     path,
                     project,
                     kind,
                     result,
-                }));
+                });
                 wake.unpark();
             })
         {
@@ -283,22 +240,6 @@ impl RuntimeOwner {
         self.publish();
     }
 
-    pub(super) fn apply_history_update(&mut self, update: HistoryUpdate) {
-        match update {
-            HistoryUpdate::Complete(result) => self.apply_history(result),
-            HistoryUpdate::RecentReply { generation, text } => {
-                if self.history_selection_generation == Some(generation)
-                    && self.history_generation == generation
-                    && !self.snapshot.document_ready
-                    && self.snapshot.status == "Loading history"
-                {
-                    self.snapshot.loading_reply = Some(text);
-                    self.publish();
-                }
-            }
-        }
-    }
-
     pub(super) fn apply_history(&mut self, result: HistoryResult) {
         let active_generation = self.history_load_generation_mut(result.kind);
         if *active_generation == Some(result.generation) {
@@ -314,7 +255,6 @@ impl RuntimeOwner {
             self.start_pending_document_refresh();
             return;
         }
-        self.snapshot.loading_reply = None;
         let profile_id = match configuration_for_target(
             &self.process_command,
             self.state.as_ref(),

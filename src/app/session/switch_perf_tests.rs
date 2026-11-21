@@ -483,9 +483,7 @@ fn hovering_a_cursor_session_does_not_start_its_profile(cx: &mut gpui::TestAppCo
 
 #[cfg(unix)]
 #[gpui::test]
-fn cold_codex_selection_draws_the_recent_reply_while_full_history_is_blocked(
-    cx: &mut gpui::TestAppContext,
-) {
+fn cold_codex_selection_paints_rows_at_their_final_positions(cx: &mut gpui::TestAppContext) {
     use std::os::unix::fs::PermissionsExt as _;
 
     const PROFILE: &str = "11111111-1111-4111-8111-111111111111";
@@ -493,7 +491,7 @@ fn cold_codex_selection_draws_the_recent_reply_while_full_history_is_blocked(
     crate::app::test_support::with_runtime_app(
         concat!(
             module_path!(),
-            "::cold_codex_selection_draws_the_recent_reply_while_full_history_is_blocked"
+            "::cold_codex_selection_paints_rows_at_their_final_positions"
         ),
         cx,
         |project| {
@@ -509,6 +507,15 @@ fn cold_codex_selection_draws_the_recent_reply_while_full_history_is_blocked(
             )
             .unwrap();
             fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+            let turns: Vec<_> = (0..30).map(|n| serde_json::json!({"items":[
+                {"type":"userMessage","content":[{"type":"text","text":format!("Question {n}")}]},
+                {"type":"agentMessage","text":format!("**Answer {n}**\n\n{}", "Wrapped words in this answer. ".repeat(20))}
+            ]})).collect();
+            fs::write(
+                project.join("full-thread.json"),
+                serde_json::json!({"thread":{"turns":turns}}).to_string(),
+            )
+            .unwrap();
             let rollout = project.join("rollout.jsonl");
             fs::write(&rollout, "").unwrap();
             fs::write(project.join("thread_history_1.sqlite"), "").unwrap();
@@ -569,60 +576,98 @@ fn cold_codex_selection_draws_the_recent_reply_while_full_history_is_blocked(
             )
             .with_app_session_id(17);
             let key = row.catalog_key();
+            let mut source = row.clone().with_app_session_id(16);
+            source.id = "source".into();
+            source.path.set_file_name("source");
+            let source_path = source.path.clone();
+            let source_key = source.catalog_key();
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions.all = vec![source.clone(), row.clone()].into();
+                    app.sessions.visible = vec![source, row.clone()].into();
+                    app.select_rail_session(source_key, window, cx);
+                })
+            });
+            wait_for_items(cx, app, &source_path, 1);
+            assert!(cx.debug_bounds("transcript-row-0").is_some());
             let started = Instant::now();
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
-                    app.sessions.all = vec![row.clone()].into();
-                    app.sessions.visible = vec![row].into();
+                    // The fixture uses a real supervisor, whose startup catalog refresh
+                    // can run while we wait for the source document.
+                    app.sessions.all.upsert_by_recency(row.clone());
+                    app.sessions.visible.upsert_by_recency(row);
                     app.select_rail_session(key, window, cx);
-                })
+                    assert!(app.lifecycle.pending_session_switch.is_some());
+                });
             });
             cx.update(|window, cx| window.draw(cx).clear(cx));
-            assert!(
-                cx.debug_bounds("First message · Loading history…")
-                    .is_some()
-            );
-            let first = started.elapsed();
+            assert!(cx.debug_bounds("transcript-loading").is_some());
+            assert!(cx.debug_bounds("transcript-row-0").is_none());
             let deadline = started + SWITCH_TIMEOUT;
             loop {
                 cx.run_until_parked();
-                let (status, reply, count, error) = cx.update(|window, cx| {
+                cx.update(|window, cx| {
                     app.update(cx, |app, cx| app.drain_runtime(cx));
                     window.draw(cx).clear(cx);
-                    let app = app.read(cx);
-                    (
-                        app.snapshot.status.clone(),
-                        app.snapshot.loading_reply.clone(),
-                        app.snapshot.conversation.items.len(),
-                        app.sessions.error.clone(),
-                    )
                 });
-                if reply.as_deref() == Some("Recent answer") {
-                    assert_eq!(count, 0);
-                    assert!(cx.debug_bounds("Latest reply · Loading history…").is_some());
+                assert!(cx.debug_bounds("transcript-loading").is_some());
+                assert!(cx.debug_bounds("transcript-row-0").is_none());
+                if project.join("reading-history").exists() {
                     break;
                 }
-                assert!(
-                    Instant::now() < deadline,
-                    "preview missing, status={status}, error={error:?}"
-                );
+                assert!(Instant::now() < deadline, "history read did not start");
                 thread::sleep(SWITCH_POLL);
             }
-            let recent = started.elapsed();
+            assert!(!project.join("requested-preview").exists());
+            assert!(cx.debug_bounds("transcript-loading").is_some());
+            assert!(cx.debug_bounds("transcript-row-0").is_none());
             fs::write(project.join("release-full-read"), "").unwrap();
-            wait_for_items(cx, app, &path, 2);
-            cx.update(|_, cx| {
-                let snapshot = &app.read(cx).snapshot;
-                assert!(snapshot.document_ready && snapshot.loading_reply.is_none());
-                assert_eq!(snapshot.conversation.items[0].text, "Original question");
-                assert_eq!(snapshot.conversation.items[1].text, "Recent answer");
-            });
-            assert!(cx.debug_bounds("Latest reply · Loading history…").is_none());
+            // Record every draw from release through settled layout. Include visibility
+            // as well as geometry so an early top-of-document frame cannot pass.
+            let mut frames = Vec::new();
+            let mut ready_frames = 0;
+            while ready_frames < 8 {
+                assert!(Instant::now() < deadline, "cold history did not settle");
+                cx.run_until_parked();
+                let ready = cx.update(|window, cx| {
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                    window.draw(cx).clear(cx);
+                    let snapshot = &app.read(cx).snapshot;
+                    snapshot.selected_session.as_ref() == Some(&path) && snapshot.document_ready
+                });
+                assert!(
+                    cx.debug_bounds("transcript-row-0").is_none(),
+                    "painted the top of a long history"
+                );
+                let rows = [
+                    "transcript-row-54",
+                    "transcript-row-55",
+                    "transcript-row-56",
+                    "transcript-row-57",
+                    "transcript-row-58",
+                    "transcript-row-59",
+                ]
+                .map(|key| cx.debug_bounds(key));
+                if ready || rows.iter().any(Option::is_some) {
+                    frames.push(rows);
+                }
+                ready_frames += usize::from(ready);
+                thread::sleep(SWITCH_POLL);
+            }
+            let settled = frames.last().expect("visible history");
+            assert!(
+                settled.iter().flatten().count() >= 2 && settled[5].is_some(),
+                "expected visible tail rows, got {settled:?}"
+            );
+            assert!(cx.debug_bounds("transcript-loading").is_none());
+            for frame in &frames {
+                assert_eq!(frame, settled, "a transcript row shifted during cold open");
+            }
             eprintln!(
-                "COLD_CODEX first_draw_ms={:.2} recent_draw_ms={:.2} complete_draw_ms={:.2}",
-                millis(first),
-                millis(recent),
-                millis(started.elapsed())
+                "Cold open: {} content frames, {} visible tail rows, zero pixel displacement",
+                frames.len(),
+                settled.iter().flatten().count()
             );
         },
     );

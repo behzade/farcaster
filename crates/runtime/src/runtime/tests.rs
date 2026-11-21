@@ -2957,7 +2957,7 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
     let history = history_rx
         .recv_timeout(Duration::from_secs(1))
         .map_err(|error| format!("history switch was rejected: {error}"))?;
-    owner.apply_history_update(history);
+    owner.apply_history(history);
 
     assert!(owner.snapshot.history_preview);
     assert_eq!(owner.snapshot.selected_session, Some(history_path));

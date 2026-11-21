@@ -57,6 +57,12 @@ fn transcript_reading_survives_session_switch_and_loading(cx: &mut gpui::TestApp
                     view.file_trees.insert(12, tree);
                 });
             });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            let saved_y = cx
+                .debug_bounds("transcript-row-12")
+                .expect("saved row")
+                .origin
+                .y;
             // A reset can precede a loading snapshot, then a second history
             // reset before the destination is ready. Neither may overwrite A.
             for (generation, snapshot) in [(2, b), (3, reading_snapshot(project, "a", 64))] {
@@ -93,6 +99,13 @@ fn transcript_reading_survives_session_switch_and_loading(cx: &mut gpui::TestApp
                         assert_eq!(view.unseen, 4);
                     }
                 });
+                if generation == 3 {
+                    for _ in 0..3 {
+                        let row = cx.debug_bounds("transcript-row-12").expect("restored row");
+                        assert_eq!(row.origin.y, saved_y);
+                        cx.update(|window, cx| window.draw(cx).clear(cx));
+                    }
+                }
             }
         },
     );
@@ -136,6 +149,9 @@ fn transcript_reading_return_after_resize_syncs_follow_state(cx: &mut gpui::Test
                 assert_eq!(view.unseen, 3);
                 window.draw(cx).clear(cx);
             });
+            let last_row = cx
+                .debug_bounds("transcript-row-59")
+                .expect("last row after resize");
             // Let the scroll handler's deferred view update run after paint.
             cx.update(|_, cx| {
                 let view = transcript.read(cx);
@@ -146,6 +162,8 @@ fn transcript_reading_return_after_resize_syncs_follow_state(cx: &mut gpui::Test
                 );
                 assert_eq!(view.unseen, 0);
             });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            assert_eq!(cx.debug_bounds("transcript-row-59"), Some(last_row));
             send_snapshot(runtime, 3, reading_snapshot(project, "a", 62));
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| app.drain_runtime(cx));

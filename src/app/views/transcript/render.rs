@@ -280,7 +280,10 @@ pub(crate) fn render(
             let expanded = resolved_expanded(row, &conversation.items, &disclosure_states);
             let reserves_tail = index + 1 == rows.len()
                 && latest_allows_tail_reserve(row, &conversation.items, expanded);
-            let content = transcript_column()
+            let column = transcript_column();
+            #[cfg(test)]
+            let column = column.debug_selector(move || format!("transcript-row-{index}"));
+            let content = column
                 .text_size(theme().type_scale.body * font_scale)
                 .line_height(theme().type_scale.line_body * font_scale)
                 .when(reserves_tail, |row| row.pb(viewport.tail_reserve))
@@ -320,6 +323,7 @@ pub(crate) fn render(
     );
 
     div()
+        .relative()
         .size_full()
         .when(visual_selection_active, |root| {
             root.key_context(list::TRANSCRIPT_SELECTION_KEY_CONTEXT)
@@ -338,12 +342,12 @@ pub(crate) fn render(
         .when(!viewport.following, |root| {
             root.child(
                 div()
-                    .flex_none()
+                    .absolute()
+                    .bottom(theme().space.xs)
+                    .w_full()
                     .flex()
                     .justify_center()
-                    .bg(theme().colors.canvas)
-                    .py(theme().space.xs)
-                    .child(button(
+                    .child(div().block_mouse_except_scroll().child(button(
                         "jump-to-latest",
                         if viewport.unseen == 0 {
                             "Jump to latest".to_owned()
@@ -355,7 +359,7 @@ pub(crate) fn render(
                         move |_, cx| {
                             let _ = jump.update(cx, |this, cx| this.jump_to_latest(cx));
                         },
-                    )),
+                    ))),
             )
         })
         .into_any_element()

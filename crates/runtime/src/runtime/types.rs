@@ -335,8 +335,6 @@ pub struct RuntimeSnapshot {
     pub connected: bool,
     /// A complete session document can remain ready without a running harness.
     pub document_ready: bool,
-    /// Display-only excerpt while the complete selected history is loading.
-    pub loading_reply: Option<Arc<str>>,
     pub status: String,
     pub harness: Option<Backend>,
     pub profile_id: Option<String>,
