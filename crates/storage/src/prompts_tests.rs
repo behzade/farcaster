@@ -2,6 +2,109 @@ use super::*;
 use crate::agents::Backend;
 
 #[test]
+fn prompt_submission_saves_the_draft_before_a_late_writer_save()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let database = root.path().join("state.sqlite3");
+    let repo = SharedStateStore::open_at(&database)?;
+    let mut writer = StateStore::open_at(&database)?;
+    let old_project = root.path().join("previous-project");
+    let mut stale = DraftSession::fresh(Some(Backend::Pi), old_project.clone());
+    stale.profile_id = Some("old profile".into());
+    let target = sessions::draft_target(&stale.id);
+    let image = PromptImage::new("YWJj".into(), "image/png".into());
+    let images = [image.clone()];
+    let submit = |harness| PromptSubmission {
+        target: &target,
+        harness,
+        project: root.path(),
+        session: None,
+        profile_id: Some("profile"),
+        provisional_title: Some("Composer title"),
+        mode: PromptMode::Normal,
+        message: "expanded prompt",
+        display_message: Some("visible prompt"),
+        invocation: Some("/command"),
+        images: &images,
+    };
+    writer.connection.execute_batch(
+        "CREATE TRIGGER reject_outbox BEFORE INSERT ON outbox BEGIN SELECT RAISE(ABORT,'reject enqueue'); END",
+    )?;
+    assert!(repo.submit_prompt(submit(Backend::Codex)).is_err());
+    assert!(writer.load_drafts()?.is_empty());
+    writer
+        .connection
+        .execute_batch("DROP TRIGGER reject_outbox")?;
+
+    // The draft was already saved when the user changed project, harness and profile.
+    let allocated = writer.save_draft_with_identity(stale.clone())?;
+    let queued = repo.submit_prompt(submit(Backend::Codex))?;
+    assert_eq!(queued.app_session_id, allocated);
+    assert!(queued.bound_session.is_none());
+    assert!(queued.images[0].path.is_some());
+    assert_eq!(queued.images[0].clone().into_inline()?, image);
+    stale.title = Some("Old draft title".into());
+
+    // The writer may receive either kind of stale draft snapshot before binding.
+    assert_eq!(
+        writer.save_draft_with_identity(stale.clone())?,
+        queued.app_session_id
+    );
+    stale.app_session_id = queued.app_session_id.get();
+    writer.save_session_changes(&SessionStateChanges {
+        drafts: [(stale.id.clone(), Some(stale.clone()))].into(),
+        ..Default::default()
+    })?;
+    let draft = writer.load_drafts()?.remove(0);
+    assert!(draft.submitted);
+    assert_eq!(draft.app_session_id, queued.app_session_id.get());
+    assert_eq!(draft.harness, Some(Backend::Codex));
+    assert_eq!(draft.project, sessions::normalize_session_path(root.path()));
+    assert_eq!(draft.profile_id.as_deref(), Some("profile"));
+    assert_eq!(draft.title.as_deref(), Some("Composer title"));
+    assert!(draft.session_path.is_none());
+
+    let path = sessions::normalize_session_path(&root.path().join("registered"));
+    writer.connection.execute(
+        "UPDATE sessions SET locator=?1, backend_id='native' WHERE id=?2",
+        params![path.to_string_lossy(), draft.app_session_id],
+    )?;
+    for mismatch in [
+        submit(Backend::Pi),
+        PromptSubmission {
+            project: &old_project,
+            ..submit(Backend::Codex)
+        },
+        PromptSubmission {
+            profile_id: None,
+            ..submit(Backend::Codex)
+        },
+    ] {
+        assert!(repo.submit_prompt(mismatch).is_err());
+    }
+    assert_eq!(writer.queued_prompts()?.len(), 1);
+    let retry = repo.submit_prompt(submit(Backend::Codex))?;
+    assert_eq!(retry.app_session_id, queued.app_session_id);
+    assert_eq!(
+        retry.bound_session,
+        Some(sessions::SessionTarget {
+            harness: Backend::Codex,
+            path: path.clone(),
+            id: "native".into(),
+        })
+    );
+    let recovered = writer.queued_prompts()?.remove(0);
+    assert_eq!(recovered.id, queued.outbox_id);
+    assert_eq!(recovered.project, draft.project);
+    assert_eq!(recovered.harness, Backend::Codex);
+    assert_eq!(recovered.session, Some(path));
+    assert_eq!(recovered.backend_session_id.as_deref(), Some("native"));
+    assert_eq!(recovered.images, queued.images);
+    assert_eq!(recovered.display_message.as_deref(), Some("visible prompt"));
+    Ok(())
+}
+
+#[test]
 fn accepted_receipt_stays_pending_and_is_idempotent() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     let database = temp.path().join("state.sqlite3");

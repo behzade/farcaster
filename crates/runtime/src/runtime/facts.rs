@@ -26,9 +26,9 @@ impl RuntimeSnapshot {
 
 impl RuntimeOwner {
     pub(super) fn session_facts(&self, path: &Path) -> SessionFacts {
-        let mut saved = match self.state.as_ref().zip(self.harness) {
-            Some((state, harness)) => state
-                .with(|store| store.load_session_facts(harness, path))
+        let mut saved = match self.session_repository().ok().zip(self.harness) {
+            Some((repository, harness)) => repository
+                .read_session_facts(harness, path)
                 .unwrap_or_else(|error| {
                     zlog::warn!("Load session facts: {error}");
                     SessionFacts::default()

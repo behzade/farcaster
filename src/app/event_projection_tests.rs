@@ -580,7 +580,7 @@ fn promoted_draft_completion_clears_status_and_saved_attachments(cx: &mut gpui::
             cx.update(|_, cx| {
                 app.update(cx, |app, _| {
                     Arc::make_mut(&mut app.snapshot).harness = Some(Backend::Pi);
-                    app.begin_draft_submission(target, "hi");
+                    app.begin_draft_submission(target);
                     app.composer.pending_submissions.insert(
                         submission_id.into(),
                         PendingSubmission {

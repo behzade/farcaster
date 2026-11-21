@@ -58,6 +58,8 @@ pub struct SessionImport {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionSummary {
     pub id: String,
+    /// Present while this database row still belongs to a local draft.
+    pub draft_id: Option<String>,
     pub worker_profile: Option<String>,
     pub app_session_id: i64,
     pub profile_id: Option<String>,
@@ -94,6 +96,7 @@ impl SessionSummary {
         Self {
             id: value.id,
             app_session_id: 0,
+            draft_id: None,
             worker_profile: None,
             profile_id: crate::profile_id_from_locator(&value.path),
             harness: value.harness,
@@ -235,6 +238,7 @@ impl SessionSummary {
         Self {
             id,
             app_session_id: 0,
+            draft_id: None,
             worker_profile: None,
             profile_id: crate::profile_id_from_locator(&path),
             harness,

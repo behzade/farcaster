@@ -4,8 +4,8 @@ use super::super::{
     queued_session::SteeringBoundary,
 };
 use crate::{
-    AgentLaunchConfig, ConfigurationCatalog, SessionLaunch, SessionStart, SessionTransport,
-    WorkerSessionFactory, contract::AgentBackendDescriptor,
+    AgentLaunchConfig, ConfigurationCatalog, SessionLaunch, SessionTransport, WorkerSessionFactory,
+    contract::AgentBackendDescriptor,
 };
 use farcaster_projects::{AppliedTrust, StartupTrust, TrustChoice};
 use farcaster_sessions::{LoadedHistory, SessionSummary, SessionTransfer, TransferMember};
@@ -145,26 +145,8 @@ impl BackendAdapter for PiAdapter {
         config: &AgentLaunchConfig,
         launch: SessionLaunch,
     ) -> Result<Box<dyn SessionTransport>, String> {
-        let process = match &launch.start {
-            SessionStart::New => super::PiRpcProcess::spawn_with_optional_waker(
-                config,
-                &launch.project,
-                None,
-                launch.wake,
-            ),
-            SessionStart::Resume(session) => super::PiRpcProcess::spawn_with_optional_waker(
-                config,
-                &launch.project,
-                Some(session),
-                launch.wake,
-            ),
-            SessionStart::Fork(source) => super::PiRpcProcess::spawn_fork_with_optional_waker(
-                config,
-                &launch.project,
-                source,
-                launch.wake,
-            ),
-        }?;
+        let process =
+            super::PiRpcProcess::spawn_main(config, launch, crate::core::CallerRegistry::shared())?;
         Ok(Box::new(process))
     }
     fn rename_session(

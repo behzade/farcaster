@@ -95,7 +95,7 @@ impl FarcasterApp {
     fn quit_after_saving(&mut self, cx: &mut Context<Self>) {
         self.capture_composer_session(cx);
         let target = self.composer.sessions.current_target().to_owned();
-        if !self.sync_current_draft(&target) {
+        if !self.sync_drafts_before_quit(&target) {
             self.lifecycle.saving_before_quit = false;
             self.notify_session_rail(cx);
             return;

@@ -101,20 +101,9 @@ pub(super) fn spawn_main(
     config: &AgentLaunchConfig,
     launch: &crate::SessionLaunch,
 ) -> Result<MainSession, String> {
-    let identity = crate::core::CallerRegistry::shared().issue_with_access(
-        &launch.project,
-        crate::core::CallerProfile {
-            backend: Backend::Cursor,
-            provider: None,
-            model: None,
-            effort: None,
-        },
-        launch.wake.clone(),
-        config.access_mode,
-    );
-    identity.set_harness_profile_id(config.profile_id.clone());
+    let identity = crate::core::CallerRegistry::shared().issue_main_session(config, launch);
     let resume = match &launch.start {
-        crate::SessionStart::New => None,
+        crate::SessionStart::New(_) => None,
         crate::SessionStart::Resume(_) => Some(
             main_session::launch_session_locator(launch).ok_or("Cursor SDK session id missing")?,
         ),

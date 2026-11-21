@@ -18,7 +18,7 @@ pub(super) fn create(
         this.flush_theme_save();
         this.capture_composer_session(cx);
         let target = this.composer.sessions.current_target().to_owned();
-        this.sync_current_draft(&target);
+        this.sync_drafts_before_quit(&target);
         this.remember_session_selection();
         let flush = this.sessions.writer.flush();
         let composer_flush = this.composer.sessions.flush();

@@ -4,6 +4,85 @@ use crate::runtime::RunStatus;
 use std::{sync::mpsc, time::Duration};
 
 #[gpui::test]
+fn first_edits_survive_switching_before_draft_allocation(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::first_edits_survive_switching_before_draft_allocation"
+        ),
+        cx,
+        |cx, app, _, project| {
+            let (resume, paused) = mpsc::channel();
+            let first = cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    futures::executor::block_on(app.sessions.writer.flush()).unwrap();
+                    let target = app.composer.sessions.current_buffer().to_owned();
+                    let (sessions, error) =
+                        crate::app::composer::sessions::load(target.clone(), cx);
+                    assert_eq!(error, None);
+                    app.composer.sessions = sessions;
+                    let gate = std::sync::Once::new();
+                    let (writer, _) = SessionStateWriter::spawn(move || {
+                        gate.call_once(|| {
+                            paused
+                                .recv_timeout(Duration::from_secs(5))
+                                .expect("release allocation")
+                        });
+                        persistence::shared()
+                    });
+                    app.sessions.writer = writer;
+                    target
+                })
+            });
+            let edit = |value: &str, cx: &mut gpui::VisualTestContext| {
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| {
+                        app.composer.input.update(cx, |input, cx| {
+                            input.set_value(value.to_owned(), window, cx);
+                            cx.emit(gpui_component::input::InputEvent::Change);
+                        });
+                    });
+                });
+            };
+            edit("first", cx);
+            edit("latest first draft", cx);
+            let second = cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.new_session(project.into(), window, cx);
+                    app.composer.sessions.current_buffer().to_owned()
+                })
+            });
+            assert_ne!(first, second);
+            edit("second draft", cx);
+            cx.update(|_, cx| {
+                futures::executor::block_on(app.read(cx).composer.sessions.flush()).unwrap();
+            });
+            let store = persistence::open().unwrap();
+            assert!(store.load_composer_buffers().unwrap().is_empty());
+            resume.send(()).unwrap();
+            cx.update(|_, cx| {
+                futures::executor::block_on(app.read(cx).sessions.writer.flush()).unwrap();
+            });
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                let app = app.read(cx);
+                assert_eq!(app.composer.sessions.current_buffer(), second);
+                assert_eq!(app.composer.input.read(cx).value().as_ref(), "second draft");
+                futures::executor::block_on(app.composer.sessions.flush()).unwrap();
+            });
+            let restored = store.load_composer_buffers().unwrap();
+            for (target, expected) in [(first, "latest first draft"), (second, "second draft")] {
+                let record = restored
+                    .iter()
+                    .find(|row| row.target == target)
+                    .expect("persisted draft buffer");
+                assert_eq!(record.text, expected);
+            }
+        },
+    );
+}
+
+#[gpui::test]
 fn failed_handoffs_restore_drafts_and_folder_membership(cx: &mut gpui::TestAppContext) {
     use crate::{agents::Backend, app::composer::sessions::draft_target, runtime::RuntimeCommand};
     crate::app::test_support::with_offline_app(
@@ -417,7 +496,7 @@ fn idless_draft_archive_returns_while_its_first_save_is_blocked(cx: &mut gpui::T
                             assert_eq!(id, previous);
                         }
                         allocated = Some(id);
-                        runtime.send_event(RuntimeEvent::DraftArchiveIdentity {
+                        runtime.send_event(RuntimeEvent::DraftIdentitySaved {
                             draft: key.clone(),
                             app_session_id: id,
                         });

@@ -9,7 +9,7 @@ pub(crate) fn start(
     updates: async_channel::Sender<()>,
     notices: NoticeBoard,
 ) -> Result<farcaster_mcp_server::McpServer, String> {
-    farcaster_mcp_server::start(store.arc(), workers, updates, notices)
+    farcaster_mcp_server::start(store, workers, updates, notices)
 }
 
 pub(crate) fn set_enabled(enabled: bool) -> Result<(), String> {

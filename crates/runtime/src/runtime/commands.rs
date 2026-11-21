@@ -173,30 +173,22 @@ impl RuntimeOwner {
                 target,
                 mode,
                 message,
+                provisional_title,
                 display_message,
                 invocation,
                 images,
                 allow_while_running,
-            } => match (display_message, invocation) {
-                (None, None) => self.send_prompt_for_submission(
-                    submission_id,
-                    target,
-                    mode,
-                    message,
-                    images,
-                    allow_while_running,
-                ),
-                (display_message, invocation) => self.send_prompt_with_presentation_for_submission(
-                    submission_id,
-                    target,
-                    mode,
-                    message,
-                    display_message,
-                    invocation,
-                    images,
-                    allow_while_running,
-                ),
-            },
+            } => self.send_prompt_with_presentation_for_submission(
+                submission_id,
+                target,
+                mode,
+                message,
+                provisional_title,
+                display_message,
+                invocation,
+                images,
+                allow_while_running,
+            ),
             RuntimeCommand::RecoverPending(prompt) => {
                 if !self.saved_prompts.iter().any(|saved| saved.id == prompt.id) {
                     self.saved_prompts.push_back(prompt);

@@ -78,13 +78,14 @@ pub(super) fn session_rail_lists(
     )
 }
 
+#[cfg(test)]
 pub(super) fn session_rail_lists_for_roots<'a>(
     roots: impl IntoIterator<Item = &'a SessionSummary>,
     drafts: &[DraftSession],
     project_filter: Option<&Path>,
     manual_order: &[i64],
 ) -> SessionRailLists {
-    build_session_rail_lists(roots, drafts, project_filter, manual_order, true)
+    build_session_rail_lists(roots, drafts, project_filter, manual_order, true, |_| {})
 }
 
 pub(super) fn active_session_rail_lists_for_roots<'a>(
@@ -92,8 +93,16 @@ pub(super) fn active_session_rail_lists_for_roots<'a>(
     drafts: &[DraftSession],
     project_filter: Option<&Path>,
     manual_order: &[i64],
+    present_draft: impl Fn(&mut DraftSession),
 ) -> SessionRailLists {
-    build_session_rail_lists(roots, drafts, project_filter, manual_order, false)
+    build_session_rail_lists(
+        roots,
+        drafts,
+        project_filter,
+        manual_order,
+        false,
+        present_draft,
+    )
 }
 
 pub(super) fn archived_session_rows_for_roots<'a>(
@@ -107,6 +116,7 @@ pub(super) fn archived_session_rows_for_roots<'a>(
         project_filter,
         &[],
         true,
+        |_| {},
     )
     .archived
 }
@@ -117,6 +127,7 @@ fn build_session_rail_lists<'a, 'd>(
     project_filter: Option<&Path>,
     manual_order: &[i64],
     include_archived: bool,
+    present_draft: impl Fn(&mut DraftSession),
 ) -> SessionRailLists {
     #[cfg(test)]
     tests::record_list_build();
@@ -137,7 +148,9 @@ fn build_session_rail_lists<'a, 'd>(
                 archived.push(ActiveSessionItem::Draft(draft.clone()));
             }
         } else {
-            active.push(ActiveSessionItem::Draft(draft.clone()));
+            let mut row = draft.clone();
+            present_draft(&mut row);
+            active.push(ActiveSessionItem::Draft(row));
         }
     }
 

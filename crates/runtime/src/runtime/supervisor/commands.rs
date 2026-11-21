@@ -168,6 +168,7 @@ impl Supervisor {
             submission_id,
             target: key.clone(),
             mode: PromptMode::Normal,
+            provisional_title: crate::sessions::provisional_session_title(&message),
             message,
             display_message: None,
             invocation: None,

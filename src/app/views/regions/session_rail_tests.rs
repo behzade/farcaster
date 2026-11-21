@@ -222,6 +222,262 @@ fn empty_archive_consumes_top_reveal_without_scheduling_a_scroll() {
 }
 
 #[gpui::test]
+fn first_submit_keeps_one_row_when_catalog_arrives_first(cx: &mut gpui::TestAppContext) {
+    check_first_submit_rows(
+        concat!(
+            module_path!(),
+            "::first_submit_keeps_one_row_when_catalog_arrives_first"
+        ),
+        cx,
+        true,
+    );
+}
+
+#[gpui::test]
+fn first_submit_keeps_one_row_when_path_arrives_first(cx: &mut gpui::TestAppContext) {
+    check_first_submit_rows(
+        concat!(
+            module_path!(),
+            "::first_submit_keeps_one_row_when_path_arrives_first"
+        ),
+        cx,
+        false,
+    );
+}
+
+fn check_first_submit_rows(test_name: &str, cx: &mut gpui::TestAppContext, catalog_first: bool) {
+    use crate::{
+        agents::Backend,
+        runtime::{RuntimeCommand, RuntimeEvent, RuntimeSnapshot},
+        sessions::{draft_target, normalize_session_path},
+        storage::{ObservedSession, PromptSubmission, SessionFacts, SessionRepository as _},
+    };
+
+    crate::app::test_support::with_offline_app(test_name, cx, |cx, app, runtime, project| {
+        crate::app::project::trust::apply(project, crate::projects::TrustChoice::TrustProject)
+            .expect("trust test project");
+        let id = cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.sessions.preferred_harness = Some(Backend::Codex);
+                app.new_session(project.into(), window, cx);
+                app.sessions.selected_draft.clone().expect("new draft")
+            })
+        });
+        let target = draft_target(&id);
+        let assert_one_row = |cx: &mut gpui::VisualTestContext, expected: &str| {
+            cx.draw(
+                gpui::point(gpui::px(0.), gpui::px(0.)),
+                gpui::size(gpui::px(280.), gpui::px(800.)),
+                |_, cx| app.read(cx).views.session_rail.clone().into_any_element(),
+            );
+            cx.update(|_, cx| {
+                let rail = app.read(cx).views.session_rail.read(cx);
+                let rows = rail.rows.borrow();
+                let chats: Vec<_> = rows
+                    .iter()
+                    .filter(|row| row.starts_with("draft:") || row.starts_with("session:"))
+                    .map(String::as_str)
+                    .collect();
+                assert_eq!(chats, [expected]);
+            });
+        };
+        assert_one_row(cx, &target);
+        cx.run_until_parked();
+        let request = std::iter::from_fn(|| runtime.try_recv_command())
+            .find_map(|command| match command {
+                RuntimeCommand::NewSession {
+                    id: new, request, ..
+                } if new == id => request,
+                _ => None,
+            })
+            .expect("New routed to this draft");
+        runtime.send_event(RuntimeEvent::SelectionRouted(request));
+        runtime.send_event(RuntimeEvent::Snapshot {
+            generation: 1,
+            snapshot: std::sync::Arc::new(RuntimeSnapshot {
+                harness: Some(Backend::Codex),
+                project: project.into(),
+                ..Default::default()
+            }),
+        });
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.drain_runtime(cx);
+                app.submit(
+                    "first prompt".into(),
+                    crate::protocol::PromptMode::Normal,
+                    window,
+                    cx,
+                );
+            })
+        });
+        let (submission, title) = std::iter::from_fn(|| runtime.try_recv_command())
+            .find_map(|command| match command {
+                RuntimeCommand::Prompt {
+                    target: to,
+                    submission_id,
+                    message,
+                    provisional_title,
+                    ..
+                } if to == target && message == "first prompt" => {
+                    Some((submission_id, provisional_title))
+                }
+                _ => None,
+            })
+            .expect("first prompt sent to the new draft");
+        assert_one_row(cx, &target);
+
+        let path = normalize_session_path(
+            &project
+                .join("session-locators")
+                .join(Backend::Codex.as_str())
+                .join("native-first-prompt"),
+        );
+        let metadata = serde_json::from_value(serde_json::json!({
+            "harness": Backend::Codex, "id": "native-first-prompt", "path": path,
+            "project": project, "first_user_message": "first prompt", "is_running": true
+        }))
+        .expect("native session metadata");
+        assert_eq!(
+            cx.update(|_, cx| app.read(cx).sessions.draft_session_ids[&id]),
+            0
+        );
+        assert_eq!(title.as_deref(), Some("first prompt"));
+        let store = crate::app::persistence::shared().expect("store");
+        let receipt = store
+            .submit_prompt(PromptSubmission {
+                target: &target,
+                harness: Backend::Codex,
+                project,
+                session: None,
+                mode: crate::protocol::PromptMode::Normal,
+                message: "first prompt",
+                profile_id: None,
+                provisional_title: title.as_deref(),
+                display_message: None,
+                invocation: None,
+                images: &[],
+            })
+            .expect("commit first prompt");
+        if catalog_first {
+            // A full refresh can read the caller registration before the actor
+            // reports LoadState and before the UI receives its outbox receipt.
+            let registry = crate::agents::CallerRegistry::default();
+            let repository = store.clone();
+            registry.set_execution_sinks(
+                Some(std::sync::Arc::new(move |caller, family| {
+                    repository.register_caller_session(caller, family)
+                })),
+                None,
+            );
+            let caller = registry.issue_main_session(
+                &Default::default(),
+                &crate::agents::SessionLaunch {
+                    harness: Backend::Codex,
+                    project: project.to_owned(),
+                    start: crate::agents::SessionStart::New(Some(id.clone())),
+                    session_id: None,
+                    wake: None,
+                    service_tier: None,
+                },
+            );
+            caller.bind_with_locator("native-first-prompt", Some(path.clone()));
+            let rows = store
+                .with(|db| db.cached_sessions(""))
+                .expect("read catalog during launch");
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].app_session_id, receipt.app_session_id.get());
+            runtime.send_event(RuntimeEvent::Sessions {
+                generation: 1,
+                sessions: rows.clone(),
+                all_sessions: rows,
+                activities: None,
+            });
+            cx.update(|_, cx| app.update(cx, |app, cx| app.drain_runtime(cx)));
+            assert_one_row(cx, &target);
+            cx.update(|_, cx| {
+                let draft = app
+                    .read(cx)
+                    .sessions
+                    .drafts
+                    .iter()
+                    .find(|draft| draft.id == id)
+                    .unwrap();
+                assert_eq!(draft.title.as_deref(), Some("first prompt"));
+            });
+        }
+        store
+            .record_session_facts(
+                ObservedSession {
+                    harness: Backend::Codex,
+                    project,
+                    path: &path,
+                    profile_id: None,
+                    draft: Some(&id),
+                },
+                &SessionFacts::default(),
+            )
+            .expect("bind runtime locator");
+        let row = store
+            .record_session_metadata(&metadata)
+            .expect("catalog row");
+        assert_eq!(row.app_session_id, receipt.app_session_id.get());
+        let identity = || RuntimeEvent::DraftPromptCommitted {
+            provisional_title: title.clone(),
+            draft: id.clone(),
+            app_session_id: receipt.app_session_id,
+        };
+        if !catalog_first {
+            runtime.send_event(identity());
+        }
+        let saved_key = crate::app::views::session_rail::session_row_identity(&row);
+        let catalog = RuntimeEvent::SessionUpdated(row);
+        let accepted = RuntimeEvent::PromptResult {
+            submission_id: Some(submission),
+            target: target.clone(),
+            outcome: crate::agents::PromptOutcome::Accepted,
+            session: Some(path.clone()),
+        };
+        let (first, second) = if catalog_first {
+            (catalog, accepted)
+        } else {
+            (accepted, catalog)
+        };
+        runtime.send_event(first);
+        cx.update(|_, cx| {
+            app.update(cx, |app, cx| {
+                app.drain_runtime(cx);
+                let draft = app
+                    .sessions
+                    .drafts
+                    .iter()
+                    .find(|draft| draft.id == id)
+                    .expect("draft before promotion");
+                assert!(draft.submitted);
+                assert_eq!(
+                    app.sessions.submitted_drafts[&id].as_deref(),
+                    draft.session_path.as_deref()
+                );
+                if catalog_first {
+                    assert!(draft.session_path.is_none());
+                    assert!(app.sessions.visible.by_path(&path).is_some());
+                } else {
+                    assert_eq!(draft.session_path.as_ref(), Some(&path));
+                    assert!(app.sessions.visible.by_path(&path).is_none());
+                }
+            })
+        });
+        assert_one_row(cx, &target);
+        if catalog_first {
+            runtime.send_event(identity());
+        }
+        runtime.send_event(second);
+        cx.update(|_, cx| app.update(cx, |app, cx| app.drain_runtime(cx)));
+        assert_one_row(cx, &saved_key);
+    });
+}
+
+#[gpui::test]
 fn switching_grouping_remeasures_session_rows(cx: &mut gpui::TestAppContext) {
     use gpui::{ParentElement as _, Styled as _, point, px, size};
     crate::app::test_support::with_offline_app(

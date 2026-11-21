@@ -14,6 +14,8 @@ pub(in crate::app) struct SessionState {
     pub(in crate::app) drop_target: Option<(i64, ui::primitives::ReorderPosition)>,
     pub(in crate::app) drafts: Vec<sessions::DraftSession>,
     pub(in crate::app) draft_session_ids: HashMap<String, i64>,
+    pub(in crate::app) draft_receipts: super::state_writer::DraftReceipts,
+    pub(in crate::app) allocating_drafts: HashMap<String, sessions::DraftSession>,
     pub(in crate::app) pending_draft_saves: HashSet<String>,
     pub(in crate::app) pending_folder_drafts: HashMap<String, u64>,
     pub(in crate::app) selected_draft: Option<String>,

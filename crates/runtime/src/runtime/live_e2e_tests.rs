@@ -132,7 +132,8 @@ impl RuntimeTrace {
             | RuntimeEvent::SessionDeleted { .. }
             | RuntimeEvent::RefreshCatalog
             | RuntimeEvent::SessionMetadata(_)
-            | RuntimeEvent::DraftArchiveIdentity { .. }
+            | RuntimeEvent::DraftPromptCommitted { .. }
+            | RuntimeEvent::DraftIdentitySaved { .. }
             | RuntimeEvent::SessionArchiveResult { .. }
             | RuntimeEvent::SessionUpdated(_)
             | RuntimeEvent::SelectionRouted(_)
@@ -836,6 +837,7 @@ fn prompt_with_mode(
         target,
         mode,
         message,
+        provisional_title: None,
         display_message: None,
         invocation: None,
         images: vec![image],

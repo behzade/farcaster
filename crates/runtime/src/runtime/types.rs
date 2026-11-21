@@ -63,6 +63,7 @@ pub enum RuntimeCommand {
         target: String,
         mode: PromptMode,
         message: String,
+        provisional_title: Option<String>,
         display_message: Option<String>,
         invocation: Option<String>,
         images: Vec<PromptImage>,
@@ -268,7 +269,12 @@ pub enum RuntimeEvent {
     RefreshCatalog,
     SessionMetadata(agents::SessionMetadata),
     SessionUpdated(SessionSummary),
-    DraftArchiveIdentity {
+    DraftPromptCommitted {
+        draft: String,
+        app_session_id: crate::sessions::AppSessionId,
+        provisional_title: Option<String>,
+    },
+    DraftIdentitySaved {
         draft: String,
         app_session_id: crate::sessions::AppSessionId,
     },

@@ -349,7 +349,7 @@ pub(super) fn launch_history(
     load: impl FnOnce(&Path) -> Result<DiscoveredHistory, String>,
 ) -> Result<Option<DiscoveredHistory>, String> {
     match &launch.start {
-        SessionStart::New => Ok(None),
+        SessionStart::New(_) => Ok(None),
         SessionStart::Resume(path) | SessionStart::Fork(path) => load(path).map(Some),
     }
 }

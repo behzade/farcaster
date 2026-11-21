@@ -50,7 +50,7 @@ done
             start: match kind {
                 "fork" => crate::SessionStart::Fork(source),
                 "resume" => crate::SessionStart::Resume(source),
-                _ => crate::SessionStart::New,
+                _ => crate::SessionStart::New(None),
             },
             wake: None,
             service_tier: None,

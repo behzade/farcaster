@@ -154,6 +154,7 @@ struct RuntimeOwner {
     document_refresh_generation: Option<u64>,
     pending_document_refresh: Option<(PathBuf, PathBuf)>,
     active_session: Option<PathBuf>,
+    unbound_prompt_draft: Option<String>,
     forked_from: Option<String>,
     parked_snapshot: Option<RuntimeSnapshot>,
     queued_prompts: VecDeque<crate::agents::QueuedPrompt>,
@@ -171,11 +172,21 @@ struct RuntimeOwner {
     session_query: String,
 }
 
+impl RuntimeOwner {
+    fn session_repository(&self) -> Result<&dyn farcaster_storage::SessionRepository, String> {
+        self.state
+            .as_ref()
+            .map(|store| store as &dyn farcaster_storage::SessionRepository)
+            .ok_or_else(|| "Session database is unavailable".to_owned())
+    }
+}
+
 #[derive(Clone, Debug)]
 struct PendingQueuedPrompt {
     submission_id: String,
     target: String,
     outbox_id: i64,
+    backend_session_id: Option<String>,
     session: Option<PathBuf>,
     delivery_tracked: bool,
     result_emitted: bool,

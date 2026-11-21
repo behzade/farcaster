@@ -917,6 +917,7 @@ fn acknowledged_draft_navigation_delivers_the_next_prompt_to_that_actor() {
                 target: target.clone(),
                 mode: PromptMode::Normal,
                 message: id.to_owned(),
+                provisional_title: None,
                 display_message: None,
                 invocation: None,
                 images: Vec::new(),

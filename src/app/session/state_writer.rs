@@ -1,5 +1,6 @@
 use crate::{
     app::{FarcasterApp, persistence},
+    sessions::DraftSession,
     storage::SessionStateWriter as StorageWriter,
 };
 
@@ -64,6 +65,55 @@ impl SessionStateWriter {
             Ok(()) => {}
         }
     }
+}
+
+type DraftIdentity = Result<crate::sessions::AppSessionId, String>;
+pub(in crate::app) type DraftReceipts =
+    async_channel::Sender<(DraftSession, async_channel::Receiver<DraftIdentity>)>;
+
+pub(in crate::app) fn observe_draft_receipts(
+    cx: &mut gpui::Context<FarcasterApp>,
+) -> DraftReceipts {
+    let (sender, receipts) =
+        async_channel::unbounded::<(DraftSession, async_channel::Receiver<DraftIdentity>)>();
+    cx.spawn(async move |weak, cx| {
+        while let Ok((snapshot, receipt)) = receipts.recv().await {
+            let result = receipt
+                .recv()
+                .await
+                .unwrap_or_else(|_| Err("Session state writer stopped before saving".into()));
+            if weak
+                .update(cx, |app, cx| {
+                    let id = &snapshot.id;
+                    let latest = app.sessions.allocating_drafts.remove(id);
+                    match result {
+                        Ok(identity) => {
+                            app.adopt_draft_identity(id.clone(), identity);
+                            if let Some(mut latest) = latest
+                                && latest != snapshot
+                                && app.sessions.draft_session_ids.get(id) == Some(&identity.get())
+                            {
+                                latest.app_session_id = identity.get();
+                                if let Err(error) = app.sessions.writer.save_draft(latest) {
+                                    app.sessions.error = Some(error);
+                                }
+                            }
+                        }
+                        Err(error) if app.sessions.pending_draft_saves.contains(id) => {
+                            app.sessions.error = Some(error);
+                        }
+                        Err(_) => return,
+                    }
+                    app.notify_session_rail(cx);
+                })
+                .is_err()
+            {
+                break;
+            }
+        }
+    })
+    .detach();
+    sender
 }
 
 pub(in crate::app) fn observe_updates(

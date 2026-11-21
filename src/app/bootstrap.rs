@@ -236,6 +236,8 @@ impl FarcasterApp {
                 group_drop_target: None,
                 drafts: persisted.drafts,
                 draft_session_ids: persisted.draft_session_ids,
+                draft_receipts: session::state_writer::observe_draft_receipts(cx),
+                allocating_drafts: HashMap::new(),
                 pending_draft_saves: HashSet::new(),
                 pending_folder_drafts: HashMap::new(),
                 selected_draft: persisted

@@ -2,6 +2,82 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn first_caller_registration_and_resume_keep_the_submitted_draft_id() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let project = sessions::normalize_session_path(temp.path());
+    let database = project.join("state.sqlite3");
+    let mut reader = StateStore::open_at(&database)?;
+    let store = SharedStateStore::open_at(&database)?;
+    let mut draft = DraftSession::fresh(Some(Backend::Codex), project.clone());
+    draft.submitted = true;
+    let app_id = reader.save_draft_with_identity(draft.clone())?;
+    let sibling = DraftSession::fresh(Some(Backend::Codex), project.clone());
+    reader.save_draft_with_identity(sibling.clone())?;
+    let registry = agents::CallerRegistry::default();
+    registry.set_execution_sinks(
+        Some(Arc::new(move |caller, family| {
+            Ok(store
+                .with(|s| s.register_caller_session(caller, family))
+                .expect("register the main session caller"))
+        })),
+        None,
+    );
+    let issue = |start| {
+        registry.issue_main_session(
+            &agents::AgentLaunchConfig::default(),
+            &agents::SessionLaunch {
+                harness: Backend::Codex,
+                project: project.clone(),
+                start,
+                session_id: None,
+                wake: None,
+                service_tier: None,
+            },
+        )
+    };
+    let root = issue(agents::SessionStart::New(Some(draft.id.clone())));
+    let locators = project
+        .join("session-locators")
+        .join(Backend::Codex.as_str());
+    let path = locators.join("first");
+    root.bind_with_locator("first", Some(path.clone()));
+    let rows = reader.cached_sessions("")?;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].app_session_id, app_id.get());
+    assert_eq!(rows[0].id, "first");
+    assert_eq!(reader.draft_session_target(&sibling.id)?, None);
+    let bound = registry.resolve(root.token())?;
+    assert_eq!(bound.app_session_id, Some(app_id));
+    assert!(bound.prompt_draft.is_none());
+
+    // Fail after registration, before the runtime receives LoadState or sends a prompt.
+    drop(root);
+    let saved = reader
+        .draft_session_target(&draft.id)?
+        .expect("registered during launch");
+    assert_eq!(saved.path, path);
+    assert_eq!(saved.id, "first");
+    let resumed = issue(agents::SessionStart::Resume(saved.path.clone()));
+    resumed.bind_with_locator(saved.id, Some(saved.path));
+    assert_eq!(
+        registry.resolve(resumed.token())?.app_session_id,
+        Some(app_id)
+    );
+
+    let mut collision = bound;
+    collision.app_session_id = None;
+    collision.prompt_draft = Some(sibling.id.clone());
+    assert!(reader.register_caller_session(&collision, None).is_err());
+    assert!(reader.draft_session_target(&sibling.id)?.is_none());
+    collision.prompt_draft = Some(draft.id.clone());
+    collision.session = "other".into();
+    collision.session_locator = Some(locators.join("other"));
+    assert!(reader.register_caller_session(&collision, None).is_err());
+    assert_eq!(reader.cached_sessions("")?, rows);
+    Ok(())
+}
+
+#[test]
 fn caller_binding_publishes_child_and_family_together() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let project = crate::sessions::normalize_session_path(temp.path());
@@ -384,6 +460,7 @@ fn caller(project: &Path, session: &str) -> crate::agents::CallerContext {
         session_locator: None,
         harness_profile_id: None,
         app_session_id: None,
+        prompt_draft: None,
         backend: Backend::Cursor,
         provider: None,
         model: None,

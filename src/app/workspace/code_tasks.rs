@@ -123,7 +123,7 @@ impl FarcasterApp {
             self.send_to_chat_error(error, cx);
             return None;
         }
-        self.capture_composer_session(cx);
+        self.capture_composer_text(cx);
         if let Some(key) = crate::app::composer::submissions::inactive_session_for_target(
             &buffer,
             chat.session.as_deref(),
@@ -153,18 +153,11 @@ impl FarcasterApp {
             );
             return;
         }
-        let mut draft = super::super::session::draft_store::new(
+        let draft = super::super::session::draft_store::new(
             settings.project.clone(),
             settings.harness,
             None,
         );
-        match super::super::session::draft_store::save(&draft) {
-            Ok(id) => draft.app_session_id = id,
-            Err(error) => {
-                self.send_to_chat_error(error, cx);
-                return;
-            }
-        }
         self.sessions.drafts.insert(0, draft.clone());
         let target = draft_target(&draft.id);
         self.sessions
@@ -179,12 +172,13 @@ impl FarcasterApp {
         };
         match self.runtime.send(RuntimeCommand::StartTask {
             submission_id: chat.submission_id.clone(),
-            id: draft.id,
+            id: draft.id.clone(),
             settings,
             message: message.clone(),
         }) {
             Ok(()) => self.track_code_submission(chat, target, message, cx),
             Err(_) => {
+                self.save_session_draft(&draft.id);
                 self.composer
                     .sessions
                     .restore_submitted_text(&target, message);
@@ -202,7 +196,7 @@ impl FarcasterApp {
         message: String,
         cx: &mut Context<Self>,
     ) {
-        self.begin_draft_submission(&chat.target, &message);
+        self.begin_draft_submission(&chat.target);
         self.composer.sessions.record_submission(&buffer, &message);
         let submission_id = chat.submission_id.clone();
         self.composer.pending_submissions.insert(

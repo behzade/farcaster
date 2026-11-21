@@ -34,18 +34,38 @@ impl RuntimeOwner {
         }
     }
 
-    pub(super) fn publish_session_metadata(&self) {
+    pub(super) fn save_observed_facts(
+        &self,
+        path: &std::path::Path,
+        draft: Option<&str>,
+    ) -> Result<(), String> {
         let Some(harness) = self.harness else {
-            return;
+            return Ok(());
         };
-        let snapshot = self.active_snapshot();
-        if let (Some(state), Some(path)) = (&self.state, &self.active_session)
-            && let Err(error) = state.with(|store| {
-                store.save_session_facts(harness, &self.project, path, &snapshot.session_facts())
-            })
+        self.session_repository()?.record_session_facts(
+            farcaster_storage::ObservedSession {
+                harness,
+                project: &self.project,
+                path,
+                profile_id: self.process_command.profile_id.as_deref(),
+                draft,
+            },
+            &self.active_snapshot().session_facts(),
+        )
+    }
+
+    pub(super) fn publish_session_metadata(&self) {
+        if let Some(path) = &self.active_session
+            && let Err(error) = self.save_observed_facts(path, None)
         {
             zlog::warn!("Save session facts: {error}");
         }
+        self.send_session_metadata();
+    }
+
+    pub(super) fn send_session_metadata(&self) {
+        let Some(harness) = self.harness else { return };
+        let snapshot = self.active_snapshot();
         let (Some(path), Some(session)) = (&self.active_session, &snapshot.session) else {
             return;
         };
@@ -102,10 +122,8 @@ impl RuntimeOwner {
 
     pub(super) fn update_session_metadata(&mut self, metadata: agents::SessionMetadata) {
         let result = self
-            .state
-            .as_mut()
-            .ok_or_else(|| "Session database is unavailable".to_owned())
-            .and_then(|state| state.with(|store| store.update_session_metadata(&metadata)));
+            .session_repository()
+            .and_then(|repo| repo.record_session_metadata(&metadata));
         let event = match result {
             Ok(session) => RuntimeEvent::SessionUpdated(session),
             Err(message) => RuntimeEvent::SessionsFailed {
@@ -127,7 +145,7 @@ impl RuntimeOwner {
                     .recv_blocking()
                     .map_err(|_| "Session state writer stopped before saving".to_owned())??;
                 if let ArchiveTarget::Draft(draft) = &request.target {
-                    let _ = self.event_tx.send(RuntimeEvent::DraftArchiveIdentity {
+                    let _ = self.event_tx.send(RuntimeEvent::DraftIdentitySaved {
                         draft: draft.clone(),
                         app_session_id: id,
                     });

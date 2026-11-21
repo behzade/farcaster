@@ -241,6 +241,13 @@ impl<A: Clone + Eq> ComposerSessions<A> {
             .unwrap_or_default()
     }
 
+    /// An edit may have reached the composer writer before its draft existed in storage.
+    pub fn resave_buffer(&self, target: &str) {
+        if let Some(session) = self.sessions.get(target) {
+            self.persistence.save(session.record(target.to_owned()));
+        }
+    }
+
     pub fn capture_current(&mut self, snapshot: ComposerSnapshot) {
         let target = self.current_buffer.clone();
         let session = self.sessions.entry(target.clone()).or_default();

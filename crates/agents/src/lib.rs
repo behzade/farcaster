@@ -67,8 +67,8 @@ pub use core::{
     WorkerActivity, WorkerActivityState, WorkerAssignment, WorkerEvent, WorkerExecution,
     WorkerFamilyLink, WorkerLaunch, WorkerModelSelection, WorkerPool, WorkerPoolUpdate,
     WorkerProfile, WorkerProfiles, WorkerRouting, WorkerSendMode, WorkerSession,
-    WorkerSessionFactory, WorkerSnapshot, WorkerUsage, begin_prompt,
-    enqueue_prompt_with_presentation, has_queued_prompts_for, is_child_input_id, queued_prompts,
+    WorkerSessionFactory, WorkerSnapshot, WorkerUsage, begin_prompt, has_queued_prompts_for,
+    is_child_input_id, queued_prompts,
 };
 
 #[cfg(any(test, feature = "test-support"))]

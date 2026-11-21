@@ -39,7 +39,7 @@ impl FarcasterApp {
         if !current.text.is_empty() {
             self.engage_current_draft();
         }
-        self.sync_current_draft(&current_target);
+        self.park_current_draft(&current_target);
         self.capture_center_surface();
         let snapshot = self.composer.sessions.switch_to(target, current);
         self.apply_composer_snapshot(snapshot, window, cx);
@@ -51,6 +51,12 @@ impl FarcasterApp {
             self.engage_current_draft();
         }
         self.composer.sessions.capture_current(snapshot);
+    }
+
+    pub(in crate::app) fn capture_composer_text(&mut self, cx: &mut Context<Self>) {
+        self.composer
+            .sessions
+            .capture_current(input_snapshot(self.composer.input.read(cx)));
     }
 
     pub(in crate::app) fn apply_composer_snapshot(

@@ -695,13 +695,15 @@ fn untouched_drafts_prune_on_switch_and_quit(cx: &mut gpui::TestAppContext) {
                     assert!(app.sessions.drafts.iter().any(|draft| draft.id == engaged));
                     let last = app.sessions.selected_draft.clone().expect("last draft");
                     let target = draft_target(&last);
-                    assert!(app.sync_current_draft(&target));
+                    assert!(app.sync_drafts_before_quit(&target));
                     assert!(app.sessions.selected_draft.is_none());
                     assert!(!app.sessions.drafts.iter().any(|draft| draft.id == last));
                     assert!(
-                        app.sync_current_draft(&target),
+                        app.sync_drafts_before_quit(&target),
                         "quit callback must not recreate the draft"
                     );
+                    futures::executor::block_on(app.sessions.writer.flush())
+                        .expect("saved engagement");
                     let saved = crate::app::persistence::open()
                         .expect("store")
                         .load_drafts()
@@ -797,7 +799,7 @@ fn user_actions_save_empty_drafts(cx: &mut gpui::TestAppContext) {
                         }
                         app.project.pending_trust_command = None;
                         app.overlays.view.project_trust = false;
-                        assert!(app.sync_current_draft(&draft_target(&id)), "{action}");
+                        assert!(app.sync_drafts_before_quit(&draft_target(&id)), "{action}");
                         futures::executor::block_on(app.sessions.writer.flush())
                             .expect("engagement saved");
                         let saved = crate::app::persistence::open()
@@ -881,12 +883,12 @@ fn failed_first_engagement_save_keeps_the_draft_and_retries_before_quit(
                     )).expect("reject writes");
                     app.set_thinking_level(Some("high".into()), cx);
                     app.set_thinking_level(None, cx);
-                    assert!(!app.sync_current_draft(&draft_target(&id)));
+                    assert!(!app.sync_drafts_before_quit(&draft_target(&id)));
                     assert_eq!(app.sessions.selected_draft.as_deref(), Some(id.as_str()));
                     assert!(app.sessions.pending_draft_saves.contains(&id));
                     assert!(store.load_drafts().expect("drafts").is_empty());
                     store.with_connection(|connection| connection.execute_batch("DROP TRIGGER reject_draft;")).expect("allow writes");
-                    assert!(app.sync_current_draft(&draft_target(&id)));
+                    assert!(app.sync_drafts_before_quit(&draft_target(&id)));
                     assert!(!app.sessions.pending_draft_saves.contains(&id));
                     assert!(store.load_drafts().expect("drafts").iter().any(|draft| draft.id == id));
                 });
@@ -979,6 +981,12 @@ fn binding_an_idless_draft_preserves_the_committed_archive_state(cx: &mut gpui::
                         app.record_draft_submission(&draft_target(&draft.id), true, Some(path.clone()));
                         receipt.recv_blocking().unwrap().unwrap()
                     };
+                    runtime.send_event(crate::runtime::RuntimeEvent::DraftIdentitySaved {
+                        draft: draft.id.clone(),
+                        app_session_id: id,
+                    });
+                    app.drain_runtime(cx);
+                    futures::executor::block_on(app.sessions.writer.flush()).unwrap();
                     let target = ArchiveTarget::App(id);
                     assert_eq!(app.sessions.archive_writes.confirmed(&target), Some(false));
                     assert_eq!(app.sessions.drafts[0].app_session_id, id.get());
@@ -1058,6 +1066,92 @@ fn working_draft_archive_requires_confirmation_and_targets_its_actor(
 }
 
 #[gpui::test]
+fn archive_during_first_send_targets_only_the_pending_draft(cx: &mut gpui::TestAppContext) {
+    use crate::{agents::PromptOutcome, protocol::PromptMode, runtime::RuntimeEvent};
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::archive_during_first_send_targets_only_the_pending_draft"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let id = app.sessions.selected_draft.clone().expect("selected draft");
+                    let sibling = DraftSession::fresh(Some(Backend::Codex), project.into());
+                    let sibling_id = sibling.id.clone();
+                    app.sessions.drafts.insert(0, sibling);
+                    std::sync::Arc::make_mut(&mut app.snapshot).harness = Some(Backend::Codex);
+
+                    for reject in [true, false] {
+                        app.submit("first send".into(), PromptMode::Normal, window, cx);
+                        let submission = std::iter::from_fn(|| runtime.try_recv_command())
+                            .find_map(|command| match command {
+                                RuntimeCommand::Prompt {
+                                    submission_id,
+                                    target,
+                                    ..
+                                } if target == draft_target(&id) => Some(submission_id),
+                                _ => None,
+                            })
+                            .expect("first send awaiting a receipt");
+                        if !reject {
+                            app.sessions.selected_draft = Some(sibling_id.clone());
+                        }
+                        app.request_draft_archive(sibling_id.clone(), true, window, cx);
+                        assert!(app.sessions.pending_archive.is_none());
+                        app.request_draft_archive(id.clone(), true, window, cx);
+                        assert!(app.sessions.pending_archive.is_some());
+                        if reject {
+                            runtime.send_event(RuntimeEvent::PromptResult {
+                                submission_id: Some(submission),
+                                target: draft_target(&id),
+                                outcome: PromptOutcome::RejectedBeforeAcceptance,
+                                session: None,
+                            });
+                            app.drain_runtime(cx);
+                            app.resolve_pending_submission(window, cx);
+                        }
+                        app.stop_and_archive_pending_session(window, cx);
+                        let stop =
+                            std::iter::from_fn(|| runtime.try_recv_command()).find_map(|command| {
+                                match command {
+                                    RuntimeCommand::StopAndArchiveDraft { draft, identity } => {
+                                        Some((draft, identity))
+                                    }
+                                    _ => None,
+                                }
+                            });
+                        if reject {
+                            assert!(stop.is_none());
+                            continue;
+                        }
+                        let (target, crate::runtime::DraftArchiveIdentity::Pending(saved)) =
+                            stop.expect("confirmed draft stop")
+                        else {
+                            panic!("expected a draft identity receipt");
+                        };
+                        assert_eq!(target, id);
+                        let identity = saved.recv_blocking().unwrap().unwrap();
+                        let row = crate::app::persistence::open()
+                            .unwrap()
+                            .load_drafts()
+                            .unwrap()
+                            .into_iter()
+                            .find(|draft| draft.app_session_id == identity.get())
+                            .expect("archive identity belongs to a saved draft");
+                        assert_eq!(row.id, id);
+                        assert!(!row.submitted);
+                        assert!(row.title.is_none());
+                    }
+                });
+            });
+        },
+    );
+}
+
+#[gpui::test]
 fn submitting_draft_waits_when_only_a_sibling_has_arrived(cx: &mut gpui::TestAppContext) {
     use crate::{agent_activity::SessionStatusRecord, runtime::RuntimeEvent};
 
@@ -1124,6 +1218,28 @@ fn submitting_draft_waits_when_only_a_sibling_has_arrived(cx: &mut gpui::TestApp
                             }
                         })
                         .expect("draft submitted");
+                    use crate::storage::{PromptSubmission, SessionRepository as _};
+                    let queued = crate::app::persistence::shared()
+                        .unwrap()
+                        .submit_prompt(PromptSubmission {
+                            target: &key,
+                            harness: owner.harness,
+                            project,
+                            session: None,
+                            profile_id: None,
+                            provisional_title: Some("owner history"),
+                            mode: crate::protocol::PromptMode::Normal,
+                            message: "owner history",
+                            display_message: None,
+                            invocation: None,
+                            images: &[],
+                        })
+                        .unwrap();
+                    runtime.send_event(RuntimeEvent::DraftPromptCommitted {
+                        provisional_title: Some("owner history".into()),
+                        draft: id.clone(),
+                        app_session_id: queued.app_session_id,
+                    });
                     app.composer
                         .input
                         .update(cx, |input, cx| input.set_value("owner input", window, cx));

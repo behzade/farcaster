@@ -116,7 +116,7 @@ pub fn spawn_main(
     launch: &SessionLaunch,
 ) -> Result<(Box<dyn WorkerSession>, String, MainSessionMetadata), String> {
     let (id, resume) = match &launch.start {
-        SessionStart::New => (uuid::Uuid::new_v4().to_string(), false),
+        SessionStart::New(_) => (uuid::Uuid::new_v4().to_string(), false),
         SessionStart::Resume(_) => (
             main_session::launch_session_locator(launch)
                 .ok_or("Claude resume requires a session id")?,
@@ -125,18 +125,7 @@ pub fn spawn_main(
         SessionStart::Fork(_) => return Err("Claude session fork is not supported".into()),
     };
     uuid::Uuid::parse_str(&id).map_err(|_| "Claude requires a UUID session id")?;
-    let caller = CallerRegistry::shared().issue_with_access(
-        &launch.project,
-        CallerProfile {
-            backend: BACKEND,
-            provider: None,
-            model: None,
-            effort: None,
-        },
-        launch.wake.clone(),
-        command.access_mode,
-    );
-    caller.set_harness_profile_id(command.profile_id.clone());
+    let caller = crate::core::CallerRegistry::shared().issue_main_session(command, launch);
     let process = Process::spawn(
         command,
         &launch.project,

@@ -74,22 +74,37 @@ pub(super) fn bind_locator(
         Some(&harness),
         draft_profile.as_deref(),
     )?;
-    let locator = locator.to_string_lossy();
     let existing: Option<i64> = transaction
         .query_row(
             "SELECT id FROM sessions WHERE harness=?1 AND locator=?2",
-            params![harness, locator.as_ref()],
+            params![harness, locator.to_string_lossy()],
             |row| row.get(0),
         )
         .optional()
         .map_err(|error| error.to_string())?;
+    attach_draft_locator(
+        transaction,
+        draft_session_id,
+        existing,
+        profile_id.as_deref(),
+        locator,
+    )
+}
+
+pub(super) fn attach_draft_locator(
+    transaction: &Transaction<'_>,
+    draft_session_id: i64,
+    existing: Option<i64>,
+    profile_id: Option<&str>,
+    locator: &Path,
+) -> Result<(), String> {
     if let Some(existing) = existing.filter(|existing| *existing != draft_session_id) {
         merge_session(transaction, draft_session_id, existing)?;
     }
     transaction
         .execute(
             "UPDATE sessions SET locator=?2, profile_id=?3 WHERE id=?1",
-            params![draft_session_id, locator.as_ref(), profile_id],
+            params![draft_session_id, locator.to_string_lossy(), profile_id],
         )
         .map(|_| ())
         .map_err(|error| error.to_string())
@@ -484,27 +499,28 @@ fn target_locator(target: &str, session_path: Option<&Path>) -> Option<PathBuf> 
 
 pub(super) fn create_target_session(
     tx: &Transaction<'_>,
-    target: &str,
-    harness: Backend,
-    project: &Path,
-    session_path: Option<&Path>,
+    submission: &crate::PromptSubmission<'_>,
 ) -> Result<i64, String> {
+    let target = submission.target;
     let client_key = crate::sessions::draft_id(target).filter(|key| !key.is_empty());
-    let locator = target_locator(target, session_path);
+    let locator = target_locator(target, submission.session);
     if client_key.is_none() && locator.is_none() {
         return Err(format!("invalid session target: {target}"));
     }
     let now = u64_to_i64(now_ms());
-    let project_id = ensure_project(tx, project, now)?;
+    let project_id = ensure_project(tx, submission.project, now)?;
     tx.execute(
-        "INSERT INTO sessions(project_id,harness,locator,client_key,modified_ms,created_ms)
-         VALUES(?1,?2,?3,?4,?5,?5)",
+        "INSERT INTO sessions(project_id,harness,locator,client_key,modified_ms,created_ms,submitted,profile_id,title)
+         VALUES(?1,?2,?3,?4,?5,?5,?6,?7,COALESCE(?8,''))",
         params![
             project_id,
-            harness.as_str(),
+            submission.harness.as_str(),
             locator.as_ref().map(|path| path.to_string_lossy()),
             client_key,
-            now
+            now,
+            client_key.is_some(),
+            client_key.and(submission.profile_id),
+            client_key.and(submission.provisional_title),
         ],
     )
     .map_err(|error| format!("create prompt session: {error}"))?;

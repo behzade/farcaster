@@ -21,7 +21,6 @@ use self::{
     drag::DraggedSession,
     groups::{
         ActiveSessionItem, SessionRailItem, merge_visible_session_order, reordered_session_ids,
-        session_rail_lists_for_roots,
     },
     rendering::archived_panel_slot,
 };
@@ -324,14 +323,42 @@ impl FarcasterApp {
             .collect()
     }
 
-    fn visible_active_items(&self) -> Vec<ActiveSessionItem> {
+    fn active_rail_lists(
+        &self,
+        project_filter: Option<&std::path::Path>,
+    ) -> groups::SessionRailLists {
         groups::active_session_rail_lists_for_roots(
             self.sessions.visible.roots(),
             &self.sessions.drafts,
-            self.sessions.project_filter.as_deref(),
+            project_filter,
             &self.sessions.order,
+            |draft| {
+                if draft.submitted || self.composer.pending_submissions.is_empty() {
+                    return;
+                }
+                if let Some(pending) = self
+                    .composer
+                    .pending_submissions
+                    .values()
+                    .filter(|pending| {
+                        pending.result.is_none()
+                            && crate::sessions::draft_id(&pending.submitted_target)
+                                == Some(draft.id.as_str())
+                    })
+                    .min_by_key(|pending| (pending.submitted_at, &pending.id))
+                {
+                    draft.submitted = true;
+                    if draft.title.is_none() {
+                        draft.title = crate::sessions::provisional_session_title(&pending.text);
+                    }
+                }
+            },
         )
-        .active
+    }
+
+    fn visible_active_items(&self) -> Vec<ActiveSessionItem> {
+        self.active_rail_lists(self.sessions.project_filter.as_deref())
+            .active
     }
 
     pub(super) fn begin_session_rail_resize(
@@ -391,6 +418,7 @@ impl FarcasterApp {
             &self.sessions.drafts,
             self.sessions.project_filter.as_deref(),
             &self.sessions.order,
+            |_| {},
         )
         .archived_count
     }
@@ -480,28 +508,20 @@ impl FarcasterApp {
                 return;
             }
         }
-        let visible = session_rail_lists_for_roots(
-            self.sessions.visible.roots(),
-            &self.sessions.drafts,
-            self.sessions.project_filter.as_deref(),
-            &self.sessions.order,
-        )
-        .active
-        .iter()
-        .map(ActiveSessionItem::app_session_id)
-        .collect::<Vec<_>>();
-        if let Some(order) = reordered_session_ids(&visible, drag.app_session_id, target, position)
-        {
-            let all = session_rail_lists_for_roots(
-                self.sessions.visible.roots(),
-                &self.sessions.drafts,
-                None,
-                &self.sessions.order,
-            )
+        let visible = self
+            .active_rail_lists(self.sessions.project_filter.as_deref())
             .active
             .iter()
             .map(ActiveSessionItem::app_session_id)
             .collect::<Vec<_>>();
+        if let Some(order) = reordered_session_ids(&visible, drag.app_session_id, target, position)
+        {
+            let all = self
+                .active_rail_lists(None)
+                .active
+                .iter()
+                .map(ActiveSessionItem::app_session_id)
+                .collect::<Vec<_>>();
             let active_order = merge_visible_session_order(&all, &order);
             let active_ids = all.into_iter().collect::<HashSet<_>>();
             self.sessions.order.retain(|id| !active_ids.contains(id));

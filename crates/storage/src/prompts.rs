@@ -5,7 +5,49 @@ use crate::agents::Backend;
 #[path = "prompts_tests.rs"]
 mod tests;
 
+pub struct PromptSubmission<'a> {
+    pub target: &'a str,
+    pub harness: Backend,
+    pub project: &'a Path,
+    pub session: Option<&'a Path>,
+    pub profile_id: Option<&'a str>,
+    pub provisional_title: Option<&'a str>,
+    pub mode: PromptMode,
+    pub message: &'a str,
+    pub display_message: Option<&'a str>,
+    pub invocation: Option<&'a str>,
+    pub images: &'a [PromptImage],
+}
+
+pub struct EnqueuedPrompt {
+    pub outbox_id: i64,
+    pub app_session_id: sessions::AppSessionId,
+    pub images: Vec<PromptImage>,
+    pub bound_session: Option<sessions::SessionTarget>,
+}
+
 impl StateStore {
+    pub(super) fn pending_prompt_target(
+        &self,
+        outbox_id: i64,
+    ) -> Result<Option<sessions::SessionTarget>, String> {
+        self.connection.query_row(
+            "SELECT s.harness, s.locator, s.backend_id FROM outbox o JOIN sessions s ON s.id=o.session_id
+              WHERE o.id=?1 AND o.state='pending'",
+            [outbox_id],
+            |row| {
+                let harness = super::backend::get(row, 0)?;
+                let path: Option<String> = row.get(1)?;
+                let id: Option<String> = row.get(2)?;
+                Ok(path.map(|path| sessions::SessionTarget {
+                    harness,
+                    path: sessions::normalize_session_path(Path::new(&path)),
+                    id: id.unwrap_or(path),
+                }))
+            },
+        ).map_err(|error| format!("resolve pending prompt {outbox_id}: {error}"))
+    }
+
     pub fn dismiss_prompt_receipt(&self, session: &Path, receipt_id: &str) -> Result<(), String> {
         let session = crate::sessions::normalize_session_path(session);
         self.connection.execute(
@@ -21,6 +63,7 @@ impl StateStore {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     #[allow(clippy::too_many_arguments)]
     pub fn enqueue_prompt(
         &self,
@@ -37,6 +80,7 @@ impl StateStore {
         )
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     #[allow(clippy::too_many_arguments)]
     pub fn enqueue_prompt_with_presentation(
         &self,
@@ -50,22 +94,42 @@ impl StateStore {
         invocation: Option<&str>,
         images: &[PromptImage],
     ) -> Result<i64, String> {
+        self.insert_prompt(PromptSubmission {
+            target,
+            harness,
+            project,
+            session,
+            profile_id: None,
+            provisional_title: None,
+            mode,
+            message,
+            display_message,
+            invocation,
+            images,
+        })
+        .map(|prompt| prompt.outbox_id)
+    }
+
+    pub(super) fn insert_prompt(
+        &self,
+        submission: PromptSubmission<'_>,
+    ) -> Result<EnqueuedPrompt, String> {
+        let PromptSubmission {
+            target,
+            mode,
+            message,
+            display_message,
+            invocation,
+            images,
+            ..
+        } = submission;
+        let (images_json, images) = self.encode_prompt_images(images)?;
         let transaction =
             Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)
                 .map_err(|error| format!("start prompt enqueue: {error}"))?;
-        let session_id = match self.session_id_for_target(target, session, Some(harness))? {
-            Some(id) => id,
-            None => super::identity::create_target_session(
-                &transaction,
-                target,
-                harness,
-                project,
-                session,
-            )?,
-        };
-        let images_json = self.encode_prompt_images(images)?;
-        let inserted = self
-            .connection
+        let (session_id, bound_session) = self.resolve_prompt_session(&transaction, &submission)?;
+        let app_session_id = sessions::AppSessionId::try_from(session_id)?;
+        let inserted = transaction
             .execute(
                 "INSERT INTO outbox(
                    session_id, mode, message, display_message, invocation, images_json,
@@ -95,7 +159,95 @@ impl StateStore {
         transaction
             .commit()
             .map_err(|error| format!("commit prompt enqueue: {error}"))?;
-        Ok(id)
+        Ok(EnqueuedPrompt {
+            outbox_id: id,
+            app_session_id,
+            images,
+            bound_session,
+        })
+    }
+
+    fn resolve_prompt_session(
+        &self,
+        transaction: &Transaction<'_>,
+        submission: &PromptSubmission<'_>,
+    ) -> Result<(i64, Option<sessions::SessionTarget>), String> {
+        let PromptSubmission {
+            target,
+            harness,
+            session,
+            profile_id,
+            provisional_title,
+            ..
+        } = *submission;
+        let draft = sessions::draft_id(target).filter(|key| !key.is_empty());
+        if let Some(key) = draft {
+            let project = sessions::normalize_session_path(submission.project);
+            // An editor save can still be queued when the first prompt arrives.
+            // After submission or binding, the stored row owns the launch configuration.
+            let row = transaction
+                .query_row(
+                    "SELECT s.id, s.locator, s.backend_id, CASE WHEN p.path=?2 THEN p.id END,
+                        (s.submitted=0 AND s.locator IS NULL)
+                        OR (p.path=?2 AND s.harness=?3 AND s.profile_id IS ?4)
+                   FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.client_key=?1",
+                    params![key, project.to_string_lossy(), harness.as_str(), profile_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            row.get::<_, Option<i64>>(3)?,
+                            row.get::<_, bool>(4)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(|error| format!("resolve submitted draft {key}: {error}"))?;
+            if let Some((id, path, native_id, matching_project_id, can_submit)) = row {
+                if !can_submit {
+                    return Err(format!(
+                        "Draft {key} belongs to a different backend, profile, or project"
+                    ));
+                }
+                let project_id = match matching_project_id {
+                    Some(id) => id,
+                    None => ensure_project(transaction, &project, u64_to_i64(now_ms()))?,
+                };
+                transaction
+                    .execute(
+                        "UPDATE sessions SET submitted=1, project_id=?2, harness=?3, profile_id=?4,
+                            title=COALESCE(NULLIF(title,''),?5,'') WHERE id=?1",
+                        params![
+                            id,
+                            project_id,
+                            harness.as_str(),
+                            profile_id,
+                            provisional_title
+                        ],
+                    )
+                    .map_err(|error| format!("save submitted draft {key}: {error}"))?;
+                let bound_session = path.map(|path| sessions::SessionTarget {
+                    harness,
+                    path: sessions::normalize_session_path(Path::new(&path)),
+                    id: native_id.unwrap_or(path),
+                });
+                return Ok((id, bound_session));
+            }
+        }
+        // Promotion may detach the draft key while its actor still knows the locator.
+        let existing = if let Some(path) = session {
+            self.session_id_for_target(&sessions::session_target(path), Some(path), Some(harness))?
+        } else if draft.is_none() {
+            self.session_id_for_target(target, None, Some(harness))?
+        } else {
+            None
+        };
+        let id = match existing {
+            Some(id) => id,
+            None => super::identity::create_target_session(transaction, submission)?,
+        };
+        Ok((id, None))
     }
 
     pub fn queued_prompts(&self) -> Result<Vec<QueuedPrompt>, String> {
@@ -139,7 +291,7 @@ impl StateStore {
             .connection
             .prepare(
                 "SELECT o.id, s.client_key, s.locator, s.harness, p.path, o.mode, o.message,
-                        o.display_message, o.invocation, o.images_json
+                        o.display_message, o.invocation, o.images_json, s.backend_id
                    FROM outbox o
                    JOIN sessions s ON s.id = o.session_id
                    JOIN projects p ON p.id = s.project_id
@@ -167,6 +319,7 @@ impl StateStore {
                     target,
                     harness: super::backend::get(row, 3)?,
                     project: crate::sessions::normalize_session_path(Path::new(&project)),
+                    backend_session_id: row.get(10)?,
                     session: locator
                         .map(PathBuf::from)
                         .map(|path| crate::sessions::normalize_session_path(&path)),

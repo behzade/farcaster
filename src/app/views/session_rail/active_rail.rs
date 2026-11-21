@@ -14,7 +14,7 @@ use super::{
     colors::palette_color,
     draft_row::{DraftRow, DraftRowInput},
     folders::{FolderRow, folder_header, new_folder_row, project_header},
-    groups::{ActiveSessionItem, active_session_rail_lists_for_roots},
+    groups::ActiveSessionItem,
     reconcile_list_rows,
     rendering::active_session_drop_target,
     rows::{SessionRow, SessionRowInput, project_label},
@@ -175,12 +175,7 @@ impl FarcasterApp {
                 OperationKind::SidebarSessionLists,
                 self.sessions.visible.len(),
             );
-            active_session_rail_lists_for_roots(
-                self.sessions.visible.roots(),
-                &self.sessions.drafts,
-                self.sessions.project_filter.as_deref(),
-                &self.sessions.order,
-            )
+            self.active_rail_lists(self.sessions.project_filter.as_deref())
         };
         let session_colors = self.sessions.folders.session_colors.clone();
         let active_entry_count = lists.active.len();

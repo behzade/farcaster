@@ -189,18 +189,7 @@ pub fn spawn_main(
 > {
     let mut prepared = command.command(&launch.project)?;
     let queue_plugin = configure_queue_hook(&mut prepared, command.prompt_boundary_url.as_deref())?;
-    let caller_identity = crate::core::CallerRegistry::shared().issue_with_access(
-        &launch.project,
-        crate::core::CallerProfile {
-            backend: Backend::OpenCode,
-            provider: None,
-            model: None,
-            effort: None,
-        },
-        launch.wake.clone(),
-        command.access_mode,
-    );
-    caller_identity.set_harness_profile_id(command.profile_id.clone());
+    let caller_identity = crate::core::CallerRegistry::shared().issue_main_session(command, launch);
     if farcaster_mcp::enabled() {
         configure_farcaster_mcp(&mut prepared, caller_identity.token())?;
     }
@@ -218,7 +207,7 @@ pub fn spawn_main(
     server.keep_queue_plugin(queue_plugin);
     let mut client = server.client();
     let session = match &launch.start {
-        crate::SessionStart::New => {
+        crate::SessionStart::New(_) => {
             client.create_session(&launch.project.to_string_lossy(), None, None)?
         }
         crate::SessionStart::Resume(_) => {
@@ -307,7 +296,7 @@ fn resolve_session_model<T: super::contract::OpenCodeHttpTransport>(
     override_model: Option<super::contract::OpenCodeModelSelection>,
 ) -> Result<Option<super::contract::OpenCodeModelSelection>, String> {
     let override_model = match &launch.start {
-        crate::SessionStart::New => override_model,
+        crate::SessionStart::New(_) => override_model,
         crate::SessionStart::Resume(_) | crate::SessionStart::Fork(_) => None,
     };
     match override_model {

@@ -45,7 +45,7 @@ impl Supervisor {
             .as_ref()
             .ok_or("Session state is unavailable")?
             .with(|store| store.draft_archive_session(id, draft))?;
-        let _ = self.event_tx.send(RuntimeEvent::DraftArchiveIdentity {
+        let _ = self.event_tx.send(RuntimeEvent::DraftIdentitySaved {
             draft: draft.to_owned(),
             app_session_id: id,
         });

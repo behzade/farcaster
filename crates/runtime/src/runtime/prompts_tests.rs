@@ -118,6 +118,47 @@ fn empty_session() -> crate::protocol::SessionState {
 }
 
 #[test]
+fn send_to_current_chat_persists_the_first_editor_message_title() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let (mut owner, events, _) = held_acks_runtime(temp.path())?;
+    owner.active_session = None;
+    owner.snapshot.selected_session = None;
+    owner.startup_state_loaded = false;
+    conversation_mut(&mut owner.snapshot).running = false;
+    owner.apply_command(RuntimeCommand::SendToSession {
+        submission_id: "editor-submit".into(),
+        target: "draft:editor".into(),
+        session: None,
+        project: temp.path().into(),
+        message: "Inspect selection\n\nCode context: src/main.rs".into(),
+    });
+    let id = events
+        .try_iter()
+        .find_map(|event| match event {
+            RuntimeEvent::DraftPromptCommitted {
+                draft,
+                app_session_id,
+                provisional_title,
+            } if draft == "editor" => {
+                assert_eq!(provisional_title.as_deref(), Some("Inspect selection"));
+                Some(app_session_id)
+            }
+            _ => None,
+        })
+        .expect("editor prompt committed");
+    let drafts = owner
+        .state
+        .as_ref()
+        .unwrap()
+        .with(|store| store.load_drafts())?;
+    let draft = drafts.iter().find(|draft| draft.id == "editor").unwrap();
+    assert_eq!(draft.app_session_id, id.get());
+    assert!(draft.submitted);
+    assert_eq!(draft.title.as_deref(), Some("Inspect selection"));
+    Ok(())
+}
+
+#[test]
 fn normal_receipt_after_steering_settles_releases_the_next_send() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let (mut owner, events, commands) = held_acks_runtime(temp.path())?;
@@ -128,6 +169,7 @@ fn normal_receipt_after_steering_settles_releases_the_next_send() -> Result<(), 
         target: "session:held".into(),
         mode,
         message: message.into(),
+        provisional_title: None,
         display_message: None,
         invocation: None,
         images: Vec::new(),
@@ -326,6 +368,7 @@ fn command_entry_sends_all_unacknowledged_inputs_before_first_escape() -> Result
             target: "session:held".into(),
             mode,
             message: message.into(),
+            provisional_title: None,
             display_message: None,
             invocation: None,
             images: Vec::new(),
@@ -512,6 +555,7 @@ fn transport_failure_after_delivery_keeps_the_accepted_outcome_and_recoverable_r
         target: "session:failure".into(),
         mode: PromptMode::Steer,
         message: "delivered before failure".into(),
+        provisional_title: None,
         display_message: None,
         invocation: None,
         images: Vec::new(),
@@ -908,7 +952,7 @@ fn resumed_prompt_survives_startup_history_without_starting_title_generation() {
                 images: Vec::new(),
             })
         });
-        owner.dispatch_prompt();
+        owner.dispatch_prompt(None);
 
         assert!(owner.deferred_prompt().is_some());
         assert!(commands.borrow().is_empty());

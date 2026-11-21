@@ -177,7 +177,8 @@ impl Supervisor {
                 }
             }
             event @ (RuntimeEvent::AgentActivityUpdated { .. }
-            | RuntimeEvent::DraftArchiveIdentity { .. }
+            | RuntimeEvent::DraftPromptCommitted { .. }
+            | RuntimeEvent::DraftIdentitySaved { .. }
             | RuntimeEvent::SystemNotification { .. }
             | RuntimeEvent::TurnCompletedNotification { .. }) => {
                 let _ = self.event_tx.send(event);

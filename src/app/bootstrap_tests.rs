@@ -127,7 +127,7 @@ fn startup_restores_a_draft_then_opens_its_bound_history(cx: &mut gpui::TestAppC
                         input.set_value("unfinished request", window, cx)
                     });
                     app.capture_composer_session(cx);
-                    assert!(app.sync_current_draft(&target));
+                    assert!(app.sync_drafts_before_quit(&target));
                     app.remember_session_selection();
                     futures::executor::block_on(app.sessions.writer.flush()).unwrap();
                     futures::executor::block_on(app.composer.sessions.flush()).unwrap();

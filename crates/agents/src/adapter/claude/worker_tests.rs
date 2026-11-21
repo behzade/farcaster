@@ -306,7 +306,7 @@ exit 1
             harness: BACKEND,
             session_id: Some(TEST_SESSION_ID.into()),
             project: directory.path().to_owned(),
-            start: SessionStart::New,
+            start: SessionStart::New(None),
             wake: None,
             service_tier: None,
         };
@@ -709,7 +709,7 @@ fn main_new_session_applies_selected_service_tier_at_launch() {
         harness: BACKEND,
         session_id: None,
         project: directory.path().into(),
-        start: SessionStart::New,
+        start: SessionStart::New(None),
         wake: None,
         service_tier: Some("fast".into()),
     };

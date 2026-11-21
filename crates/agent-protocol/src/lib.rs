@@ -121,6 +121,7 @@ pub struct QueuedPrompt {
     pub target: String,
     pub harness: Backend,
     pub project: PathBuf,
+    pub backend_session_id: Option<String>,
     pub session: Option<PathBuf>,
     pub mode: PromptMode,
     pub message: String,
@@ -441,7 +442,8 @@ pub trait SessionTransport {
 
 #[derive(Clone, Debug)]
 pub enum SessionStart {
-    New,
+    /// A fresh backend session, optionally created for a persisted draft key.
+    New(Option<String>),
     Resume(PathBuf),
     Fork(PathBuf),
 }

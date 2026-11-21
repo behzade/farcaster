@@ -1278,7 +1278,7 @@ pub fn external_session_locator(harness: Backend, path: &std::path::Path) -> Opt
 
 pub fn launch_session_locator(launch: &crate::SessionLaunch) -> Option<String> {
     match &launch.start {
-        crate::SessionStart::New => launch.session_id.clone(),
+        crate::SessionStart::New(_) => launch.session_id.clone(),
         crate::SessionStart::Resume(path) | crate::SessionStart::Fork(path) => {
             external_session_locator(launch.harness, path).or_else(|| launch.session_id.clone())
         }

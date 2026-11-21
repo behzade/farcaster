@@ -1,6 +1,37 @@
 use super::*;
 
 impl StateStore {
+    #[cfg(test)]
+    pub(super) fn draft_session_target(
+        &self,
+        key: &str,
+    ) -> Result<Option<sessions::SessionTarget>, String> {
+        let row = self
+            .connection
+            .query_row(
+                "SELECT harness, locator, COALESCE(backend_id, locator) FROM sessions
+                  WHERE client_key=?1 AND locator IS NOT NULL",
+                [key],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|error| format!("load draft session target: {error}"))?;
+        row.map(|(harness, path, id)| {
+            Ok(sessions::SessionTarget {
+                harness: harness.parse()?,
+                path: sessions::normalize_session_path(Path::new(&path)),
+                id,
+            })
+        })
+        .transpose()
+    }
+
     pub fn draft_profile_id(&self, key: &str) -> Result<Option<String>, String> {
         self.connection
             .query_row(
@@ -99,6 +130,76 @@ impl StateStore {
         }
         Ok(drafts)
     }
+}
+
+pub(super) fn register_prompt_caller(
+    tx: &Transaction<'_>,
+    draft: &str,
+    caller: &agents::CallerContext,
+) -> Result<i64, String> {
+    let path = caller
+        .session_locator
+        .as_deref()
+        .unwrap_or(Path::new(&caller.session));
+    if caller.parent_worker_id.is_some() || !path.is_absolute() {
+        return Err("a prompt draft requires a main session with an exact locator".into());
+    }
+    let id = bind_prompt_locator(
+        tx,
+        draft,
+        caller.backend,
+        &caller.project,
+        caller.harness_profile_id.as_deref(),
+        path,
+    )?;
+    if caller.app_session_id.is_some_and(|hint| hint.get() != id) {
+        return Err("caller application identity conflicts with its draft".into());
+    }
+    if caller.session_locator.is_some() {
+        let changed = tx
+            .execute(
+                "UPDATE sessions SET backend_id=?2
+                  WHERE id=?1 AND (backend_id IS NULL OR backend_id=?2)",
+                params![id, caller.session],
+            )
+            .map_err(|error| format!("save draft native ID: {error}"))?;
+        if changed == 0 {
+            return Err("caller native ID conflicts with its draft".into());
+        }
+    }
+    Ok(id)
+}
+
+pub(super) fn bind_prompt_locator(
+    tx: &Transaction<'_>,
+    draft: &str,
+    harness: Backend,
+    project: &Path,
+    profile_id: Option<&str>,
+    path: &Path,
+) -> Result<i64, String> {
+    let path = sessions::normalize_session_path(path);
+    let project = sessions::normalize_session_path(project);
+    if sessions::profile_id_from_locator(&path)
+        .as_deref()
+        .is_some_and(|profile| Some(profile) != profile_id)
+    {
+        return Err("draft profile conflicts with the session locator".into());
+    }
+    // A catalog row may already have this locator. Merge it only within the
+    // draft's project and profile, and only if another draft does not own it.
+    let (id, existing): (i64, Option<i64>) = tx.query_row(
+        "SELECT d.id, s.id FROM sessions d JOIN projects p ON p.id=d.project_id
+           LEFT JOIN sessions s ON s.harness=d.harness AND s.locator=?5 AND s.id<>d.id
+          WHERE d.client_key=?1 AND d.harness=?2 AND p.path=?3 AND d.profile_id IS ?4
+            AND (d.locator IS NULL OR d.locator=?5)
+            AND (s.id IS NULL OR (s.client_key IS NULL AND s.project_id=d.project_id AND s.profile_id IS ?4))",
+        params![draft, harness.as_str(), project.to_string_lossy(), profile_id, path.to_string_lossy()],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ).optional().map_err(|error| format!("check draft locator: {error}"))?
+        .ok_or_else(|| format!("Draft {draft} cannot bind to {}", path.display()))?;
+    super::identity::attach_draft_locator(tx, id, existing, profile_id, &path)?;
+    Ok(id)
 }
 
 pub(super) fn remove_draft_row(tx: &Transaction<'_>, key: &str) -> Result<(), String> {

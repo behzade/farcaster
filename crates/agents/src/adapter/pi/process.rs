@@ -174,6 +174,11 @@ fn prepare_rpc(
     Ok(prepared)
 }
 
+enum PiCaller {
+    Main(crate::core::CallerIdentity),
+    Worker(String, String),
+}
+
 pub struct PiRpcProcess {
     commands: Vec<super::wire::PiCommand>,
     sandbox_adapter: Option<&'static dyn super::sandbox::PiSandboxAdapter>,
@@ -226,6 +231,27 @@ impl PiRpcProcess {
         self.caller_identity.set_slot(slot);
     }
 
+    pub(super) fn spawn_main(
+        command: &AgentLaunchConfig,
+        launch: crate::SessionLaunch,
+        registry: &crate::core::CallerRegistry,
+    ) -> Result<Self, String> {
+        let caller = registry.issue_main_session(command, &launch);
+        let start = match &launch.start {
+            crate::SessionStart::New(_) => SessionLaunch::New,
+            crate::SessionStart::Resume(path) => SessionLaunch::Resume(path),
+            crate::SessionStart::Fork(path) => SessionLaunch::Fork(path),
+        };
+        Self::spawn_inner(
+            command,
+            &launch.project,
+            start,
+            launch.wake,
+            Some(PiCaller::Main(caller)),
+            None,
+        )
+    }
+
     pub fn spawn_catalog(command: &AgentLaunchConfig, project: &Path) -> Result<Self, String> {
         Self::spawn_inner(command, project, SessionLaunch::Catalog, None, None, None)
     }
@@ -237,32 +263,6 @@ impl PiRpcProcess {
     ) -> Result<Self, String> {
         let launch = session.map_or(SessionLaunch::New, SessionLaunch::Resume);
         Self::spawn_inner(command, project, launch, None, None, None)
-    }
-
-    pub fn spawn_with_optional_waker(
-        command: &AgentLaunchConfig,
-        project: &Path,
-        session: Option<&Path>,
-        wake: Option<thread::Thread>,
-    ) -> Result<Self, String> {
-        let launch = session.map_or(SessionLaunch::New, SessionLaunch::Resume);
-        Self::spawn_inner(command, project, launch, wake, None, None)
-    }
-
-    pub fn spawn_fork_with_optional_waker(
-        command: &AgentLaunchConfig,
-        project: &Path,
-        source: &Path,
-        wake: Option<thread::Thread>,
-    ) -> Result<Self, String> {
-        Self::spawn_inner(
-            command,
-            project,
-            SessionLaunch::Fork(source),
-            wake,
-            None,
-            None,
-        )
     }
 
     pub(super) fn spawn_worker(
@@ -278,7 +278,7 @@ impl PiRpcProcess {
             project,
             launch,
             None,
-            Some((worker_id, worker_name)),
+            Some(PiCaller::Worker(worker_id, worker_name)),
             parent,
         )
     }
@@ -288,7 +288,7 @@ impl PiRpcProcess {
         project: &Path,
         launch: SessionLaunch<'_>,
         wake: Option<thread::Thread>,
-        worker: Option<(String, String)>,
+        caller: Option<PiCaller>,
         parent: Option<(String, String)>,
     ) -> Result<Self, String> {
         if super::trust::startup_trust(project)? == farcaster_projects::StartupTrust::Prompt {
@@ -301,13 +301,14 @@ impl PiRpcProcess {
             model: None,
             effort: None,
         };
-        let is_worker = worker.is_some();
+        let is_worker = matches!(caller, Some(PiCaller::Worker(..)));
         let parent_worker_id = parent.as_ref().map(|(id, _)| id.clone());
         let parent_session = parent
             .as_ref()
             .and_then(|(id, _)| registry.native_parent_session(id, Backend::Pi));
-        let caller_identity = if let Some((worker_id, worker_name)) = worker {
-            registry.issue_as_with_access(
+        let caller_identity = match caller {
+            Some(PiCaller::Main(identity)) => identity,
+            Some(PiCaller::Worker(worker_id, worker_name)) => registry.issue_as_with_access(
                 project,
                 profile,
                 wake.clone(),
@@ -315,9 +316,8 @@ impl PiRpcProcess {
                 worker_name,
                 parent_worker_id.clone(),
                 command.access_mode,
-            )?
-        } else {
-            registry.issue_with_access(project, profile, wake.clone(), command.access_mode)
+            )?,
+            None => registry.issue_with_access(project, profile, wake.clone(), command.access_mode),
         };
         caller_identity.set_harness_profile_id(command.profile_id.clone());
         let mut steering_extension = tempfile::Builder::new()

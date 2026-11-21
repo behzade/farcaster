@@ -124,6 +124,304 @@ fn image(data: &str) -> ComposerImage {
 }
 
 #[gpui::test]
+fn first_submit_restores_input_when_enqueue_fails(cx: &mut gpui::TestAppContext) {
+    check_rejected_first_prompt(
+        concat!(
+            module_path!(),
+            "::first_submit_restores_input_when_enqueue_fails"
+        ),
+        cx,
+        false,
+        None,
+    );
+}
+
+#[gpui::test]
+fn allocated_draft_remains_editable_after_enqueue_fails(cx: &mut gpui::TestAppContext) {
+    check_rejected_first_prompt(
+        concat!(
+            module_path!(),
+            "::allocated_draft_remains_editable_after_enqueue_fails"
+        ),
+        cx,
+        true,
+        None,
+    );
+}
+
+#[gpui::test]
+fn rejection_and_retry_preserve_a_named_draft(cx: &mut gpui::TestAppContext) {
+    check_rejected_first_prompt(
+        concat!(
+            module_path!(),
+            "::rejection_and_retry_preserve_a_named_draft"
+        ),
+        cx,
+        true,
+        Some("My title"),
+    );
+}
+
+fn check_rejected_first_prompt(
+    test_name: &str,
+    cx: &mut gpui::TestAppContext,
+    allocate_before_rejection: bool,
+    original_title: Option<&str>,
+) {
+    use crate::{
+        agents::Backend,
+        app::persistence,
+        runtime::RuntimeEvent,
+        storage::{PromptSubmission, SessionRepository as _},
+    };
+
+    crate::app::test_support::with_offline_app(test_name, cx, |cx, app, runtime, project| {
+        let repository = persistence::shared().unwrap();
+        let sql = |sql: &str| {
+            repository
+                .with(|store| {
+                    store.with_connection(|conn| {
+                        conn.execute_batch(sql).map_err(|error| error.to_string())
+                    })
+                })
+                .unwrap()
+        };
+        sql("CREATE TRIGGER reject_prompt BEFORE INSERT ON outbox
+             BEGIN SELECT RAISE(FAIL, 'fixture enqueue failure'); END");
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                let draft = app.sessions.selected_draft.clone().unwrap();
+                let target = crate::sessions::draft_target(&draft);
+                app.sessions
+                    .drafts
+                    .iter_mut()
+                    .find(|d| d.id == draft)
+                    .unwrap()
+                    .title = original_title.map(str::to_owned);
+                Arc::make_mut(&mut app.snapshot).harness = Some(Backend::Codex);
+                let send = |app: &mut FarcasterApp,
+                            text: &str,
+                            window: &mut Window,
+                            cx: &mut Context<FarcasterApp>| {
+                    app.composer
+                        .input
+                        .update(cx, |input, cx| input.set_value(text.to_owned(), window, cx));
+                    app.submit(text.to_owned(), PromptMode::Normal, window, cx);
+                    let (submission_id, title) = std::iter::from_fn(|| runtime.try_recv_command())
+                        .find_map(|command| match command {
+                            RuntimeCommand::Prompt {
+                                target: to,
+                                submission_id,
+                                message,
+                                provisional_title,
+                                ..
+                            } if to == target && message == text => {
+                                Some((submission_id, provisional_title))
+                            }
+                            _ => None,
+                        })
+                        .expect("prompt sent to runtime");
+                    let result = repository.submit_prompt(PromptSubmission {
+                        target: &target,
+                        harness: Backend::Codex,
+                        project,
+                        session: None,
+                        profile_id: None,
+                        mode: PromptMode::Normal,
+                        message: text,
+                        provisional_title: title.as_deref(),
+                        display_message: None,
+                        invocation: None,
+                        images: &[],
+                    });
+                    (submission_id, title, result)
+                };
+                let reject = |submission_id| {
+                    runtime.send_event(RuntimeEvent::PromptResult {
+                        submission_id: Some(submission_id),
+                        target: target.clone(),
+                        outcome: crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+                        session: None,
+                    })
+                };
+                let (first, _, failed) = send(app, "Prompt A", window, cx);
+                assert!(failed.err().unwrap().contains("fixture enqueue failure"));
+                assert!(app.composer.input.read(cx).value().is_empty());
+                // A draft or archive writer can allocate the row even while A is pending.
+                if allocate_before_rejection {
+                    let snapshot = app
+                        .sessions
+                        .drafts
+                        .iter()
+                        .find(|d| d.id == draft)
+                        .unwrap()
+                        .clone();
+                    let id = repository
+                        .with(|db| db.save_draft_with_identity(snapshot))
+                        .unwrap();
+                    runtime.send_event(RuntimeEvent::DraftIdentitySaved {
+                        draft: draft.clone(),
+                        app_session_id: id,
+                    });
+                }
+                reject(first);
+                app.drain_runtime(cx);
+                app.resolve_pending_submission(window, cx);
+                assert_eq!(app.composer.input.read(cx).value().as_ref(), "Prompt A");
+                assert!(app.composer.pending_submissions.is_empty());
+                assert!(app.editable_draft_project().is_some());
+                assert!(app.editable_draft_harness().is_some());
+                assert!(app.save_draft_before_handoff(&draft));
+                futures::executor::block_on(app.sessions.writer.flush()).unwrap();
+                let saved = || {
+                    repository
+                        .with(|db| {
+                            Ok(db
+                                .load_drafts()?
+                                .into_iter()
+                                .find(|d| d.id == draft)
+                                .unwrap())
+                        })
+                        .unwrap()
+                };
+                let before = saved();
+                assert!(!before.submitted);
+                assert_eq!(before.title.as_deref(), original_title);
+
+                sql("DROP TRIGGER reject_prompt");
+                let (second, title, result) = send(app, "Prompt B", window, cx);
+                let queued = result.unwrap();
+                assert_eq!(queued.app_session_id.get(), before.app_session_id);
+                runtime.send_event(RuntimeEvent::DraftPromptCommitted {
+                    draft: draft.clone(),
+                    app_session_id: queued.app_session_id,
+                    provisional_title: title,
+                });
+                // A launch failure after enqueue still owns the draft, even before a locator arrives.
+                reject(second);
+                app.drain_runtime(cx);
+                app.resolve_pending_submission(window, cx);
+                let row = app.sessions.drafts.iter().find(|d| d.id == draft).unwrap();
+                assert!(row.submitted);
+                assert_eq!(row.title.as_deref(), original_title.or(Some("Prompt B")));
+                assert_eq!(saved().title, row.title);
+                assert!(app.editable_draft_harness().is_none());
+            })
+        });
+    });
+}
+
+#[gpui::test]
+fn earlier_rejection_preserves_later_bound_submission(cx: &mut gpui::TestAppContext) {
+    use crate::{
+        agents::{Backend, PromptOutcome},
+        app::persistence,
+        runtime::RuntimeEvent,
+        storage::{ObservedSession, PromptSubmission, SessionFacts, SessionRepository as _},
+    };
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::earlier_rejection_preserves_later_bound_submission"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let id = app.sessions.selected_draft.clone().unwrap();
+                    let target = crate::sessions::draft_target(&id);
+                    let path = crate::sessions::normalize_session_path(&project.join("bound"));
+                    Arc::make_mut(&mut app.snapshot).harness = Some(Backend::Codex);
+                    for text in ["Prompt A", "Prompt B"] {
+                        app.composer
+                            .input
+                            .update(cx, |input, cx| input.set_value(text.to_owned(), window, cx));
+                        app.submit(text.into(), PromptMode::Normal, window, cx);
+                    }
+                    let mut sends =
+                        std::iter::from_fn(|| runtime.try_recv_command()).filter_map(|command| {
+                            match command {
+                                RuntimeCommand::Prompt {
+                                    submission_id,
+                                    provisional_title,
+                                    ..
+                                } => Some((submission_id, provisional_title)),
+                                _ => None,
+                            }
+                        });
+                    let (first, _) = sends.next().unwrap();
+                    let (second, title) = sends.next().unwrap();
+                    let repo = persistence::shared().unwrap();
+                    let queued = repo
+                        .submit_prompt(PromptSubmission {
+                            target: &target,
+                            harness: Backend::Codex,
+                            project,
+                            session: None,
+                            profile_id: None,
+                            provisional_title: title.as_deref(),
+                            mode: PromptMode::Normal,
+                            message: "Prompt B",
+                            display_message: None,
+                            invocation: None,
+                            images: &[],
+                        })
+                        .unwrap();
+                    repo.record_session_facts(
+                        ObservedSession {
+                            harness: Backend::Codex,
+                            project,
+                            path: &path,
+                            profile_id: None,
+                            draft: Some(&id),
+                        },
+                        &SessionFacts::default(),
+                    )
+                    .unwrap();
+                    let row = repo
+                        .with(|db| Ok(db.cached_sessions("")?.remove(0)))
+                        .unwrap();
+                    runtime.send_event(RuntimeEvent::SessionUpdated(row));
+                    runtime.send_event(RuntimeEvent::PromptResult {
+                        submission_id: Some(first),
+                        target: target.clone(),
+                        outcome: PromptOutcome::RejectedBeforeAcceptance,
+                        session: None,
+                    });
+                    app.drain_runtime(cx);
+                    app.resolve_pending_submission(window, cx);
+                    assert_eq!(app.composer.input.read(cx).value().as_ref(), "Prompt A");
+                    assert!(app.composer.pending_submissions.contains_key(&second));
+                    assert_eq!(
+                        app.activity.run_statuses.get(&target),
+                        Some(&RunStatus::Working)
+                    );
+                    assert!(app.editable_draft_project().is_none());
+                    runtime.send_event(RuntimeEvent::DraftPromptCommitted {
+                        draft: id.clone(),
+                        app_session_id: queued.app_session_id,
+                        provisional_title: title,
+                    });
+                    app.drain_runtime(cx);
+                    let draft = app
+                        .sessions
+                        .drafts
+                        .iter()
+                        .find(|draft| draft.id == id)
+                        .unwrap();
+                    assert!(draft.submitted);
+                    assert_eq!(draft.title.as_deref(), Some("Prompt B"));
+                    let saved = repo.with(|db| Ok(db.load_drafts()?.remove(0))).unwrap();
+                    assert_eq!(saved.title, draft.title);
+                    assert_eq!(saved.session_path.as_ref(), Some(&path));
+                    assert_eq!(saved.app_session_id, draft.app_session_id);
+                })
+            });
+        },
+    );
+}
+
+#[gpui::test]
 fn existing_session_submit_keeps_working_until_the_prompt_result(cx: &mut gpui::TestAppContext) {
     use crate::{agents::Backend, runtime::RuntimeEvent};
 

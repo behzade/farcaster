@@ -65,6 +65,7 @@ fn caller(project: &Path, id: &str) -> CallerContext {
         session_locator: None,
         harness_profile_id: None,
         app_session_id: None,
+        prompt_draft: None,
         backend: Backend::Pi,
         provider: None,
         model: None,

@@ -34,6 +34,46 @@ fn fake(case: &str) -> TestResult<(tempfile::TempDir, AgentLaunchConfig)> {
     Ok((temp, pi_test_command(&script, vec![case.into()])))
 }
 
+#[test]
+fn first_pi_handshake_registers_the_prompt_draft() -> TestResult {
+    let (project, command) = fake("fixed-session")?;
+    let registry = crate::core::CallerRegistry::default();
+    let registrations = Arc::new(Mutex::new(Vec::new()));
+    let captured = registrations.clone();
+    registry.set_execution_sinks(
+        Some(Arc::new(move |caller, _| {
+            captured
+                .lock()
+                .unwrap()
+                .push((caller.prompt_draft.clone(), caller.session.clone()));
+            Ok(42)
+        })),
+        None,
+    );
+    let mut process = PiRpcProcess::spawn_main(
+        &command,
+        crate::SessionLaunch {
+            harness: Backend::Pi,
+            start: crate::SessionStart::New(Some("first".into())),
+            project: project.path().into(),
+            session_id: None,
+            wake: None,
+            service_tier: None,
+        },
+        &registry,
+    )?;
+    let registrations = registrations.lock().unwrap();
+    let (draft, path) = registrations.first().expect("registration inside spawn");
+    assert_eq!(draft.as_deref(), Some("first"));
+    assert_eq!(
+        farcaster_sessions::normalize_session_path(Path::new(path)),
+        farcaster_sessions::normalize_session_path(&project.path().join("fake-session.jsonl"))
+    );
+    drop(registrations);
+    crate::SessionTransport::close(&mut process)?;
+    Ok(())
+}
+
 fn queue_rpc_fixture(project: &Path) -> TestResult<AgentLaunchConfig> {
     queue_rpc_fixture_case(project, "normal")
 }

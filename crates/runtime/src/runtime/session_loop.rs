@@ -47,6 +47,7 @@ pub(super) fn run(
         document_refresh_generation: None,
         pending_document_refresh: None,
         active_session: None,
+        unbound_prompt_draft: None,
         forked_from: None,
         parked_snapshot: None,
         queued_prompts: VecDeque::new(),

@@ -132,20 +132,9 @@ pub fn spawn_main(
     profile: &AcpProfile,
     launch: &crate::SessionLaunch,
 ) -> Result<super::MainSession, String> {
-    let caller_identity = crate::core::CallerRegistry::shared().issue_with_access(
-        &launch.project,
-        crate::core::CallerProfile {
-            backend: profile.backend,
-            provider: None,
-            model: None,
-            effort: None,
-        },
-        launch.wake.clone(),
-        command.access_mode,
-    );
-    caller_identity.set_harness_profile_id(command.profile_id.clone());
+    let caller_identity = crate::core::CallerRegistry::shared().issue_main_session(command, launch);
     let resume = match &launch.start {
-        crate::SessionStart::New => None,
+        crate::SessionStart::New(_) => None,
         crate::SessionStart::Resume(_) => Some(
             main_session::launch_session_locator(launch)
                 .ok_or_else(|| format!("{} resume requires a session id", profile.name))?,

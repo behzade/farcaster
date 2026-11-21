@@ -97,6 +97,16 @@ impl SessionStateWriter {
         Ok(receiver)
     }
 
+    /// Complete a write for a caller that must use the assigned ID immediately.
+    pub fn save_draft_before_handoff(
+        &self,
+        draft: DraftSession,
+    ) -> Result<crate::sessions::AppSessionId, String> {
+        self.save_draft_with_identity(draft)?
+            .recv_blocking()
+            .map_err(|_| "Session state writer stopped before saving".to_owned())?
+    }
+
     pub fn flush(&self) -> impl Future<Output = Result<(), String>> + use<> {
         let (sender, receiver) = async_channel::bounded(1);
         let sent = self.send(Command::Flush(sender));

@@ -239,18 +239,7 @@ pub fn spawn_main(
 > {
     let mut prepared = command.command(&launch.project)?;
     configure_service_tier(&mut prepared, launch.service_tier.as_deref())?;
-    let caller_identity = crate::core::CallerRegistry::shared().issue_with_access(
-        &launch.project,
-        crate::core::CallerProfile {
-            backend: Backend::Codex,
-            provider: None,
-            model: None,
-            effort: None,
-        },
-        launch.wake.clone(),
-        command.access_mode,
-    );
-    caller_identity.set_harness_profile_id(command.profile_id.clone());
+    let caller_identity = crate::core::CallerRegistry::shared().issue_main_session(command, launch);
     configure_codex_app_server(&mut prepared, command.access_mode);
     if farcaster_mcp::enabled() {
         configure_farcaster_mcp(&mut prepared, caller_identity.token());
@@ -522,7 +511,7 @@ fn setup_main_connection(
     let (mut metadata, skills) = load_main_metadata(&mut connection, &launch.project)?;
     let cwd = launch.project.to_string_lossy();
     let thread = match &launch.start {
-        crate::SessionStart::New => connection.start_thread(&cwd, None, None, access_mode)?,
+        crate::SessionStart::New(_) => connection.start_thread(&cwd, None, None, access_mode)?,
         crate::SessionStart::Resume(_) => {
             let thread_id = main_session::launch_session_locator(launch)
                 .ok_or_else(|| "Codex resume requires a thread id".to_owned())?;

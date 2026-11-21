@@ -142,7 +142,7 @@ impl FarcasterApp {
             .position(|draft| draft.app_session_id <= 0 && draft.app_session_id == session)
         {
             let id = self.sessions.drafts[index].id.clone();
-            if !self.save_session_draft(&id) {
+            if !self.save_draft_before_handoff(&id) {
                 self.notify_session_rail(cx);
                 return false;
             }

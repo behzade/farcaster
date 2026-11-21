@@ -61,9 +61,9 @@ impl FarcasterApp {
         if !self.ensure_backend_trust(backend, &project, window, cx) {
             return;
         }
-        self.capture_composer_session(cx);
         let target = self.composer.sessions.current_buffer().to_owned();
         let command_target = crate::sessions::composer_command_target(&target);
+        self.capture_composer_text(cx);
         let editor_text = self.composer.input.read(cx).value().to_string();
         let (mode, allow_while_running) =
             submission_delivery(&value, mode, &self.snapshot.commands);
@@ -109,6 +109,8 @@ impl FarcasterApp {
             target: command_target.to_owned(),
             mode,
             message: message.clone(),
+            provisional_title: crate::sessions::draft_id(command_target)
+                .and_then(|_| crate::sessions::provisional_session_title(&value)),
             display_message: display_message.clone(),
             invocation: invocation.clone(),
             images,
@@ -118,7 +120,7 @@ impl FarcasterApp {
                 if let Some(key) = inactive_session {
                     self.request_rail_archive(key, false, window, cx);
                 }
-                self.begin_draft_submission(&target, &value);
+                self.begin_draft_submission(&target);
                 if show_in_transcript {
                     self.record_run_status(command_target.to_owned(), RunStatus::Working, false);
                 }
@@ -251,6 +253,17 @@ impl FarcasterApp {
             {
                 self.apply_composer_snapshot(snapshot, window, cx);
             }
+            // Background editor sends may have had no draft row before rejection.
+            if let Some(id) = crate::sessions::draft_id(&target)
+                && self
+                    .sessions
+                    .drafts
+                    .iter()
+                    .any(|draft| draft.id == id && draft.app_session_id <= 0 && !draft.submitted)
+                && !has_pending_submission(&self.composer.pending_submissions, &target)
+            {
+                self.save_session_draft(id);
+            }
             if let Some(address) = rejected_attachment_target(
                 &pending.text,
                 !pending.images.is_empty() || !pending.pastes.is_empty(),
@@ -322,7 +335,10 @@ pub(in crate::app) fn take_resolved_pending_submissions(
         .collect()
 }
 
-fn submission_order(left: &PendingSubmission, right: &PendingSubmission) -> std::cmp::Ordering {
+pub(in crate::app) fn submission_order(
+    left: &PendingSubmission,
+    right: &PendingSubmission,
+) -> std::cmp::Ordering {
     left.submitted_at
         .cmp(&right.submitted_at)
         .then_with(|| left.id.cmp(&right.id))

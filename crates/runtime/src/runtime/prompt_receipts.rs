@@ -21,6 +21,7 @@ impl PendingQueuedPrompt {
             harness: self.harness,
             project: self.project.clone(),
             session: self.session.clone(),
+            backend_session_id: self.backend_session_id.clone(),
             mode: self.mode,
             message: self.message.clone(),
             display_message: self.display_message.clone(),

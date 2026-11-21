@@ -115,6 +115,7 @@ impl RuntimeOwner {
             let _ = process.close();
         }
         self.active_session = None;
+        self.unbound_prompt_draft = None;
         self.forked_from = None;
         self.parked_snapshot = None;
         self.startup_state_loaded = false;
@@ -222,8 +223,14 @@ impl RuntimeOwner {
         self.idle_retirement.resume_attempted = resume_attempted;
         self.idle_retirement.retired = retired;
         self.pending_session_controls.restore_preview = keep_preview;
-        self.pending_prompt = waiting_prompt;
         self.title_generation.new_session = session.is_none() && fork.is_none();
+        if self.title_generation.new_session {
+            self.unbound_prompt_draft = waiting_prompt
+                .as_ref()
+                .and_then(|prompt| crate::sessions::draft_id(&prompt.target))
+                .map(str::to_owned);
+        }
+        self.pending_prompt = waiting_prompt;
         self.active_session = session.clone();
         self.process_command.access_mode = self
             .access_mode_changes
@@ -303,7 +310,7 @@ impl RuntimeOwner {
         } else if let Some(session) = session {
             SessionStart::Resume(session)
         } else {
-            SessionStart::New
+            SessionStart::New(self.unbound_prompt_draft.clone())
         };
         let launch_tier = self
             .active_snapshot()

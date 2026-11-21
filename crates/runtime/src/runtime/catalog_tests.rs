@@ -76,6 +76,79 @@ fn fork_metadata_records_provenance_and_reset_clears_it() {
 }
 
 #[test]
+fn draft_binding_failure_does_not_publish_a_second_chat() -> Result<(), Box<dyn std::error::Error>>
+{
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().to_path_buf();
+    let script = project.join("fake-pi.sh");
+    std::fs::write(
+        &script,
+        include_str!("../../../../tests/fixtures/fake-pi.sh"),
+    )?;
+    let mut draft = crate::sessions::DraftSession::fresh(Some(Backend::Pi), project.clone());
+    draft.submitted = true;
+    let state = SharedStateStore::open_at(&project.join("state.sqlite3"))?;
+    let id = state.with(|store| store.save_draft_with_identity(draft.clone()))?;
+    state.with(|store| {
+        store.with_connection(|conn| {
+            conn.execute_batch(
+                "CREATE TRIGGER fail_bind BEFORE UPDATE OF locator ON sessions
+                 BEGIN SELECT RAISE(ABORT, 'draft bind failed'); END",
+            )
+            .map_err(|error| error.to_string())
+        })
+    })?;
+    let (mut owner, events) = crate::runtime::tests::owner_without_process(project);
+    owner.state = Some(state.clone());
+    owner.process_command = AgentLaunchConfig::test_script(&script, vec!["fixed-session".into()]);
+    let send = |owner: &mut RuntimeOwner| {
+        owner.send_prompt(
+            crate::sessions::draft_target(&draft.id),
+            PromptMode::Normal,
+            "first".into(),
+            vec![],
+            false,
+        )
+    };
+    send(&mut owner);
+    crate::runtime::tests::drive_process_until(&mut owner, |owner| {
+        owner.snapshot.status == "Failed"
+    });
+    assert_eq!(owner.snapshot.status, "Failed");
+    assert!(owner.active_session.is_none());
+    assert!(
+        !events
+            .try_iter()
+            .any(|event| matches!(event, RuntimeEvent::SessionMetadata(_)))
+    );
+    state.with(|store| {
+        assert!(store.cached_sessions("")?.is_empty());
+        assert!(store.load_drafts()?[0].session_path.is_none());
+        store.with_connection(|conn| {
+            conn.execute_batch("DROP TRIGGER fail_bind")
+                .map_err(|error| error.to_string())
+        })
+    })?;
+    send(&mut owner);
+    crate::runtime::tests::drive_process_until(&mut owner, |owner| owner.active_session.is_some());
+    assert!(
+        events
+            .try_iter()
+            .any(|event| matches!(event, RuntimeEvent::SessionMetadata(_)))
+    );
+    state.with(|store| {
+        let rows = store.cached_sessions("")?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].app_session_id, id.get());
+        Ok(())
+    })?;
+    if let Some(mut process) = owner.process.take() {
+        process.close()?;
+    }
+    Ok(())
+}
+
+#[test]
 fn pool_snapshot_maps_to_persisted_child_and_projects_needs_input() {
     let mut parent = summary(Path::new("/sessions/parent.jsonl"));
     parent.id = "parent".into();

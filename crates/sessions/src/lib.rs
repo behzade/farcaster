@@ -27,8 +27,9 @@ pub use core::{
     session_family_for_path, set_archived, take_catalog_metrics,
 };
 pub use draft::{
-    DraftSession, establish_submission, fill_session_association, reconciliation_candidates,
-    submitted_draft_associations, sync_materialized_draft, update_persisted_submission,
+    DraftSession, establish_submission, fill_session_association, provisional_session_title,
+    reconciliation_candidates, submitted_draft_associations, sync_materialized_draft,
+    update_persisted_submission,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use folders::SessionFolder;

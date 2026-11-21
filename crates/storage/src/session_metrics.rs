@@ -19,12 +19,29 @@ pub struct SessionFacts {
 }
 
 impl StateStore {
-    /// Retain observed session facts independently of the backend process.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn save_session_facts(
         &mut self,
         harness: Backend,
         project: &Path,
         session: &Path,
+        facts: &SessionFacts,
+    ) -> Result<(), String> {
+        self.record_session_facts(
+            ObservedSession {
+                harness,
+                project,
+                path: session,
+                profile_id: None,
+                draft: None,
+            },
+            facts,
+        )
+    }
+
+    pub(super) fn record_session_facts(
+        &mut self,
+        session: ObservedSession<'_>,
         facts: &SessionFacts,
     ) -> Result<(), String> {
         let mut metrics: serde_json::Map<String, serde_json::Value> =
@@ -38,20 +55,31 @@ impl StateStore {
                         .map(|value| (key.to_owned(), value.clone()))
                 })
                 .collect();
-        let locator = sessions::normalize_session_path(session);
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| format!("start session metrics save: {error}"))?;
         let now = u64_to_i64(now_ms());
-        let project_id = ensure_project(&tx, project, now)?;
-        let id = ensure_locator_session(
-            &tx,
-            harness,
-            &locator.to_string_lossy(),
-            project_id,
-            project,
-        )?;
+        let id = if let Some(draft) = session.draft {
+            draft_storage::bind_prompt_locator(
+                &tx,
+                draft,
+                session.harness,
+                session.project,
+                session.profile_id,
+                session.path,
+            )?
+        } else {
+            let locator = sessions::normalize_session_path(session.path);
+            let project_id = ensure_project(&tx, session.project, now)?;
+            ensure_locator_session(
+                &tx,
+                session.harness,
+                &locator.to_string_lossy(),
+                project_id,
+                session.project,
+            )?
+        };
         let previous: Option<String> = tx
             .query_row(
                 "SELECT body FROM session_events WHERE session_id=?1

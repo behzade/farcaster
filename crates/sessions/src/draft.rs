@@ -113,6 +113,22 @@ pub fn submitted_draft_associations(drafts: &[DraftSession]) -> HashMap<String, 
         .collect()
 }
 
+pub fn provisional_session_title(prompt: &str) -> Option<String> {
+    const MAX_WORDS: usize = 12;
+    const MAX_CHARS: usize = 80;
+
+    let line = prompt.lines().find(|line| !line.trim().is_empty())?.trim();
+    let words = line
+        .trim_matches(|character| matches!(character, '"' | '`'))
+        .split_whitespace()
+        .take(MAX_WORDS)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let title = words.chars().take(MAX_CHARS).collect::<String>();
+    let title = title.trim_end_matches(['.', ':', ';']).trim();
+    (!title.is_empty()).then(|| title.to_owned())
+}
+
 pub fn sync_materialized_draft(
     drafts: &mut Vec<DraftSession>,
     id: &str,

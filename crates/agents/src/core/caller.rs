@@ -91,6 +91,7 @@ pub struct CallerContext {
     pub session_locator: Option<PathBuf>,
     pub harness_profile_id: Option<String>,
     pub app_session_id: Option<AppSessionId>,
+    pub prompt_draft: Option<String>,
     pub backend: Backend,
     pub provider: Option<String>,
     pub model: Option<String>,
@@ -101,6 +102,7 @@ pub struct CallerContext {
 
 struct RegisteredCaller {
     persist_session: bool,
+    prompt_draft: Option<String>,
     session_record: Option<i64>,
     execution: Option<ExecutionBinding>,
     worker_id: String,
@@ -278,6 +280,7 @@ impl CallerRegistry {
             && caller.harness_profile_id == context.harness_profile_id
         {
             caller.session_record = Some(record);
+            caller.prompt_draft = None;
         }
         self.refresh_family(token);
         Ok(())
@@ -448,6 +451,29 @@ impl CallerRegistry {
         self.issue_with_access(project, profile, wake, crate::HarnessAccessMode::Auto)
     }
 
+    pub fn issue_main_session(
+        &self,
+        config: &crate::AgentLaunchConfig,
+        launch: &crate::SessionLaunch,
+    ) -> CallerIdentity {
+        let caller = self.issue_with_access(
+            &launch.project,
+            CallerProfile {
+                backend: launch.harness,
+                provider: None,
+                model: None,
+                effort: None,
+            },
+            launch.wake.clone(),
+            config.access_mode,
+        );
+        caller.set_harness_profile_id(config.profile_id.clone());
+        if let crate::SessionStart::New(Some(draft)) = &launch.start {
+            caller.set_prompt_draft(draft.clone());
+        }
+        caller
+    }
+
     pub fn issue_with_access(
         &self,
         project: &Path,
@@ -475,6 +501,7 @@ impl CallerRegistry {
                 token.clone(),
                 RegisteredCaller {
                     persist_session: true,
+                    prompt_draft: None,
                     session_record: None,
                     execution: None,
                     worker_id,
@@ -573,6 +600,7 @@ impl CallerRegistry {
             token.clone(),
             RegisteredCaller {
                 persist_session: true,
+                prompt_draft: None,
                 session_record: None,
                 execution: None,
                 worker_id,
@@ -880,6 +908,7 @@ impl RegisteredCaller {
             session_locator: self.session_locator.clone(),
             harness_profile_id: self.harness_profile_id.clone(),
             app_session_id: self.session_record.and_then(AppSessionId::new),
+            prompt_draft: self.prompt_draft.clone(),
             backend: self.backend,
             provider: self.provider.clone(),
             model: self.model.clone(),
@@ -1043,6 +1072,14 @@ impl CallerIdentity {
 
     pub fn bind(&self, session_locator: impl Into<String>) {
         self.bind_with_locator(session_locator, None);
+    }
+
+    fn set_prompt_draft(&self, draft: String) {
+        if let Ok(mut callers) = self.registry.callers.lock()
+            && let Some(caller) = callers.get_mut(&self.token)
+        {
+            caller.prompt_draft = Some(draft);
+        }
     }
 
     pub fn set_harness_profile_id(&self, profile_id: Option<String>) {

@@ -137,7 +137,8 @@ impl DirtyRegions {
             }
             RuntimeEvent::Snapshot { .. }
             | RuntimeEvent::Sessions { .. }
-            | RuntimeEvent::DraftArchiveIdentity { .. }
+            | RuntimeEvent::DraftPromptCommitted { .. }
+            | RuntimeEvent::DraftIdentitySaved { .. }
             | RuntimeEvent::SessionArchiveResult { .. }
             | RuntimeEvent::SessionUpdated(_)
             | RuntimeEvent::AgentActivityUpdated { .. }
@@ -453,6 +454,23 @@ impl FarcasterApp {
         }
     }
 
+    fn adopt_catalog_draft(&mut self, row: &SessionSummary, dirty: &mut DirtyRegions) {
+        if let (Some(draft), Some(id)) = (
+            &row.draft_id,
+            sessions::AppSessionId::new(row.app_session_id),
+        ) {
+            // A full refresh can see the bound session before the outbox receipt.
+            self.confirm_draft_submission(
+                draft,
+                (!row.title.is_empty()).then_some(row.title.as_str()),
+            );
+            if self.adopt_draft_identity(draft.clone(), id) {
+                dirty.rail = true;
+                dirty.archive_keys = true;
+            }
+        }
+    }
+
     fn project_sessions(
         &mut self,
         generation: u64,
@@ -499,6 +517,7 @@ impl FarcasterApp {
         let graph_identities_changed =
             session_identities_changed(&self.sessions.all, &all_sessions);
         for session in all_sessions.iter() {
+            self.adopt_catalog_draft(session, dirty);
             projects::add_visible(
                 &mut self.project.registered,
                 &self.project.excluded,
@@ -854,7 +873,18 @@ impl FarcasterApp {
             cx,
         );
         self.record_draft_submission(&target, accepted, session.clone());
-        if outcome == crate::agents::PromptOutcome::RejectedBeforeAcceptance {
+        if outcome == crate::agents::PromptOutcome::RejectedBeforeAcceptance
+            && !submission_id
+                .as_ref()
+                .and_then(|id| self.composer.pending_submissions.get(id))
+                .is_some_and(|rejected| {
+                    self.composer.pending_submissions.values().any(|other| {
+                        other.submitted_target == rejected.submitted_target
+                            && super::composer::submissions::submission_order(other, rejected)
+                                .is_gt()
+                    })
+                })
+        {
             self.activity
                 .run_statuses
                 .insert(target.clone(), RunStatus::Failed);
@@ -915,11 +945,21 @@ impl FarcasterApp {
             } if generation >= self.sessions.generation => {
                 self.project_sessions(generation, sessions, all_sessions, activities, dirty, cx);
             }
-            RuntimeEvent::DraftArchiveIdentity {
+            RuntimeEvent::DraftPromptCommitted {
+                draft,
+                app_session_id,
+                provisional_title,
+            } => {
+                self.confirm_draft_submission(&draft, provisional_title.as_deref());
+                dirty.archive_keys |= self.adopt_draft_identity(draft, app_session_id);
+                dirty.rail = true;
+                dirty.composer = true;
+            }
+            RuntimeEvent::DraftIdentitySaved {
                 draft,
                 app_session_id,
             } => {
-                if self.adopt_archive_draft_identity(draft, app_session_id) {
+                if self.adopt_draft_identity(draft, app_session_id) {
                     dirty.rail = true;
                     dirty.archive_keys = true;
                 }
@@ -928,6 +968,7 @@ impl FarcasterApp {
                 self.finish_archive(request, rows, cx);
             }
             RuntimeEvent::SessionUpdated(mut session) => {
+                self.adopt_catalog_draft(&session, dirty);
                 self.sessions
                     .archive_writes
                     .overlay(&mut session, &self.sessions.all);

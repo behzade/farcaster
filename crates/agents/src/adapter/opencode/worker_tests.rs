@@ -1164,7 +1164,7 @@ fn model_override_only_decides_new_sessions() -> Result<(), String> {
     });
     let selected = resolve_session_model(
         &mut client,
-        &launch(crate::SessionStart::New),
+        &launch(crate::SessionStart::New(None)),
         &session(Value::Null),
         Some(override_model.clone()),
     )?;
@@ -1231,7 +1231,7 @@ fn model_override_only_decides_new_sessions() -> Result<(), String> {
     });
     let selected = resolve_session_model(
         &mut client,
-        &launch(crate::SessionStart::New),
+        &launch(crate::SessionStart::New(None)),
         &session(Value::Null),
         None,
     )?;

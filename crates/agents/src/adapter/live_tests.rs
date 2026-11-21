@@ -178,7 +178,7 @@ fn exercise_live_harness(harness: Backend, capabilities: &AgentCapabilities) -> 
         wake: Some(thread::current()),
         service_tier: None,
     };
-    let mut session = spawn_session(&config, launch(SessionStart::New, None))?;
+    let mut session = spawn_session(&config, launch(SessionStart::New(None), None))?;
     let path = session_path(&mut *session)?;
     if !coverage.delete {
         writeln!(
@@ -1510,7 +1510,7 @@ pub mod support {
                     harness,
                     session_id: None,
                     project,
-                    start: SessionStart::New,
+                    start: SessionStart::New(None),
                     wake: Some(thread::current()),
                     service_tier: None,
                 },

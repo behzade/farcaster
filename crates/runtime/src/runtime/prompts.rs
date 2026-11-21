@@ -1,3 +1,4 @@
+use farcaster_storage::{EnqueuedPrompt, PromptSubmission};
 use std::sync::Arc;
 
 use crate::{
@@ -24,11 +25,14 @@ impl RuntimeOwner {
         images: Vec<PromptImage>,
         allow_while_running: bool,
     ) {
+        let provisional_title = crate::sessions::draft_id(&target)
+            .and_then(|_| crate::sessions::provisional_session_title(&message));
         self.send_prompt_with_presentation_for_submission(
             submission_id,
             target,
             mode,
             message,
+            provisional_title,
             None,
             None,
             images,
@@ -43,6 +47,7 @@ impl RuntimeOwner {
         target: String,
         mut mode: PromptMode,
         message: String,
+        provisional_title: Option<String>,
         display_message: Option<String>,
         invocation: Option<String>,
         images: Vec<PromptImage>,
@@ -81,37 +86,41 @@ impl RuntimeOwner {
             );
             return;
         }
-        let queued = self
-            .state
-            .as_ref()
-            .ok_or_else(|| "Couldn’t save the message".to_owned())
-            .and_then(|state| {
-                state.with(|store| {
-                    let images = store.store_prompt_images(&images)?;
-                    let id = agents::enqueue_prompt_with_presentation(
-                        store,
-                        &target,
-                        harness,
-                        &self.project,
-                        self.snapshot.selected_session.as_deref(),
-                        mode,
-                        &message,
-                        display_message.as_deref(),
-                        invocation.as_deref(),
-                        &images,
-                    )?;
-                    Ok((Some(id), images))
-                })
-            });
-        let (outbox_id, images) = match queued {
+        let queued = self.session_repository().and_then(|repository| {
+            repository.submit_prompt(PromptSubmission {
+                target: &target,
+                harness,
+                project: &self.project,
+                session: self.snapshot.selected_session.as_deref(),
+                profile_id: self.process_command.profile_id.as_deref(),
+                provisional_title: provisional_title.as_deref(),
+                mode,
+                message: &message,
+                display_message: display_message.as_deref(),
+                invocation: invocation.as_deref(),
+                images: &images,
+            })
+        });
+        let EnqueuedPrompt {
+            outbox_id,
+            app_session_id,
+            images,
+            bound_session,
+        } = match queued {
             Ok(queued) => queued,
             Err(error) => {
                 self.reject_prompt(&submission_id, &target, error);
                 return;
             }
         };
+        if let Some(draft) = crate::sessions::draft_id(&target) {
+            let _ = self.event_tx.send(RuntimeEvent::DraftPromptCommitted {
+                draft: draft.to_owned(),
+                app_session_id,
+                provisional_title,
+            });
+        }
         if queue_behind_pending {
-            let outbox_id = outbox_id.expect("saved prompt has an outbox id");
             let can_dispatch_now = self.process.is_some()
                 && self.startup_state_loaded
                 && self.startup_history_loaded
@@ -138,6 +147,7 @@ impl RuntimeOwner {
                         self.pending_queued_prompts.insert(
                             request_id,
                             super::PendingQueuedPrompt {
+                                backend_session_id: self.session_id.clone(),
                                 submission_id,
                                 target,
                                 outbox_id,
@@ -173,6 +183,7 @@ impl RuntimeOwner {
                                 target,
                                 harness,
                                 project: self.project.clone(),
+                                backend_session_id: self.session_id.clone(),
                                 session: self.active_session.clone(),
                                 mode,
                                 message,
@@ -192,7 +203,13 @@ impl RuntimeOwner {
                 target,
                 harness,
                 project: self.project.clone(),
-                session: self.snapshot.selected_session.clone(),
+                backend_session_id: bound_session
+                    .as_ref()
+                    .map(|session| session.id.clone())
+                    .or_else(|| self.session_id.clone()),
+                session: bound_session
+                    .map(|session| session.path)
+                    .or_else(|| self.snapshot.selected_session.clone()),
                 mode,
                 message,
                 display_message,
@@ -226,7 +243,7 @@ impl RuntimeOwner {
         self.pending_prompt = Some(PendingPrompt {
             submission_id: Some(submission_id),
             target,
-            outbox_id,
+            outbox_id: Some(outbox_id),
             item,
             phase: PromptPhase::Waiting(PromptInput {
                 mode,
@@ -237,7 +254,7 @@ impl RuntimeOwner {
             }),
         });
         self.publish();
-        self.dispatch_prompt();
+        self.dispatch_prompt(bound_session);
     }
 
     #[cfg(test)]
@@ -276,6 +293,7 @@ impl RuntimeOwner {
             target,
             mode,
             message,
+            None,
             display_message,
             invocation,
             images,
@@ -288,6 +306,7 @@ impl RuntimeOwner {
             self.queued_prompts.push_back(prompt);
             return;
         }
+        let bound_session = self.queued_prompt_target(&prompt);
         self.project = prompt.project;
         self.snapshot.project = self.project.clone();
         self.snapshot.selected_session = prompt.session.clone();
@@ -326,7 +345,32 @@ impl RuntimeOwner {
             }),
         });
         self.publish();
-        self.dispatch_prompt();
+        match bound_session {
+            Ok(target) => self.dispatch_prompt(target),
+            Err(error) => self.fail(error),
+        }
+    }
+
+    fn queued_prompt_target(
+        &self,
+        prompt: &QueuedPrompt,
+    ) -> Result<Option<crate::sessions::SessionTarget>, String> {
+        if self.process.is_some() && !self.snapshot.history_preview {
+            return Ok(None);
+        }
+        if let Some(path) = &prompt.session {
+            return Ok(Some(crate::sessions::SessionTarget {
+                harness: prompt.harness,
+                id: prompt
+                    .backend_session_id
+                    .clone()
+                    .unwrap_or_else(|| path.to_string_lossy().into_owned()),
+                path: path.clone(),
+            }));
+        }
+        // Registration and promotion may both occur while a prompt is parked.
+        // Its outbox row keeps the session identity after promotion clears the draft key.
+        self.session_repository()?.pending_prompt_target(prompt.id)
     }
 
     pub(super) fn cancel_outbox_or_park(&mut self, id: i64) -> bool {
@@ -360,6 +404,7 @@ impl RuntimeOwner {
                 harness,
                 project: self.project.clone(),
                 session: self.active_session.clone(),
+                backend_session_id: self.session_id.clone(),
                 mode: input.mode,
                 message: input.message.clone(),
                 display_message: input.display_message.clone(),
@@ -419,7 +464,7 @@ impl RuntimeOwner {
             && snapshot.pending_question.is_none()
     }
 
-    fn dispatch_prompt(&mut self) {
+    fn dispatch_prompt(&mut self, bound_session: Option<crate::sessions::SessionTarget>) {
         let Some(pending) = self.pending_prompt.as_ref() else {
             return;
         };
@@ -448,7 +493,18 @@ impl RuntimeOwner {
             || self.pending_session_controls.selection_pending()
         {
             if start_process {
-                self.start_process(self.snapshot.selected_session.clone());
+                let session = if let Some(target) = bound_session {
+                    if self.harness != Some(target.harness) {
+                        self.fail("The prompt belongs to another backend".into());
+                        return;
+                    }
+                    self.session_id = Some(target.id);
+                    self.bind_external_session_identity(&target.path);
+                    Some(target.path)
+                } else {
+                    self.snapshot.selected_session.clone()
+                };
+                self.start_process(session);
             }
             return;
         }
@@ -636,7 +692,7 @@ impl RuntimeOwner {
             {
                 self.snapshot = snapshot;
             }
-            self.dispatch_prompt();
+            self.dispatch_prompt(None);
         }
     }
 

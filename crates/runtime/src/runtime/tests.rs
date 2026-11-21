@@ -142,6 +142,7 @@ pub(super) fn owner_without_process(
             document_refresh_generation: None,
             pending_document_refresh: None,
             active_session: None,
+            unbound_prompt_draft: None,
             forked_from: None,
             parked_snapshot: None,
             queued_prompts: VecDeque::new(),
@@ -169,6 +170,7 @@ fn publishing_reuses_conversation_and_queue_storage_until_the_queue_changes() {
         target: "draft:one".into(),
         harness: Backend::Pi,
         project: project.clone(),
+        backend_session_id: None,
         session: None,
         mode: PromptMode::Normal,
         message: "saved text".into(),
@@ -1409,7 +1411,7 @@ fn deferred_prompt_is_rejected_when_startup_state_has_no_session_path()
             harness: Backend::Pi,
             session_id: None,
             project: temp.path().to_path_buf(),
-            start: SessionStart::New,
+            start: SessionStart::New(None),
             wake: None,
             service_tier: None,
         },
@@ -1504,8 +1506,8 @@ fn new_session_stays_cold_until_the_first_prompt() -> Result<(), Box<dyn std::er
         &script,
         include_str!("../../../../tests/fixtures/fake-pi.sh"),
     )?;
-    let (mut owner, _events) = owner_without_process(old_project.path().to_path_buf());
-    owner.process_command = AgentLaunchConfig::test_script(&script, vec!["quiet".into()]);
+    let (mut owner, events) = owner_without_process(old_project.path().to_path_buf());
+    owner.process_command = AgentLaunchConfig::test_script(&script, vec!["fixed-session".into()]);
     owner.state = Some(SharedStateStore::open_at(
         &old_project.path().join("state.sqlite3"),
     )?);
@@ -1544,8 +1546,148 @@ fn new_session_stays_cold_until_the_first_prompt() -> Result<(), Box<dyn std::er
     assert!(owner.process.is_some());
     assert!(owner.deferred_prompt().is_some());
     assert!(owner.snapshot.connected);
+    let state = owner.state.clone().expect("persisted outbox");
+    let draft_id = state.with(|store| Ok(store.load_drafts()?[0].app_session_id))?;
+    // Stop at the first published locator, before processing a prompt receipt.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while owner.active_session.is_none() {
+        assert!(Instant::now() < deadline, "backend did not report its path");
+        if let Some(item) = owner.process.as_mut().and_then(|process| process.poll()) {
+            owner.apply_process_item(item);
+        } else {
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
+    assert!(owner.pending_prompt.is_some());
+    let first_metadata = events
+        .try_iter()
+        .find_map(|event| match event {
+            RuntimeEvent::SessionMetadata(metadata) => Some(metadata),
+            _ => None,
+        })
+        .expect("first session metadata");
+    state.with(|store| {
+        let rows = store.cached_sessions("")?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].app_session_id, draft_id, "first facts write");
+        assert_eq!(
+            store
+                .update_session_metadata(&first_metadata)?
+                .app_session_id,
+            draft_id
+        );
+        Ok(())
+    })?;
     if let Some(mut process) = owner.process.take() {
         process.close()?;
+    }
+    Ok(())
+}
+
+#[test]
+fn retry_from_draft_resumes_the_previously_registered_session()
+-> Result<(), Box<dyn std::error::Error>> {
+    let project = tempdir()?;
+    let script = project.path().join("fake-pi.sh");
+    fs::write(
+        &script,
+        include_str!("../../../../tests/fixtures/fake-pi.sh"),
+    )?;
+    let path = crate::sessions::normalize_session_path(&project.path().join("registered.jsonl"));
+    fs::write(&path, "")?;
+    let draft = crate::sessions::DraftSession::fresh(Some(Backend::Pi), project.path().into());
+    let store = SharedStateStore::open_at(&project.path().join("state.sqlite3"))?;
+    let target = crate::sessions::draft_target(&draft.id);
+    let app_id = store.with(|store| store.save_draft_with_identity(draft.clone()))?;
+    let parked_before_registration = store.with(|store| {
+        store.enqueue_prompt(
+            &target,
+            Backend::Pi,
+            project.path(),
+            None,
+            PromptMode::FollowUp,
+            "follow-up queued before registration",
+            &[],
+        )?;
+        Ok(store.queued_prompts()?.remove(0))
+    })?;
+
+    let registry = agents::CallerRegistry::default();
+    let registrations = store.clone();
+    registry.set_execution_sinks(
+        Some(Arc::new(move |caller, family| {
+            farcaster_storage::SessionRepository::register_caller_session(
+                &registrations,
+                caller,
+                family,
+            )
+        })),
+        None,
+    );
+    let caller = registry.issue_main_session(
+        &AgentLaunchConfig::default(),
+        &SessionLaunch {
+            harness: Backend::Pi,
+            project: project.path().into(),
+            start: SessionStart::New(Some(draft.id.clone())),
+            session_id: None,
+            wake: None,
+            service_tier: None,
+        },
+    );
+    caller.bind(path.to_string_lossy().into_owned());
+    assert_eq!(
+        registry.resolve(caller.token())?.app_session_id,
+        Some(app_id)
+    );
+    drop(caller);
+
+    let recovered_after_registration = store.with(|store| Ok(store.queued_prompts()?.remove(0)))?;
+    for queued in [
+        None,
+        Some(parked_before_registration),
+        Some(recovered_after_registration),
+    ] {
+        let (mut owner, events) = owner_without_process(project.path().to_path_buf());
+        owner.state = Some(store.clone());
+        owner.process_command = AgentLaunchConfig::test_script(&script, vec!["quiet".into()]);
+        if let Some(queued) = queued {
+            let command = RuntimeCommand::SendSaved {
+                target: queued.target.clone(),
+                id: queued.id,
+            };
+            owner.apply_command(RuntimeCommand::RecoverPending(queued));
+            owner.apply_command(command);
+        } else {
+            owner.send_prompt(
+                target.clone(),
+                PromptMode::Normal,
+                "retry".into(),
+                vec![],
+                false,
+            );
+            let identity = events
+                .try_iter()
+                .take_while(|event| !matches!(event, RuntimeEvent::SessionReset { .. }))
+                .find_map(|event| match event {
+                    RuntimeEvent::DraftPromptCommitted {
+                        draft,
+                        app_session_id,
+                        ..
+                    } => Some((draft, app_session_id)),
+                    _ => None,
+                });
+            assert_eq!(identity, Some((draft.id.clone(), app_id)));
+            // Promotion detaches the draft key before the previously queued follow-up is retried.
+            store.with(|store| store.remove_draft(&draft.id))?;
+        }
+        // No actor has received LoadState for this launch.
+        assert!(owner.process.is_some());
+        assert_eq!(owner.harness, Some(Backend::Pi));
+        assert_eq!(owner.active_session.as_ref(), Some(&path));
+        assert_eq!(owner.session_id.as_deref(), path.to_str());
+        assert!(owner.unbound_prompt_draft.is_none());
+        owner.process.take().unwrap().close()?;
     }
     Ok(())
 }
@@ -2587,7 +2729,7 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
             harness: Backend::Pi,
             session_id: None,
             project: temp.path().to_path_buf(),
-            start: SessionStart::New,
+            start: SessionStart::New(None),
             wake: None,
             service_tier: None,
         },
@@ -2794,6 +2936,7 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
         document_refresh_generation: None,
         pending_document_refresh: None,
         active_session: Some(active_path.clone()),
+        unbound_prompt_draft: None,
         forked_from: None,
         parked_snapshot: None,
         queued_prompts: VecDeque::new(),

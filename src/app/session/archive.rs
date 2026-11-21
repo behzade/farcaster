@@ -181,11 +181,7 @@ impl FarcasterApp {
         }
     }
 
-    pub(in crate::app) fn adopt_archive_draft_identity(
-        &mut self,
-        draft: String,
-        id: AppSessionId,
-    ) -> bool {
+    pub(in crate::app) fn adopt_draft_identity(&mut self, draft: String, id: AppSessionId) -> bool {
         self.record_archive_draft_identity(&draft, id);
         if let Some(row) = self.sessions.drafts.iter_mut().find(|row| row.id == draft) {
             if row.app_session_id > 0 {
@@ -197,6 +193,9 @@ impl FarcasterApp {
                 .draft_session_ids
                 .insert(draft.clone(), id.get());
             self.sessions.pending_draft_saves.remove(&draft);
+            self.composer
+                .sessions
+                .resave_buffer(&crate::sessions::draft_target(&draft));
             self.remember_rail_projects([project]);
             if self.sessions.selected_draft.as_deref() == Some(&draft) {
                 self.remember_session_selection();
@@ -589,6 +588,10 @@ impl FarcasterApp {
                     .iter()
                     .find(|row| row.id == original.id)
                 {
+                    // A first send can be rejected while the confirmation is open.
+                    if !self.can_archive_draft(draft) {
+                        return;
+                    }
                     let mut draft = draft.clone();
                     let target = AppSessionId::new(draft.app_session_id)
                         .map(ArchiveTarget::App)

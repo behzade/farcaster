@@ -352,9 +352,6 @@ impl RuntimeOwner {
         let Ok(payload) = response.result else { return };
         match payload {
             Payload::LoadState(state) => {
-                if !state.session_id.is_empty() {
-                    self.session_id = Some(state.session_id.clone());
-                }
                 let model_change_sent = !self.pending_session_controls.model_pending();
                 let tier_change_sent = !self.pending_session_controls.service_tier_pending();
                 let normal_prompt_in_flight = self.normal_prompt_in_flight;
@@ -364,13 +361,30 @@ impl RuntimeOwner {
                     .map(PathBuf::from)
                     .map(|path| crate::sessions::normalize_session_path(&path))
                     .or_else(|| self.active_session.clone());
+                self.active_snapshot_mut().observed_service_tier = state.service_tier.clone();
+                if let Some(path) = &selected_session {
+                    // Bind and save the first observation in one transaction before
+                    // publishing the path to the catalog or dispatching the prompt.
+                    if let Err(error) =
+                        self.save_observed_facts(path, self.unbound_prompt_draft.as_deref())
+                    {
+                        if self.unbound_prompt_draft.is_some() {
+                            self.fail(format!("Bind new chat to its session: {error}"));
+                            return;
+                        }
+                        zlog::warn!("Save session facts: {error}");
+                    }
+                    self.unbound_prompt_draft = None;
+                }
+                if !state.session_id.is_empty() {
+                    self.session_id = Some(state.session_id.clone());
+                }
                 self.active_session = selected_session.clone();
                 // An idle sample can arrive between a start event and its settlement.
                 self.backend_activity.turn.sample(state.is_streaming);
                 self.backend_activity.compaction.sample(state.is_compacting);
                 let run_active = self.backend_activity.turn.is_active();
                 let snapshot = self.active_snapshot_mut();
-                snapshot.observed_service_tier = state.service_tier.clone();
                 snapshot.selected_session = selected_session;
                 conversation_mut(snapshot).running = run_active || normal_prompt_in_flight;
                 snapshot.session = Some(*state);
@@ -399,7 +413,7 @@ impl RuntimeOwner {
                 snapshot.status = "Ready".into();
                 self.startup_state_loaded = true;
                 self.active_snapshot_mut().document_ready |= self.startup_history_loaded;
-                self.publish_session_metadata();
+                self.send_session_metadata();
             }
             Payload::LoadHistory(history) => {
                 if let SessionHistory::Replace {
