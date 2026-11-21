@@ -21,6 +21,8 @@ pub(crate) const TRANSCRIPT_SELECTION_KEY_CONTEXT: &str = "PiTranscriptSelection
 
 #[derive(Default)]
 struct StateInner {
+    history_tail_first_safe_row: Option<usize>,
+    painted_history_top: Option<ListOffset>,
     heights: HeightIndex,
     scroll_y: Pixels,
     viewport_height: Pixels,
@@ -69,6 +71,18 @@ impl StateInner {
     }
 
     fn layout_range(&self, overdraw: Pixels) -> Range<usize> {
+        if self.following_tail {
+            // Use only distances from the bottom. Subtracting the height of a
+            // long prefix can round a subpixel offset differently at handoff.
+            let mut remaining = self.viewport_height + overdraw;
+            let end = self.heights.len();
+            let mut start = end;
+            while start > 0 && remaining > px(0.0) {
+                start -= 1;
+                remaining -= self.heights.height(start).expect("row exists");
+            }
+            return start..end;
+        }
         let start_y = (self.scroll_y - overdraw).max(px(0.0));
         let end_y = self.scroll_y + self.viewport_height + overdraw;
         let start = self.heights.row_at(start_y);
@@ -208,6 +222,22 @@ pub(crate) struct TranscriptListState(Rc<RefCell<StateInner>>);
 impl TranscriptListState {
     pub(crate) fn new() -> Self {
         Self(Rc::new(RefCell::new(StateInner::default())))
+    }
+
+    pub(crate) fn new_history_tail(first_safe_row: usize) -> Self {
+        Self(Rc::new(RefCell::new(StateInner {
+            history_tail_first_safe_row: Some(first_safe_row),
+            following_tail: true,
+            ..Default::default()
+        })))
+    }
+
+    pub(crate) fn is_history_tail(&self) -> bool {
+        self.0.borrow().history_tail_first_safe_row.is_some()
+    }
+
+    pub(crate) fn painted_history_top(&self) -> Option<ListOffset> {
+        self.0.borrow().painted_history_top
     }
 
     pub(crate) fn reset(&self) {
@@ -402,6 +432,18 @@ struct FrameRow {
 pub(crate) struct TranscriptPrepaintState {
     hitbox: Hitbox,
     rows: Vec<AnyElement>,
+    history_top: Option<ListOffset>,
+}
+
+impl TranscriptPrepaintState {
+    fn paint_rows(&mut self, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
+        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+            let _timing = OperationTiming::new(OperationKind::TranscriptPaint, self.rows.len());
+            for row in &mut self.rows {
+                row.paint(window, cx);
+            }
+        });
+    }
 }
 
 impl Element for TranscriptList {
@@ -513,9 +555,35 @@ impl Element for TranscriptList {
             }
         };
 
+        let history_tail_first_safe_row = self.state.0.borrow().history_tail_first_safe_row;
+        // At the fixed point above, every visible row has been laid out at this
+        // frame's width. A partial page can only show rows beyond its first user.
+        if history_tail_first_safe_row.is_some_and(|first_safe_row| {
+            visible_range.start < first_safe_row || visible_range.is_empty()
+        }) {
+            let mut loading = super::loading_history();
+            loading.prepaint_as_root(bounds.origin, bounds.size.map(Into::into), window, cx);
+            return TranscriptPrepaintState {
+                hitbox,
+                rows: vec![loading],
+                history_top: None,
+            };
+        }
         let mut rows = Vec::with_capacity(visible_range.len());
-        let mut row_y =
-            bounds.top() + self.state.0.borrow().heights.prefix(visible_range.start) - scroll_y;
+        let mut row_y = if following_tail {
+            let mut top = bounds.bottom();
+            for index in visible_range.clone().rev() {
+                top -= frame_rows[&index].height;
+            }
+            // Short full documents stay top-aligned.
+            top.min(bounds.top())
+        } else {
+            bounds.top() + self.state.0.borrow().heights.prefix(visible_range.start) - scroll_y
+        };
+        let history_top = history_tail_first_safe_row.map(|_| ListOffset {
+            item_ix: visible_range.start,
+            offset_in_item: bounds.top() - row_y,
+        });
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             let _timing =
                 OperationTiming::new(OperationKind::TranscriptPrepaint, visible_range.len());
@@ -529,6 +597,13 @@ impl Element for TranscriptList {
                 rows.push(row.element);
             }
         });
+        let hitbox = if history_tail_first_safe_row.is_some() {
+            // Preview row keys are local to the suffix. Block links, disclosures,
+            // context menus and text selection until the full list owns input.
+            window.insert_hitbox(bounds, HitboxBehavior::BlockMouse)
+        } else {
+            hitbox
+        };
 
         // Restoration or resizing can reach the tail without queued scrolling.
         if (viewport_scrolled || following_tail != following_before_layout)
@@ -537,7 +612,11 @@ impl Element for TranscriptList {
             handler.borrow_mut()(following_tail, window, cx);
         }
 
-        TranscriptPrepaintState { hitbox, rows }
+        TranscriptPrepaintState {
+            hitbox,
+            rows,
+            history_top,
+        }
     }
 
     fn paint(
@@ -550,6 +629,18 @@ impl Element for TranscriptList {
         window: &mut Window,
         cx: &mut App,
     ) {
+        if self.state.is_history_tail() {
+            let shield = prepaint.hitbox.id;
+            window.on_mouse_event(move |_: &MouseDownEvent, phase, window, cx| {
+                if phase == DispatchPhase::Capture && shield.is_hovered(window) {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                }
+            });
+            prepaint.paint_rows(bounds, window, cx);
+            self.state.0.borrow_mut().painted_history_top = prepaint.history_top;
+            return;
+        }
         let current_view = window.current_view();
         let hitbox_id = prepaint.hitbox.id;
         let state = self.state.clone();
@@ -703,12 +794,7 @@ impl Element for TranscriptList {
             }
         });
 
-        window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            let _timing = OperationTiming::new(OperationKind::TranscriptPaint, prepaint.rows.len());
-            for row in &mut prepaint.rows {
-                row.paint(window, cx);
-            }
-        });
+        prepaint.paint_rows(bounds, window, cx);
 
         if let Some(token) = self.state.0.borrow_mut().continue_selection_scroll() {
             request_scroll_frame(window, current_view, self.state.clone(), token);

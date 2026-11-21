@@ -1,6 +1,6 @@
 use crate::Backend;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::BufReader,
     path::{Path, PathBuf},
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
@@ -230,7 +230,7 @@ pub(super) fn load_history_with_config(
     config: &crate::AgentLaunchConfig,
     path: &Path,
     project: &Path,
-    preview: Option<&mut dyn FnMut(Vec<Value>)>,
+    preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
 ) -> Result<DiscoveredHistory, String> {
     load_history_using(Some(config), path, Some(project), preview)
 }
@@ -239,7 +239,7 @@ fn load_history_using(
     config: Option<&crate::AgentLaunchConfig>,
     path: &Path,
     project: Option<&Path>,
-    preview: Option<&mut dyn FnMut(Vec<Value>)>,
+    preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
 ) -> Result<DiscoveredHistory, String> {
     let locator = external_session_locator(Backend::Codex, path)
         .ok_or_else(|| format!("invalid Codex session locator: {}", path.display()))?;
@@ -253,14 +253,12 @@ fn load_history_with_client<R: std::io::BufRead, W: std::io::Write>(
     home: &Path,
     locator: &str,
     scope: history_cache::Scope,
-    preview: Option<&mut dyn FnMut(Vec<Value>)>,
+    preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
 ) -> Result<DiscoveredHistory, String> {
     if scope.has_sqlite_home_override() {
         return read_history(connection, home, locator, None);
     }
-    let preview = preview.filter(|_| history_cache::is_paginated(home, locator));
-    if (preview.is_none() && !history_cache::has_revision(home, locator))
-        || !can_cache_persisted_history(connection, home)
+    if !history_cache::has_revision(home, locator) || !can_cache_persisted_history(connection, home)
     {
         return read_history(connection, home, locator, None);
     }
@@ -280,6 +278,7 @@ fn can_cache_persisted_history<R: std::io::BufRead, W: std::io::Write>(
             .get("data")
             .and_then(Value::as_array)
             .is_some_and(Vec::is_empty)
+            || !loaded["nextCursor"].is_null()
         {
             return Ok(false);
         }
@@ -307,13 +306,13 @@ fn read_history<R: std::io::BufRead, W: std::io::Write>(
     connection: &mut CodexConnection<R, W>,
     codex_home: &Path,
     locator: &str,
-    preview: Option<&mut dyn FnMut(Vec<Value>)>,
+    preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
 ) -> Result<DiscoveredHistory, String> {
     if let Some(preview) = preview
-        && let Ok(messages) = recent_turn_messages(connection, locator)
-        && !messages.is_empty()
+        && let Some(page) = recent_turn_messages(connection, codex_home, locator)
+        && !page.content.is_empty()
     {
-        preview(messages);
+        preview(page);
     }
     let id = connection.send_request(
         "thread/read",
@@ -358,22 +357,90 @@ fn read_history<R: std::io::BufRead, W: std::io::Write>(
     })
 }
 
+const RECENT_TURN_LIMIT: usize = 8;
+
 fn recent_turn_messages<R: std::io::BufRead, W: std::io::Write>(
     connection: &mut CodexConnection<R, W>,
+    home: &Path,
     locator: &str,
-) -> Result<Vec<Value>, String> {
+) -> Option<crate::HistoryPage> {
+    let before = history_cache::paginated_revision(home, locator)?;
     let id = connection.send_request(
         "thread/turns/list",
-        json!({"threadId": locator, "limit": 1, "sortDirection": "desc", "itemsView": "summary"}),
-    )?;
-    let page = connection.wait_response_value(&id)?;
-    Ok(page
-        .pointer("/data/0/items")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .flat_map(history_messages)
-        .collect())
+        json!({"threadId": locator, "limit": RECENT_TURN_LIMIT, "sortDirection": "desc", "itemsView": "full"}),
+    ).ok()?;
+    let page = connection.wait_response_value(&id).ok()?;
+    let messages = recent_page_messages(&page)?;
+    (history_cache::paginated_revision(home, locator)? == before).then_some(messages)
+}
+
+fn recent_page_messages(page: &Value) -> Option<crate::HistoryPage> {
+    let turns = page.get("data")?.as_array()?;
+    if turns.len() > RECENT_TURN_LIMIT {
+        return None;
+    }
+    let mut turn_ids = HashSet::new();
+    for turn in turns {
+        let id = turn.get("id")?.as_str()?;
+        if id.is_empty() || !turn_ids.insert(id) {
+            return None;
+        }
+    }
+
+    // Keep only a contiguous suffix. If an older turn needs the full rollout
+    // to restore an image, its newer neighbors can still be shown.
+    let mut recent = Vec::new();
+    for turn in turns {
+        if turn["itemsView"] != "full"
+            || !matches!(
+                turn["status"].as_str(),
+                Some("completed" | "interrupted" | "failed")
+            )
+        {
+            break;
+        }
+        let Some(items) = turn["items"].as_array() else {
+            break;
+        };
+        let mut item_ids = HashSet::new();
+        if !items.iter().all(|item| {
+            item["id"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty() && item_ids.insert(id))
+                && preview_item_is_complete(item)
+        }) {
+            break;
+        }
+        let messages: Vec<_> = items.iter().flat_map(history_messages).collect();
+        // Only the full read has a rollout path for restoring these images.
+        if history_images::needs_restore(&messages) {
+            break;
+        }
+        recent.push(messages);
+    }
+    let coverage = if page.get("nextCursor") == Some(&Value::Null) && recent.len() == turns.len() {
+        crate::HistoryCoverage::Complete
+    } else {
+        crate::HistoryCoverage::Suffix
+    };
+    Some(crate::HistoryPage {
+        content: recent.into_iter().rev().flatten().collect(),
+        coverage,
+    })
+}
+
+fn preview_item_is_complete(item: &Value) -> bool {
+    if item["outputDeferred"].as_bool() == Some(true) {
+        return false;
+    }
+    match item["type"].as_str() {
+        Some("agentMessage") => item["text"].is_string(),
+        Some("userMessage") => item["content"].is_array(),
+        // Reading a mutable saved file twice could produce two different images.
+        Some("imageGeneration") => item["savedPath"].is_null(),
+        Some(_) => true,
+        None => false,
+    }
 }
 
 fn delivered_submission_id(item: &Value) -> Option<&str> {

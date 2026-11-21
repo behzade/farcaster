@@ -148,7 +148,7 @@ struct RuntimeOwner {
     title_generation: SessionTitleGeneration,
     transcript_changed_from: Option<usize>,
     event_tx: SessionEventSender,
-    history_tx: mpsc::Sender<HistoryResult>,
+    history_tx: mpsc::Sender<HistoryUpdate>,
     history_generation: u64,
     history_selection_generation: Option<u64>,
     document_refresh_generation: Option<u64>,
@@ -203,6 +203,14 @@ struct PendingQueuedPrompt {
 enum HistoryLoadKind {
     Selection,
     DocumentRefresh,
+}
+
+enum HistoryUpdate {
+    Tail {
+        generation: u64,
+        page: agents::HistoryPage,
+    },
+    Finished(HistoryResult),
 }
 
 struct HistoryResult {

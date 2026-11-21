@@ -4,17 +4,68 @@ use std::{
     sync::Arc,
 };
 
-use gpui::{
-    Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render, Styled as _,
-    WeakEntity,
-};
+use gpui::{Context, IntoElement as _, Render, WeakEntity};
 
 use super::super::{FarcasterApp, transcript};
-use crate::utility::persistent_vec::PersistentVec;
+use crate::{
+    agents::{HistoryCoverage, HistoryPage},
+    conversation::{ConversationState, TranscriptKind},
+    reviews::presentation::TranscriptPresentation,
+    utility::persistent_vec::PersistentVec,
+};
 
 #[path = "transcript_reading.rs"]
 mod reading;
 use reading::{ReadingAnchor, ReadingState};
+
+struct HistoryTail {
+    list: transcript::list::TranscriptListState,
+    rows: Arc<PersistentVec<transcript::TranscriptRow>>,
+    presentation: Arc<TranscriptPresentation>,
+    markdown: transcript::markdown::TranscriptMarkdownCache,
+}
+
+impl HistoryTail {
+    fn new(page: &HistoryPage<ConversationState>, project: &Path) -> Option<Self> {
+        let source = &page.content;
+        let presentation = Arc::new(TranscriptPresentation::from(source));
+        let projected = transcript::project_presentation_rows(&presentation);
+        if projected.is_empty()
+            || projected
+                .iter()
+                .any(|row| matches!(row, transcript::TranscriptRow::Review { .. }))
+            || source
+                .items
+                .iter()
+                .any(|item| crate::reviews::artifact::hydration_result(item, project).is_some())
+        {
+            return None;
+        }
+        let first_safe_row = match page.coverage {
+            HistoryCoverage::Complete => 0,
+            HistoryCoverage::Suffix => {
+                // The first user separates these rows from older activity and reviews.
+                let first_user = source
+                    .items
+                    .position(|item| item.kind == TranscriptKind::User)?;
+                projected.position(|row| row.key() == first_user)? + 1
+            }
+        };
+        let list = transcript::list::TranscriptListState::new_history_tail(first_safe_row);
+        let mut rows = Arc::default();
+        transcript::TranscriptRowUpdate::replace(projected).apply(
+            &list,
+            &mut rows,
+            &presentation.items,
+        );
+        Some(Self {
+            list,
+            rows,
+            presentation,
+            markdown: Default::default(),
+        })
+    }
+}
 
 pub(crate) struct TranscriptView {
     app: WeakEntity<FarcasterApp>,
@@ -30,6 +81,7 @@ pub(crate) struct TranscriptView {
     session: Option<PathBuf>,
     reading: HashMap<PathBuf, ReadingState>,
     pending_reading_anchor: Option<ReadingAnchor>,
+    history_tail: Option<HistoryTail>,
 }
 
 impl TranscriptView {
@@ -51,6 +103,7 @@ impl TranscriptView {
             session: None,
             reading: HashMap::new(),
             pending_reading_anchor: None,
+            history_tail: None,
         }
     }
 
@@ -65,6 +118,7 @@ impl TranscriptView {
             self.reading.insert(session, saved);
         }
         self.list.reset();
+        self.history_tail = None;
         self.pending_reading_anchor = None;
         self.list.scroll_to_end();
         self.rows = Arc::new(PersistentVec::default());
@@ -140,14 +194,31 @@ impl TranscriptView {
         }
         if let Some(anchor) = anchor {
             if let Some(offset) = anchor.resolve(&self.rows, items) {
-                self.list.restore_scroll(offset);
-                self.following = false;
-                self.pending_reading_anchor = Some(anchor);
+                self.restore_reading_anchor(anchor, offset);
             } else {
                 self.jump_to_latest();
             }
         }
         changed
+    }
+
+    fn restore_reading_anchor(&mut self, anchor: ReadingAnchor, offset: gpui::ListOffset) {
+        self.list.restore_scroll(offset);
+        self.following = false;
+        self.pending_reading_anchor = Some(anchor);
+    }
+
+    pub(crate) fn preserve_painted_history(
+        &mut self,
+        items: &PersistentVec<Arc<crate::conversation::TranscriptItem>>,
+    ) {
+        if self.allows_history_tail()
+            && let Some(page) = &self.history_tail
+            && let Some((anchor, offset, unseen)) = page.anchor_before_append(&self.rows, items)
+        {
+            self.restore_reading_anchor(anchor, offset);
+            self.unseen = unseen;
+        }
     }
 
     fn take_pending_reading_anchor(&mut self) -> Option<ReadingAnchor> {
@@ -162,6 +233,34 @@ impl TranscriptView {
         }
         self.last_count = count;
     }
+
+    pub(crate) fn set_history_tail(
+        &mut self,
+        source: Option<&HistoryPage<ConversationState>>,
+        project: &Path,
+    ) {
+        self.history_tail = source.and_then(|source| HistoryTail::new(source, project));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn history_tail_row_count(&self) -> usize {
+        self.history_tail.as_ref().map_or(0, |tail| tail.rows.len())
+    }
+
+    fn allows_history_tail(&self) -> bool {
+        self.following
+            && self.list.is_following_tail()
+            && !self.list.has_pending_scroll()
+            && !self.list.has_pending_restore()
+            && self.pending_reading_anchor.is_none()
+            && self.disclosure_states.is_empty()
+            && self.file_trees.is_empty()
+            && self.session.as_ref().is_some_and(|path| {
+                self.reading
+                    .get(path)
+                    .is_none_or(ReadingState::allows_history_tail)
+            })
+    }
 }
 
 impl Render for TranscriptView {
@@ -175,34 +274,35 @@ impl Render for TranscriptView {
             return gpui::div().into_any_element();
         };
         let app = app.read(cx);
-        if app.lifecycle.pending_session_switch.is_some()
-            || (!app.snapshot.document_ready
-                && app.snapshot.status == "Loading history"
-                && app.snapshot.conversation.items.is_empty())
-        {
-            let theme = crate::app::ui::theme::theme();
-            return gpui::div()
-                .debug_selector(|| "transcript-loading".into())
-                .size_full()
-                .bg(theme.colors.canvas)
-                .child(
-                    crate::app::ui::layout::chat_column()
-                        .py(theme.space.md)
-                        .text_size(theme.type_scale.body_small)
-                        .text_color(theme.colors.muted)
-                        .child("Loading history…"),
-                )
-                .into_any_element();
+        if app.lifecycle.pending_session_switch.is_some() {
+            return transcript::loading_history();
         }
-        let viewport = window.viewport_size();
+        let viewport = transcript::TranscriptViewport {
+            font_scale: self.font_size / crate::app::ui::theme::theme().type_scale.reading,
+            following: self.following,
+            unseen: self.unseen,
+            tail_reserve: transcript::tail_reserve(window.viewport_size().height),
+        };
+        if app.awaiting_history_rows() {
+            if let Some(tail) = &self.history_tail
+                && self.allows_history_tail()
+            {
+                return transcript::render(
+                    &tail.list,
+                    viewport,
+                    tail.rows.clone(),
+                    tail.presentation.clone(),
+                    HashMap::new(),
+                    HashMap::new(),
+                    tail.markdown.clone(),
+                    self.app.clone(),
+                );
+            }
+            return transcript::loading_history();
+        }
         transcript::render(
             &self.list,
-            transcript::TranscriptViewport {
-                font_scale: self.font_size / crate::app::ui::theme::theme().type_scale.reading,
-                following: self.following,
-                unseen: self.unseen,
-                tail_reserve: transcript::tail_reserve(viewport.height),
-            },
+            viewport,
             self.rows.clone(),
             app.snapshot.transcript_presentation(),
             self.disclosure_states.clone(),

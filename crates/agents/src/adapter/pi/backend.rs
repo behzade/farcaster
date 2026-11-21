@@ -164,11 +164,16 @@ impl BackendAdapter for PiAdapter {
     }
 
     fn load_history(&self, path: &Path, _project: &Path) -> Result<LoadedHistory, String> {
-        HISTORY.load(
-            path.to_path_buf(),
-            || FileStamp::read(path),
-            || super::session_files::load_history(path),
-        )
+        cached_history(path, None)
+    }
+    fn load_history_with_preview(
+        &self,
+        _config: &AgentLaunchConfig,
+        path: &Path,
+        _project: &Path,
+        preview: &mut dyn FnMut(crate::HistoryPage),
+    ) -> Result<LoadedHistory, String> {
+        cached_history(path, Some(preview))
     }
     fn discover_sessions(
         &self,
@@ -212,6 +217,18 @@ impl BackendAdapter for PiAdapter {
     fn delete_session(&self, _id: &str, path: &Path) -> Result<Option<PathBuf>, String> {
         Ok(Some(path.to_owned()))
     }
+}
+
+fn cached_history(
+    path: &Path,
+    preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
+) -> Result<LoadedHistory, String> {
+    HISTORY.load_with_preview(
+        path.to_path_buf(),
+        || FileStamp::read(path),
+        preview,
+        |publish| super::session_files::load_history_with_preview(path, publish),
+    )
 }
 
 fn load_configuration(

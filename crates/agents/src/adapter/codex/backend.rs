@@ -192,7 +192,7 @@ impl BackendAdapter for CodexAdapter {
         config: &AgentLaunchConfig,
         path: &Path,
         project: &Path,
-        preview: &mut dyn FnMut(Vec<serde_json::Value>),
+        preview: &mut dyn FnMut(crate::HistoryPage),
     ) -> Result<farcaster_sessions::LoadedHistory, String> {
         super::catalog::load_history_with_config(config, path, project, Some(preview))
             .map(loaded_history)

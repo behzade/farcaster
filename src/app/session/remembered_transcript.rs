@@ -43,6 +43,19 @@ pub(in crate::app) fn stand_in(snapshot: Arc<RuntimeSnapshot>) -> Arc<RuntimeSna
     {
         return snapshot;
     }
+    if let Some(tail) = &snapshot.history_tail {
+        let items = &remembered.conversation.items;
+        let Some(start) = items.len().checked_sub(tail.content.items.len()) else {
+            return snapshot;
+        };
+        if (tail.coverage == crate::agents::HistoryCoverage::Complete && start != 0)
+            || !items
+                .iter_range(start..items.len())
+                .eq(tail.content.items.iter())
+        {
+            return snapshot;
+        }
+    }
     Arc::new(RuntimeSnapshot {
         conversation: remembered.conversation.clone(),
         transcript: remembered.transcript.clone(),

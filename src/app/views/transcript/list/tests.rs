@@ -21,7 +21,11 @@ impl Render for FixedHeightView {
             |_| String::new(),
             move |index, _, _| {
                 rendered.borrow_mut().push(index);
-                div().h(row_height).w_full().into_any_element()
+                div()
+                    .debug_selector(move || format!("fixed-row-{index}"))
+                    .h(row_height)
+                    .w_full()
+                    .into_any_element()
             },
         )
     }
@@ -357,6 +361,29 @@ fn measurement_shrink_fills_the_viewport_in_one_layout(cx: &mut TestAppContext) 
     let rendered = draw_transcript(cx, &state, theme().size(10.0), theme().size(100.0));
 
     assert!(rendered.into_iter().max().unwrap_or_default() >= 9);
+}
+
+#[gpui::test]
+fn history_tail_rechecks_measured_room_after_resize(cx: &mut TestAppContext) {
+    let state = TranscriptListState::new_history_tail(2);
+    state.splice_with_size_hints(0..0, std::iter::repeat_n(px(200.), 5));
+    let (_, cx) = cx.add_window_view(|_, _| FixedHeightView {
+        state: state.clone(),
+        row_height: px(40.),
+        rendered: Default::default(),
+    });
+    for (height, readable) in [(121., false), (120., true), (121., false)] {
+        cx.simulate_resize(size(px(400.), px(height)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(cx.debug_bounds("transcript-loading").is_none(), readable);
+        assert_eq!(cx.debug_bounds("fixed-row-4").is_some(), readable);
+        assert!(cx.debug_bounds("fixed-row-1").is_none());
+        if readable {
+            wheel(cx, px(50.));
+            assert!(!state.has_pending_scroll());
+            assert!(state.is_following_tail());
+        }
+    }
 }
 
 #[gpui::test]

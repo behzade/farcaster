@@ -7,7 +7,7 @@ while IFS= read -r request; do
             result=$(printf '{"userAgent":"fixture","codexHome":"%s","platformFamily":"unix","platformOs":"macos"}' "$CODEX_HOME") ;;
         *'"method":"thread/loaded/list"'*) result='{"data":[]}' ;;
         *'"method":"config/read"'*) result='{"config":{}}' ;;
-        *'"method":"thread/turns/list"'*) touch "$CODEX_HOME/requested-preview"; result='{"data":[]}' ;;
+        *'"method":"thread/turns/list"'*) touch "$CODEX_HOME/requested-preview"; result=$(cat "$CODEX_HOME/recent-turns.json") ;;
         *'"method":"thread/read"'*'"threadId":"source"'*) result='{"thread":{"turns":[{"items":[{"type":"agentMessage","text":"Previous session"}]}]}}' ;;
         *'"method":"thread/read"'*)
             touch "$CODEX_HOME/reading-history"

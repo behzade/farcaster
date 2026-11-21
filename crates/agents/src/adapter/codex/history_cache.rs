@@ -90,17 +90,60 @@ fn state_database(home: &Path) -> Option<Connection> {
     .ok()
 }
 
-pub(super) fn is_paginated(home: &Path, thread: &str) -> bool {
-    state_database(home)
-        .and_then(|db| {
-            db.query_row(
-                "SELECT history_mode = 'paginated' FROM threads WHERE id = ?1",
-                [thread],
-                |row| row.get(0),
-            )
-            .ok()
-        })
-        .unwrap_or(false)
+// The full-history cache tracks all WAL writes. For a provisional page, use
+// Codex's per-thread cursor so activity in another thread cannot hide the page.
+pub(super) fn paginated_revision(home: &Path, thread: &str) -> Option<impl Eq> {
+    // A newer app-server may leave these older files in place after migration.
+    for entry in std::fs::read_dir(home).ok()? {
+        let name = entry.ok()?.file_name();
+        let Some(stem) = name.to_str().and_then(|name| name.strip_suffix(".sqlite")) else {
+            continue;
+        };
+        for (prefix, supported) in [("state_", 5), ("thread_history_", 1)] {
+            if stem
+                .strip_prefix(prefix)
+                .and_then(|v| v.parse::<u32>().ok())
+                .is_some_and(|v| v > supported)
+            {
+                return None;
+            }
+        }
+    }
+    let rollout: String = state_database(home)?
+        .query_row(
+            "SELECT rollout_path FROM threads WHERE id = ?1 AND history_mode = 'paginated'",
+            [thread],
+            |row| row.get(0),
+        )
+        .ok()?;
+    let rollout = PathBuf::from(rollout);
+    if !rollout.is_absolute() {
+        return None;
+    }
+    let rollout = rollout.canonicalize().ok()?;
+    let metadata = rollout.metadata().ok()?;
+    let database = home.join("thread_history_1.sqlite").canonicalize().ok()?;
+    let db = Connection::open_with_flags(&database, OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
+    db.busy_timeout(std::time::Duration::ZERO).ok()?;
+    let (offset, ordinal): (u64, u64) = db
+        .query_row(
+            "SELECT next_rollout_byte_offset, next_rollout_ordinal
+         FROM thread_history_projection_state WHERE thread_id = ?1
+         AND EXISTS (SELECT 1 FROM thread_turns WHERE thread_id = ?1)",
+            [thread],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .ok()?;
+    if !metadata.is_file() || offset != metadata.len() {
+        return None;
+    }
+    Some((
+        rollout,
+        metadata.modified().ok()?,
+        database,
+        offset,
+        ordinal,
+    ))
 }
 
 fn revision(home: &Path, thread: &str) -> Option<Revision> {

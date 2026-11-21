@@ -248,7 +248,7 @@ pub(super) trait BackendAdapter: Sync {
         config: &AgentLaunchConfig,
         path: &Path,
         project: &Path,
-        _preview: &mut dyn FnMut(Vec<serde_json::Value>),
+        _preview: &mut dyn FnMut(crate::HistoryPage),
     ) -> Result<LoadedHistory, String> {
         self.load_history_for_profile(config, path, project)
     }

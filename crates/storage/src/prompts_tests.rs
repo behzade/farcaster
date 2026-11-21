@@ -379,6 +379,7 @@ fn every_delivery_path_preserves_expanded_prompt_after_restart_and_repeated_comp
             path.complete(&mut store, id, &session)?;
             drop(store);
             let mut store = StateStore::open_at(&database)?;
+            assert!(!store.can_display_history_tail(&session)?);
             let presentations = store.prompt_presentations(&session)?;
             assert_eq!(
                 presentations,

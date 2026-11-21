@@ -182,6 +182,9 @@ fn refresh_history_preserves_config_and_selects_profile_from_locator() {
         let result = receiver
             .recv_timeout(std::time::Duration::from_secs(5))
             .expect("history worker result");
+        let HistoryUpdate::Finished(result) = result else {
+            panic!("expected complete Claude history")
+        };
         assert_eq!(result.path, locator);
         assert_eq!(result.project, temp.path());
         let history = result
@@ -656,6 +659,16 @@ fn reselect_keeps_in_flight_history_and_displays_load_failure() {
     assert_eq!(owner.session_id.as_deref(), Some("native-id"));
     owner.history_generation = 2;
     owner.history_selection_generation = Some(2);
+    let tail = |generation, text| HistoryUpdate::Tail {
+        generation,
+        page: agents::HistoryPage {
+            content: vec![json!({"role":"assistant","content":[{"type":"text","text":text}]})],
+            coverage: agents::HistoryCoverage::Complete,
+        },
+    };
+    owner.apply_history_update(tail(2, "recent answer"));
+    owner.apply_history_update(tail(1, "old session"));
+    owner.apply_history_update(tail(2, "later revision of the same session"));
     owner.apply_command(RuntimeCommand::SelectSession {
         path: path.clone(),
         harness: Backend::Codex,
@@ -666,6 +679,14 @@ fn reselect_keeps_in_flight_history_and_displays_load_failure() {
     });
     assert_eq!(owner.history_generation, 2);
     assert!(owner.snapshot.conversation.items.is_empty());
+    assert_eq!(
+        owner.snapshot.history_tail.as_ref().unwrap().content.items[0].text,
+        "recent answer"
+    );
+    assert_eq!(
+        owner.snapshot.history_tail.as_ref().unwrap().coverage,
+        agents::HistoryCoverage::Complete
+    );
     owner.apply_history(HistoryResult {
         generation: 2,
         path,
@@ -673,6 +694,8 @@ fn reselect_keeps_in_flight_history_and_displays_load_failure() {
         kind: HistoryLoadKind::Selection,
         result: Err("fixture error".into()),
     });
+    owner.apply_history_update(tail(2, "late page"));
+    assert!(owner.snapshot.history_tail.is_none());
     assert!(!owner.snapshot.document_ready);
     assert_eq!(owner.snapshot.status, "Could not load history");
     assert!(

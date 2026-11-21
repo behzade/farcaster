@@ -343,9 +343,34 @@ impl FarcasterApp {
             dirty.root = true;
         }
         let previous_items = self.snapshot.transcript_presentation().items.clone();
+        let tail_changed = match (&self.snapshot.history_tail, &snapshot.history_tail) {
+            (Some(previous), Some(next)) => !Arc::ptr_eq(previous, next),
+            (None, None) => false,
+            _ => true,
+        };
+        let replacing_stand_in = self.snapshot.status == "Loading history"
+            && self.snapshot.selected_session == snapshot.selected_session
+            && !self.snapshot.conversation.items.is_empty()
+            && (snapshot.status != "Loading history" || snapshot.conversation.items.is_empty());
+        let history_handoff = !session_changed
+            && self.awaiting_history_rows()
+            && self.snapshot.history_tail.is_some()
+            && snapshot.document_ready
+            && snapshot.status == "Ready"
+            && self.snapshot.selected_session == snapshot.selected_session
+            && self.snapshot.project == snapshot.project
+            && self.snapshot.harness == snapshot.harness
+            && self.snapshot.profile_id == snapshot.profile_id;
         let transcript_changed = self.views.transcript.update(cx, |transcript, _| {
-            transcript.select_session(snapshot.selected_session.as_deref(), &previous_items)
+            if replacing_stand_in {
+                // Save the complete stand-in's reading position at the handoff.
+                transcript.reset(&previous_items);
+            }
+            let changed =
+                transcript.select_session(snapshot.selected_session.as_deref(), &previous_items);
+            changed || replacing_stand_in
         });
+        dirty.transcript |= tail_changed;
         let row_update = if transcript_changed || (session_changed && !transcript_preselected) {
             let _timing = crate::app::infrastructure::performance::OperationTiming::new(
                 crate::app::infrastructure::performance::OperationKind::FullProjection,
@@ -399,6 +424,21 @@ impl FarcasterApp {
             self.refresh_configuration_picker(cx);
         }
         dirty.transcript |= self.apply_transcript_rows(row_update, &previous_items, cx);
+        if tail_changed || transcript_changed || session_changed {
+            self.views.transcript.update(cx, |transcript, _| {
+                if history_handoff {
+                    transcript
+                        .preserve_painted_history(&self.snapshot.transcript_presentation().items);
+                }
+                transcript.set_history_tail(
+                    self.snapshot
+                        .history_tail
+                        .as_deref()
+                        .filter(|_| self.snapshot.conversation.items.is_empty()),
+                    &self.snapshot.project,
+                );
+            });
+        }
         self.sync_restored_dialog();
         self.sync_composer_history();
         dirty.rail |= self.reconcile_submitted_drafts(cx);
@@ -934,7 +974,10 @@ impl FarcasterApp {
                 self.reset_session_ui(generation, preserve_submission, cx);
             }
             RuntimeEvent::HistoryReset { generation } if generation == self.runtime_generation => {
-                self.reset_transcript_ui(cx);
+                // Keep the displayed tail or stand-in until the replacement snapshot.
+                if self.snapshot.status != "Loading history" {
+                    self.reset_transcript_ui(cx);
+                }
             }
             RuntimeEvent::Sessions {
                 generation,

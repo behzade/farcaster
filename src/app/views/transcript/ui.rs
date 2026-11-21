@@ -8,6 +8,12 @@ use crate::conversation::{TranscriptItem, TranscriptKind};
 use crate::utility::persistent_vec::PersistentVec;
 
 impl FarcasterApp {
+    pub(in crate::app) fn awaiting_history_rows(&self) -> bool {
+        !self.snapshot.document_ready
+            && self.snapshot.status == "Loading history"
+            && self.snapshot.conversation.items.is_empty()
+    }
+
     pub(in crate::app) fn adjust_transcript_font_size(
         &mut self,
         delta: f32,
@@ -53,6 +59,9 @@ impl FarcasterApp {
         path: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
+        if self.awaiting_history_rows() {
+            return;
+        }
         let expanded = self.settings.expand_transcript_folders;
         self.views.transcript.update(cx, |transcript, cx| {
             transcript.list.pause_following_tail();
@@ -116,6 +125,9 @@ impl FarcasterApp {
         expanded: bool,
         cx: &mut Context<Self>,
     ) {
+        if self.awaiting_history_rows() {
+            return;
+        }
         self.views.transcript.update(cx, |transcript, cx| {
             if expanded {
                 transcript.list.pause_following_tail();

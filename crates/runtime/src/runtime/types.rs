@@ -351,6 +351,8 @@ pub struct RuntimeSnapshot {
     pub pending_initial_service_tier: bool,
     pub selected_session: Option<PathBuf>,
     pub conversation: Arc<ConversationState>,
+    /// Complete recent messages for display while the selected history is loading.
+    pub history_tail: Option<Arc<crate::agents::HistoryPage<ConversationState>>>,
     /// Adds locally saved prompts and cancellation IDs to the backend queue for display.
     pub prompt_queue: Option<Arc<crate::conversation::QueueState>>,
     pub models: Vec<Model>,

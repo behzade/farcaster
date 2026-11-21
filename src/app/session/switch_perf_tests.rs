@@ -484,15 +484,38 @@ fn hovering_a_cursor_session_does_not_start_its_profile(cx: &mut gpui::TestAppCo
 #[cfg(unix)]
 #[gpui::test]
 fn cold_codex_selection_paints_rows_at_their_final_positions(cx: &mut gpui::TestAppContext) {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    const PROFILE: &str = "11111111-1111-4111-8111-111111111111";
-    let executor = cx.background_executor.clone();
-    crate::app::test_support::with_runtime_app(
+    cold_codex_frame_check(
+        cx,
         concat!(
             module_path!(),
             "::cold_codex_selection_paints_rows_at_their_final_positions"
         ),
+        30,
+    );
+}
+
+#[cfg(unix)]
+#[gpui::test]
+fn cold_codex_short_chat_paints_rows_at_their_final_positions(cx: &mut gpui::TestAppContext) {
+    cold_codex_frame_check(
+        cx,
+        concat!(
+            module_path!(),
+            "::cold_codex_short_chat_paints_rows_at_their_final_positions"
+        ),
+        1,
+    );
+}
+
+#[cfg(unix)]
+fn cold_codex_frame_check(cx: &mut gpui::TestAppContext, name: &str, turn_count: usize) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    const PROFILE: &str = "11111111-1111-4111-8111-111111111111";
+    let executor = cx.background_executor.clone();
+    let complete = turn_count <= 8;
+    crate::app::test_support::with_runtime_app(
+        name,
         cx,
         |project| {
             // The fixture uses a fixed executable; keep the user's login shell out of the measurement.
@@ -507,10 +530,17 @@ fn cold_codex_selection_paints_rows_at_their_final_positions(cx: &mut gpui::Test
             )
             .unwrap();
             fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
-            let turns: Vec<_> = (0..30).map(|n| serde_json::json!({"items":[
-                {"type":"userMessage","content":[{"type":"text","text":format!("Question {n}")}]},
-                {"type":"agentMessage","text":format!("**Answer {n}**\n\n{}", "Wrapped words in this answer. ".repeat(20))}
+            let turns: Vec<_> = (0..turn_count).map(|n| serde_json::json!({"id":format!("turn-{n}"),"itemsView":"full","status":"completed","items":[
+                {"type":"userMessage","id":format!("q-{n}"),"content":[{"type":"text","text":format!("Question {n}")}]},
+                {"type":"agentMessage","id":format!("a-{n}"),"text":format!("**Answer {n}**\n\n{}", "Wrapped words in this answer. ".repeat(20))}
             ]})).collect();
+            let page: Vec<_> = turns.iter().rev().take(8).collect();
+            fs::write(
+                project.join("recent-turns.json"),
+                serde_json::json!({"data":page,"nextCursor":(!complete).then_some("older")})
+                    .to_string(),
+            )
+            .unwrap();
             fs::write(
                 project.join("full-thread.json"),
                 serde_json::json!({"thread":{"turns":turns}}).to_string(),
@@ -518,7 +548,12 @@ fn cold_codex_selection_paints_rows_at_their_final_positions(cx: &mut gpui::Test
             .unwrap();
             let rollout = project.join("rollout.jsonl");
             fs::write(&rollout, "").unwrap();
-            fs::write(project.join("thread_history_1.sqlite"), "").unwrap();
+            let history_db =
+                rusqlite::Connection::open(project.join("thread_history_1.sqlite")).unwrap();
+            history_db.execute_batch("CREATE TABLE thread_turns(thread_id TEXT);
+                INSERT INTO thread_turns VALUES ('thread');
+                CREATE TABLE thread_history_projection_state(thread_id TEXT PRIMARY KEY, next_rollout_byte_offset INTEGER, next_rollout_ordinal INTEGER);
+                INSERT INTO thread_history_projection_state VALUES ('thread',0,30);").unwrap();
             let db = rusqlite::Connection::open(project.join("state_5.sqlite")).unwrap();
             db.execute_batch("CREATE TABLE threads(id TEXT PRIMARY KEY, rollout_path TEXT, history_mode TEXT, model_provider TEXT, model TEXT, reasoning_effort TEXT)").unwrap();
             db.execute(
@@ -605,27 +640,78 @@ fn cold_codex_selection_paints_rows_at_their_final_positions(cx: &mut gpui::Test
             assert!(cx.debug_bounds("transcript-loading").is_some());
             assert!(cx.debug_bounds("transcript-row-0").is_none());
             let deadline = started + SWITCH_TIMEOUT;
+            let short = ["transcript-row-0", "transcript-row-1"];
+            let partial = [
+                "transcript-row-10",
+                "transcript-row-11",
+                "transcript-row-12",
+                "transcript-row-13",
+                "transcript-row-14",
+                "transcript-row-15",
+            ];
+            let full = [
+                "transcript-row-54",
+                "transcript-row-55",
+                "transcript-row-56",
+                "transcript-row-57",
+                "transcript-row-58",
+                "transcript-row-59",
+            ];
+            let partial_rows = if complete {
+                short.as_slice()
+            } else {
+                partial.as_slice()
+            };
+            let full_rows = if complete {
+                short.as_slice()
+            } else {
+                full.as_slice()
+            };
+            let mut frames = Vec::new();
             loop {
                 cx.run_until_parked();
                 cx.update(|window, cx| {
                     app.update(cx, |app, cx| app.drain_runtime(cx));
                     window.draw(cx).clear(cx);
                 });
-                assert!(cx.debug_bounds("transcript-loading").is_some());
-                assert!(cx.debug_bounds("transcript-row-0").is_none());
-                if project.join("reading-history").exists() {
+                if !complete {
+                    assert!(cx.debug_bounds("transcript-row-0").is_none());
+                }
+                let rows: Vec<_> = partial_rows
+                    .iter()
+                    .map(|key| cx.debug_bounds(key))
+                    .collect();
+                if rows.iter().any(Option::is_some) {
+                    cx.update(|_, cx| {
+                        let snapshot = &app.read(cx).snapshot;
+                        assert!(!snapshot.document_ready);
+                        let items = &snapshot.history_tail.as_ref().unwrap().content.items;
+                        assert_eq!(items.len(), turn_count.min(8) * 2);
+                        assert_eq!(
+                            items[items.len() - 2].text,
+                            format!("Question {}", turn_count - 1)
+                        );
+                        assert!(
+                            items[items.len() - 1]
+                                .text
+                                .contains(&format!("Answer {}", turn_count - 1))
+                        );
+                    });
+                    frames.push(rows);
+                }
+                if !frames.is_empty() && project.join("reading-history").exists() {
                     break;
                 }
-                assert!(Instant::now() < deadline, "history read did not start");
+                assert!(
+                    Instant::now() < deadline,
+                    "no readable messages while full history was blocked"
+                );
                 thread::sleep(SWITCH_POLL);
             }
-            assert!(!project.join("requested-preview").exists());
-            assert!(cx.debug_bounds("transcript-loading").is_some());
-            assert!(cx.debug_bounds("transcript-row-0").is_none());
+            let first_readable = started.elapsed();
+            assert!(project.join("requested-preview").exists());
+            assert!(cx.debug_bounds("transcript-loading").is_none());
             fs::write(project.join("release-full-read"), "").unwrap();
-            // Record every draw from release through settled layout. Include visibility
-            // as well as geometry so an early top-of-document frame cannot pass.
-            let mut frames = Vec::new();
             let mut ready_frames = 0;
             while ready_frames < 8 {
                 assert!(Instant::now() < deadline, "cold history did not settle");
@@ -637,27 +723,17 @@ fn cold_codex_selection_paints_rows_at_their_final_positions(cx: &mut gpui::Test
                     snapshot.selected_session.as_ref() == Some(&path) && snapshot.document_ready
                 });
                 assert!(
-                    cx.debug_bounds("transcript-row-0").is_none(),
+                    complete || cx.debug_bounds("transcript-row-0").is_none(),
                     "painted the top of a long history"
                 );
-                let rows = [
-                    "transcript-row-54",
-                    "transcript-row-55",
-                    "transcript-row-56",
-                    "transcript-row-57",
-                    "transcript-row-58",
-                    "transcript-row-59",
-                ]
-                .map(|key| cx.debug_bounds(key));
-                if ready || rows.iter().any(Option::is_some) {
-                    frames.push(rows);
-                }
+                let selectors = if ready { full_rows } else { partial_rows };
+                frames.push(selectors.iter().map(|key| cx.debug_bounds(key)).collect());
                 ready_frames += usize::from(ready);
                 thread::sleep(SWITCH_POLL);
             }
             let settled = frames.last().expect("visible history");
             assert!(
-                settled.iter().flatten().count() >= 2 && settled[5].is_some(),
+                settled.iter().flatten().count() >= 2 && settled.last().unwrap().is_some(),
                 "expected visible tail rows, got {settled:?}"
             );
             assert!(cx.debug_bounds("transcript-loading").is_none());
@@ -665,10 +741,158 @@ fn cold_codex_selection_paints_rows_at_their_final_positions(cx: &mut gpui::Test
                 assert_eq!(frame, settled, "a transcript row shifted during cold open");
             }
             eprintln!(
-                "Cold open: {} content frames, {} visible tail rows, zero pixel displacement",
+                "Cold open: first readable rows in {first_readable:?} with full history blocked; {} frames, {} visible tail rows, zero pixel displacement",
                 frames.len(),
                 settled.iter().flatten().count()
             );
+        },
+    );
+}
+
+/// Run against an existing paginated chat without resuming it or sending a prompt.
+#[gpui::test]
+#[ignore = "requires FARCASTER_TEST_CODEX_THREAD, FARCASTER_TEST_CODEX_HOME and FARCASTER_TEST_CODEX_PROGRAM"]
+fn cold_saved_codex_chat_draws_recent_rows_before_full_read(cx: &mut gpui::TestAppContext) {
+    const PROFILE: &str = "11111111-1111-4111-8111-111111111111";
+    let thread = std::env::var("FARCASTER_TEST_CODEX_THREAD").unwrap();
+    let full_only = std::env::var_os("FARCASTER_TEST_FULL_HISTORY_ONLY").is_some();
+    let executor = cx.background_executor.clone();
+    crate::app::test_support::with_runtime_app(
+        concat!(
+            module_path!(),
+            "::cold_saved_codex_chat_draws_recent_rows_before_full_read"
+        ),
+        cx,
+        |project| {
+            let mut environment = vec![("PATH".into(), "/usr/bin:/bin".into())];
+            if full_only {
+                // A SQLite-home override uses the full-read-only path on the same data.
+                environment.push((
+                    "CODEX_SQLITE_HOME".into(),
+                    std::env::var_os("FARCASTER_TEST_CODEX_HOME").unwrap(),
+                ));
+            }
+            crate::agents::set_test_project_environment(project, environment);
+            let config = AgentLaunchConfig::default();
+            config
+                .profiles
+                .replace(vec![crate::agents::HarnessProfile {
+                    id: PROFILE.into(),
+                    name: "Local history".into(),
+                    backend: Backend::Codex,
+                    executable: std::env::var_os("FARCASTER_TEST_CODEX_PROGRAM")
+                        .unwrap()
+                        .into(),
+                    data_directory: Some(
+                        std::env::var_os("FARCASTER_TEST_CODEX_HOME")
+                            .unwrap()
+                            .into(),
+                    ),
+                }])
+                .unwrap();
+            RuntimeHandle::spawn(
+                project.into(),
+                crate::sessions::DraftSession::with_id(None, "start".into(), project.into()),
+                None,
+                config,
+                crate::app::runtime_host::host(executor.clone()),
+            )
+        },
+        |cx, app, project| {
+            let project = project.canonicalize().unwrap();
+            trust::apply(&project, TrustChoice::TrustProject).unwrap();
+            let path = project
+                .join("profiles")
+                .join(PROFILE)
+                .join(Backend::Codex.as_str())
+                .join(&thread);
+            let row = crate::sessions::SessionSummary::from_cached_for_harness(
+                thread.clone(),
+                Backend::Codex,
+                path.clone(),
+                project,
+                "Saved chat".into(),
+                String::new(),
+                String::new(),
+                None,
+                std::time::UNIX_EPOCH,
+                1,
+                Default::default(),
+                false,
+                false,
+                String::new(),
+            )
+            .with_app_session_id(17);
+            let started = Instant::now();
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let key = row.catalog_key();
+                    app.sessions.all = vec![row.clone()].into();
+                    app.sessions.visible = vec![row].into();
+                    app.select_rail_session(key, window, cx);
+                })
+            });
+            let mut first = None;
+            let mut page_rows = 0;
+            let mut selectors = std::collections::HashMap::new();
+            loop {
+                assert!(
+                    started.elapsed() < SWITCH_TIMEOUT,
+                    "live history did not arrive"
+                );
+                cx.run_until_parked();
+                let (ready, count) = cx.update(|window, cx| {
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                    window.draw(cx).clear(cx);
+                    let app = app.read(cx);
+                    let snapshot = &app.snapshot;
+                    if snapshot.selected_session.as_ref() != Some(&path) {
+                        return (false, 0);
+                    }
+                    if snapshot.document_ready {
+                        return (true, app.views.transcript.read(cx).rows.len());
+                    }
+                    (
+                        false,
+                        app.views.transcript.read(cx).history_tail_row_count(),
+                    )
+                });
+                if !ready {
+                    page_rows = page_rows.max(count);
+                }
+                if count > 0 {
+                    let bounds: Vec<_> = (0..count.min(24))
+                        .map(|offset| {
+                            let index = count - 1 - offset;
+                            let key = selectors.entry(index).or_insert_with(|| {
+                                Box::leak(format!("transcript-row-{index}").into_boxed_str())
+                                    as &'static str
+                            });
+                            cx.debug_bounds(key)
+                        })
+                        .take_while(Option::is_some)
+                        .flatten()
+                        .collect();
+                    if !bounds.is_empty() {
+                        let (when, initial) = first.get_or_insert_with(|| {
+                            assert_eq!(ready, full_only, "unexpected first paint ({page_rows} provisional rows, {count} final rows)");
+                            (started.elapsed(), bounds.clone())
+                        });
+                        assert_eq!(initial, &bounds, "visible tail shifted on actual history");
+                        if ready {
+                            eprintln!(
+                                "Real cold open: first readable {when:?}, full {:?}, {} visible rows at identical bounds",
+                                started.elapsed(),
+                                bounds.len()
+                            );
+                            break;
+                        }
+                    } else {
+                        assert!(!ready, "full transcript has no visible tail");
+                    }
+                }
+                thread::sleep(SWITCH_POLL);
+            }
         },
     );
 }

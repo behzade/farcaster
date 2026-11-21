@@ -132,6 +132,17 @@ pub(crate) enum TranscriptRow {
 }
 
 impl TranscriptRow {
+    pub(crate) fn at_item(mut self, item: usize) -> Self {
+        match &mut self {
+            Self::Item { index, .. }
+            | Self::Review { index, .. }
+            | Self::MessageChunk { index, .. }
+            | Self::StreamChunk { index, .. } => *index = item,
+            Self::ActivityGroup { start, .. } => *start = item,
+        }
+        self
+    }
+
     pub(crate) fn key(&self) -> usize {
         self.item_start()
     }

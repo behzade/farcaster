@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use super::TranscriptView;
+use super::{HistoryTail, TranscriptView};
 use crate::{
     app::{ui::change_tree::ChangeTreeState, views::transcript::TranscriptRow},
     conversation::TranscriptItem,
@@ -92,6 +92,10 @@ fn text_start(row: TranscriptRow, items: &Items) -> usize {
 }
 
 impl ReadingState {
+    pub(super) fn allows_history_tail(&self) -> bool {
+        self.anchor.is_none() && self.disclosures.is_empty() && self.file_trees.is_empty()
+    }
+
     pub(super) fn capture(view: &mut TranscriptView, items: &Items) -> Self {
         let anchor = view
             .take_pending_reading_anchor()
@@ -158,9 +162,13 @@ impl ReadingAnchor {
         }
         let offset = view.list.logical_scroll_top();
         let row = *view.rows.get(offset.item_ix)?;
+        Self::at(row, offset.offset_in_item, items)
+    }
+
+    fn at(row: TranscriptRow, offset: gpui::Pixels, items: &Items) -> Option<Self> {
         Some(Self {
             row,
-            offset: offset.offset_in_item,
+            offset,
             source: SourceItem::new(row.key(), items)?,
             text_start: text_start(row, items),
         })
@@ -195,6 +203,73 @@ impl ReadingAnchor {
             },
         })
     }
+}
+
+impl HistoryTail {
+    pub(super) fn anchor_before_append(
+        &self,
+        rows: &PersistentVec<TranscriptRow>,
+        items: &Items,
+    ) -> Option<(ReadingAnchor, gpui::ListOffset, usize)> {
+        let top = self.list.painted_history_top()?;
+        let page = &self.presentation.items;
+        let start = unique_page_before_append(items, page)?;
+        let row = self.rows.get(top.item_ix)?;
+        let expected = row.at_item(start + row.key());
+        let item_ix = rows.position(|row| row.same_position(&expected))?;
+        let actual = rows[item_ix];
+        if let (
+            TranscriptRow::ActivityGroup { len: before, .. },
+            TranscriptRow::ActivityGroup { len: after, .. },
+        ) = (expected, actual)
+            && before != after
+        {
+            return None;
+        }
+        let end = start + page.len();
+        let unseen = rows.iter().filter(|row| row.key() >= end).count();
+        Some((
+            ReadingAnchor::at(actual, top.offset_in_item, items)?,
+            gpui::ListOffset { item_ix, ..top },
+            unseen,
+        ))
+    }
+}
+
+fn unique_page_before_append(items: &Items, page: &Items) -> Option<usize> {
+    let last_start = items.len().checked_sub(page.len())?;
+    if page.is_empty()
+        || last_start == 0
+        || items.iter_range(last_start..items.len()).eq(page.iter())
+    {
+        return None;
+    }
+    // Match whole items, including tools and attachments. A prefix table keeps
+    // repeated turns linear and lets us detect overlapping copies of the page.
+    let mut prefix = vec![0; page.len()];
+    let mut matched = 0;
+    for i in 1..page.len() {
+        while matched > 0 && page[matched] != page[i] {
+            matched = prefix[matched - 1];
+        }
+        matched += usize::from(page[matched] == page[i]);
+        prefix[i] = matched;
+    }
+    matched = 0;
+    let mut start = None;
+    for (index, item) in items.iter().enumerate() {
+        while matched > 0 && &page[matched] != item {
+            matched = prefix[matched - 1];
+        }
+        matched += usize::from(&page[matched] == item);
+        if matched == page.len() {
+            if start.replace(index + 1 - matched).is_some() {
+                return None;
+            }
+            matched = prefix[matched - 1];
+        }
+    }
+    start
 }
 
 #[cfg(test)]

@@ -379,6 +379,30 @@ impl StateStore {
             .collect()
     }
 
+    /// Displaying a page on its own is safe when full-history projection cannot
+    /// append a local delivery or substitute a stored prompt presentation.
+    pub fn can_display_history_tail(&self, session: &Path) -> Result<bool, String> {
+        let locator = crate::sessions::normalize_session_path(session);
+        self.connection.query_row(
+            "SELECT NOT EXISTS (
+                SELECT 1 FROM session_events e JOIN sessions s ON s.id=e.session_id
+                WHERE s.locator=?1 AND (
+                    json_extract(e.body,'$.type')='prompt_presentation' OR (
+                        json_extract(e.body,'$.type')='accepted_prompt'
+                        AND json_extract(e.body,'$.deliveryTracked')=1
+                        AND COALESCE(json_extract(e.body,'$.deliveryStatus'),'accepted')='accepted'
+                        AND NOT EXISTS (
+                            SELECT 1 FROM session_events r WHERE r.session_id=e.session_id
+                            AND json_extract(r.body,'$.type') IN ('prompt_delivery_receipt','prompt_delivery_resolution')
+                            AND json_extract(r.body,'$.submissionId')=json_extract(e.body,'$.submissionId')
+                        )
+                    )
+                )
+            )",
+            [locator.to_string_lossy()], |row| row.get(0)
+        ).map_err(|error| format!("check local history presentation: {error}"))
+    }
+
     pub fn accepted_prompt_history(
         &self,
         session: &Path,

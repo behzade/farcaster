@@ -54,10 +54,7 @@ impl Shortened {
     }
 }
 
-// Codex can shorten image bytes inside an event's serialized MCP result while
-// retaining the full image in the model-facing output. Read only that thread's
-// rollout, and restore only a unique match for the preserved bytes and length.
-pub(super) fn restore(messages: &mut [Value], thread: &Value, home: &Path, locator: &str) {
+fn shortened_images(messages: &[Value]) -> Vec<(usize, usize, Shortened)> {
     let mut missing = Vec::new();
     for (message_index, message) in messages.iter().enumerate() {
         if message["role"] != "toolResult" {
@@ -76,6 +73,18 @@ pub(super) fn restore(messages: &mut [Value], thread: &Value, home: &Path, locat
             }
         }
     }
+    missing
+}
+
+pub(super) fn needs_restore(messages: &[Value]) -> bool {
+    !shortened_images(messages).is_empty()
+}
+
+// Codex can shorten image bytes inside an event's serialized MCP result while
+// retaining the full image in the model-facing output. Read only that thread's
+// rollout, and restore only a unique match for the preserved bytes and length.
+pub(super) fn restore(messages: &mut [Value], thread: &Value, home: &Path, locator: &str) {
+    let mut missing = shortened_images(messages);
     let Some(shortest) = missing.iter().map(|(_, _, image)| image.length).min() else {
         return;
     };

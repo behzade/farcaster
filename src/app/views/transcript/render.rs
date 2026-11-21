@@ -78,6 +78,21 @@ pub(crate) struct TranscriptViewport {
     pub(crate) tail_reserve: Pixels,
 }
 
+pub(crate) fn loading_history() -> AnyElement {
+    div()
+        .debug_selector(|| "transcript-loading".into())
+        .size_full()
+        .bg(theme().colors.canvas)
+        .child(
+            crate::app::ui::layout::chat_column()
+                .py(theme().space.md)
+                .text_size(theme().type_scale.body_small)
+                .text_color(theme().colors.muted)
+                .child("Loading history…"),
+        )
+        .into_any_element()
+}
+
 pub(super) fn expanded_by_default(
     _row: TranscriptRow,
     _items: &(impl Indexed<Arc<TranscriptItem>> + ?Sized),
@@ -257,6 +272,7 @@ pub(crate) fn render(
     }
 
     let font_scale = viewport.font_scale;
+    let history_tail = list_state.is_history_tail();
     let visual_selection_active = list_state.selected_text().is_some();
     let jump = entity.clone();
     let row_entity = entity;
@@ -323,6 +339,19 @@ pub(crate) fn render(
     );
 
     div()
+        .id(if history_tail {
+            "history-tail"
+        } else {
+            "transcript-document"
+        })
+        .when(history_tail, |root| {
+            root.capture_key_down(|event, window, cx| {
+                if crate::app::ui::primitives::activates_button(event) {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                }
+            })
+        })
         .relative()
         .size_full()
         .when(visual_selection_active, |root| {

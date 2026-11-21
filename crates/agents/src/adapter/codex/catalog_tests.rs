@@ -265,44 +265,67 @@ fn discovery_requests_native_agent_sources_explicitly() {
 }
 
 #[test]
-fn optional_last_turn_never_replaces_the_full_history_read() {
-    let home = tempfile::tempdir().unwrap();
-    let turn = |text: &str| json!({"items":[{"type":"agentMessage","text":text}]});
-    let full = json!({"id":2,"result":{"thread":{"turns":[turn("final")]}}});
-    for (page, expected_preview) in [
+fn preview_stops_at_the_first_incomplete_turn_in_descending_order() {
+    let turn = |id: &str, text: &str| {
+        json!({
+            "id":id, "status":"completed", "itemsView":"full",
+            "items":[{"type":"agentMessage","id":id,"text":text}]
+        })
+    };
+    let older = turn("older", "old answer");
+    let newer = turn("newer", "new answer");
+    let mut abbreviated = turn("middle", "discard the entire turn");
+    abbreviated["items"].as_array_mut().unwrap().push(json!({
+        "id":"image","type":"mcpToolCall","server":"computer","tool":"capture","status":"completed",
+        "result":{"content":[{"type":"text","text":r#"{"content":[{"type":"image","mimeType":"image/png","data":"AQID\u20268 chars truncated\u2026CgsM"}]}"#}]}
+    }));
+    for incomplete in [
+        abbreviated,
+        json!({"id":"middle","itemsView":"summary","status":"completed","items":[]}),
+        json!({"id":"middle","itemsView":"notLoaded","status":"completed","items":[]}),
+        json!({"id":"middle","itemsView":"full","status":"inProgress","items":[]}),
+        json!({"id":"middle","itemsView":"full","status":"completed","items":null}),
+        json!({"id":"middle","itemsView":"full","status":"completed","items":[{"id":"x","type":"agentMessage"}]}),
+        json!({"id":"middle","itemsView":"full","status":"completed","items":[
+            {"id":"x","type":"agentMessage","text":"one"},{"id":"x","type":"agentMessage","text":"two"}
+        ]}),
+    ] {
+        let page = json!({"data":[newer, incomplete, older], "nextCursor":null});
+        let tail = recent_page_messages(&page).unwrap();
+        assert_eq!(tail.coverage, crate::HistoryCoverage::Suffix);
+        assert_eq!(tail.content, history_messages(&newer["items"][0]));
+        let page = json!({"data":[incomplete, older]});
+        assert!(recent_page_messages(&page).unwrap().content.is_empty());
+    }
+    // The authoritative read preserves abbreviated text and normalizes historical
+    // tool states and unrendered user inputs through the same projector.
+    let mut native = turn("middle", "first…12 chars truncated…last");
+    native["items"].as_array_mut().unwrap().extend([
+        json!({"id":"command","type":"commandExecution","status":"inProgress","command":"pwd","aggregatedOutput":null}),
+        json!({"id":"user","type":"userMessage","content":[{"type":"localImage","path":"/image.png"}]}),
+    ]);
+    let expected: Vec<_> = native["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(history_messages)
+        .collect();
+    for (page, coverage) in [
+        (json!({"data":[native]}), crate::HistoryCoverage::Suffix),
         (
-            json!({"id":1,"result":{"data":[turn("recent")],"nextCursor":null}}),
-            true,
+            json!({"data":[native], "nextCursor":"older"}),
+            crate::HistoryCoverage::Suffix,
         ),
         (
-            json!({"id":1,"result":{"data":[],"nextCursor":null}}),
-            false,
-        ),
-        (json!({"id":1,"result":{"data":[{"items":[]}]}}), false),
-        (
-            json!({"id":1,"error":{"code":-32601,"message":"method not found"}}),
-            false,
+            json!({"data":[native], "nextCursor":null}),
+            crate::HistoryCoverage::Complete,
         ),
     ] {
-        let mut connection = CodexConnection::new(
-            std::io::Cursor::new(format!("{page}\n{full}\n")),
-            Vec::new(),
-        );
-        let mut previews = Vec::new();
-        let history = read_history(
-            &mut connection,
-            home.path(),
-            "thread",
-            Some(&mut |messages| previews.push(messages)),
-        )
-        .unwrap();
-        assert_eq!(previews.len(), usize::from(expected_preview));
-        if expected_preview {
-            assert_eq!(previews[0][0]["content"][0]["text"], "recent");
-        }
-        assert_eq!(history.messages.len(), 1);
-        assert_eq!(history.messages[0]["content"][0]["text"], "final");
+        let page = recent_page_messages(&page).unwrap();
+        assert_eq!(page.content, expected);
+        assert_eq!(page.coverage, coverage);
     }
+    assert!(recent_page_messages(&json!({"data":[older, newer, older]})).is_none());
 }
 
 #[test]

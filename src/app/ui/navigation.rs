@@ -317,6 +317,9 @@ impl FarcasterApp {
     }
 
     fn scroll_transcript(&mut self, scroll: Scroll, window: &mut Window, cx: &mut Context<Self>) {
+        if self.lifecycle.pending_session_switch.is_some() || self.awaiting_history_rows() {
+            return;
+        }
         let list = &self.views.transcript.read(cx).list;
         let distance = match scroll {
             Scroll::Start => {

@@ -5,7 +5,14 @@ use gpui::{AnyWindowHandle, Entity, TestAppContext, VisualTestContext};
 use super::{FarcasterApp, runtime::TestRuntime, ui::theme::install_component_theme};
 
 const ISOLATED_APP_TEST: &str = "FARCASTER_OFFLINE_APP_TEST_CHILD";
-const INHERITED_ENV: &[&str] = &["DEBUG", "FARCASTER_PERF_TRACE"];
+const INHERITED_ENV: &[&str] = &[
+    "DEBUG",
+    "FARCASTER_PERF_TRACE",
+    "FARCASTER_TEST_CODEX_PROGRAM",
+    "FARCASTER_TEST_CODEX_HOME",
+    "FARCASTER_TEST_FULL_HISTORY_ONLY",
+    "FARCASTER_TEST_CODEX_THREAD",
+];
 
 pub(crate) fn with_offline_app(
     test_name: &str,
@@ -92,7 +99,7 @@ fn in_isolated_child(test_name: &str) -> bool {
     let sandbox = tempfile::tempdir().expect("isolated app test directory");
     let mut command = Command::new(std::env::current_exe().expect("current test executable"));
     command
-        .args(["--exact", test_name, "--nocapture"])
+        .args(["--exact", test_name, "--nocapture", "--include-ignored"])
         .env_clear()
         .env(ISOLATED_APP_TEST, test_name)
         .env("FARCASTER_DATA_DIR", sandbox.path().join("data"))

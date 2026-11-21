@@ -29,6 +29,124 @@ fn send_snapshot(runtime: &TestRuntime, generation: u64, snapshot: Arc<RuntimeSn
     });
 }
 
+#[test]
+fn transcript_reading_matches_only_a_unique_page_before_new_items() {
+    fn items(messages: &[&str]) -> super::Items {
+        let mut conversation = crate::conversation::ConversationState::default();
+        let messages: Vec<_> = messages
+            .iter()
+            .map(|text| {
+                serde_json::json!({
+                    "role": "user", "content": text
+                })
+            })
+            .collect();
+        conversation.replace_history(&messages);
+        conversation.items
+    }
+    let page = items(&["a", "a"]);
+    for (full, expected) in [
+        (vec!["a", "x", "a", "a", "b"], Some(2)),
+        (vec!["a", "a", "a", "b"], None),
+        (vec!["x", "a", "a"], None),
+        (vec!["a", "x", "a", "b"], None),
+    ] {
+        assert_eq!(
+            super::unique_page_before_append(&items(&full), &page),
+            expected
+        );
+    }
+}
+
+#[gpui::test]
+fn transcript_reading_keeps_painted_rows_when_full_history_has_new_turns(
+    cx: &mut gpui::TestAppContext,
+) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::transcript_reading_keeps_painted_rows_when_full_history_has_new_turns"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            cx.simulate_resize(size(px(1200.), px(650.)));
+            let transcript = cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions.selected_draft = None;
+                    cx.notify();
+                    app.views.transcript.clone()
+                })
+            });
+            for (generation, name, paint) in [(1, "painted", true), (2, "unpainted", false)] {
+                let first = reading_snapshot(project, name, 44);
+                let mut tail = crate::conversation::ConversationState::default();
+                tail.items = first
+                    .conversation
+                    .items
+                    .iter_range(28..44)
+                    .cloned()
+                    .collect();
+                let page = Arc::new(RuntimeSnapshot {
+                    status: "Loading history".into(),
+                    conversation: Default::default(),
+                    history_tail: Some(Arc::new(crate::agents::HistoryPage {
+                        content: tail,
+                        coverage: crate::agents::HistoryCoverage::Suffix,
+                    })),
+                    ..(*first).clone()
+                });
+                send_snapshot(runtime, generation, page);
+                let original_y = paint.then(|| {
+                    cx.update(|_, cx| app.update(cx, |app, cx| app.drain_runtime(cx)));
+                    cx.update(|window, cx| window.draw(cx).clear(cx));
+                    cx.debug_bounds("transcript-row-15")
+                        .expect("painted page end")
+                        .origin
+                        .y
+                });
+                let full = reading_snapshot(project, name, 66);
+                send_snapshot(
+                    runtime,
+                    generation,
+                    Arc::new(RuntimeSnapshot {
+                        document_ready: true,
+                        ..(*full).clone()
+                    }),
+                );
+                cx.update(|_, cx| app.update(cx, |app, cx| app.drain_runtime(cx)));
+                for _ in 0..3 {
+                    cx.update(|window, cx| window.draw(cx).clear(cx));
+                    if let Some(y) = original_y {
+                        assert_eq!(
+                            cx.debug_bounds("transcript-row-43")
+                                .expect("original page end")
+                                .origin
+                                .y,
+                            y
+                        );
+                        assert!(cx.debug_bounds("transcript-row-65").is_none());
+                        cx.update(|_, cx| {
+                            assert!(!transcript.read(cx).following);
+                            assert_eq!(transcript.read(cx).unseen, 22);
+                        });
+                    } else {
+                        assert!(cx.debug_bounds("transcript-row-65").is_some());
+                        cx.update(|_, cx| assert!(transcript.read(cx).following));
+                    }
+                }
+                if paint {
+                    cx.update(|window, cx| {
+                        app.update(cx, |app, cx| app.jump_to_latest(cx));
+                        window.draw(cx).clear(cx);
+                    });
+                    assert!(cx.debug_bounds("transcript-row-65").is_some());
+                    cx.update(|_, cx| assert_eq!(transcript.read(cx).unseen, 0));
+                }
+            }
+        },
+    );
+}
+
 #[gpui::test]
 fn transcript_reading_survives_session_switch_and_loading(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
@@ -38,7 +156,14 @@ fn transcript_reading_survives_session_switch_and_loading(cx: &mut gpui::TestApp
         ),
         cx,
         |cx, app, runtime, project| {
-            let transcript = cx.update(|_, cx| app.read(cx).views.transcript.clone());
+            let transcript = cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    // Injecting snapshots bypasses the sidebar's selection of a saved chat.
+                    app.sessions.selected_draft = None;
+                    cx.notify();
+                    app.views.transcript.clone()
+                })
+            });
             let a = reading_snapshot(project, "a", 60);
             let b = reading_snapshot(project, "b", 60);
             send_snapshot(runtime, 1, a.clone());
@@ -66,6 +191,12 @@ fn transcript_reading_survives_session_switch_and_loading(cx: &mut gpui::TestApp
             // A reset can precede a loading snapshot, then a second history
             // reset before the destination is ready. Neither may overwrite A.
             for (generation, snapshot) in [(2, b), (3, reading_snapshot(project, "a", 64))] {
+                let items = &snapshot.conversation.items;
+                let mut tail = crate::conversation::ConversationState::default();
+                tail.items = items
+                    .iter_range(items.len() - 16..items.len())
+                    .cloned()
+                    .collect();
                 runtime.send_event(RuntimeEvent::SessionReset {
                     generation,
                     preserve_submission: false,
@@ -75,11 +206,22 @@ fn transcript_reading_survives_session_switch_and_loading(cx: &mut gpui::TestApp
                     generation,
                     Arc::new(RuntimeSnapshot {
                         conversation: Default::default(),
+                        history_tail: Some(Arc::new(crate::agents::HistoryPage {
+                            content: tail,
+                            coverage: crate::agents::HistoryCoverage::Suffix,
+                        })),
                         status: "Loading history".into(),
                         ..(*snapshot).clone()
                     }),
                 );
-                cx.update(|_, cx| app.update(cx, |app, cx| app.drain_runtime(cx)));
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                    window.draw(cx).clear(cx);
+                });
+                if generation == 3 {
+                    assert!(cx.debug_bounds("transcript-loading").is_some());
+                    assert!(cx.debug_bounds("transcript-row-15").is_none());
+                }
                 runtime.send_event(RuntimeEvent::HistoryReset { generation });
                 send_snapshot(runtime, generation, snapshot);
                 cx.update(|window, cx| {

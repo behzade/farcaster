@@ -108,6 +108,7 @@ impl RuntimeOwner {
         self.snapshot.profile_id = profile_id;
         self.snapshot.status = "Loading history".into();
         self.snapshot.document_ready = false;
+        self.snapshot.history_tail = None;
         self.snapshot.session = None;
         self.snapshot.conversation = Default::default();
         self.snapshot.restore_session_facts(facts);
@@ -159,18 +160,33 @@ impl RuntimeOwner {
                     .ok_or_else(|| "Choose a backend before loading history.".to_owned())
                     .and_then(|harness| {
                         let config = config?;
-                        agents::load_session_history_for_profile(&config, harness, &path, &project)
+                        if kind == HistoryLoadKind::Selection {
+                            agents::load_session_history_with_page(
+                                &config,
+                                harness,
+                                &path,
+                                &project,
+                                &mut |page| {
+                                    let _ = sender.send(HistoryUpdate::Tail { generation, page });
+                                    wake.unpark();
+                                },
+                            )
+                        } else {
+                            agents::load_session_history_for_profile(
+                                &config, harness, &path, &project,
+                            )
+                        }
                     });
                 if let Ok(history) = &result {
                     operation.set_work(history.messages.len());
                 }
-                let _ = sender.send(HistoryResult {
+                let _ = sender.send(HistoryUpdate::Finished(HistoryResult {
                     generation,
                     path,
                     project,
                     kind,
                     result,
-                });
+                }));
                 wake.unpark();
             })
         {
@@ -240,6 +256,42 @@ impl RuntimeOwner {
         self.publish();
     }
 
+    pub(super) fn apply_history_update(&mut self, update: HistoryUpdate) {
+        match update {
+            HistoryUpdate::Finished(result) => self.apply_history(result),
+            HistoryUpdate::Tail { generation, page } => {
+                if self.history_selection_generation != Some(generation)
+                    || self.history_generation != generation
+                    || self.snapshot.document_ready
+                    || self.snapshot.history_tail.is_some()
+                    || self.snapshot.status != "Loading history"
+                    || page.content.is_empty()
+                {
+                    return;
+                }
+                let Some(path) = self.snapshot.selected_session.as_deref() else {
+                    return;
+                };
+                // Full-history reconciliation can append an unresolved local prompt or
+                // replace a repeated prompt's display text. Wait when either is possible.
+                if let Some(state) = &self.state
+                    && !state
+                        .with(|store| store.can_display_history_tail(path))
+                        .unwrap_or(false)
+                {
+                    return;
+                }
+                let mut tail = ConversationState::default();
+                tail.replace_history(&page.content);
+                self.snapshot.history_tail = Some(Arc::new(agents::HistoryPage {
+                    content: tail,
+                    coverage: page.coverage,
+                }));
+                self.publish();
+            }
+        }
+    }
+
     pub(super) fn apply_history(&mut self, result: HistoryResult) {
         let active_generation = self.history_load_generation_mut(result.kind);
         if *active_generation == Some(result.generation) {
@@ -272,6 +324,7 @@ impl RuntimeOwner {
             && self.snapshot.selected_session.as_ref() == Some(&result.path);
         let refreshing_visible_history =
             result.kind == HistoryLoadKind::DocumentRefresh && same_document;
+        self.snapshot.history_tail = None;
         let mut history = match result.result {
             Ok(history) => history,
             Err(error) => {
