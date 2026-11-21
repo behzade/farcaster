@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
     Context, IntoElement as _, ListAlignment, ListState, Pixels, Render, ScrollStrategy,
@@ -7,7 +7,7 @@ use gpui::{
 
 #[cfg(test)]
 use super::super::session_rail::session_row_height;
-use super::super::{FarcasterApp, SessionRailKind};
+use super::super::{FarcasterApp, SessionRailKind, session_rail::ArchivedItem};
 use crate::app::infrastructure::performance::{OperationKind, OperationTiming, Timing};
 use crate::app::ui::theme::theme;
 
@@ -43,6 +43,11 @@ pub(crate) struct InactiveSessionRailView {
     list: UniformListScrollHandle,
     rows: RefCell<Vec<String>>,
     pub(crate) reveal: Option<SessionReveal>,
+    #[cfg(test)]
+    pub(in crate::app) preparations: usize,
+    #[cfg(test)]
+    pub(in crate::app) renders: usize,
+    prepared: Option<Rc<Vec<ArchivedItem>>>,
 }
 
 fn session_list() -> ListState {
@@ -92,6 +97,25 @@ impl SessionRailView {
 }
 
 impl InactiveSessionRailView {
+    pub(in crate::app::views) fn sorted_rows(
+        &mut self,
+        app: &FarcasterApp,
+    ) -> Rc<Vec<ArchivedItem>> {
+        self.prepared
+            .get_or_insert_with(|| {
+                #[cfg(test)]
+                {
+                    self.preparations += 1;
+                }
+                app.prepare_archived_rows(&self.list, &self.rows)
+            })
+            .clone()
+    }
+
+    pub(in crate::app) fn invalidate_rows(&mut self) {
+        self.prepared = None;
+    }
+
     pub(crate) fn new(app: WeakEntity<FarcasterApp>, kind: SessionRailKind) -> Self {
         Self {
             app,
@@ -99,12 +123,21 @@ impl InactiveSessionRailView {
             list: UniformListScrollHandle::new(),
             rows: RefCell::new(Vec::new()),
             reveal: None,
+            #[cfg(test)]
+            preparations: 0,
+            #[cfg(test)]
+            renders: 0,
+            prepared: None,
         }
     }
 }
 
 impl Render for SessionRailView {
-    fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+    fn render(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) -> impl gpui::IntoElement {
         let _timing = Timing::new("render.session_sidebar");
         let _operation = OperationTiming::new(OperationKind::SessionSidebar, 1);
         #[cfg(test)]
@@ -125,6 +158,7 @@ impl Render for SessionRailView {
             .render_sessions(
                 self.app.clone(),
                 cx.has_active_drag(),
+                window.is_a11y_active(),
                 self.list.clone(),
                 &self.rows,
             )
@@ -152,15 +186,17 @@ fn reveal_archived_session_row(
 impl Render for InactiveSessionRailView {
     fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let _timing = Timing::new("render.inactive_session_sidebar");
+        #[cfg(test)]
+        {
+            self.renders += 1;
+        }
         let Some(app) = self.app.upgrade() else {
             return gpui::div().into_any_element();
         };
-        let content = app.read(cx).render_inactive_sessions(
-            self.app.clone(),
-            self.kind,
-            self.list.clone(),
-            &self.rows,
-        );
+        let app = app.read(cx);
+        let rows = self.sorted_rows(app);
+        let content =
+            app.render_inactive_sessions(self.app.clone(), self.kind, self.list.clone(), rows);
         reveal_archived_session_row(&self.list, &self.rows, &mut self.reveal);
         content
     }

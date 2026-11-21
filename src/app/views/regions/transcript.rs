@@ -4,7 +4,10 @@ use std::{
     sync::Arc,
 };
 
-use gpui::{Context, IntoElement as _, Render, WeakEntity};
+use gpui::{
+    Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render, Styled as _,
+    WeakEntity,
+};
 
 use super::super::{FarcasterApp, transcript};
 use crate::utility::persistent_vec::PersistentVec;
@@ -172,6 +175,39 @@ impl Render for TranscriptView {
             return gpui::div().into_any_element();
         };
         let app = app.read(cx);
+        if let Some((label, excerpt)) = loading_excerpt(app) {
+            let theme = crate::app::ui::theme::theme();
+            let mut column = crate::app::ui::layout::chat_column()
+                .py(theme.space.md)
+                .flex()
+                .flex_col()
+                .gap(theme.space.sm)
+                .child(
+                    gpui::div()
+                        .text_size(theme.type_scale.body_small)
+                        .text_color(theme.colors.muted)
+                        .child(label),
+                );
+            if !excerpt.is_empty() {
+                let text = match excerpt.char_indices().nth(1600) {
+                    Some((end, _)) => format!("{}…", &excerpt[..end]),
+                    None => excerpt.to_owned(),
+                };
+                column = column.child(
+                    gpui::div()
+                        .text_size(self.font_size)
+                        .text_color(theme.colors.text)
+                        .child(text),
+                );
+            }
+            return gpui::div()
+                .debug_selector(move || label.into())
+                .size_full()
+                .overflow_hidden()
+                .bg(theme.colors.canvas)
+                .child(column)
+                .into_any_element();
+        }
         let viewport = window.viewport_size();
         transcript::render(
             &self.list,
@@ -188,5 +224,39 @@ impl Render for TranscriptView {
             self.markdown_cache.clone(),
             self.app.clone(),
         )
+    }
+}
+
+// Keep partial history out of the transcript list. Its item offsets, saved reading
+// position, composer recall, and actions all belong to the complete document.
+pub(super) fn loading_excerpt(app: &FarcasterApp) -> Option<(&'static str, &str)> {
+    if app.sessions.selected_draft.is_some() {
+        return None;
+    }
+    let snapshot = &app.snapshot;
+    let row = if app.lifecycle.pending_session_switch.is_some() {
+        // Until the runtime acknowledges the request its reply belongs to the previous selection.
+        app.sidebar_catalog_row(&app.sessions.all)
+    } else {
+        if snapshot.document_ready
+            || snapshot.status != "Loading history"
+            || !snapshot.conversation.items.is_empty()
+        {
+            return None;
+        }
+        if let Some(reply) = snapshot.loading_reply.as_deref() {
+            return Some(("Latest reply · Loading history…", reply));
+        }
+        snapshot
+            .selected_session
+            .as_deref()
+            .and_then(|path| snapshot.catalog_row_at(&app.sessions.all, path))
+    };
+    match row
+        .map(|row| row.first_user_message.as_str())
+        .filter(|text| !text.is_empty())
+    {
+        Some(text) => Some(("First message · Loading history…", text)),
+        None => Some(("Loading history…", "")),
     }
 }

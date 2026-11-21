@@ -214,7 +214,7 @@ fn pool(
     factory: Arc<FakeFactory>,
     project: &std::path::Path,
     maximum: usize,
-) -> Result<(WorkerPool, async_channel::Receiver<()>), String> {
+) -> Result<(WorkerPool, async_channel::Receiver<crate::WorkerPoolUpdate>), String> {
     let factory: Arc<dyn WorkerSessionFactory> = factory;
     let pool = WorkerPool::new(
         BTreeMap::from([(Backend::Pi, factory)]),
@@ -543,8 +543,8 @@ fn child_settlement_sends_one_final_message_per_turn() -> Result<(), String> {
     let parent_id = CallerRegistry::shared().resolve(parent.token())?.worker_id;
     let mut child_request = request(project.path());
     child_request.parent_worker_id = Some(parent_id);
-    pool.start(child_request)?;
-    wait_for_update(&updates)?;
+    let child = pool.start(child_request)?;
+    assert_eq!(wait_for_update(&updates)?, crate::WorkerPoolUpdate::Catalog);
     let events = factory.events.lock().map_err(|_| "events")?[0].clone();
     for (starts_turn, output, delivers) in [
         (false, "done", true),
@@ -556,13 +556,20 @@ fn child_settlement_sends_one_final_message_per_turn() -> Result<(), String> {
             events
                 .send(WorkerEvent::Started)
                 .map_err(|_| "start turn")?;
+            assert_eq!(
+                wait_for_update(&updates)?,
+                crate::WorkerPoolUpdate::Status(child.id.clone())
+            );
         }
         events
             .send(WorkerEvent::Settled {
                 output: output.into(),
             })
             .map_err(|_| "finish turn")?;
-        wait_for_update(&updates)?;
+        assert_eq!(
+            wait_for_update(&updates)?,
+            crate::WorkerPoolUpdate::Status(child.id.clone())
+        );
         if delivers {
             let report = parent.try_recv().ok_or("missing final message")?;
             assert_eq!(report.from, "implementation");
@@ -625,6 +632,7 @@ fn worker_parent_reports_and_inputs_follow_a_replacement_parent_process() -> Res
     );
 
     events.send(WorkerEvent::Started).map_err(|_| "start")?;
+    wait_for_update(&updates)?;
     events
         .send(WorkerEvent::NeedsInput(crate::WorkerInput {
             id: "approval".into(),
@@ -677,11 +685,13 @@ fn worker_parent_reports_and_inputs_follow_a_replacement_parent_process() -> Res
     Ok(())
 }
 
-fn wait_for_update(receiver: &async_channel::Receiver<()>) -> Result<(), String> {
+fn wait_for_update(
+    receiver: &async_channel::Receiver<crate::WorkerPoolUpdate>,
+) -> Result<crate::WorkerPoolUpdate, String> {
     let deadline = Instant::now() + Duration::from_secs(1);
     loop {
         match receiver.try_recv() {
-            Ok(()) => return Ok(()),
+            Ok(update) => return Ok(update),
             Err(async_channel::TryRecvError::Empty) if Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(5));
             }
@@ -2209,6 +2219,10 @@ fn restored_snapshot_reads_merged_child_binding_without_a_session_event() -> Res
             prompt_id: None,
         });
         let snapshot = pool.snapshots()?.remove(0);
+        assert_eq!(
+            pool.status_snapshot(&snapshot.id)?.as_ref(),
+            Some(&snapshot)
+        );
         assert_eq!(
             snapshot.session_key,
             AppSessionId::new(id).map(SessionKey::App)

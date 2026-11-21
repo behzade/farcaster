@@ -4,11 +4,14 @@ use gpui::px;
 use std::{path::PathBuf, time::SystemTime};
 
 use super::{
-    ActiveSessionItem, SessionRailItem, SessionRailKind, archived_panel_rows,
-    clamped_session_rail_width, first_unsubmitted_draft, hover::session_tooltip_lines,
-    minimal_row_splice, numbered_session_items, rendering::archived_panel_slot,
-    replacement_index_after_close, rows::run_status_visual, session_accessible_label,
-    subagent_counts,
+    ActiveSessionItem, SessionRailItem, SessionRailKind, clamped_session_rail_width,
+    first_unsubmitted_draft,
+    hover::session_tooltip_lines,
+    minimal_row_splice, numbered_session_items,
+    rendering::{archived_panel_rows, archived_panel_slot},
+    replacement_index_after_close,
+    rows::run_status_visual,
+    session_accessible_label,
 };
 use crate::{
     app::session_folders::{SessionFolder, SessionFolders},
@@ -202,7 +205,7 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
                 );
                 input.compact = self.compact;
                 super::rows::SessionRow::new(
-                    &item("chat", 1, "/project", kind, false),
+                    item("chat", 1, "/project", kind, false),
                     input,
                     self.app.clone(),
                 )
@@ -446,16 +449,14 @@ fn tooltips_report_model_effort_and_direct_subagent_counts() {
         other.session,
     ];
 
-    let counts = subagent_counts(&crate::sessions::SessionCatalog::from(sessions.clone()));
+    let catalog = crate::sessions::SessionCatalog::from(sessions);
+    let count = catalog.child_count(&catalog[0]);
 
-    assert_eq!(counts.get(&sessions[0].path), Some(&2));
+    assert_eq!(count, 2);
     assert!(
-        session_tooltip_lines(
-            sessions.first().expect("root session fixture"),
-            counts[&sessions[0].path],
-        )
-        .iter()
-        .any(|line| line == "Subagents: 2 subagents")
+        session_tooltip_lines(&catalog[0], count)
+            .iter()
+            .any(|line| line == "Subagents: 2 subagents")
     );
 }
 
@@ -472,13 +473,9 @@ fn direct_worker_counts_do_not_merge_profile_copies() {
     child.parent_session = Some("same".into());
     child.profile_id = first.profile_id.clone();
     child.parent_app_session_id = Some(second.app_session_id);
-    let counts = subagent_counts(&crate::sessions::SessionCatalog::from(vec![
-        first.clone(),
-        second.clone(),
-        child,
-    ]));
-    assert_eq!(counts.get(&first.path), None);
-    assert_eq!(counts.get(&second.path), Some(&1));
+    let catalog = crate::sessions::SessionCatalog::from(vec![first.clone(), second.clone(), child]);
+    assert_eq!(catalog.child_count(&first), 0);
+    assert_eq!(catalog.child_count(&second), 1);
 }
 
 #[test]
@@ -496,10 +493,6 @@ fn profile_copies_keep_distinct_list_and_navigation_keys_when_reordered() {
             let key = super::session_item_identity(row);
             assert_eq!(
                 super::active_item_identity(&ActiveSessionItem::Session(row.clone())),
-                key
-            );
-            assert_eq!(
-                super::VisibleSessionTarget::Persisted(row.session.clone()).rail_identity(),
                 key
             );
             key

@@ -156,6 +156,9 @@ fn expanding_archive_reveals_newest_once_after_rows_change(cx: &mut gpui::TestAp
             let rail = cx.update(|_, cx| {
                 app.update(cx, |app, cx| {
                     app.sessions.drafts = (1..=12).map(archived).collect();
+                    let mut next = archived(13);
+                    next.set_archived(false);
+                    app.sessions.drafts.push(next);
                     app.sessions.archived_expanded = false;
                     app.toggle_archive(cx);
                     app.views.archived_session_rail.clone()
@@ -192,13 +195,13 @@ fn expanding_archive_reveals_newest_once_after_rows_change(cx: &mut gpui::TestAp
                     size(px(280.), height * 2.),
                     |_, _| rail.clone().into_any_element(),
                 );
-                cx.update(|_, cx| {
+                cx.update(|window, cx| {
                     assert_eq!(rail.read(cx).list.0.borrow().base_handle.offset().y, offset);
                     if newest == 12 {
                         app.update(cx, |app, cx| {
                             app.toggle_archive(cx);
                             assert!(rail.read(cx).reveal.is_none());
-                            app.sessions.drafts.push(archived(13));
+                            app.request_draft_archive("archive-13".into(), true, window, cx);
                             app.toggle_archive(cx);
                         });
                     }

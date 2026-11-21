@@ -141,7 +141,7 @@ impl<A: Clone + Eq> SessionComposer<A> {
 }
 
 pub struct ComposerSessions<A> {
-    current_target: String,
+    current_buffer: String,
     sessions: HashMap<String, SessionComposer<A>>,
     persistence: Box<dyn ComposerPersistence<A>>,
 }
@@ -163,7 +163,7 @@ impl<A: Clone + Eq> ComposerSessions<A> {
             .map(|record| (record.target.clone(), SessionComposer::from_record(record)))
             .collect();
         Self {
-            current_target,
+            current_buffer: current_target,
             sessions,
             persistence,
         }
@@ -184,13 +184,38 @@ impl<A: Clone + Eq> ComposerSessions<A> {
 
     pub fn current(&self) -> ComposerSnapshot {
         self.sessions
-            .get(&self.current_target)
+            .get(&self.current_buffer)
             .map(|session| session.composer.clone())
             .unwrap_or_default()
     }
 
+    /// Runtime command address. Several harnesses may use the same locator.
     pub fn current_target(&self) -> &str {
-        &self.current_target
+        composer_command_target(&self.current_buffer)
+    }
+
+    pub fn current_buffer(&self) -> &str {
+        &self.current_buffer
+    }
+
+    /// Both names address the same SQLite row. Deleting the old name would erase it.
+    pub fn bind_legacy_buffer(&mut self, from: &str, buffer: &str) {
+        if let Some(session) = self.sessions.remove(from) {
+            self.sessions.entry(buffer.to_owned()).or_insert(session);
+        }
+        if self.current_buffer == from {
+            self.current_buffer = buffer.to_owned();
+        }
+    }
+
+    pub fn buffers_for_target(&self, target: &str) -> Vec<String> {
+        self.sessions
+            .keys()
+            .filter(|buffer| *buffer != &self.current_buffer)
+            .chain(std::iter::once(&self.current_buffer))
+            .filter(|buffer| composer_command_target(buffer) == target)
+            .cloned()
+            .collect()
     }
 
     pub fn saved_attachments(&self) -> impl Iterator<Item = (&String, &[A])> {
@@ -217,7 +242,7 @@ impl<A: Clone + Eq> ComposerSessions<A> {
     }
 
     pub fn capture_current(&mut self, snapshot: ComposerSnapshot) {
-        let target = self.current_target.clone();
+        let target = self.current_buffer.clone();
         let session = self.sessions.entry(target.clone()).or_default();
         if session.composer == snapshot {
             return;
@@ -228,18 +253,18 @@ impl<A: Clone + Eq> ComposerSessions<A> {
 
     pub fn switch_to(&mut self, target: String, current: ComposerSnapshot) -> ComposerSnapshot {
         self.capture_current(current);
-        if let Some(session) = self.sessions.get_mut(&self.current_target) {
+        if let Some(session) = self.sessions.get_mut(&self.current_buffer) {
             session.history_index = None;
             session.history_draft = None;
         }
-        self.current_target = target;
+        self.current_buffer = target;
         self.current()
     }
 
     pub fn discard_and_switch(&mut self, target: &str, next: String) -> ComposerSnapshot {
         self.sessions.remove(target);
         self.persistence.delete(target.to_owned());
-        self.current_target = next;
+        self.current_buffer = next;
         self.current()
     }
 
@@ -250,8 +275,8 @@ impl<A: Clone + Eq> ComposerSessions<A> {
 
     pub fn promote(&mut self, from: &str, to: String) {
         let Some(mut source) = self.sessions.remove(from) else {
-            if self.current_target == from {
-                self.current_target = to;
+            if self.current_buffer == from {
+                self.current_buffer = to;
             }
             self.persistence.delete(from.to_owned());
             return;
@@ -266,8 +291,8 @@ impl<A: Clone + Eq> ComposerSessions<A> {
             target.history = source.history;
         }
         target.attachments.extend(source.attachments);
-        if self.current_target == from {
-            self.current_target = to.clone();
+        if self.current_buffer == from {
+            self.current_buffer = to.clone();
         }
         self.persistence.delete(from.to_owned());
         self.persistence.save(target.record(to));
@@ -359,7 +384,7 @@ impl<A: Clone + Eq> ComposerSessions<A> {
     }
 
     pub fn exit_history(&mut self) {
-        if let Some(session) = self.sessions.get_mut(&self.current_target) {
+        if let Some(session) = self.sessions.get_mut(&self.current_buffer) {
             session.history_index = None;
             session.history_draft = None;
         }
@@ -367,7 +392,7 @@ impl<A: Clone + Eq> ComposerSessions<A> {
 
     fn is_browsing_history(&self) -> bool {
         self.sessions
-            .get(&self.current_target)
+            .get(&self.current_buffer)
             .is_some_and(|session| session.history_index.is_some())
     }
 
@@ -387,7 +412,7 @@ impl<A: Clone + Eq> ComposerSessions<A> {
     }
 
     pub fn previous_history(&mut self, current: ComposerSnapshot) -> Option<ComposerSnapshot> {
-        let target = self.current_target.clone();
+        let target = self.current_buffer.clone();
         let session = self.sessions.entry(target.clone()).or_default();
         let next = session
             .history_index
@@ -406,7 +431,7 @@ impl<A: Clone + Eq> ComposerSessions<A> {
     }
 
     fn next_history(&mut self) -> Option<ComposerSnapshot> {
-        let target = self.current_target.clone();
+        let target = self.current_buffer.clone();
         let session = self.sessions.get_mut(&target)?;
         let index = session.history_index?;
         session.composer = if index == 0 {
@@ -430,6 +455,21 @@ pub fn draft_target(id: &str) -> String {
 
 pub fn session_target(path: &Path) -> String {
     format!("session:{}", path.display())
+}
+
+/// SQLite identifies a materialized session by (harness, locator).
+pub fn session_buffer(harness: farcaster_contracts::Backend, path: &Path) -> String {
+    format!("composer:{harness}:session:{}", path.display())
+}
+
+pub fn composer_buffer_parts(buffer: &str) -> Option<(farcaster_contracts::Backend, &str)> {
+    let (harness, target) = buffer.strip_prefix("composer:")?.split_once(':')?;
+    session_path(target)?;
+    Some((harness.parse().ok()?, target))
+}
+
+pub fn composer_command_target(buffer: &str) -> &str {
+    composer_buffer_parts(buffer).map_or(buffer, |(_, target)| target)
 }
 
 pub fn project_target(path: &Path) -> String {

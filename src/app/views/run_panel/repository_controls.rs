@@ -275,8 +275,7 @@ fn repository_actions(
     let can_sync = app.project.repository.can_sync();
     let identity = snapshot.map(|snapshot| snapshot.identity.clone());
     let kind = snapshot.map(|snapshot| snapshot.location.kind);
-    let (git, jj) = RepositoryBackend::available_backends();
-    let active = selected_backend(kind, app.project.repository.preference, git, jj);
+    let preference = app.project.repository.preference;
     dropdown_button("repository-actions", "⋯", ButtonTone::Quiet, true)
         .dropdown_caret(false)
         .size(theme().controls.icon_button)
@@ -324,6 +323,8 @@ fn repository_actions(
                 ));
             }
             menu = menu.separator();
+            let (git, jj) = RepositoryBackend::available_backends();
+            let active = selected_backend(kind, preference, git, jj);
             for (label, preference, available, kind) in [
                 ("Use Git", BackendPreference::Git, git, RepositoryKind::Git),
                 (

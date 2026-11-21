@@ -92,8 +92,8 @@ use supervisor::{
     target_command_needs_actor_message,
 };
 pub use types::{
-    ConfigurationStatus, RunStatus, RuntimeCommand, RuntimeEvent, RuntimeSignal, RuntimeSnapshot,
-    TaskSettings,
+    ArchiveRequest, ArchiveTarget, ConfigurationStatus, DraftArchiveIdentity, RunStatus,
+    RuntimeCommand, RuntimeEvent, RuntimeSignal, RuntimeSnapshot, TaskSettings,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -148,7 +148,7 @@ struct RuntimeOwner {
     title_generation: SessionTitleGeneration,
     transcript_changed_from: Option<usize>,
     event_tx: SessionEventSender,
-    history_tx: mpsc::Sender<HistoryResult>,
+    history_tx: mpsc::Sender<HistoryUpdate>,
     history_generation: u64,
     history_selection_generation: Option<u64>,
     document_refresh_generation: Option<u64>,
@@ -192,6 +192,11 @@ struct PendingQueuedPrompt {
 enum HistoryLoadKind {
     Selection,
     DocumentRefresh,
+}
+
+enum HistoryUpdate {
+    RecentReply { generation: u64, text: Arc<str> },
+    Complete(HistoryResult),
 }
 
 struct HistoryResult {

@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant, SystemTime};
 
 use super::*;
-use crate::sessions::UsageSummary;
+use crate::sessions::{SessionSummary, UsageSummary};
 
 fn session(path: &str, archived: bool) -> SessionSummary {
     SessionSummary::from_cached(
@@ -43,15 +43,20 @@ fn submission_queue_matches_backend_steering_support(cx: &mut gpui::TestAppConte
             "::submission_queue_matches_backend_steering_support"
         ),
         cx,
-        |cx, app, _runtime, _project| {
+        |cx, app, runtime, project| {
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
+                    let path = project.join("shared.jsonl");
+                    app.sessions.selected_draft = None;
                     for (backend, expected_mode) in [
                         (crate::agents::Backend::Antigravity, PromptMode::FollowUp),
                         (crate::agents::Backend::Cursor, PromptMode::Steer),
                     ] {
                         app.composer.pending_submissions.clear();
+                        let buffer = crate::sessions::session_buffer(backend, &path);
+                        app.switch_composer_target(buffer.clone(), window, cx);
                         let snapshot = Arc::make_mut(&mut app.snapshot);
+                        snapshot.selected_session = Some(path.clone());
                         snapshot.harness = Some(backend);
                         Arc::make_mut(&mut snapshot.conversation).running = true;
                         let mut native = crate::conversation::QueueState::default();
@@ -72,11 +77,25 @@ fn submission_queue_matches_backend_steering_support(cx: &mut gpui::TestAppConte
                             app.submit("same text".into(), PromptMode::Steer, window, cx);
                             let pending = &app.composer.pending_submissions;
                             assert_eq!(pending.len(), count);
-                            assert!(pending.values().all(|input| input.mode == expected_mode));
+                            assert!(
+                                pending.values().all(|input| input.mode == expected_mode
+                                    && input.submitted_target == buffer),
+                                "wrong queue for {backend} on submission {count}: {pending:?}"
+                            );
+                            let (target, mode) = std::iter::from_fn(|| runtime.try_recv_command())
+                                .find_map(|command| match command {
+                                    RuntimeCommand::Prompt { target, mode, .. } => {
+                                        Some((target, mode))
+                                    }
+                                    _ => None,
+                                })
+                                .expect("prompt command");
+                            assert_eq!(target, session_target(&path));
+                            assert_eq!(mode, expected_mode);
                             let visible = visible_prompt_queue(
                                 &native,
                                 pending,
-                                app.composer.sessions.current_target(),
+                                app.composer.sessions.current_buffer(),
                             );
                             let (messages, other) = if expected_mode == PromptMode::Steer {
                                 (&visible.steering, &visible.follow_up)
@@ -146,6 +165,7 @@ fn existing_session_submit_keeps_working_until_the_prompt_result(cx: &mut gpui::
                     .clone()
             });
             runtime.send_event(RuntimeEvent::SessionStatus {
+                record: None,
                 target: target.clone(),
                 session: Some(path.clone()),
                 status: RunStatus::Done,
@@ -163,6 +183,7 @@ fn existing_session_submit_keeps_working_until_the_prompt_result(cx: &mut gpui::
                 session: Some(path.clone()),
             });
             runtime.send_event(RuntimeEvent::SessionStatus {
+                record: None,
                 target: target.clone(),
                 session: Some(path),
                 status: RunStatus::Done,
@@ -180,19 +201,87 @@ fn existing_session_submit_keeps_working_until_the_prompt_result(cx: &mut gpui::
 #[test]
 fn archived_sessions_activate_when_their_message_is_sent() {
     let path = Path::new("/sessions/inactive.jsonl");
-    let archived = [session("/sessions/inactive.jsonl", true)];
+    let row = session("/sessions/inactive.jsonl", true);
+    let key = row.catalog_key();
+    let archived = vec![row].into();
     assert_eq!(
         inactive_session_for_target(&session_target(path), Some(path), &archived),
-        Some(path.to_path_buf())
+        Some(key)
     );
     assert_eq!(
         inactive_session_for_target("session:/sessions/other.jsonl", Some(path), &archived,),
         None
     );
-    let active = [session("/sessions/inactive.jsonl", false)];
+    let active = vec![session("/sessions/inactive.jsonl", false)].into();
     assert_eq!(
         inactive_session_for_target(&session_target(path), Some(path), &active),
         None
+    );
+}
+
+#[gpui::test]
+fn submitting_to_an_archived_session_restores_only_its_record(cx: &mut gpui::TestAppContext) {
+    use crate::{agents::Backend, runtime::ArchiveTarget, sessions::AppSessionId};
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::submitting_to_an_archived_session_restores_only_its_record"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let path = project.join("shared.jsonl");
+            let mut selected = session(path.to_str().unwrap(), true).with_app_session_id(31);
+            selected.harness = Backend::Codex;
+            selected.project = project.into();
+            let mut sibling = selected.clone().with_app_session_id(32);
+            sibling.harness = Backend::Cursor;
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions.selected_draft = None;
+                    let rows = vec![selected.clone(), sibling.clone()];
+                    app.sessions.all = rows.clone().into();
+                    app.sessions.visible = rows.into();
+                    app.switch_composer_target(
+                        crate::sessions::session_buffer(selected.harness, &path),
+                        window,
+                        cx,
+                    );
+                    let snapshot = Arc::make_mut(&mut app.snapshot);
+                    snapshot.project = project.into();
+                    snapshot.harness = Some(selected.harness);
+                    snapshot.selected_session = Some(path);
+                    app.submit("resume this chat".into(), PromptMode::Normal, window, cx);
+                    assert!(
+                        !app.sessions
+                            .all
+                            .by_key(&selected.catalog_key())
+                            .unwrap()
+                            .archived
+                    );
+                    assert!(
+                        app.sessions
+                            .all
+                            .by_key(&sibling.catalog_key())
+                            .unwrap()
+                            .archived
+                    );
+                    let restored =
+                        std::iter::from_fn(|| runtime.try_recv_command()).find_map(|command| {
+                            match command {
+                                RuntimeCommand::SetSessionArchived { request, .. } => {
+                                    Some(request.target)
+                                }
+                                _ => None,
+                            }
+                        });
+                    assert_eq!(
+                        restored,
+                        Some(ArchiveTarget::App(AppSessionId::new(31).unwrap()))
+                    );
+                });
+            });
+        },
     );
 }
 

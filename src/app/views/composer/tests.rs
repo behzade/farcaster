@@ -245,10 +245,7 @@ fn primary_action_matches_content_and_running_state() {
         composer_primary_action(false, true, false, true),
         Some(Stop)
     );
-    assert_eq!(
-        composer_primary_action(false, false, false, true),
-        Some(Stop)
-    );
+    assert_eq!(composer_primary_action(false, false, false, true), None);
     assert_eq!(composer_primary_action(true, false, false, false), None);
     assert_eq!(
         composer_primary_action(true, true, false, false),

@@ -16,14 +16,14 @@ use super::{
     folders::{FolderRow, folder_header, new_folder_row, project_header},
     groups::{ActiveSessionItem, active_session_rail_lists_for_roots},
     reconcile_list_rows,
-    rendering::{active_session_drop_target, subagent_counts},
+    rendering::active_session_drop_target,
     rows::{SessionRow, SessionRowInput, project_label},
 };
 use crate::{
     app::PickerScope,
     app::ProjectPickerIntent,
     app::infrastructure::performance::{OperationKind, OperationTiming},
-    app::session::status::{resolved_session_status, roots_waiting_for_active_descendants},
+    app::session::status::roots_waiting_for_active_descendants,
     app::ui::assets::AppIcon,
     app::ui::layout::TRAFFIC_LIGHT_INSET,
     app::ui::primitives::{
@@ -59,7 +59,6 @@ impl FarcasterApp {
     }
 
     fn session_search_controls(&self, entity: WeakEntity<Self>) -> AnyElement {
-        let projects = self.available_projects();
         let selected = self.sessions.project_filter.clone();
         let filter_label = selected.as_deref().map_or_else(
             || "Filter sessions by project".to_owned(),
@@ -78,7 +77,11 @@ impl FarcasterApp {
         )
         .w(theme().controls.icon_button)
         .flex_none()
-        .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+        .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, cx| {
+            let projects = filter_entity
+                .upgrade()
+                .map(|app| app.read(cx).available_projects())
+                .unwrap_or_default();
             let all_entity = filter_entity.clone();
             let mut menu = menu
                 .min_w(theme().size(220.0))
@@ -148,6 +151,7 @@ impl FarcasterApp {
         &self,
         entity: WeakEntity<Self>,
         session_drag_active: bool,
+        accessibility_active: bool,
         session_list: ListState,
         session_list_rows: &RefCell<Vec<String>>,
     ) -> impl IntoElement {
@@ -160,8 +164,7 @@ impl FarcasterApp {
         let active_drop_entity = entity.clone();
         let selected_root = self
             .selected_rail_root()
-            .map(|session| session.path.clone());
-        let live_session = self.snapshot.live_session.clone();
+            .map(|session| session.catalog_key());
         let waiting_roots = {
             let _timing =
                 OperationTiming::new(OperationKind::SidebarFamilyStatus, self.sessions.all.len());
@@ -179,7 +182,6 @@ impl FarcasterApp {
                 &self.sessions.order,
             )
         };
-        let counts = subagent_counts(&self.sessions.all);
         let session_colors = self.sessions.folders.session_colors.clone();
         let active_entry_count = lists.active.len();
         let archived_entry_count = lists.archived_count;
@@ -217,12 +219,7 @@ impl FarcasterApp {
         );
 
         let selected_draft = self.sessions.selected_draft.clone();
-        let submitted_drafts = self.sessions.submitted_drafts.clone();
         let active_selected_root = selected_root.clone();
-        let active_live_session = live_session.clone();
-        let active_live_status = self.snapshot.live_status;
-        let active_run_statuses = self.activity.run_statuses.clone();
-        let active_waiting_roots = waiting_roots.clone();
         let active_row_entity = entity.clone();
         let active_editing_path = self
             .sessions
@@ -232,16 +229,15 @@ impl FarcasterApp {
         let active_title_input = self.sessions.title_input.clone();
         let active_drop_target = self.sessions.drop_target;
         let rail_scrollbar = session_list.clone();
-        let active_list = list(session_list, move |index, _, _| {
+        let active_list = list(session_list, move |index, _, cx| {
             match active_rows.get(index) {
                 Some(FolderRow::Session(item)) => match item.as_ref() {
                     ActiveSessionItem::Draft(draft) => {
                         let selected = selected_draft.as_deref() == Some(draft.id.as_str());
-                        let status = crate::app::session::drafts::resolved_draft_status(
-                            &draft.id,
-                            &submitted_drafts,
-                            &active_run_statuses,
-                        );
+                        let Some(app) = active_row_entity.upgrade() else {
+                            return gpui::div().into_any_element();
+                        };
+                        let status = app.read(cx).draft_rail_status(draft);
                         let drop_position = active_drop_target
                             .filter(|(target, _)| *target == draft.app_session_id)
                             .map(|(_, position)| position);
@@ -260,22 +256,21 @@ impl FarcasterApp {
                     }
                     ActiveSessionItem::Session(item) => {
                         let selected =
-                            active_selected_root.as_deref() == Some(item.session.path.as_path());
-                        let target = format!("session:{}", item.session.path.display());
-                        let badge = Some(resolved_session_status(
-                            &item.session,
-                            active_run_statuses.get(&target).copied(),
-                            active_live_session.as_deref(),
-                            active_live_status,
-                            active_waiting_roots.contains(&item.session.path),
-                        ));
+                            active_selected_root.as_ref() == Some(&item.session.catalog_key());
+                        let app = active_row_entity.upgrade();
+                        let badge = app.as_ref().map(|app| {
+                            app.read(cx).rail_row_status(
+                                &item.session,
+                                waiting_roots.contains(&item.session.catalog_key()),
+                            )
+                        });
                         let editing =
                             active_editing_path.as_deref() == Some(item.session.path.as_path());
                         let drop_position = active_drop_target
                             .filter(|(target, _)| *target == item.session.app_session_id)
                             .map(|(_, position)| position);
                         SessionRow::new(
-                            item,
+                            item.clone(),
                             SessionRowInput {
                                 selected,
                                 color: session_colors
@@ -286,10 +281,9 @@ impl FarcasterApp {
                                 drop_position,
                                 draggable: true,
                                 title_editor: editing.then(|| active_title_input.clone()),
-                                subagents: counts
-                                    .get(item.session.path.as_path())
-                                    .copied()
-                                    .unwrap_or(0),
+                                subagents: app.as_ref().map_or(0, |app| {
+                                    app.read(cx).sessions.all.child_count(&item.session)
+                                }),
                                 compact,
                             },
                             active_row_entity.clone(),
@@ -341,7 +335,10 @@ impl FarcasterApp {
                 [div()
                     .flex_1()
                     .min_h_0()
-                    .child(self.views.archived_session_rail.clone())
+                    .child(crate::app::ui::accessibility::cached_panel(
+                        self.views.archived_session_rail.clone(),
+                        accessibility_active,
+                    ))
                     .into_any_element()],
             )
             .count(archived_entry_count)

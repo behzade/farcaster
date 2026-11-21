@@ -271,7 +271,7 @@ impl RuntimeOwner {
                 let result = configuration_for_target(
                     &self.process_command,
                     self.state.as_ref(),
-                    LaunchTarget::Session(&path),
+                    LaunchTarget::Session(&path, Some(harness)),
                 )
                 .and_then(|config| {
                     crate::agents::rename_session(
@@ -312,8 +312,8 @@ impl RuntimeOwner {
                 }
             }
             RuntimeCommand::MoveSession { .. }
-            | RuntimeCommand::SetAppSessionArchived { .. }
             | RuntimeCommand::StopSessionFamily { .. }
+            | RuntimeCommand::StopAndArchiveDraft { .. }
             | RuntimeCommand::StopAndDeleteSessionFamily { .. }
             | RuntimeCommand::StopAndMoveSession { .. }
             | RuntimeCommand::DeleteSessionFamily { .. } => {}
@@ -349,7 +349,32 @@ impl RuntimeOwner {
                 harness,
                 session_id,
                 project,
+                ..
             } => {
+                let session_id = if session_id == path.to_string_lossy() {
+                    agents::external_session_identity(&path)
+                        .filter(|(backend, _)| *backend == harness)
+                        .map_or(session_id, |(_, native_id)| native_id)
+                } else {
+                    session_id
+                };
+                // Reselecting a resident actor can race the first history read.
+                // Keep its existing reply and the reader that will finish the document.
+                if self.history_selection_generation == Some(self.history_generation)
+                    && self.snapshot.status == "Loading history"
+                    && self.snapshot.selected_session.as_ref() == Some(&path)
+                    && self.snapshot.project == project
+                    && self.harness == Some(harness)
+                    && self.session_id.as_ref() == Some(&session_id)
+                    && configuration_for_target(
+                        &self.process_command,
+                        self.state.as_ref(),
+                        LaunchTarget::Session(&path, Some(harness)),
+                    )
+                    .is_ok_and(|config| config.profile_id == self.snapshot.profile_id)
+                {
+                    return;
+                }
                 self.harness = Some(harness);
                 self.session_id = Some(session_id);
                 self.select_history(path, project);
@@ -359,6 +384,7 @@ impl RuntimeOwner {
                 harness,
                 session_id,
                 project,
+                ..
             } => {
                 self.project = project;
                 self.harness = Some(harness);
@@ -401,20 +427,15 @@ impl RuntimeOwner {
                     self.fail(error);
                 }
             }
-            RuntimeCommand::SetSessionArchived { path, archived } => {
-                if let Some(state) = &self.state
-                    && let Err(error) =
-                        state.with(|store| sessions::set_archived(store, &path, archived))
-                {
-                    let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
-                        generation: self.session_generation,
-                        message: error,
-                    });
-                }
-                self.load_sessions(self.session_query.clone());
+            RuntimeCommand::SetSessionArchived {
+                request,
+                draft_saved,
+            } => {
+                self.set_catalog_archive(request, draft_saved);
             }
             RuntimeCommand::LoadSessions(query) => self.load_sessions(query),
             RuntimeCommand::RefreshSessions => self.refresh_sessions(),
+            RuntimeCommand::RefreshWorkerStatus(id) => self.refresh_worker_status(&id),
             RuntimeCommand::UpdateSessionMetadata(metadata) => {
                 self.update_session_metadata(metadata)
             }

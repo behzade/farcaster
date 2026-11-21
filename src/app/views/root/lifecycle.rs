@@ -183,9 +183,17 @@ impl FarcasterApp {
                 }
             });
         }
-        if let Some((generation, text)) = self.extensions.pending_editor_text.take() {
+        // The editor already belongs to the clicked session while the runtime
+        // may still be delivering extensions from the previous one.
+        if !self.awaiting_selection_snapshot()
+            && let Some((generation, text)) = self.extensions.pending_editor_text.take()
+        {
+            let target = self.composer.sessions.current_buffer().to_owned();
             cx.defer_in(window, move |this, window, cx| {
-                if this.runtime_generation == generation {
+                if this.runtime_generation == generation
+                    && !this.awaiting_selection_snapshot()
+                    && this.composer.sessions.current_buffer() == target
+                {
                     let snapshot =
                         crate::app::composer::sessions::ComposerSnapshot::new(text, 0, 0..0);
                     this.apply_composer_snapshot(snapshot.clone(), window, cx);
@@ -195,7 +203,7 @@ impl FarcasterApp {
         }
         if let Some((target, snapshot)) = self.composer.pending_restore.take() {
             cx.defer_in(window, move |this, window, cx| {
-                if this.composer.sessions.current_target() == target {
+                if this.composer.sessions.current_buffer() == target {
                     this.apply_composer_snapshot(snapshot.clone(), window, cx);
                     this.composer.sessions.capture_current(snapshot);
                 }

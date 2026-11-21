@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
     InteractiveElement as _, IntoElement, ParentElement as _, Styled as _, UniformListScrollHandle,
@@ -9,17 +9,56 @@ use gpui_component::scroll::Scrollbar;
 use super::{
     FarcasterApp,
     draft_row::{DraftRow, DraftRowInput},
-    groups::{ActiveSessionItem, SessionRailKind, session_rail_lists_for_roots},
-    rendering::{inactive_session_badge, session_section_drop_target, subagent_counts},
+    groups::{
+        ActiveSessionItem, SessionRailItem, SessionRailKind, archived_session_rows_for_roots,
+    },
+    rendering::session_section_drop_target,
     rows::{SessionRow, SessionRowInput, session_row_height},
     session_item_identity,
 };
 use crate::{app::session::status::roots_waiting_for_descendants, app::ui::theme::theme};
 
-fn archived_item_identity(item: &ActiveSessionItem) -> String {
-    match item {
-        ActiveSessionItem::Draft(draft) => format!("draft:{}", draft.id),
-        ActiveSessionItem::Session(item) => session_item_identity(item),
+pub(in crate::app::views) enum ArchivedItem {
+    Draft(String, i64),
+    Session(crate::sessions::SessionKey),
+}
+
+impl ArchivedItem {
+    pub(super) fn matches(&self, selected: &super::RailSessionIdentity) -> bool {
+        use super::RailSessionIdentity;
+        use crate::sessions::SessionKey;
+        match (self, selected) {
+            (Self::Draft(_, id), RailSessionIdentity::App(selected)) => *id == selected.get(),
+            (Self::Draft(id, _), RailSessionIdentity::Draft(selected)) => id == selected,
+            (Self::Session(SessionKey::App(id)), RailSessionIdentity::App(selected)) => {
+                id == selected
+            }
+            (
+                Self::Session(SessionKey::Locator {
+                    harness,
+                    profile_id,
+                    path,
+                }),
+                RailSessionIdentity::Session(selected, native),
+            ) => path == selected && *harness == native.harness && profile_id == &native.profile_id,
+            _ => false,
+        }
+    }
+
+    pub(super) fn resolve(&self, app: &FarcasterApp) -> Option<ActiveSessionItem> {
+        match self {
+            Self::Draft(id, _) => app
+                .sessions
+                .drafts
+                .iter()
+                .find(|row| &row.id == id)
+                .cloned()
+                .map(ActiveSessionItem::Draft),
+            Self::Session(key) => Some(ActiveSessionItem::Session(SessionRailItem {
+                session: app.sessions.visible.by_key(key)?.clone(),
+                kind: SessionRailKind::Archived,
+            })),
+        }
     }
 }
 
@@ -55,59 +94,64 @@ fn reconcile_archived_rows(
     *current = next;
 }
 impl FarcasterApp {
+    pub(in crate::app::views) fn prepare_archived_rows(
+        &self,
+        list_state: &UniformListScrollHandle,
+        list_rows: &RefCell<Vec<String>>,
+    ) -> Rc<Vec<ArchivedItem>> {
+        let items = archived_session_rows_for_roots(
+            self.sessions.visible.roots(),
+            &self.sessions.drafts,
+            self.sessions.project_filter.as_deref(),
+        );
+        let mut keys = Vec::with_capacity(items.len());
+        let mut identities = Vec::with_capacity(items.len());
+        for item in items {
+            match item {
+                ActiveSessionItem::Draft(draft) => {
+                    identities.push(format!("draft:{}", draft.id));
+                    keys.push(ArchivedItem::Draft(draft.id, draft.app_session_id));
+                }
+                ActiveSessionItem::Session(item) => {
+                    identities.push(session_item_identity(&item));
+                    keys.push(ArchivedItem::Session(item.session.catalog_key()));
+                }
+            }
+        }
+        reconcile_archived_rows(list_state, list_rows, identities);
+        Rc::new(keys)
+    }
+
     pub(in crate::app::views) fn render_inactive_sessions(
         &self,
         entity: WeakEntity<Self>,
         kind: SessionRailKind,
         list_state: UniformListScrollHandle,
-        list_rows: &RefCell<Vec<String>>,
+        rows: Rc<Vec<ArchivedItem>>,
     ) -> gpui::AnyElement {
         debug_assert!(kind != SessionRailKind::Project);
         let selected_root = self
             .selected_rail_root()
-            .map(|session| session.path.clone());
-        let live_session = self.snapshot.live_session.clone();
+            .map(|session| session.catalog_key());
         let waiting_roots = roots_waiting_for_descendants(&self.sessions.all);
-        let lists = session_rail_lists_for_roots(
-            self.sessions.visible.roots(),
-            &self.sessions.drafts,
-            self.sessions.project_filter.as_deref(),
-            &self.sessions.order,
-        );
-        let rows = match kind {
-            SessionRailKind::Archived => lists.archived,
-            SessionRailKind::Project => unreachable!("active sessions use the main rail"),
-        };
         let empty = rows.is_empty();
-        let counts = subagent_counts(&self.sessions.all);
-        reconcile_archived_rows(
-            &list_state,
-            list_rows,
-            rows.iter().map(archived_item_identity).collect(),
-        );
 
         let row_entity = entity.clone();
-        let selected_draft = self.sessions.selected_draft.clone();
-        let submitted_drafts = self.sessions.submitted_drafts.clone();
-        let editing_path = self
-            .sessions
-            .editing_title
-            .as_ref()
-            .map(|edit| edit.path.clone());
-        let title_input = self.sessions.title_input.clone();
-        let live_status = self.snapshot.live_status;
-        let run_statuses = self.activity.run_statuses.clone();
         let section_scrollbar = list_state.clone();
-        let rows_list = uniform_list("archived-session-rows", rows.len(), move |range, _, _| {
+        let rows_list = uniform_list("archived-session-rows", rows.len(), move |range, _, cx| {
+            let Some(entity) = row_entity.upgrade() else {
+                return Vec::new();
+            };
+            let app = entity.read(cx);
             range
                 .map(|index| match rows.get(index) {
-                    Some(ActiveSessionItem::Draft(draft)) => {
-                        let selected = selected_draft.as_deref() == Some(draft.id.as_str());
-                        let status = crate::app::session::drafts::resolved_draft_status(
-                            &draft.id,
-                            &submitted_drafts,
-                            &run_statuses,
-                        );
+                    Some(ArchivedItem::Draft(id, _)) => {
+                        let Some(draft) = app.sessions.drafts.iter().find(|draft| &draft.id == id)
+                        else {
+                            return div().into_any_element();
+                        };
+                        let selected = app.sessions.selected_draft.as_ref() == Some(id);
+                        let status = app.draft_rail_status(draft);
                         DraftRow::new(
                             draft,
                             DraftRowInput {
@@ -121,27 +165,27 @@ impl FarcasterApp {
                         )
                         .into_any_element()
                     }
-                    Some(ActiveSessionItem::Session(item)) => {
-                        let selected =
-                            selected_root.as_deref() == Some(item.session.path.as_path());
-                        let badge = inactive_session_badge(
-                            kind,
-                            item,
-                            &run_statuses,
-                            live_session.as_deref(),
-                            live_status,
-                            &waiting_roots,
-                        );
-                        let editing = editing_path.as_deref() == Some(item.session.path.as_path());
+                    Some(ArchivedItem::Session(key)) => {
+                        let Some(session) = app.sessions.visible.by_key(key) else {
+                            return div().into_any_element();
+                        };
+                        let selected = selected_root.as_ref() == Some(key);
+                        let status = app.rail_row_status(session, waiting_roots.contains(key));
+                        let badge = (status != crate::runtime::RunStatus::Done).then_some(status);
+                        let editing = app
+                            .sessions
+                            .editing_title
+                            .as_ref()
+                            .is_some_and(|edit| edit.path == session.path);
                         SessionRow::new(
-                            item,
+                            SessionRailItem {
+                                session: session.clone(),
+                                kind,
+                            },
                             SessionRowInput {
                                 compact: false,
-                                title_editor: editing.then(|| title_input.clone()),
-                                subagents: counts
-                                    .get(item.session.path.as_path())
-                                    .copied()
-                                    .unwrap_or(0),
+                                title_editor: editing.then(|| app.sessions.title_input.clone()),
+                                subagents: app.sessions.all.child_count(session),
                                 ..SessionRowInput::standard(selected, badge)
                             },
                             row_entity.clone(),

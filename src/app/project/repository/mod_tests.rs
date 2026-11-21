@@ -90,7 +90,7 @@ fn project_change_rejects_old_scan_and_starts_pending_scan() {
     );
 }
 
-fn cached_observation(preference: BackendPreference) -> RepositoryObservation {
+pub(super) fn cached_observation(preference: BackendPreference) -> RepositoryObservation {
     RepositoryObservation {
         preference,
         backend: None,

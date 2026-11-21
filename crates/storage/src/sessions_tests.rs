@@ -599,6 +599,39 @@ fn metadata_readback_failure_rolls_back_the_update() -> Result<(), String> {
 }
 
 #[test]
+fn exact_metadata_match_preserves_a_separate_legacy_record()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    let mut update = metadata("active");
+    update.project = temp.path().canonicalize()?;
+    update.path = update.project.join("active.jsonl");
+    let active = store.update_session_metadata(&update)?.app_session_id;
+    let mut other = update.clone();
+    other.id = "older".into();
+    other.path = update.project.join("older.jsonl");
+    let older = store.update_session_metadata(&other)?.app_session_id;
+    let legacy = update.project.join("missing/../active.jsonl");
+    store.connection.execute(
+        "UPDATE sessions SET locator=?1 WHERE id=?2",
+        params![legacy.to_string_lossy(), older],
+    )?;
+    update.title = Some("Updated".into());
+    assert_eq!(
+        store.update_session_metadata(&update)?.app_session_id,
+        active
+    );
+    let (title, locator): (String, String) = store.connection.query_row(
+        "SELECT title,locator FROM sessions WHERE id=?1",
+        [older],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(title, other.title.unwrap());
+    assert_eq!(locator, legacy.to_string_lossy());
+    Ok(())
+}
+
+#[test]
 fn live_metadata_preserves_archive_identity_and_other_sessions() {
     let temp = tempfile::tempdir().expect("test operation should succeed");
     let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))

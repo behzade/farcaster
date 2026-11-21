@@ -143,10 +143,7 @@ pub(in crate::app::views) fn bind_actions(
         }
     }))
     .on_action(cx.listener(|this, _: &AbortRun, _, _| {
-        this.runtime.signal(
-            this.composer.sessions.current_target(),
-            crate::runtime::RuntimeSignal::Abort,
-        );
+        this.signal_composer(crate::runtime::RuntimeSignal::Abort);
     }))
     // Give GPUI a single-key fallback so the Escape sequence expires.
     // Steering already ran in the keystroke interceptor.

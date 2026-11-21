@@ -48,6 +48,16 @@ fn failed_handoffs_restore_drafts_and_folder_membership(cx: &mut gpui::TestAppCo
                     draft.session_path = Some(project.join("session"));
                     app.sessions.drafts[0] = draft.clone();
                     app.request_draft_archive(draft.id.clone(), true, window, cx);
+                    assert!(app.sessions.drafts[0].archived);
+                    let Some(RuntimeCommand::SetSessionArchived {
+                        request,
+                        draft_saved: Some(saved),
+                    }) = runtime.try_recv_command()
+                    else {
+                        panic!("expected a draft archive intent")
+                    };
+                    let error = saved.recv_blocking().expect("receipt").unwrap_err();
+                    app.finish_archive(request, Err(error), cx);
                     assert_eq!(app.sessions.drafts[0], draft);
 
                     app.sessions.folders.create("Folder".into(), None);
@@ -66,7 +76,6 @@ fn failed_handoffs_restore_drafts_and_folder_membership(cx: &mut gpui::TestAppCo
                             command,
                             RuntimeCommand::NewSession { .. }
                                 | RuntimeCommand::SetSessionArchived { .. }
-                                | RuntimeCommand::SetAppSessionArchived { .. }
                         ));
                     }
                     failed.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -349,6 +358,99 @@ fn quit_reflushes_composer_changes_queued_after_its_barrier(cx: &mut gpui::TestA
                     .iter()
                     .any(|record| record.history.as_slice() == ["late submission"])
             );
+        },
+    );
+}
+
+#[gpui::test]
+fn idless_draft_archive_returns_while_its_first_save_is_blocked(cx: &mut gpui::TestAppContext) {
+    use crate::runtime::{ArchiveTarget, RuntimeCommand, RuntimeEvent};
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::idless_draft_archive_returns_while_its_first_save_is_blocked"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let mut draft = crate::sessions::DraftSession::fresh(
+                        Some(crate::agents::Backend::Pi),
+                        project.into(),
+                    );
+                    draft.submitted = true;
+                    let key = draft.id.clone();
+                    app.sessions.drafts.insert(0, draft);
+                    let (started, wait) = mpsc::channel();
+                    let (release, gate) = mpsc::channel();
+                    let (writer, _) = SessionStateWriter::spawn(move || {
+                        started.send(()).unwrap();
+                        gate.recv_timeout(Duration::from_secs(5))
+                            .map_err(|_| "UI did not return from archive".to_owned())?;
+                        persistence::shared()
+                    });
+                    app.sessions.writer = writer;
+                    while runtime.try_recv_command().is_some() {}
+                    app.request_draft_archive(key.clone(), true, window, cx);
+                    wait.recv_timeout(Duration::from_secs(5)).unwrap();
+                    assert!(app.sessions.drafts[0].archived);
+                    assert_eq!(app.sessions.drafts[0].app_session_id, 0);
+                    app.request_draft_archive(key.clone(), false, window, cx);
+                    assert!(!app.sessions.drafts[0].archived);
+
+                    let mut allocated = None;
+                    for archived in [true, false] {
+                        let Some(RuntimeCommand::SetSessionArchived {
+                            request,
+                            draft_saved: Some(receipt),
+                        }) = runtime.try_recv_command()
+                        else {
+                            panic!("missing archive command");
+                        };
+                        assert_eq!(request.target, ArchiveTarget::Draft(key.clone()));
+                        release.send(()).unwrap();
+                        let id = receipt
+                            .recv_blocking()
+                            .unwrap()
+                            .expect("allocate a durable identity");
+                        if let Some(previous) = allocated {
+                            assert_eq!(id, previous);
+                        }
+                        allocated = Some(id);
+                        runtime.send_event(RuntimeEvent::DraftArchiveIdentity {
+                            draft: key.clone(),
+                            app_session_id: id,
+                        });
+                        let mut store = persistence::open().unwrap();
+                        let rows = store
+                            .archive_app_session(id, archived)
+                            .unwrap()
+                            .into_iter()
+                            .collect();
+                        runtime.send_event(RuntimeEvent::SessionArchiveResult {
+                            request,
+                            rows: Ok(rows),
+                        });
+                        app.drain_runtime(cx);
+                        assert_eq!(app.sessions.drafts[0].app_session_id, id.get());
+                        assert!(
+                            !app.sessions.drafts[0].archived,
+                            "older acknowledgment replaced the pending restore"
+                        );
+                    }
+                    assert!(!app.sessions.archive_writes.has_pending());
+                    assert!(
+                        !persistence::open()
+                            .unwrap()
+                            .load_drafts()
+                            .unwrap()
+                            .into_iter()
+                            .find(|row| row.id == key)
+                            .unwrap()
+                            .archived
+                    );
+                })
+            })
         },
     );
 }

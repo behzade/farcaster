@@ -46,18 +46,77 @@ impl StateStore {
             .map_err(|error| format!("load selected session: {error}"))
     }
 
+    /// Save a draft snapshot while preserving the archive intent already in the database.
+    pub fn save_draft_with_identity(
+        &mut self,
+        mut draft: DraftSession,
+    ) -> Result<sessions::AppSessionId, String> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| error.to_string())?;
+        if draft.app_session_id <= 0 {
+            draft.app_session_id = tx
+                .query_row(
+                    "SELECT id FROM sessions WHERE client_key=?1",
+                    [&draft.id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|error| error.to_string())?
+                .unwrap_or_default();
+        }
+        if draft.app_session_id > 0 {
+            // A queued snapshot can outlive draft promotion or a previous archive intent.
+            update_draft(&tx, &draft)?;
+        } else {
+            draft.app_session_id = save_draft(&tx, &draft)?;
+        }
+        tx.commit().map_err(|error| error.to_string())?;
+        sessions::AppSessionId::new(draft.app_session_id)
+            .ok_or_else(|| "The chat has no saved identity".to_owned())
+    }
+
+    /// Resolve a confirmed draft's project and any bound session before stopping its actors.
+    pub fn draft_archive_session(
+        &self,
+        id: sessions::AppSessionId,
+        draft: &str,
+    ) -> Result<(PathBuf, Option<SessionSummary>), String> {
+        let project: String = self.connection.query_row(
+            "SELECT p.path FROM sessions s JOIN projects p ON p.id=s.project_id
+             WHERE s.id=?1 AND (s.client_key=?2 OR (s.client_key IS NULL AND s.locator IS NOT NULL))",
+            params![id.get(), draft], |row| row.get(0)
+        ).map_err(|error| format!("resolve draft archive identity: {error}"))?;
+        Ok((
+            project.into(),
+            Self::read_cached_sessions(&self.connection, Some(id.get()))?.pop(),
+        ))
+    }
+
     pub fn set_app_session_archived(
         &mut self,
         app_session_id: sessions::AppSessionId,
         archived: bool,
     ) -> Result<(), String> {
+        self.archive_app_session(app_session_id, archived)
+            .map(|_| ())
+    }
+
+    pub fn archive_app_session(
+        &mut self,
+        app_session_id: sessions::AppSessionId,
+        archived: bool,
+    ) -> Result<Option<SessionSummary>, String> {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| format!("start session archive intent: {error}"))?;
         apply_archive_intent(&tx, app_session_id.get(), archived)?;
+        let row = Self::read_cached_sessions(&tx, Some(app_session_id.get()))?.pop();
         tx.commit()
-            .map_err(|error| format!("commit session archive intent: {error}"))
+            .map_err(|error| format!("commit session archive intent: {error}"))?;
+        Ok(row)
     }
 
     pub fn save_session_changes(&mut self, changes: &SessionStateChanges) -> Result<(), String> {

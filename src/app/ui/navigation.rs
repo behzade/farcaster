@@ -182,10 +182,7 @@ impl FarcasterApp {
                             && !event.keystroke.modifiers.modified()
                             && escape_context.depth_of(&event.context_stack).is_some()
                         {
-                            this.runtime.signal(
-                                this.composer.sessions.current_target(),
-                                crate::runtime::RuntimeSignal::ApplySteering,
-                            );
+                            this.signal_composer(crate::runtime::RuntimeSignal::ApplySteering);
                         }
                         if this.navigation.chat.activation_focus != window.focused(cx) {
                             this.navigation.chat.activation.clear();

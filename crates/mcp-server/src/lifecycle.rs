@@ -221,6 +221,16 @@ pub fn with_test_worker_pool<T>(workers: crate::agents::WorkerPool, test: impl F
     test()
 }
 
+pub fn worker_status_snapshot(id: &str) -> Result<Option<crate::agents::WorkerSnapshot>, String> {
+    let current = SERVER
+        .lock()
+        .map_err(|_| "MCP server state is unavailable")?;
+    let Some(server) = current.as_ref() else {
+        return Ok(None);
+    };
+    server.service.workers.status_snapshot(id)
+}
+
 pub fn worker_snapshots() -> Result<Vec<crate::agents::WorkerSnapshot>, String> {
     let current = SERVER
         .lock()

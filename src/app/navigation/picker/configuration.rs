@@ -11,6 +11,9 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.can_submit() {
+            return;
+        }
         if self.workspace.runtime_picker.open {
             self.set_runtime_picker_open(false, window, cx);
         }
@@ -273,7 +276,7 @@ impl FarcasterApp {
                         picker_row(
                             commands,
                             &format!("restore:{index}"),
-                            PickerCommand::RestoreSession(session.path.clone()),
+                            PickerCommand::RestoreSession(session.catalog_key()),
                             AppIcon::ChatCircle,
                             &session.title,
                             Some(session.project.display().to_string()),

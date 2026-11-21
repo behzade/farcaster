@@ -108,6 +108,7 @@ struct RegisteredCaller {
     project: PathBuf,
     session: Option<String>,
     session_locator: Option<PathBuf>,
+    normalized_locator: Option<PathBuf>,
     harness_profile_id: Option<String>,
     backend: Backend,
     provider: Option<String>,
@@ -481,6 +482,7 @@ impl CallerRegistry {
                     project,
                     session: None,
                     session_locator: None,
+                    normalized_locator: None,
                     harness_profile_id: None,
                     backend: profile.backend,
                     provider: profile.provider,
@@ -578,6 +580,7 @@ impl CallerRegistry {
                 project,
                 session: None,
                 session_locator: None,
+                normalized_locator: None,
                 harness_profile_id: None,
                 backend: profile.backend,
                 provider: profile.provider,
@@ -679,18 +682,21 @@ impl CallerRegistry {
     ) -> Option<(String, CallerProfile, Option<String>)> {
         let caller = unique_caller(callers.values().filter(|caller| {
             // Stored session IDs need no context allocation or filesystem lookup.
-            // Keep locator matching unchanged for sessions not yet in the store.
             match key {
                 SessionKey::App(id) => {
                     caller.session.is_some()
                         && caller.session_record.and_then(AppSessionId::new).as_ref() == Some(id)
                 }
-                _ => {
-                    caller
-                        .session_key()
-                        .and_then(|session| session.key)
-                        .as_ref()
-                        == Some(key)
+                SessionKey::Locator {
+                    harness,
+                    profile_id,
+                    path,
+                } => {
+                    caller.session.is_some()
+                        && caller.session_record.and_then(AppSessionId::new).is_none()
+                        && caller.backend == *harness
+                        && caller.harness_profile_id == *profile_id
+                        && caller.normalized_locator.as_ref() == Some(path)
                 }
             }
         }))?;
@@ -1052,6 +1058,14 @@ impl CallerIdentity {
 
     pub fn bind_with_locator(&self, session: impl Into<String>, locator: Option<PathBuf>) {
         let session = session.into();
+        let normalized_locator = locator
+            .as_deref()
+            .or_else(|| {
+                Path::new(&session)
+                    .is_absolute()
+                    .then(|| Path::new(&session))
+            })
+            .map(farcaster_sessions::normalize_session_path);
         let before = self.registry.callers.lock().ok().and_then(|callers| {
             callers
                 .get(&self.token)
@@ -1066,6 +1080,7 @@ impl CallerIdentity {
             }
             context.session = Some(session);
             context.session_locator = locator;
+            context.normalized_locator = normalized_locator;
             context.activity = WorkerActivityState::Idle;
         }
         self.registry.bind_record(&self.token);

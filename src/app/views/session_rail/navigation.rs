@@ -1,19 +1,20 @@
+#[cfg(test)]
 use std::path::Path;
 
+#[cfg(test)]
+use crate::sessions::SessionCatalog;
 use gpui::{Context, Window};
 
-use super::{
-    FarcasterApp, VisibleSessionTarget, groups::ActiveSessionItem,
-    groups::session_rail_lists_for_roots,
-};
+use super::{FarcasterApp, active_item_identity};
 use crate::{
     app::{
         views::SessionReveal,
         views::run_panel::{RECENT_WORKERS, worker_navigation_rows},
     },
-    sessions::{SessionCatalog, SessionSummary},
+    sessions::SessionSummary,
 };
 
+#[cfg(test)]
 fn selected_root<'a>(
     sessions: &'a SessionCatalog,
     confirmed: Option<&Path>,
@@ -29,16 +30,13 @@ enum SessionStep {
 }
 
 fn session_step(
-    active: impl IntoIterator<Item = i64, IntoIter: ExactSizeIterator>,
-    archived: impl IntoIterator<Item = i64, IntoIter: ExactSizeIterator>,
-    selected: i64,
+    active_count: usize,
+    archived_count: usize,
+    current: Option<usize>,
     direction: isize,
 ) -> Option<SessionStep> {
-    let active = active.into_iter();
-    let archived = archived.into_iter();
-    let active_count = active.len();
-    let total = active_count + archived.len();
-    let current = active.chain(archived).position(|id| id == selected)?;
+    let total = active_count + archived_count;
+    let current = current?;
     let next = current.checked_add_signed(direction)?;
     if next < active_count {
         Some(SessionStep::Active(next))
@@ -80,22 +78,21 @@ impl FarcasterApp {
         {
             return;
         }
-        let selected = self
-            .lifecycle
-            .pending_session_switch
-            .as_ref()
-            .map(|(path, _)| path.as_path())
-            .or(self.snapshot.selected_session.as_deref());
-        let rows = worker_navigation_rows(&self.sessions.all, &self.activity.agents, selected);
+        let selected = self.sidebar_catalog_row(&self.sessions.all);
+        let rows = worker_navigation_rows(
+            &self.sessions.all,
+            &self.activity.agents,
+            self.sidebar_worker_root(),
+        );
         let Some(root) = rows.first() else { return };
         let expanded = self
             .views
             .run_panel
             .read(cx)
-            .workers_expanded_for(&root.path);
+            .workers_expanded_for(&root.catalog_key());
         let selected_index = rows
             .iter()
-            .position(|session| Some(session.path.as_path()) == selected);
+            .position(|session| selected.is_some_and(|row| row.same_record(session)));
         let visible = visible_worker_indices(rows.len(), selected_index, expanded);
         let current = visible
             .iter()
@@ -104,20 +101,15 @@ impl FarcasterApp {
             return;
         };
         let session = rows[visible[index]];
-        let path = session.path.clone();
-        let project = session.project.clone();
-        self.select_session_and_focus(path, project, window, cx);
+        self.select_rail_session(session.catalog_key(), window, cx);
     }
 
-    pub(super) fn selected_rail_root(&self) -> Option<&SessionSummary> {
-        selected_root(
-            &self.sessions.visible,
-            self.snapshot.selected_session.as_deref(),
-            self.lifecycle
-                .pending_session_switch
-                .as_ref()
-                .map(|(path, _)| path.as_path()),
-        )
+    pub(in crate::app) fn selected_rail_root(&self) -> Option<&SessionSummary> {
+        if self.sessions.selected_draft.is_some() {
+            return None;
+        }
+        let catalog = &self.sessions.visible;
+        catalog.root_for_row(self.sidebar_catalog_row(catalog)?)
     }
 
     pub(in crate::app) fn switch_transcript_session(
@@ -131,50 +123,44 @@ impl FarcasterApp {
         {
             return;
         }
-        let active = self.visible_session_targets();
-        let archived = session_rail_lists_for_roots(
-            self.sessions.visible.roots(),
-            &self.sessions.drafts,
-            self.sessions.project_filter.as_deref(),
-            &self.sessions.order,
-        )
-        .archived;
-        let selected = self
-            .sessions
-            .selected_draft
-            .as_ref()
-            .and_then(|id| self.sessions.drafts.iter().find(|draft| &draft.id == id))
-            .map(|draft| draft.app_session_id)
-            .or_else(|| {
-                self.selected_rail_root()
-                    .map(|session| session.app_session_id)
-            });
-        let Some(selected) = selected else { return };
-        let step = session_step(
-            active.iter().map(VisibleSessionTarget::app_session_id),
-            archived.iter().map(ActiveSessionItem::app_session_id),
-            selected,
-            direction,
-        );
-        let (target, archived_index) = match step {
-            Some(SessionStep::Active(index)) => (active[index].clone(), None),
-            Some(SessionStep::Archived(index)) => (
-                match &archived[index] {
-                    ActiveSessionItem::Draft(draft) => {
-                        VisibleSessionTarget::Draft((*draft).clone())
-                    }
-                    ActiveSessionItem::Session(item) => {
-                        VisibleSessionTarget::Persisted(item.session.clone())
-                    }
-                },
-                Some(index),
-            ),
-            None => return,
+        let Some(selected) = self.selected_rail_identity() else {
+            return;
         };
-        let key = target.rail_identity();
+        let mut active = self.visible_session_targets();
+        let active_index = active.iter().position(|item| selected.matches(item));
+        // Stepping within the active section need not prepare a collapsed archive.
+        let archived = if active_index.is_some_and(|i| {
+            i.checked_add_signed(direction)
+                .is_none_or(|next| next < active.len())
+        }) {
+            Default::default()
+        } else {
+            self.views
+                .archived_session_rail
+                .update(cx, |rail, _| rail.sorted_rows(self))
+        };
+        let current = active_index.or_else(|| {
+            archived
+                .iter()
+                .position(|item| item.matches(&selected))
+                .map(|i| active.len() + i)
+        });
+        let Some(step) = session_step(active.len(), archived.len(), current, direction) else {
+            return;
+        };
+        let target = match step {
+            SessionStep::Active(index) => active.swap_remove(index),
+            SessionStep::Archived(index) => {
+                let Some(target) = archived[index].resolve(self) else {
+                    return;
+                };
+                target
+            }
+        };
+        let key = active_item_identity(&target);
         self.select_visible_session(target, window, cx);
-        if let Some(index) = archived_index {
-            self.sessions.archived_expanded |= index >= self.archived_visible_rows();
+        if matches!(step, SessionStep::Archived(_)) {
+            self.sessions.archived_expanded = true;
             self.views.archived_session_rail.update(cx, |view, cx| {
                 view.reveal = Some(SessionReveal::SessionID(key));
                 cx.notify();
@@ -182,7 +168,7 @@ impl FarcasterApp {
         } else {
             self.reveal_active_session_row(key, cx);
         }
-        self.notify_session_rail(cx);
+        self.notify_session_rail_shell(cx);
         cx.notify();
     }
 }

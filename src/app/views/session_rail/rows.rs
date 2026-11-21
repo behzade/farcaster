@@ -70,12 +70,12 @@ pub(super) struct SessionRow {
 
 impl SessionRow {
     pub(super) fn new(
-        item: &SessionRailItem,
+        item: SessionRailItem,
         input: SessionRowInput,
         entity: WeakEntity<FarcasterApp>,
     ) -> Self {
         Self {
-            item: item.clone(),
+            item,
             input,
             entity,
         }
@@ -106,6 +106,7 @@ impl RenderOnce for SessionRow {
         let path = session.path.clone();
         let project = session.project.clone();
         let open_entity = entity.clone();
+        let open_key = session.catalog_key();
         let edit_entity = entity.clone();
         let cancel_entity = entity.clone();
         let edit_path = path.clone();
@@ -134,7 +135,7 @@ impl RenderOnce for SessionRow {
         let action_group = format!("{identity}:actions");
         let archive_action = session_archive_action(
             &identity,
-            session.path.clone(),
+            open_key.clone(),
             is_archived,
             action_group.clone(),
             entity.clone(),
@@ -218,7 +219,7 @@ impl RenderOnce for SessionRow {
                     });
                 } else {
                     let _ = open_entity.update(cx, |this, cx| {
-                        this.select_session_and_focus(path.clone(), project.clone(), window, cx)
+                        this.select_rail_session(open_key.clone(), window, cx)
                     });
                 }
             })
@@ -373,14 +374,14 @@ pub(super) fn session_title(title: String, selected: bool, archived: bool) -> Di
 
 fn session_archive_action(
     id: &str,
-    path: PathBuf,
+    key: crate::sessions::SessionKey,
     is_archived: bool,
     action_group: String,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     archive_action(id, is_archived, action_group, move |apply, window, cx| {
         let _ = entity.update(cx, |this, cx| {
-            this.request_session_archive(path.clone(), apply, window, cx);
+            this.request_rail_archive(key.clone(), apply, window, cx);
         });
     })
 }

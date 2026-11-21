@@ -856,3 +856,25 @@ fn ui_session_presentation_does_not_wait_for_registry_updates() {
     let _updating = registry.callers.lock().unwrap();
     assert!(registry.try_session_presentation(&key).is_none());
 }
+
+#[cfg(unix)]
+#[test]
+fn ui_locator_presentation_follows_bound_identity_and_rebinding() {
+    let registry = CallerRegistry::default();
+    let dir = tempfile::tempdir().unwrap();
+    let canonical = dir.path().canonicalize().unwrap();
+    let alias = dir.path().join("alias");
+    std::os::unix::fs::symlink(&canonical, &alias).unwrap();
+    let caller = identity(&registry, &canonical, Backend::Codex).without_session_persistence();
+    caller.bind_with_locator("native", Some(alias.join("first")));
+    let key = |name: &str| SessionKey::Locator {
+        harness: Backend::Codex,
+        profile_id: None,
+        path: canonical.join(name),
+    };
+    std::fs::remove_file(&alias).unwrap();
+    assert!(registry.try_session_presentation(&key("first")).is_some());
+    caller.bind_with_locator("native", Some(canonical.join("second")));
+    assert!(registry.try_session_presentation(&key("first")).is_none());
+    assert!(registry.try_session_presentation(&key("second")).is_some());
+}

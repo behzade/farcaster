@@ -69,17 +69,18 @@ pub(in crate::app::views) fn render(
     };
     let runtime_entity = entity.clone();
     let content_entity = entity.clone();
+    let enabled = app.can_submit();
     let runtime = Popover::new("runtime-popover")
         .anchor(gpui::Anchor::BottomLeft)
         .appearance(false)
-        .open(app.workspace.runtime_picker.open)
+        .open(enabled && app.workspace.runtime_picker.open)
         .trigger(
             dropdown_content_button(
                 "select-runtime",
                 runtime_label,
                 runtime_content,
                 ButtonTone::Quiet,
-                true,
+                enabled,
             )
             .px(theme().space.xs)
             .flex_none(),
@@ -105,6 +106,7 @@ pub(in crate::app::views) fn render(
                 app.snapshot.access_mode,
                 app.snapshot.available_access_modes(),
                 app.snapshot.sandbox_state,
+                enabled,
                 entity,
             ))
         })
@@ -134,6 +136,7 @@ fn access_selector(
     selected: HarnessAccessMode,
     supported: Vec<HarnessAccessMode>,
     state: SandboxState,
+    enabled: bool,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     let label = sandbox_state_label(state, selected);
@@ -178,7 +181,7 @@ fn access_selector(
     .auto_menu_width()
     .anchor(gpui::Anchor::BottomLeft)
     .accessibility_label(sandbox_state_tooltip(state, selected))
-    .disabled(supported.len() < 2)
+    .disabled(!enabled || supported.len() < 2)
     .into_any_element()
 }
 

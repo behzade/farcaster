@@ -1,12 +1,38 @@
 use super::*;
 
 impl FarcasterApp {
+    pub(in crate::app) fn signal_composer(&self, signal: crate::runtime::RuntimeSignal) {
+        if self.can_submit() {
+            self.runtime
+                .signal(self.composer.sessions.current_buffer(), signal);
+        }
+    }
+
+    pub(in crate::app) fn bind_legacy_composer(&mut self, path: &Path, harness: Backend) {
+        let legacy = session_target(path);
+        let buffer = crate::sessions::session_buffer(harness, path);
+        self.composer.sessions.bind_legacy_buffer(&legacy, &buffer);
+        self.promote_composer_images(&legacy, &buffer);
+        self.promote_composer_pastes(&legacy, &buffer);
+        for pending in self.composer.pending_submissions.values_mut() {
+            if pending.submitted_target == legacy {
+                pending.submitted_target.clone_from(&buffer);
+            }
+        }
+    }
+
     pub(in crate::app) fn switch_composer_target(
         &mut self,
         target: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some((harness, address)) = crate::sessions::composer_buffer_parts(&target)
+            && let Some(path) = crate::sessions::session_path(address)
+            && !self.sessions.all.has_shared_path(path)
+        {
+            self.bind_legacy_composer(path, harness);
+        }
         self.navigation.chat.activation.clear();
         let current = input_snapshot(self.composer.input.read(cx));
         let current_target = self.composer.sessions.current_target().to_owned();
@@ -106,6 +132,9 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if !self.can_submit() {
+            return false;
+        }
         let available = crate::agents::available_access_modes(
             self.snapshot.harness,
             Some(self.snapshot.catalog_model(model)),

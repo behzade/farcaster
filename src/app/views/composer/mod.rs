@@ -218,10 +218,8 @@ impl FarcasterApp {
             .flex()
             .flex_col()
             .when_some(
-                queue::render(
-                    self.composer_queue(),
-                    crate::app::composer::queue::action_handler(entity.clone()),
-                ),
+                self.composer_queue(entity.clone())
+                    .and_then(|(queue, on_action)| queue::render(queue, on_action)),
                 |composer, queue| composer.child(queue),
             )
             .when(
@@ -268,11 +266,11 @@ pub(super) fn composer_primary_action(
     exact_command: bool,
     running: bool,
 ) -> Option<ComposerAction> {
-    if !has_content {
-        return running.then_some(ComposerAction::Stop);
-    }
     if !can_submit {
         return None;
+    }
+    if !has_content {
+        return running.then_some(ComposerAction::Stop);
     }
     Some(if running {
         ComposerAction::Steer

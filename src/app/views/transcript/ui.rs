@@ -135,11 +135,22 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn sync_composer_history(&mut self) {
+        let target = self.composer.sessions.current_target();
+        if self.lifecycle.pending_session_switch.is_some()
+            || crate::sessions::composer_buffer_parts(self.composer.sessions.current_buffer())
+                .is_some_and(|(harness, _)| self.snapshot.harness != Some(harness))
+            || crate::sessions::session_path(target)
+                .is_some_and(|path| self.snapshot.selected_session.as_deref() != Some(path))
+            || (self.sessions.selected_draft.is_some()
+                && self.snapshot.selected_session.as_deref() != self.sidebar_session_path())
+        {
+            return;
+        }
         let _timing = crate::app::infrastructure::performance::OperationTiming::new(
             crate::app::infrastructure::performance::OperationKind::ComposerHistory,
             self.snapshot.conversation.items.len(),
         );
-        let target = self.composer.sessions.current_target().to_owned();
+        let target = self.composer.sessions.current_buffer().to_owned();
         let mut user_count = 0;
         let mut last_user = "";
         for item in &self.snapshot.conversation.items {

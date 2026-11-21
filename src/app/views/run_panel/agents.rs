@@ -7,7 +7,6 @@ use gpui::{
 
 use super::super::super::FarcasterApp;
 use super::super::session_rail::{session_hover_details, session_tooltip_content};
-use super::WorkerProfileNames;
 use crate::{
     agent_activity::{AgentLifecycle, AgentOutcome},
     app::ui::assets::AppIcon,
@@ -53,13 +52,11 @@ thread_local! {
 }
 
 impl FarcasterApp {
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn agent_card(
         &self,
-        row: &super::worker_list::WorkerRow,
+        row: &std::rc::Rc<super::worker_list::WorkerRow>,
         selected: bool,
         anchor: &ScrollAnchor,
-        saved_profiles: &WorkerProfileNames,
         entity: WeakEntity<Self>,
     ) -> Option<AnyElement> {
         #[cfg(test)]
@@ -67,12 +64,9 @@ impl FarcasterApp {
         let activity = &row.activity;
         let session = &row.session;
         let depth = row.depth;
-        let activity_key = row.activity_key.clone();
         let focus = row.focus.clone()?;
-        let path = session.path.clone();
-        let project = session.project.clone();
-        let key_path = path.clone();
-        let key_project = project.clone();
+        let click_key = row.session_key.clone();
+        let keyboard_key = click_key.clone();
         let key_entity = entity.clone();
         let state = lifecycle_label(activity.lifecycle);
         let (icon, color) = agent_lifecycle_visual(activity.lifecycle);
@@ -83,37 +77,38 @@ impl FarcasterApp {
         let caller = presentation
             .as_ref()
             .map(|(name, profile, _)| (name, profile));
-        let mut hover_details = session_hover_details(session, state, "", 0);
         let profile_name = presentation
             .as_ref()
             .and_then(|(_, _, profile)| profile.clone())
-            .or_else(|| saved_profiles.get(key).cloned());
-        if let Some(profile) = &profile_name {
-            hover_details
-                .rows
-                .insert(0, ("Profile".into(), profile.clone()));
-        }
-        hover_details.rows.insert(
-            0,
-            (
-                "Name".into(),
-                caller
-                    .as_ref()
-                    .map(|(name, _)| (*name).clone())
-                    .unwrap_or_else(|| role.clone()),
-            ),
-        );
+            .or_else(|| {
+                self.sessions
+                    .all
+                    .active_worker_profile(session.app_session_id)
+                    .map(str::to_owned)
+            });
+        let name = caller
+            .as_ref()
+            .map(|(name, _)| (*name).clone())
+            .unwrap_or(role);
+        let tooltip_row = row.clone();
+        let tooltip_name = name.clone();
+        let tooltip_profile = profile_name.clone();
         let execution = execution_label(
             caller.as_ref().map(|(_, profile)| *profile),
             session.model.as_ref(),
             session.thinking_level.as_deref(),
         );
-        let identity = profile_name
-            .or_else(|| caller.as_ref().map(|(name, _)| (*name).clone()))
-            .unwrap_or_else(|| role.clone());
-        let card = conversation_row(format!("agent-card-{activity_key}"), selected)
+        let identity = profile_name.unwrap_or(name);
+        let element_id = format!("agent-card-{:?}", row.session_key);
+        let card = conversation_row(element_id, selected)
             .anchor_scroll(selected.then(|| anchor.clone()))
-            .debug_selector(move || format!("agent-card-{activity_key}"))
+            .debug_selector(|| {
+                if self.sessions.all.has_shared_path(&session.path) {
+                    format!("agent-card-{:?}", row.session_key)
+                } else {
+                    format!("agent-card-{}", session.path.display())
+                }
+            })
             .track_focus(&focus)
             .aria_label(format!("Show {identity} transcript: {state}"))
             .on_mouse_down(
@@ -128,23 +123,19 @@ impl FarcasterApp {
             .cursor_pointer()
             .on_click(move |event, window, cx| {
                 let _ = entity.update(cx, |this, cx| {
-                    if matches!(event, gpui::ClickEvent::Keyboard(_)) {
-                        this.select_session_and_focus(path.clone(), project.clone(), window, cx);
-                    } else {
-                        this.select_clicked_worker(path.clone(), project.clone(), window, cx);
-                    }
+                    this.select_catalog_session(
+                        click_key.clone(),
+                        matches!(event, gpui::ClickEvent::Keyboard(_)),
+                        window,
+                        cx,
+                    );
                 });
             })
             .on_key_down(move |event, window, cx| {
                 if activates_button(event) {
                     cx.stop_propagation();
                     let _ = key_entity.update(cx, |this, cx| {
-                        this.select_session_and_focus(
-                            key_path.clone(),
-                            key_project.clone(),
-                            window,
-                            cx,
-                        )
+                        this.select_rail_session(keyboard_key.clone(), window, cx)
                     });
                 }
             })
@@ -197,7 +188,16 @@ impl FarcasterApp {
                             ),
                     ),
             )
-            .app_tooltip_element(move |_, _| session_tooltip_content(&hover_details))
+            .app_tooltip_element(move |_, _| {
+                let mut details = session_hover_details(&tooltip_row.session, state, "", 0);
+                if let Some(profile) = &tooltip_profile {
+                    details.rows.insert(0, ("Profile".into(), profile.clone()));
+                }
+                details
+                    .rows
+                    .insert(0, ("Name".into(), tooltip_name.clone()));
+                session_tooltip_content(&details)
+            })
             .into_any_element();
         Some(card)
     }

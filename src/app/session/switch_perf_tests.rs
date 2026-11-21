@@ -25,6 +25,85 @@ const SWITCH_POLL: Duration = Duration::from_millis(2);
 const SWITCH_TIMEOUT: Duration = Duration::from_secs(15);
 const SUMMARY_WINDOW: Duration = Duration::from_millis(1_400);
 
+#[gpui::test]
+fn session_actions_draw_before_runtime_acknowledgment(cx: &mut gpui::TestAppContext) {
+    use crate::sessions::SessionSummary;
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::session_actions_draw_before_runtime_acknowledgment"
+        ),
+        cx,
+        |cx, app, _, project| {
+            let rows: Vec<_> = (1..=2_716)
+                .map(|id| {
+                    let title = format!("Chat {id}");
+                    SessionSummary::from_cached(
+                        id.to_string(),
+                        project.join(id.to_string()),
+                        project.into(),
+                        title,
+                        String::new(),
+                        String::new(),
+                        None,
+                        std::time::UNIX_EPOCH,
+                        1,
+                        Default::default(),
+                        id > 120,
+                        false,
+                        String::new(),
+                    )
+                    .with_app_session_id(id)
+                })
+                .collect();
+            let target = rows[1].catalog_key();
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    std::sync::Arc::make_mut(&mut app.snapshot).selected_session =
+                        Some(rows[0].path.clone());
+                    app.sessions.visible = rows.clone().into();
+                    app.sessions.all = rows.into();
+                    app.sessions.selected_draft = None;
+                    app.sessions.archived_expanded = true;
+                    app.notify_session_rail(cx);
+                })
+            });
+            cx.simulate_resize(gpui::size(gpui::px(1600.), gpui::px(900.)));
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            for action in ["switch", "archive", "new"] {
+                let start = Instant::now();
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| match action {
+                        "switch" => app.select_rail_session(target.clone(), window, cx),
+                        "archive" => app.request_rail_archive(target.clone(), true, window, cx),
+                        "new" => app.new_session(project.into(), window, cx),
+                        _ => unreachable!(),
+                    });
+                });
+                let handler = start.elapsed();
+                cx.update(|window, cx| window.draw(cx).clear(cx));
+                let drawn = start.elapsed();
+                cx.update(|_, cx| {
+                    let app = app.read(cx);
+                    match action {
+                        "switch" => {
+                            assert_eq!(app.selected_rail_root().unwrap().catalog_key(), target)
+                        }
+                        "archive" => {
+                            assert!(app.sessions.visible.by_key(&target).unwrap().archived)
+                        }
+                        "new" => assert!(app.sessions.selected_draft.is_some()),
+                        _ => unreachable!(),
+                    }
+                });
+                eprintln!(
+                    "sidebar {action} with 2716 sessions: handler {handler:?}, through test-window draw {drawn:?}"
+                );
+            }
+        },
+    );
+}
+
 fn write_session_file(directory: &Path, name: &str, messages: usize) -> PathBuf {
     let mut body = format!("{{\"type\":\"session\",\"id\":\"{name}\",\"cwd\":\".\"}}\n");
     let filler = "a transcript line that a switch has to read and project ".repeat(8);
@@ -92,6 +171,7 @@ fn wait_for_items(
 ) {
     let deadline = Instant::now() + SWITCH_TIMEOUT;
     loop {
+        cx.run_until_parked();
         let applied = cx.update(|window, cx| {
             app.update(cx, |app, cx| app.drain_runtime(cx));
             window.draw(cx).clear(cx);
@@ -335,4 +415,399 @@ fn hover_prefetch_and_cold_selection_load_the_same_transcript(cx: &mut gpui::Tes
 
 fn millis(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1_000.0
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[gpui::test]
+fn hovering_a_cursor_session_does_not_start_its_profile(cx: &mut gpui::TestAppContext) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::hovering_a_cursor_session_does_not_start_its_profile"
+        ),
+        cx,
+        |cx, app, _, project| {
+            let target = project.join("other-project");
+            fs::create_dir(&target).unwrap();
+            crate::agents::set_test_project_environment(
+                &target,
+                vec![("CURSOR_API_KEY".into(), "fixture".into())],
+            );
+            let executable = project.join("cursor-history-fixture");
+            fs::write(
+                &executable,
+                "#!/bin/sh\n: > history-bridge-started\nexit 1\n",
+            )
+            .unwrap();
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+            let profile = crate::agents::HarnessProfile {
+                id: "11111111-1111-4111-8111-111111111111".into(),
+                name: "Cursor fixture".into(),
+                backend: Backend::Cursor,
+                executable,
+                data_directory: Some(project.to_owned()),
+            };
+            let path = project
+                .join("profiles")
+                .join(&profile.id)
+                .join(Backend::Cursor.as_str())
+                .join("thread");
+            let config = cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    let config = AgentLaunchConfig {
+                        profiles: app.settings.harness_profiles.clone(),
+                        profile_id: Some(profile.id.clone()),
+                        ..Default::default()
+                    };
+                    config.profiles.replace(vec![profile]).unwrap();
+                    app.prefetch_session(Backend::Cursor, path.clone(), target.clone(), cx);
+                    config
+                })
+            });
+            cx.run_until_parked();
+            let marker = target.join("history-bridge-started");
+            assert!(!marker.exists());
+            // The same locator and profile start the fixture when explicitly loading history.
+            let _ = crate::agents::load_session_history_for_profile(
+                &config,
+                Backend::Cursor,
+                &path,
+                &target,
+            );
+            assert!(marker.is_file());
+        },
+    );
+}
+
+#[cfg(unix)]
+#[gpui::test]
+fn cold_codex_selection_draws_the_recent_reply_while_full_history_is_blocked(
+    cx: &mut gpui::TestAppContext,
+) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    const PROFILE: &str = "11111111-1111-4111-8111-111111111111";
+    let executor = cx.background_executor.clone();
+    crate::app::test_support::with_runtime_app(
+        concat!(
+            module_path!(),
+            "::cold_codex_selection_draws_the_recent_reply_while_full_history_is_blocked"
+        ),
+        cx,
+        |project| {
+            // The fixture uses a fixed executable; keep the user's login shell out of the measurement.
+            crate::agents::set_test_project_environment(
+                project,
+                vec![("PATH".into(), "/usr/bin:/bin".into())],
+            );
+            let executable = project.join("codex-fixture");
+            fs::write(
+                &executable,
+                include_str!("../../../tests/fixtures/cold-codex-history.sh"),
+            )
+            .unwrap();
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+            let rollout = project.join("rollout.jsonl");
+            fs::write(&rollout, "").unwrap();
+            fs::write(project.join("thread_history_1.sqlite"), "").unwrap();
+            let db = rusqlite::Connection::open(project.join("state_5.sqlite")).unwrap();
+            db.execute_batch("CREATE TABLE threads(id TEXT PRIMARY KEY, rollout_path TEXT, history_mode TEXT, model_provider TEXT, model TEXT, reasoning_effort TEXT)").unwrap();
+            db.execute(
+                "INSERT INTO threads VALUES ('thread', ?1, 'paginated', 'openai', 'fixture', NULL)",
+                [rollout.to_str().unwrap()],
+            )
+            .unwrap();
+            let config = AgentLaunchConfig::default();
+            config
+                .profiles
+                .replace(vec![crate::agents::HarnessProfile {
+                    id: PROFILE.into(),
+                    name: "Fixture".into(),
+                    backend: Backend::Codex,
+                    executable,
+                    data_directory: Some(project.to_owned()),
+                }])
+                .unwrap();
+            RuntimeHandle::spawn(
+                project.to_owned(),
+                crate::sessions::DraftSession::with_id(
+                    None,
+                    "cold-history-test".into(),
+                    project.into(),
+                ),
+                None,
+                config,
+                crate::app::runtime_host::host(executor.clone()),
+            )
+        },
+        |cx, app, project| {
+            let project = project.canonicalize().unwrap();
+            trust::apply(&project, TrustChoice::TrustProject).unwrap();
+            let path = project
+                .join("profiles")
+                .join(PROFILE)
+                .join(Backend::Codex.as_str())
+                .join("thread");
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let row = crate::sessions::SessionSummary::from_cached_for_harness(
+                "thread".into(),
+                Backend::Codex,
+                path.clone(),
+                project.clone(),
+                "Saved chat".into(),
+                "Original question".into(),
+                String::new(),
+                None,
+                std::time::UNIX_EPOCH,
+                2,
+                Default::default(),
+                false,
+                false,
+                String::new(),
+            )
+            .with_app_session_id(17);
+            let key = row.catalog_key();
+            let started = Instant::now();
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions.all = vec![row.clone()].into();
+                    app.sessions.visible = vec![row].into();
+                    app.select_rail_session(key, window, cx);
+                })
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            assert!(
+                cx.debug_bounds("First message · Loading history…")
+                    .is_some()
+            );
+            let first = started.elapsed();
+            let deadline = started + SWITCH_TIMEOUT;
+            loop {
+                cx.run_until_parked();
+                let (status, reply, count, error) = cx.update(|window, cx| {
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                    window.draw(cx).clear(cx);
+                    let app = app.read(cx);
+                    (
+                        app.snapshot.status.clone(),
+                        app.snapshot.loading_reply.clone(),
+                        app.snapshot.conversation.items.len(),
+                        app.sessions.error.clone(),
+                    )
+                });
+                if reply.as_deref() == Some("Recent answer") {
+                    assert_eq!(count, 0);
+                    assert!(cx.debug_bounds("Latest reply · Loading history…").is_some());
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "preview missing, status={status}, error={error:?}"
+                );
+                thread::sleep(SWITCH_POLL);
+            }
+            let recent = started.elapsed();
+            fs::write(project.join("release-full-read"), "").unwrap();
+            wait_for_items(cx, app, &path, 2);
+            cx.update(|_, cx| {
+                let snapshot = &app.read(cx).snapshot;
+                assert!(snapshot.document_ready && snapshot.loading_reply.is_none());
+                assert_eq!(snapshot.conversation.items[0].text, "Original question");
+                assert_eq!(snapshot.conversation.items[1].text, "Recent answer");
+            });
+            assert!(cx.debug_bounds("Latest reply · Loading history…").is_none());
+            eprintln!(
+                "COLD_CODEX first_draw_ms={:.2} recent_draw_ms={:.2} complete_draw_ms={:.2}",
+                millis(first),
+                millis(recent),
+                millis(started.elapsed())
+            );
+        },
+    );
+}
+
+#[gpui::test]
+fn resuming_a_draft_keeps_late_editor_text_out_of_its_input(cx: &mut gpui::TestAppContext) {
+    use crate::{protocol::ExtensionUiRequest, runtime::RuntimeEvent, sessions::DraftSession};
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::resuming_a_draft_keeps_late_editor_text_out_of_its_input"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            trust::apply(project, TrustChoice::TrustProject).unwrap();
+            let draft =
+                DraftSession::new(Some(Backend::Codex), "resume".into(), 42, project.into(), 0);
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let id = draft.id.clone();
+                    app.sessions.drafts.push(draft);
+                    app.resume_draft(id, project.into(), window, cx);
+                    app.composer
+                        .input
+                        .update(cx, |input, cx| input.set_value("draft text", window, cx));
+                    runtime.send_event(RuntimeEvent::ExtensionUi {
+                        generation: app.runtime_generation,
+                        request: ExtensionUiRequest::SetEditorText {
+                            id: "previous".into(),
+                            text: "previous actor's text".into(),
+                        },
+                        system_notification_target: None,
+                    });
+                    app.drain_runtime(cx);
+                    assert!(app.lifecycle.pending_session_switch.is_none());
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.run_until_parked();
+            let request = std::iter::from_fn(|| runtime.try_recv_command())
+                .find_map(|command| match command {
+                    RuntimeCommand::ResumeDraft { request, .. } => request,
+                    _ => None,
+                })
+                .expect("resume dispatched");
+            runtime.send_event(RuntimeEvent::SelectionRouted(request));
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| app.drain_runtime(cx));
+                window.draw(cx).clear(cx);
+            });
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                let app = app.read(cx);
+                assert_eq!(app.composer.input.read(cx).value().as_ref(), "draft text");
+                assert!(app.awaiting_selection_snapshot());
+            });
+            let path = project.join("materialized");
+            let row = crate::sessions::SessionSummary::from_cached_for_harness(
+                "native".into(),
+                Backend::Codex,
+                path.clone(),
+                project.into(),
+                "Resumed draft".into(),
+                String::new(),
+                String::new(),
+                None,
+                std::time::UNIX_EPOCH,
+                1,
+                Default::default(),
+                false,
+                false,
+                String::new(),
+            )
+            .with_app_session_id(42);
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions
+                        .submitted_drafts
+                        .insert("resume".into(), Some(path.clone()));
+                    runtime.send_event(RuntimeEvent::SessionUpdated(row));
+                    app.drain_runtime(cx);
+                    assert!(app.sessions.selected_draft.is_none());
+                    assert!(app.awaiting_selection_snapshot());
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    assert_eq!(app.composer.input.read(cx).value().as_ref(), "draft text");
+                    runtime.send_event(RuntimeEvent::Snapshot {
+                        generation: app.runtime_generation + 1,
+                        snapshot: std::sync::Arc::new(crate::runtime::RuntimeSnapshot {
+                            harness: Some(Backend::Codex),
+                            selected_session: Some(path),
+                            project: project.into(),
+                            document_ready: true,
+                            ..Default::default()
+                        }),
+                    });
+                    app.drain_runtime(cx);
+                    assert!(!app.awaiting_selection_snapshot());
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                assert_eq!(
+                    app.read(cx).composer.input.read(cx).value().as_ref(),
+                    "draft text"
+                );
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn late_editor_text_cannot_replace_input_for_the_session_being_opened(
+    cx: &mut gpui::TestAppContext,
+) {
+    use crate::{
+        protocol::ExtensionUiRequest,
+        runtime::RuntimeEvent,
+        sessions::{ComposerSnapshot, session_target},
+    };
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::late_editor_text_cannot_replace_input_for_the_session_being_opened"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let requested = project.join("requested");
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.switch_composer_target(session_target(&requested), window, cx);
+                    app.apply_composer_snapshot(
+                        ComposerSnapshot::new("new input".into(), 9, 9..9),
+                        window,
+                        cx,
+                    );
+                    app.lifecycle.pending_session_switch = Some((
+                        requested.clone(),
+                        crate::app::infrastructure::performance::Timing::new("switch.test"),
+                    ));
+                    runtime.send_event(RuntimeEvent::ExtensionUi {
+                        generation: app.runtime_generation,
+                        request: ExtensionUiRequest::SetEditorText {
+                            id: "old".into(),
+                            text: "old extension".into(),
+                        },
+                        system_notification_target: None,
+                    });
+                    app.drain_runtime(cx);
+                })
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    assert_eq!(app.composer.input.read(cx).value().as_ref(), "new input");
+                    assert!(app.extensions.pending_editor_text.is_some());
+                    runtime.send_event(RuntimeEvent::Snapshot {
+                        generation: app.runtime_generation + 1,
+                        snapshot: std::sync::Arc::new(crate::runtime::RuntimeSnapshot {
+                            selected_session: Some(requested.clone()),
+                            project: project.into(),
+                            document_ready: true,
+                            status: "Ready".into(),
+                            ..Default::default()
+                        }),
+                    });
+                    app.drain_runtime(cx);
+                })
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                let app = app.read(cx);
+                assert!(app.extensions.pending_editor_text.is_none());
+                assert_eq!(app.composer.input.read(cx).value().as_ref(), "new input");
+            });
+        },
+    );
 }

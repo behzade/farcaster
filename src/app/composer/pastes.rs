@@ -49,7 +49,7 @@ impl FarcasterApp {
     pub(crate) fn current_composer_pastes(&self) -> &[ComposerPaste] {
         self.composer
             .pastes
-            .get(self.composer.sessions.current_target())
+            .get(self.composer.sessions.current_buffer())
             .map(Vec::as_slice)
             .unwrap_or_default()
     }
@@ -64,7 +64,7 @@ impl FarcasterApp {
         let Some(paste) = store_long_paste(&text).ok().flatten() else {
             return false;
         };
-        let target = self.composer.sessions.current_target().to_owned();
+        let target = self.composer.sessions.current_buffer().to_owned();
         self.composer
             .pastes
             .entry(target.clone())
@@ -76,7 +76,7 @@ impl FarcasterApp {
     }
 
     pub(crate) fn remove_composer_paste(&mut self, index: usize, cx: &mut Context<Self>) {
-        let target = self.composer.sessions.current_target().to_owned();
+        let target = self.composer.sessions.current_buffer().to_owned();
         if let Some(pastes) = self.composer.pastes.get_mut(&target)
             && index < pastes.len()
         {

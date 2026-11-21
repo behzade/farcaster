@@ -65,10 +65,10 @@ pub use core::{
     CallerContext, CallerProfile, CallerRegistry, ChildSessionOutcome, CommonTool,
     ExecutionBinding, PromptStore, TokenUsage, ToolCategory, ToolMetadata, ToolReviewState,
     WorkerActivity, WorkerActivityState, WorkerAssignment, WorkerEvent, WorkerExecution,
-    WorkerFamilyLink, WorkerLaunch, WorkerModelSelection, WorkerPool, WorkerProfile,
-    WorkerProfiles, WorkerRouting, WorkerSendMode, WorkerSession, WorkerSessionFactory,
-    WorkerSnapshot, WorkerUsage, begin_prompt, enqueue_prompt_with_presentation,
-    has_queued_prompts_for, is_child_input_id, queued_prompts,
+    WorkerFamilyLink, WorkerLaunch, WorkerModelSelection, WorkerPool, WorkerPoolUpdate,
+    WorkerProfile, WorkerProfiles, WorkerRouting, WorkerSendMode, WorkerSession,
+    WorkerSessionFactory, WorkerSnapshot, WorkerUsage, begin_prompt,
+    enqueue_prompt_with_presentation, has_queued_prompts_for, is_child_input_id, queued_prompts,
 };
 
 #[cfg(any(test, feature = "test-support"))]

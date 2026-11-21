@@ -388,19 +388,17 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn workspace_project(&self) -> PathBuf {
-        self.sessions
-            .all
-            .root_for_path(self.snapshot.selected_session.as_deref())
-            .map(|root| root.project.clone())
-            .or_else(|| {
-                let selected = self.sessions.selected_draft.as_deref()?;
-                self.sessions
-                    .drafts
-                    .iter()
-                    .find(|draft| draft.id == selected)
-                    .map(|draft| draft.project.clone())
-            })
-            .unwrap_or_else(|| self.project.path.clone())
+        if let Some(id) = &self.sessions.selected_draft {
+            return self
+                .sessions
+                .drafts
+                .iter()
+                .find(|draft| &draft.id == id)
+                .map_or_else(|| self.project.path.clone(), |draft| draft.project.clone());
+        }
+        self.sidebar_catalog_row(&self.sessions.all)
+            .and_then(|row| self.sessions.all.root_for_row(row))
+            .map_or_else(|| self.project.path.clone(), |root| root.project.clone())
     }
 
     pub(in crate::app) fn capture_center_surface(&mut self) {
@@ -438,6 +436,29 @@ impl FarcasterApp {
             .copied()
             .unwrap_or(AppSurface::Chat);
         self.activate_chat_center(cx);
+        if matches!(surface, AppSurface::Editor | AppSurface::Terminal)
+            && let Some(ready) = self.wait_for_repository_trust()
+        {
+            let target = self.composer.sessions.current_target().to_owned();
+            let generation = self.workspace.editor.request_generation;
+            cx.spawn_in(window, async move |weak, cx| {
+                if ready.await.is_err() {
+                    return;
+                }
+                let _ = weak.update_in(cx, |app, window, cx| {
+                    if app.project.path == project
+                        && app.composer.sessions.current_target() == target
+                        && app.workspace.surface == AppSurface::Chat
+                        && app.workspace.editor.request_generation == generation
+                        && !app.center_surface_switch_blocked()
+                    {
+                        app.restore_center_surface(project, window, cx);
+                    }
+                });
+            })
+            .detach();
+            return;
+        }
         match surface {
             AppSurface::Editor => self.activate_editor_for_project(project, window, cx),
             AppSurface::Terminal => self.activate_terminal_for_project(project, window, cx),
@@ -1150,11 +1171,58 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let project = self.project.path.clone();
+        if self.project.navigation_trust.take().is_some()
+            || self
+                .sessions
+                .selected_draft
+                .as_ref()
+                .is_some_and(|id| self.sessions.pending_folder_drafts.contains_key(id))
+        {
+            self.restore_rejected_selection(window, cx);
+        }
+        self.open_project_trust_for(project, None, window, cx);
+    }
+
+    pub(in crate::app) fn open_project_trust_for(
+        &mut self,
+        project: PathBuf,
+        backend: Option<crate::agents::Backend>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.project.pending_trust_command.take().is_some() {
+            self.restore_rejected_selection(window, cx);
+        }
         self.project.trust_error = None;
-        self.project.trust_project = Some(self.project.path.clone());
-        self.project.trust_backend = None;
-        self.project.pending_trust_command = None;
+        self.project.trust_project = Some(project.clone());
+        self.project.trust_backend = backend;
         self.project.pending_trust_action = None;
+        self.project.trust_display = None;
+        self.project.trust_display_task = Some(cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_spawn(async move {
+                    match backend {
+                        Some(backend) => crate::agents::saved_project_trust(backend, &project),
+                        None => crate::app::project::trust::saved_decision(&project),
+                    }
+                })
+                .await;
+            let _ = weak.update(cx, |app, cx| {
+                app.project.trust_display = Some(match result {
+                    Ok(Some((path, trusted))) => format!(
+                        "Saved decision: {} ({})",
+                        if trusted { "trusted" } else { "untrusted" },
+                        path.display()
+                    ),
+                    Ok(None) => "Saved decision: none".into(),
+                    Err(error) => format!("Saved decision unavailable: {error}"),
+                });
+                if app.overlays.view.project_trust {
+                    cx.notify();
+                }
+            });
+        }));
         self.open_sheet(AppSheet::ProjectTrust, window, cx);
     }
 

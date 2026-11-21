@@ -71,7 +71,7 @@ pub(crate) fn run(
     project: PathBuf,
     agent_launch: crate::agents::AgentLaunchConfig,
     workgraph_updates: async_channel::Receiver<()>,
-    worker_updates: async_channel::Receiver<()>,
+    worker_updates: async_channel::Receiver<crate::agents::WorkerPoolUpdate>,
     notice_board: crate::app::mcp_server::NoticeBoard,
 ) -> Result<(), LaunchError> {
     let launch_timing = StartupTiming::always("launch.until_window_open");

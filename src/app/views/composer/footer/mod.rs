@@ -126,10 +126,7 @@ impl FarcasterApp {
                         move |window, cx| {
                             let _ = entity.update(cx, |this, cx| {
                                 if action == ComposerAction::Stop {
-                                    this.runtime.signal(
-                                        this.composer.sessions.current_target(),
-                                        RuntimeSignal::Abort,
-                                    );
+                                    this.signal_composer(RuntimeSignal::Abort);
                                 } else {
                                     let value =
                                         this.composer.input.read(cx).value().trim().to_owned();

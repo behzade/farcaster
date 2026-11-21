@@ -26,7 +26,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         self.engage_current_draft();
-        if !self.project.repository.execution_allowed {
+        if !self.project.repository.allows_execution_in(&project) {
             self.request_project_trust_for_action(
                 project.clone(),
                 crate::app::project::trust::PendingTrustAction::Terminal(project),

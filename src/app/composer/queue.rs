@@ -62,29 +62,62 @@ impl QueueAction {
 
 pub(crate) type QueueActionHandler = Rc<dyn Fn(&QueueAction, &mut gpui::App)>;
 
-pub(crate) fn action_handler(entity: gpui::WeakEntity<FarcasterApp>) -> QueueActionHandler {
-    Rc::new(move |action, cx| {
-        if let Some(command) = action.runtime_command() {
-            let _ = entity.update(cx, |app, cx| app.send(command, cx));
-        }
-    })
-}
-
 impl FarcasterApp {
-    pub(crate) fn composer_queue(&self) -> QueuePresentation {
+    fn queue_snapshot_buffer(&self) -> Option<&str> {
+        use crate::sessions::{composer_buffer_parts, draft_id, session_path};
+
+        if self.awaiting_selection_snapshot() {
+            return None;
+        }
+        let buffer = self.composer.sessions.current_buffer();
+        let selected = self.snapshot.selected_session.as_deref();
+        let matches = if let Some((harness, address)) = composer_buffer_parts(buffer) {
+            self.snapshot.harness == Some(harness) && selected == session_path(address)
+        } else if let Some(path) = session_path(buffer) {
+            selected == Some(path) && !self.sessions.all.has_shared_path(path)
+        } else {
+            let id = draft_id(buffer)?;
+            self.sessions.selected_draft.as_deref() == Some(id)
+                && self.sidebar_session_path() == selected
+                && self.snapshot.project == self.project.path
+        };
+        matches.then_some(buffer)
+    }
+
+    pub(crate) fn composer_queue(
+        &self,
+        entity: gpui::WeakEntity<FarcasterApp>,
+    ) -> Option<(QueuePresentation, QueueActionHandler)> {
+        let buffer = self.queue_snapshot_buffer()?;
         let queue = super::submissions::visible_prompt_queue(
             self.snapshot.prompt_queue(),
             &self.composer.pending_submissions,
-            self.composer.sessions.current_target(),
+            buffer,
         );
-        prepare(
+        let presentation = prepare(
             &queue,
             &self.snapshot.conversation.pending_receipts_ref(),
             self.composer.sessions.current_target(),
             self.snapshot.selected_session.as_deref(),
-            crate::agents::supports_individual_queue_cancellation(self.active_harness()),
+            crate::agents::supports_individual_queue_cancellation(self.snapshot.harness),
             self.snapshot.history_preview,
-        )
+        );
+        if presentation.groups.is_empty() {
+            return None;
+        }
+        let buffer = buffer.to_owned();
+        let generation = self.runtime_generation;
+        let on_action: QueueActionHandler = Rc::new(move |action, cx| {
+            let _ = entity.update(cx, |app, cx| {
+                if app.runtime_generation == generation
+                    && app.queue_snapshot_buffer() == Some(buffer.as_str())
+                    && let Some(command) = action.runtime_command()
+                {
+                    app.send(command, cx);
+                }
+            });
+        });
+        Some((presentation, on_action))
     }
 }
 

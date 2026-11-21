@@ -155,7 +155,7 @@ pub(super) fn load(
     let (composer_sessions, composer_error) = crate::app::composer::sessions::load(
         initial_session.as_ref().map_or_else(
             || draft_target(&initial_draft.id),
-            |session| session_target(&session.path),
+            |session| sessions::session_buffer(session.harness, &session.path),
         ),
         cx,
     );

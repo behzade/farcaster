@@ -58,6 +58,7 @@ pub struct SessionImport {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionSummary {
     pub id: String,
+    pub worker_profile: Option<String>,
     pub app_session_id: i64,
     pub profile_id: Option<String>,
     pub harness: Backend,
@@ -93,6 +94,7 @@ impl SessionSummary {
         Self {
             id: value.id,
             app_session_id: 0,
+            worker_profile: None,
             profile_id: crate::profile_id_from_locator(&value.path),
             harness: value.harness,
             path: value.path,
@@ -116,6 +118,16 @@ impl SessionSummary {
         }
     }
 
+    pub fn same_record(&self, other: &Self) -> bool {
+        if self.app_session_id > 0 && other.app_session_id > 0 {
+            return self.app_session_id == other.app_session_id;
+        }
+        self.path == other.path
+            && self.harness == other.harness
+            && self.profile_id == other.profile_id
+            && self.project == other.project
+    }
+
     pub fn target(&self) -> SessionTarget {
         SessionTarget {
             harness: self.harness,
@@ -125,11 +137,20 @@ impl SessionSummary {
     }
 
     pub fn key(&self) -> crate::SessionKey {
+        self.key_with_locator(|| crate::normalize_session_path(&self.path))
+    }
+
+    /// Storage normalizes the locator before publishing a catalog entry.
+    pub fn catalog_key(&self) -> crate::SessionKey {
+        self.key_with_locator(|| self.path.clone())
+    }
+
+    fn key_with_locator(&self, locator: impl FnOnce() -> PathBuf) -> crate::SessionKey {
         crate::AppSessionId::new(self.app_session_id).map_or_else(
             || crate::SessionKey::Locator {
                 harness: self.harness,
                 profile_id: self.profile_id.clone(),
-                path: crate::normalize_session_path(&self.path),
+                path: locator(),
             },
             crate::SessionKey::App,
         )
@@ -214,6 +235,7 @@ impl SessionSummary {
         Self {
             id,
             app_session_id: 0,
+            worker_profile: None,
             profile_id: crate::profile_id_from_locator(&path),
             harness,
             path,

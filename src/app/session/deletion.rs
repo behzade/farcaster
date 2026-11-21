@@ -75,6 +75,7 @@ impl FarcasterApp {
             &self.sessions.all,
             &self.sessions.drafts,
             &self.sessions.folders,
+            &self.sessions.pending_folder_drafts,
             folder,
         );
         if deletion.drafts.iter().any(|id| {
@@ -133,6 +134,16 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.project.pending_trust_command.is_some()
+            && self
+                .sessions
+                .pending_delete
+                .as_ref()
+                .is_some_and(|pending| !pending.drafts.is_empty())
+        {
+            // Discarding a draft waits for the trust prompt. Keep the folder until all its drafts can be removed.
+            return;
+        }
         let Some(pending) = self.close_delete_confirmation(window, cx) else {
             return;
         };

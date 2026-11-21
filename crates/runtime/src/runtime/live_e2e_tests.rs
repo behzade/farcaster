@@ -132,8 +132,13 @@ impl RuntimeTrace {
             | RuntimeEvent::SessionDeleted { .. }
             | RuntimeEvent::RefreshCatalog
             | RuntimeEvent::SessionMetadata(_)
+            | RuntimeEvent::DraftArchiveIdentity { .. }
+            | RuntimeEvent::SessionArchiveResult { .. }
             | RuntimeEvent::SessionUpdated(_)
-            | RuntimeEvent::AgentActivityUpdated(_)
+            | RuntimeEvent::SelectionRouted(_)
+            | RuntimeEvent::SelectionRejected(_)
+            | RuntimeEvent::WorkerSnapshot(_)
+            | RuntimeEvent::AgentActivityUpdated { .. }
             | RuntimeEvent::ExtensionUiDismissed { .. }
             | RuntimeEvent::SessionStatus { .. }
             | RuntimeEvent::ImportPreview { .. }
@@ -282,6 +287,8 @@ fn live_e2e_runtime_accepted_prompt_survives_restart_without_duplicate_or_replay
                     harness: first.harness,
                     session_id: first.id.clone(),
                     project: project.clone(),
+                    key: None,
+                    request: None,
                 })?;
                 wait_for(&resumed, &mut after_restart, TURN_TIMEOUT, |trace| {
                     trace.snapshot.as_ref().is_some_and(|snapshot| {
@@ -415,6 +422,7 @@ fn live_e2e_runtime_navigation_keeps_pending_receipts_in_their_origin_session() 
             let second_target = draft_target(&second_draft);
             trace.phase("navigate to second draft before releasing first gate")?;
             runtime.send(RuntimeCommand::NewSession {
+                request: None,
                 id: second_draft,
                 harness: harness.into(),
                 profile_id: None,
@@ -460,6 +468,8 @@ fn live_e2e_runtime_navigation_keeps_pending_receipts_in_their_origin_session() 
                 harness: first.harness,
                 session_id: first.id.clone(),
                 project: project.clone(),
+                key: None,
+                request: None,
             })?;
             wait_for(&runtime, &mut trace, TURN_TIMEOUT, |trace| {
                 trace.snapshot.as_ref().is_some_and(|snapshot| {
@@ -802,6 +812,7 @@ fn start_runtime(
         crate::test_support::host_at(&state_path()?),
     );
     runtime.send(RuntimeCommand::NewSession {
+        request: None,
         id: draft_id.into(),
         harness: harness.into(),
         profile_id: None,

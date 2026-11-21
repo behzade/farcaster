@@ -46,6 +46,7 @@ fn sidebar_prepares_session_lists_once_for_both_panels(cx: &mut gpui::TestAppCon
                         .render_sessions(
                             app.downgrade(),
                             false,
+                            false,
                             ListState::new(0, ListAlignment::Top, px(0.)),
                             &RefCell::new(Vec::new()),
                         )
@@ -86,6 +87,8 @@ fn active_sidebar_counts_archives_without_preparing_their_rows() {
     for filter in [None, Some(alpha.as_path()), Some(beta.as_path())] {
         let full = session_rail_lists_for_roots(sessions.iter(), &drafts, filter, &[1, 2]);
         let active = active_session_rail_lists_for_roots(sessions.iter(), &drafts, filter, &[1, 2]);
+        let archived = archived_session_rows_for_roots(sessions.iter(), &drafts, filter);
+        assert_eq!(ids(&archived), ids(&full.archived));
         assert_eq!(active.archived_count, full.archived.len());
         assert!(
             active.archived.is_empty(),

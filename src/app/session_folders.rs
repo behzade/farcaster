@@ -1,4 +1,7 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
 use gpui::{Context, Window};
 
@@ -22,10 +25,26 @@ pub(in crate::app) struct FolderDeletion {
     pub(in crate::app) drafts: Vec<String>,
 }
 
+pub(in crate::app) fn draft_folder(
+    draft: &DraftSession,
+    folders: &SessionFolders,
+    pending: &HashMap<String, u64>,
+) -> Option<u64> {
+    match pending.get(&draft.id) {
+        Some(id) => folders
+            .folders
+            .iter()
+            .any(|folder| folder.id == *id)
+            .then_some(*id),
+        None => folders.folder_for(draft.app_session_id),
+    }
+}
+
 pub(in crate::app) fn folder_deletion(
     sessions: &[SessionSummary],
     drafts: &[DraftSession],
     folders: &SessionFolders,
+    pending: &HashMap<String, u64>,
     folder: u64,
 ) -> FolderDeletion {
     let mut deletion = FolderDeletion::default();
@@ -47,7 +66,7 @@ pub(in crate::app) fn folder_deletion(
     }
     deletion.drafts = drafts
         .iter()
-        .filter(|draft| folders.folder_for(draft.app_session_id) == Some(folder))
+        .filter(|draft| draft_folder(draft, folders, pending) == Some(folder))
         .map(|draft| draft.id.clone())
         .collect();
     deletion

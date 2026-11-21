@@ -1,6 +1,6 @@
 pub(crate) use farcaster_mcp_server::{
     NoticeBoard, NoticeView, finish_session_family_worker_stop, set_worker_app_proxy,
-    stop_session_family_workers, worker_snapshots,
+    stop_session_family_workers, worker_snapshots, worker_status_snapshot,
 };
 
 pub(crate) fn start(

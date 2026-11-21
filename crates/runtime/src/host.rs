@@ -42,6 +42,18 @@ pub trait RuntimeHost: Send + Sync {
         project: &Path,
         sessions: &[farcaster_sessions::SessionKey],
     ) -> Result<(), String>;
+    fn worker_status_snapshot(&self, id: &str) -> Result<Option<WorkerSnapshot>, String> {
+        let mut workers = self.worker_snapshots()?;
+        let Some(index) = workers.iter().position(|worker| worker.id == id) else {
+            return Ok(None);
+        };
+        let worker = workers.swap_remove(index);
+        let unique = worker.session_key.is_some()
+            && !workers.iter().any(|other| {
+                other.project == worker.project && other.session_key == worker.session_key
+            });
+        Ok(unique.then_some(worker))
+    }
     fn worker_snapshots(&self) -> Result<Vec<WorkerSnapshot>, String>;
     fn schedule_wake(&self, deadline: Instant, wake: Thread) -> Box<dyn ScheduledWake>;
     fn subscribe_worker_activity(&self, project: &Path, wake: Thread) -> Box<dyn WorkerActivity> {

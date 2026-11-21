@@ -111,7 +111,7 @@ fn submission_diagnostics(
 ) {
     let details = cx.update(|_, cx| {
         let app = app.read(cx);
-        let target = app.composer.sessions.current_target();
+        let target = app.composer.sessions.current_buffer();
         let visible_queue = visible_prompt_queue(app);
         let composer = app.composer.input.read(cx).value().to_owned();
         let rows = markers
@@ -170,7 +170,7 @@ fn visible_prompt_queue(app: &FarcasterApp) -> crate::conversation::QueueState {
     crate::app::composer::submissions::visible_prompt_queue(
         app.snapshot.prompt_queue(),
         &app.composer.pending_submissions,
-        app.composer.sessions.current_target(),
+        app.composer.sessions.current_buffer(),
     )
 }
 
@@ -192,7 +192,7 @@ fn exact_pending_submission(
     mode: PromptMode,
     submitted_text: &str,
 ) -> Option<(String, String)> {
-    let target = app.composer.sessions.current_target();
+    let target = app.composer.sessions.current_buffer();
     let mut matches = app.composer.pending_submissions.values().filter(|pending| {
         pending.submitted_target == target
             && pending.mode == mode
@@ -232,7 +232,7 @@ fn wait_for_exact_queue(
                         .pending_submissions
                         .values()
                         .any(|pending| pending.submitted_target
-                            == app.composer.sessions.current_target()
+                            == app.composer.sessions.current_buffer()
                             && pending.result.is_none()),
                     app.can_submit(),
                 ),

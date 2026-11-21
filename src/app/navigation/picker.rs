@@ -23,7 +23,7 @@ use crate::{
     app::ui::primitives::{ButtonTone, PickerDelegate, PickerRow, button, icon_button, modal},
     app::ui::theme::theme,
     runtime::RuntimeCommand,
-    sessions::SessionSummary,
+    sessions::{SessionKey, SessionSummary},
 };
 
 pub(crate) const PICKER_KEY_CONTEXT: &str = "Picker";
@@ -106,10 +106,7 @@ enum PickerCommand {
         path: PathBuf,
         project: PathBuf,
     },
-    SelectSession {
-        path: PathBuf,
-        project: PathBuf,
-    },
+    SelectSession(SessionKey),
     ResumeDraft {
         id: String,
         project: PathBuf,
@@ -123,7 +120,7 @@ enum PickerCommand {
         model: crate::protocol::Model,
         effort: Option<String>,
     },
-    RestoreSession(PathBuf),
+    RestoreSession(crate::sessions::SessionKey),
 }
 
 pub(in crate::app) struct PickerState {
@@ -548,9 +545,9 @@ impl FarcasterApp {
                     self.close_picker(window, cx);
                 }
             }
-            PickerCommand::RestoreSession(path) => {
+            PickerCommand::RestoreSession(key) => {
                 self.close_picker(window, cx);
-                self.set_session_archived(path, false, cx);
+                self.request_rail_archive(key, false, window, cx);
             }
             PickerCommand::OpenProjects(intent) => {
                 self.open_picker(PickerScope::Projects(intent), window, cx);
@@ -594,9 +591,9 @@ impl FarcasterApp {
                 self.close_picker(window, cx);
                 self.move_session(path, project, window, cx);
             }
-            PickerCommand::SelectSession { path, project } => {
+            PickerCommand::SelectSession(key) => {
                 self.close_picker(window, cx);
-                self.select_session_and_focus(path, project, window, cx);
+                self.select_rail_session(key, window, cx);
             }
             PickerCommand::ResumeDraft { id, project } => {
                 self.close_picker(window, cx);
@@ -687,7 +684,7 @@ impl FarcasterApp {
                             session.modified,
                             session.title.clone(),
                             session.project.clone(),
-                            Some((session.path.clone(), session.search_text().to_owned())),
+                            Some((session.catalog_key(), session.search_text().to_owned())),
                             None,
                         )
                     })
@@ -712,12 +709,9 @@ impl FarcasterApp {
                     .into_iter()
                     .enumerate()
                     .map(|(index, (_, title, project, session, draft_id))| {
-                        let (command, keywords, icon) = if let Some((path, search)) = session {
+                        let (command, keywords, icon) = if let Some((key, search)) = session {
                             (
-                                PickerCommand::SelectSession {
-                                    path,
-                                    project: project.clone(),
-                                },
+                                PickerCommand::SelectSession(key),
                                 search,
                                 AppIcon::ChatCircle,
                             )

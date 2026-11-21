@@ -8,6 +8,10 @@ use crate::{
 
 enum Command {
     Draft(DraftSession),
+    DraftWithIdentity(
+        DraftSession,
+        async_channel::Sender<Result<crate::sessions::AppSessionId, String>>,
+    ),
     Remove(String),
     Projects(ProjectList),
     Folders(SessionFolders),
@@ -83,6 +87,16 @@ impl SessionStateWriter {
         self.send(Command::Selection(project, session))
     }
 
+    pub fn save_draft_with_identity(
+        &self,
+        draft: DraftSession,
+    ) -> Result<async_channel::Receiver<Result<crate::sessions::AppSessionId, String>>, String>
+    {
+        let (sender, receiver) = async_channel::bounded(1);
+        self.send(Command::DraftWithIdentity(draft, sender))?;
+        Ok(receiver)
+    }
+
     pub fn flush(&self) -> impl Future<Output = Result<(), String>> + use<> {
         let (sender, receiver) = async_channel::bounded(1);
         let sent = self.send(Command::Flush(sender));
@@ -123,6 +137,7 @@ fn run(
             Err(mpsc::RecvTimeoutError::Disconnected) => Some(Command::Shutdown),
         };
         let mut barrier = None;
+        let mut identity = None;
         let mut shutdown = false;
         while let Some(next) = command {
             match next {
@@ -137,6 +152,10 @@ fn run(
                 Command::Selection(project, session) => {
                     pending.last_selected_project = Some(project.clone());
                     pending.selected_sessions.insert(project, session);
+                }
+                Command::DraftWithIdentity(draft, reply) => {
+                    identity = Some((draft, reply));
+                    break;
                 }
                 Command::Flush(sender) => {
                     barrier = Some(sender);
@@ -167,6 +186,12 @@ fn run(
                     let _ = updates.send_blocking(Err(error.clone()));
                 }
             }
+        }
+        if let Some((draft, reply)) = identity {
+            let prepared = result
+                .clone()
+                .and_then(|()| open()?.with(|store| store.save_draft_with_identity(draft)));
+            let _ = reply.send_blocking(prepared);
         }
         if let Some(barrier) = barrier {
             let _ = barrier.send_blocking(result.clone());

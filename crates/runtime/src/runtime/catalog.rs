@@ -12,11 +12,24 @@ impl RuntimeOwner {
         if let Ok(metadata) = serde_json::from_value::<agents::SessionMetadata>(child.clone())
             && !metadata.id.is_empty()
         {
-            let _ = self
-                .event_tx
-                .send(RuntimeEvent::AgentActivityUpdated(native_child_activity(
-                    &child, &metadata,
-                )));
+            let activity = native_child_activity(&child, &metadata);
+            let path = crate::sessions::normalize_session_path(&activity.session_path);
+            let profile_id = metadata
+                .profile_id
+                .clone()
+                .or_else(|| crate::sessions::profile_id_from_locator(&path));
+            let _ = self.event_tx.send(RuntimeEvent::AgentActivityUpdated {
+                key: crate::agent_activity::WorkerActivityKey {
+                    path,
+                    native: crate::sessions::NativeSessionIdentity {
+                        project: crate::sessions::normalize_session_path(&metadata.project),
+                        harness: metadata.harness,
+                        profile_id,
+                        id: metadata.id.clone(),
+                    },
+                },
+                activity,
+            });
             let _ = self.event_tx.send(RuntimeEvent::SessionMetadata(metadata));
         }
     }
@@ -103,9 +116,73 @@ impl RuntimeOwner {
         let _ = self.event_tx.send(event);
     }
 
+    pub(super) fn set_catalog_archive(
+        &self,
+        request: ArchiveRequest,
+        draft_saved: Option<async_channel::Receiver<Result<crate::sessions::AppSessionId, String>>>,
+    ) {
+        let rows = (|| {
+            let target = if let Some(saved) = draft_saved {
+                let id = saved
+                    .recv_blocking()
+                    .map_err(|_| "Session state writer stopped before saving".to_owned())??;
+                if let ArchiveTarget::Draft(draft) = &request.target {
+                    let _ = self.event_tx.send(RuntimeEvent::DraftArchiveIdentity {
+                        draft: draft.clone(),
+                        app_session_id: id,
+                    });
+                }
+                ArchiveTarget::App(id)
+            } else {
+                request.target.clone()
+            };
+            self.state
+                .as_ref()
+                .ok_or("Session database is unavailable")?
+                .with(|store| match &target {
+                    ArchiveTarget::Draft(_) => Err("The chat has no saved identity".into()),
+                    ArchiveTarget::App(id) => Ok(store
+                        .archive_app_session(*id, request.archived)?
+                        .into_iter()
+                        .collect()),
+                    ArchiveTarget::Native(_) | ArchiveTarget::Path(_) => {
+                        let (path, native) = match &target {
+                            ArchiveTarget::Native(t) => (&t.path, Some(t)),
+                            ArchiveTarget::Path(path) => (path, None),
+                            _ => unreachable!(),
+                        };
+                        let rows =
+                            store.archive_matching_sessions(path, native, request.archived)?;
+                        if rows.is_empty() {
+                            return Err(format!(
+                                "The session is no longer available to archive: {}",
+                                path.display()
+                            ));
+                        }
+                        Ok(rows)
+                    }
+                })
+        })();
+        let _ = self
+            .event_tx
+            .send(RuntimeEvent::SessionArchiveResult { request, rows });
+    }
+
     pub(super) fn load_sessions(&mut self, query: String) {
         self.session_query = query;
         self.publish_cached_sessions();
+    }
+
+    pub(super) fn refresh_worker_status(&mut self, id: &str) {
+        // Read current status on the catalog actor so a pending signal cannot replay an old
+        // status over a newer full catalog. Idle workers without output need stored outcomes.
+        if let Ok(Some(snapshot)) = self.host.worker_status_snapshot(id)
+            && (snapshot.status != agents::WorkerStatus::Idle || snapshot.output.is_some())
+        {
+            let _ = self.event_tx.send(RuntimeEvent::WorkerSnapshot(snapshot));
+        } else {
+            self.refresh_sessions();
+        }
     }
 
     pub(super) fn refresh_sessions(&mut self) {
@@ -236,7 +313,7 @@ impl RuntimeOwner {
             let Some(outcome) = outcomes.get(&session.app_session_id) else {
                 continue;
             };
-            let key = crate::agent_activity::agent_activity_key(&session.path);
+            let key = session.activity_key();
             if worker_activities.get(&key).is_some_and(|activity| {
                 activity.lifecycle != crate::agent_activity::AgentLifecycle::Unknown
             }) {
@@ -256,16 +333,16 @@ impl RuntimeOwner {
     }
 }
 
-fn worker_activities(
+pub(super) fn worker_activities(
     sessions: &[SessionSummary],
     snapshots: Vec<agents::WorkerSnapshot>,
-) -> HashMap<String, AgentActivity> {
+) -> HashMap<crate::agent_activity::WorkerActivityKey, AgentActivity> {
     snapshots
         .into_iter()
         .filter_map(|snapshot| {
             let session = session_for_worker_snapshot(sessions, &snapshot)?;
             Some((
-                crate::agent_activity::agent_activity_key(&session.path),
+                session.activity_key(),
                 AgentActivity::from_worker_status(
                     session,
                     snapshot.status,
@@ -280,7 +357,7 @@ fn worker_activities(
 pub fn live_worker_activities(
     sessions: &[SessionSummary],
     snapshots: Vec<agents::WorkerSnapshot>,
-) -> HashMap<String, AgentActivity> {
+) -> HashMap<crate::agent_activity::WorkerActivityKey, AgentActivity> {
     worker_activities(sessions, snapshots)
 }
 
@@ -294,7 +371,7 @@ pub fn native_child_activity(child: &Value, metadata: &agents::SessionMetadata) 
     )
 }
 
-fn session_for_worker_snapshot<'a>(
+pub(super) fn session_for_worker_snapshot<'a>(
     sessions: &'a [SessionSummary],
     snapshot: &agents::WorkerSnapshot,
 ) -> Option<&'a SessionSummary> {

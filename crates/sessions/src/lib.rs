@@ -8,7 +8,8 @@ mod identity;
 
 pub use composer::{
     ComposerPersistence, ComposerRecord, ComposerSessions, ComposerSnapshot, HistoryNavigation,
-    draft_id, draft_target, project_target, session_path, session_target,
+    composer_buffer_parts, composer_command_target, draft_id, draft_target, project_target,
+    session_buffer, session_path, session_target,
 };
 pub use contract::{
     LoadedHistory, PromptDeliveryReconciliation, RUNNING_ACTIVITY_TIMEOUT, RestoredQuestion,

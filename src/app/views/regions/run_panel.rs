@@ -5,7 +5,7 @@ use gpui::{
 use gpui_component::input::{InputEvent, InputState};
 
 use super::super::FarcasterApp;
-use crate::app::ui::theme::theme;
+use crate::{app::ui::theme::theme, sessions::SessionKey};
 
 pub(crate) struct RunPanelView {
     app: WeakEntity<FarcasterApp>,
@@ -18,7 +18,7 @@ pub(crate) struct RunPanelView {
     scroll: ScrollHandle,
     activity_scroll: ScrollHandle,
     worker_list: gpui::UniformListScrollHandle,
-    worker_rows: std::cell::RefCell<Vec<(String, gpui::FocusHandle)>>,
+    worker_rows: std::cell::RefCell<super::super::run_panel::worker_list::WorkerKeys>,
     main_agent_focus: Option<gpui::FocusHandle>,
     prepared_workers: std::cell::RefCell<
         Option<std::rc::Rc<super::super::run_panel::worker_list::PreparedWorkers>>,
@@ -27,12 +27,10 @@ pub(crate) struct RunPanelView {
     review_scroll: ScrollHandle,
     pub(crate) review_tree: super::super::run_panel::change_tree::ChangeTreeState,
     review_id: Option<u64>,
-    expanded_workers_root: Option<std::path::PathBuf>,
-    last_selected: Option<std::path::PathBuf>,
-    preserve_worker_scroll_for: Option<std::path::PathBuf>,
+    expanded_workers_root: Option<SessionKey>,
+    last_selected: Option<SessionKey>,
+    preserve_worker_scroll_for: Option<SessionKey>,
     reveal_selected: bool,
-    worker_profiles_generation: Option<u64>,
-    saved_worker_profiles: super::super::run_panel::WorkerProfileNames,
 }
 
 impl RunPanelView {
@@ -60,9 +58,18 @@ impl RunPanelView {
             last_selected: None,
             preserve_worker_scroll_for: None,
             reveal_selected: false,
-            worker_profiles_generation: None,
-            saved_worker_profiles: Default::default(),
         }
+    }
+
+    pub(in crate::app) fn has_prepared_workers_for(&self, root: &SessionKey) -> bool {
+        self.prepared_workers
+            .borrow()
+            .as_ref()
+            .is_some_and(|workers| workers.root.as_ref() == Some(root))
+    }
+
+    pub(in crate::app) fn prepared_worker_root(&self) -> Option<SessionKey> {
+        self.prepared_workers.borrow().as_ref()?.root.clone()
     }
 
     pub(in crate::app) fn invalidate_workers(&self) {
@@ -100,10 +107,10 @@ impl RunPanelView {
         self.resize_start.take().is_some()
     }
 
-    pub(crate) fn expand_workers(&mut self, root: std::path::PathBuf) {
+    pub(crate) fn expand_workers(&mut self, root: SessionKey) {
         self.worker_list
             .scroll_to_item(0, gpui::ScrollStrategy::Top);
-        self.worker_rows.borrow_mut().clear();
+        self.worker_rows.take();
         self.expanded_workers_root = Some(root);
         self.reveal_selected = false;
     }
@@ -113,12 +120,12 @@ impl RunPanelView {
         self.reveal_selected = true;
     }
 
-    pub(crate) fn workers_expanded_for(&self, root: &std::path::Path) -> bool {
-        self.expanded_workers_root.as_deref() == Some(root)
+    pub(crate) fn workers_expanded_for(&self, root: &SessionKey) -> bool {
+        self.expanded_workers_root.as_ref() == Some(root)
     }
 
-    pub(in crate::app) fn preserve_worker_scroll_for(&mut self, path: Option<std::path::PathBuf>) {
-        self.preserve_worker_scroll_for = path;
+    pub(in crate::app) fn preserve_worker_scroll_for(&mut self, key: Option<SessionKey>) {
+        self.preserve_worker_scroll_for = key;
     }
 }
 
@@ -136,21 +143,6 @@ impl Render for RunPanelView {
             .main_agent_focus
             .get_or_insert_with(|| cx.focus_handle().tab_stop(true))
             .clone();
-        let generation = app.read(cx).sessions.generation;
-        if self.worker_profiles_generation != Some(generation) {
-            self.worker_profiles_generation = Some(generation);
-            if let Ok(families) =
-                crate::app::persistence::open().and_then(|store| store.load_worker_routes())
-            {
-                self.saved_worker_profiles = families
-                    .into_iter()
-                    .filter_map(|family| {
-                        let profile = family.routing?.assignment.profile;
-                        Some((family.child_key?, profile))
-                    })
-                    .collect();
-            }
-        }
         if let Some(review) = app.read(cx).visible_review() {
             if self.review_id != Some(review.id) {
                 self.review_id = Some(review.id);
@@ -168,17 +160,12 @@ impl Render for RunPanelView {
         }
         let selected = app
             .read(cx)
-            .lifecycle
-            .pending_session_switch
-            .as_ref()
-            .map(|(path, _)| path.clone())
-            .or_else(|| app.read(cx).snapshot.selected_session.clone());
+            .sidebar_catalog_row(&app.read(cx).sessions.all)
+            .map(|row| row.catalog_key());
         let root = app
             .read(cx)
-            .sessions
-            .all
-            .root_for_path(selected.as_deref())
-            .map(|session| session.path.clone());
+            .sidebar_worker_root()
+            .map(|row| row.catalog_key());
         if self.expanded_workers_root.as_ref() != root.as_ref()
             || app.read(cx).sessions.selected_draft.is_some()
             || (self.last_selected != selected && selected == root)
@@ -242,7 +229,6 @@ impl Render for RunPanelView {
                 &super::super::run_panel::WorkerListView {
                     scroll: &self.activity_scroll,
                     anchor: &self.activity_anchor,
-                    saved_profiles: &self.saved_worker_profiles,
                     expanded: self.expanded_workers_root.is_some(),
                     prepared: &self.prepared_workers,
                     list: &self.worker_list,

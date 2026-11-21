@@ -104,15 +104,29 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn select_project(&mut self, project: PathBuf, cx: &mut Context<Self>) {
+        let allowed = super::trust::repository_execution_allowed(&project).unwrap_or(false);
+        self.set_repository_project_execution(project.clone(), allowed, cx);
+        self.update_selected_project(project, cx);
+    }
+
+    pub(in crate::app) fn select_project_for_navigation(
+        &mut self,
+        project: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_repository_project(project.clone(), cx);
+        self.update_selected_project(project, cx);
+    }
+
+    fn update_selected_project(&mut self, project: PathBuf, cx: &mut Context<Self>) {
         if self.project.path != project {
+            self.project.navigation_trust = None;
             self.composer.project_files.clear();
             self.composer.project_files_error = None;
             self.composer.project_files_project = None;
             self.composer.project_files_loading = None;
         }
         self.project.path = project.clone();
-        self.select_repository_project(project.clone(), cx);
-        self.warm_repository_observations(cx);
         if projects::select(
             &mut self.project.registered,
             &self.project.excluded,
@@ -120,6 +134,7 @@ impl FarcasterApp {
         ) {
             self.save_project_registry();
         }
+        self.start_offscreen_observation_pass(cx);
         self.remember_session_selection();
     }
 

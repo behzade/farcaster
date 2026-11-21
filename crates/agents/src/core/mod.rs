@@ -20,7 +20,7 @@ pub use caller::{
 #[cfg(test)]
 pub use concurrency::WorkerConcurrency;
 pub use concurrency::WorkerSlot;
-pub use pool::WorkerPool;
+pub use pool::{WorkerPool, WorkerPoolUpdate};
 pub use prompt_store::{
     PromptStore, begin as begin_prompt,
     enqueue_with_presentation as enqueue_prompt_with_presentation,

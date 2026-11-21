@@ -6,11 +6,20 @@ pub(super) fn resolve_session_profile(
     locator: &Path,
     explicit: Option<&str>,
 ) -> Result<Option<String>, String> {
+    resolve_harness_profile(connection, locator, None, explicit)
+}
+
+pub(super) fn resolve_harness_profile(
+    connection: &Connection,
+    locator: &Path,
+    harness: Option<&str>,
+    explicit: Option<&str>,
+) -> Result<Option<String>, String> {
     let mut statement = connection
-        .prepare("SELECT DISTINCT profile_id FROM sessions WHERE locator=?1")
+        .prepare("SELECT DISTINCT profile_id FROM sessions WHERE locator=?1 AND (?2 IS NULL OR harness=?2)")
         .map_err(|error| format!("prepare session profile: {error}"))?;
     let profiles = statement
-        .query_map([locator.to_string_lossy()], |row| {
+        .query_map(params![locator.to_string_lossy(), harness], |row| {
             row.get::<_, Option<String>>(0)
         })
         .map_err(|error| format!("read session profile: {error}"))?
@@ -59,7 +68,12 @@ pub(super) fn bind_locator(
     let Some((draft_session_id, harness, draft_profile)) = draft_row else {
         return Ok(());
     };
-    let profile_id = resolve_session_profile(transaction, locator, draft_profile.as_deref())?;
+    let profile_id = resolve_harness_profile(
+        transaction,
+        locator,
+        Some(&harness),
+        draft_profile.as_deref(),
+    )?;
     let locator = locator.to_string_lossy();
     let existing: Option<i64> = transaction
         .query_row(
@@ -350,7 +364,7 @@ pub(super) fn ensure_locator_session(
         locator_root.join(harness.as_str()).join(encoded)
     };
     let locator = crate::sessions::normalize_session_path(&locator);
-    let profile_id = resolve_session_profile(transaction, &locator, None)?;
+    let profile_id = resolve_harness_profile(transaction, &locator, Some(harness.as_str()), None)?;
     let locator_text = locator.to_string_lossy();
     let mut statement = transaction
         .prepare(

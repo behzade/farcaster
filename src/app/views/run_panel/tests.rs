@@ -178,7 +178,7 @@ fn production_rows_include_restored_children_from_an_empty_activity_map() {
     let rows = run_panel_agent_rows(
         &sessions,
         &std::collections::HashMap::new(),
-        Some(PathBuf::from("/one/root.jsonl").as_path()),
+        sessions.by_path(Path::new("/one/root.jsonl")),
     );
 
     assert_eq!(rows.len(), 1);
@@ -228,12 +228,13 @@ fn worker_navigation_keeps_creation_order_when_statuses_differ() {
     let sessions = std::iter::once(root).chain(children).collect::<Vec<_>>();
     let mut limited = AgentActivity::limited_fallback(&sessions[2]);
     limited.lifecycle = AgentLifecycle::Unknown;
-    let activities = std::collections::HashMap::from([(
-        crate::agent_activity::agent_activity_key(&sessions[2].path),
-        limited,
-    )]);
+    let activities = std::collections::HashMap::from([(sessions[2].activity_key(), limited)]);
     let sessions = crate::sessions::SessionCatalog::from(sessions);
-    let rows = worker_navigation_rows(&sessions, &activities, Some(Path::new("/project/child-3")));
+    let rows = worker_navigation_rows(
+        &sessions,
+        &activities,
+        sessions.root_for_path(Some(Path::new("/project/child-3"))),
+    );
     let ids = rows
         .iter()
         .map(|session| session.id.as_str())
@@ -244,7 +245,11 @@ fn worker_navigation_keeps_creation_order_when_statuses_differ() {
             "root", "child-6", "child-5", "child-4", "child-3", "child-2", "child-1", "child-0"
         ]
     );
-    let ordered = ordered_worker_rows(&sessions, &activities, Some(Path::new("/project/root")));
+    let ordered = ordered_worker_rows(
+        &sessions,
+        &activities,
+        sessions.by_path(Path::new("/project/root")),
+    );
     assert_eq!(ordered[5].3, AgentSection::Limited);
     assert_eq!(ordered[6].3, AgentSection::Active);
 }
@@ -283,19 +288,17 @@ fn production_rows_resolve_same_native_id_by_scoped_session_path() {
     let mut second = AgentActivity::limited_fallback(&child_two);
     second.activity = "second project".into();
     let activities = std::collections::HashMap::from([
-        (
-            crate::agent_activity::agent_activity_key(&child_one.path),
-            first,
-        ),
-        (
-            crate::agent_activity::agent_activity_key(&child_two.path),
-            second,
-        ),
+        (child_one.activity_key(), first),
+        (child_two.activity_key(), second),
     ]);
     let sessions = vec![root_one, child_one, root_two, child_two.clone()];
 
     let sessions = crate::sessions::SessionCatalog::from(sessions);
-    let rows = run_panel_agent_rows(&sessions, &activities, Some(Path::new("/two/root")));
+    let rows = run_panel_agent_rows(
+        &sessions,
+        &activities,
+        sessions.by_path(Path::new("/two/root")),
+    );
 
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].2.path, child_two.path);
@@ -337,5 +340,484 @@ fn worker_subtitle_uses_live_profile_then_catalog_identity() {
     assert_eq!(
         execution_label(Some(&profile), Some(&cached_model), Some("low")),
         "cached-provider · cached-model · low"
+    );
+}
+
+#[gpui::test]
+fn catalog_generation_renders_while_the_store_is_busy(cx: &mut gpui::TestAppContext) {
+    use gpui::Render as _;
+    use std::{
+        sync::{Arc, mpsc},
+        time::{Duration, Instant},
+    };
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::catalog_generation_renders_while_the_store_is_busy"
+        ),
+        cx,
+        |cx, app, _, project| {
+            // The offline harness launches each app test in its own process and data directory.
+            let store = crate::app::persistence::initialize().unwrap();
+            let root = project.join("root");
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    let sessions = (0..=500)
+                        .map(|i| {
+                            let id = if i == 0 {
+                                "root".to_owned()
+                            } else {
+                                format!("worker-{i}")
+                            };
+                            let path = project.join(&id);
+                            let mut session = crate::sessions::SessionSummary::from_cached(
+                                id.clone(),
+                                path.clone(),
+                                project.into(),
+                                id,
+                                "Measure the sidebar".into(),
+                                String::new(),
+                                (i > 0).then(|| "root".into()),
+                                SystemTime::UNIX_EPOCH,
+                                1,
+                                Default::default(),
+                                false,
+                                false,
+                                String::new(),
+                            )
+                            .with_app_session_id(i + 1);
+                            if i > 0 {
+                                session.parent_app_session_id = Some(1);
+                                session.worker_profile = Some("reviewer".into());
+                                app.activity
+                                    .row_focus
+                                    .insert(session.activity_key(), cx.focus_handle());
+                            }
+                            session
+                        })
+                        .collect::<Vec<_>>();
+                    app.sessions.all = sessions.into();
+                    app.sessions.selected_draft = None;
+                    Arc::make_mut(&mut app.snapshot).selected_session = Some(root);
+                })
+            });
+
+            let (locked, lock_acquired) = mpsc::channel();
+            let (release, rendered) = mpsc::channel();
+            std::thread::scope(|scope| {
+                let holder = scope.spawn(move || {
+                    let _guard = store.lock().unwrap();
+                    locked.send(()).unwrap();
+                    // A regression can finish and report the missed signal.
+                    rendered.recv_timeout(Duration::from_secs(5)).is_ok()
+                });
+                lock_acquired.recv().unwrap();
+                let (cold, warm) = cx.update(|window, cx| {
+                    let panel = app.read(cx).views.run_panel.clone();
+                    panel.read(cx).invalidate_workers();
+                    let render = |cx: &mut gpui::App, window: &mut gpui::Window| {
+                        let start = Instant::now();
+                        panel.update(cx, |panel, cx| {
+                            drop(std::hint::black_box(panel.render(window, cx)))
+                        });
+                        start.elapsed()
+                    };
+                    super::worker_list::PREPARATIONS.with(|count| count.set(0));
+                    super::agents::CARD_BUILDS.with(|count| count.set(0));
+                    let cold = render(cx, window);
+                    assert_eq!(
+                        super::agents::CARD_BUILDS.with(|count| count.get()),
+                        super::RECENT_WORKERS
+                    );
+                    let mut warm: Vec<_> = (0..50).map(|_| render(cx, window)).collect();
+                    assert_eq!(
+                        super::worker_list::PREPARATIONS.with(|count| count.get()),
+                        1
+                    );
+                    warm.sort_unstable();
+                    (cold, warm)
+                });
+                let _ = release.send(());
+                assert!(
+                    holder.join().unwrap(),
+                    "run panel waited for the state store"
+                );
+                eprintln!(
+                    "500 workers, store held: first panel render {cold:?}, 50 cached renders p50 {:?}, p95 {:?}",
+                    warm[24], warm[47]
+                );
+            });
+        },
+    );
+}
+
+pub(super) fn worker_session(
+    project: &Path,
+    id: i64,
+    name: &str,
+    parent: Option<i64>,
+) -> crate::sessions::SessionSummary {
+    use crate::sessions::SessionSummary;
+    let mut row = SessionSummary::from_cached(
+        name.into(),
+        project.join(name),
+        project.to_owned(),
+        name.into(),
+        String::new(),
+        String::new(),
+        None,
+        SystemTime::UNIX_EPOCH,
+        0,
+        Default::default(),
+        false,
+        false,
+        String::new(),
+    )
+    .with_app_session_id(id);
+    row.parent_app_session_id = parent;
+    row
+}
+
+#[gpui::test]
+fn sessions_events_only_rebuild_workers_for_a_changed_family(cx: &mut gpui::TestAppContext) {
+    use crate::{agents::WorkerStatus, runtime::RuntimeEvent, sessions::SessionSummary};
+    use gpui::Render as _;
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::sessions_events_only_rebuild_workers_for_a_changed_family"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let project = project.canonicalize().unwrap();
+            let session = |id, name, parent| worker_session(&project, id, name, parent);
+            let mut rows = vec![
+                session(1, "a", None),
+                session(2, "worker-a", Some(1)),
+                session(3, "b", None),
+                session(4, "worker-b", Some(3)),
+            ];
+            let key = rows[1].activity_key();
+            cx.update(|window, cx| {
+                app.update(cx, |app, _| {
+                    app.sessions.selected_draft = None;
+                    std::sync::Arc::make_mut(&mut app.snapshot).selected_session =
+                        Some(rows[0].path.clone());
+                });
+                let mut generation = app.read(cx).sessions.generation;
+                let mut publish = |cx: &mut gpui::App, rows: &[SessionSummary], index, status| {
+                    generation += 1;
+                    let row: &SessionSummary = &rows[index];
+                    let activity = AgentActivity::from_worker_status(row, status, false);
+                    runtime.send_event(RuntimeEvent::Sessions {
+                        generation,
+                        sessions: rows.to_vec(),
+                        all_sessions: rows.to_vec(),
+                        activities: Some((
+                            std::collections::HashMap::from([(row.activity_key(), activity)]),
+                            false,
+                        )),
+                    });
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                    let panel = app.read(cx).views.run_panel.clone();
+                    panel.update(cx, |panel, cx| drop(panel.render(window, cx)));
+                };
+                super::worker_list::PREPARATIONS.with(|count| count.set(0));
+                publish(cx, &rows, 1, WorkerStatus::Running);
+                let focus = app.read(cx).activity.row_focus[&key].clone();
+                assert_eq!(
+                    super::worker_list::PREPARATIONS.with(|count| count.get()),
+                    1
+                );
+
+                rows[3].title = "Other worker changed".into();
+                publish(cx, &rows, 3, WorkerStatus::NeedsInput);
+                assert_eq!(
+                    super::worker_list::PREPARATIONS.with(|count| count.get()),
+                    1
+                );
+                assert_eq!(app.read(cx).activity.row_focus[&key], focus);
+                assert_eq!(
+                    app.read(cx).activity.agents[&rows[3].activity_key()].lifecycle,
+                    AgentLifecycle::NeedsInput
+                );
+
+                publish(cx, &rows, 1, WorkerStatus::Failed);
+                assert_eq!(
+                    super::worker_list::PREPARATIONS.with(|count| count.get()),
+                    2
+                );
+                assert_eq!(app.read(cx).activity.row_focus[&key], focus);
+                assert_eq!(
+                    app.read(cx).activity.agents[&key].lifecycle,
+                    AgentLifecycle::Completed(AgentOutcome::Failed)
+                );
+
+                rows[1].title = "Updated tooltip".into();
+                publish(cx, &rows, 1, WorkerStatus::Failed);
+                assert_eq!(
+                    super::worker_list::PREPARATIONS.with(|count| count.get()),
+                    3
+                );
+                app.update(cx, |app, _| {
+                    app.activity.row_focus.remove(&key);
+                });
+                publish(cx, &rows, 3, WorkerStatus::NeedsInput);
+                assert_ne!(app.read(cx).activity.row_focus[&key], focus);
+                assert_eq!(
+                    super::worker_list::PREPARATIONS.with(|count| count.get()),
+                    4
+                );
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn incremental_events_only_rebuild_affected_worker_families(cx: &mut gpui::TestAppContext) {
+    use crate::{agents::WorkerStatus, runtime::RuntimeEvent};
+    use gpui::Render as _;
+    use std::sync::Arc;
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::incremental_events_only_rebuild_affected_worker_families"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let project = project.canonicalize().unwrap();
+            // The selected family is an orphan until session 9 arrives.
+            let root = worker_session(&project, 1, "root", Some(9));
+            let worker = worker_session(&project, 2, "worker", Some(1));
+            let other = worker_session(&project, 3, "other", None);
+            let rows = vec![root.clone(), worker.clone()];
+            cx.update(|window, cx| {
+                app.update(cx, |app, _| {
+                    app.sessions.selected_draft = None;
+                    Arc::make_mut(&mut app.snapshot).selected_session = Some(worker.path.clone());
+                });
+                let panel = app.read(cx).views.run_panel.clone();
+                let generation = app.read(cx).sessions.generation + 1;
+                let drain = |cx: &mut gpui::App, event| {
+                    runtime.send_event(event);
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                };
+                let mut publish = |cx: &mut gpui::App, event| {
+                    drain(cx, event);
+                    panel.update(cx, |panel, cx| drop(panel.render(window, cx)));
+                    super::worker_list::PREPARATIONS.with(|count| count.get())
+                };
+                super::worker_list::PREPARATIONS.with(|count| count.set(0));
+                assert_eq!(
+                    publish(
+                        cx,
+                        RuntimeEvent::Sessions {
+                            generation,
+                            sessions: rows.clone(),
+                            all_sessions: rows,
+                            activities: None,
+                        }
+                    ),
+                    1
+                );
+                let worker_key = worker.activity_key();
+                let focus = app.read(cx).activity.row_focus[&worker_key].clone();
+                assert_eq!(publish(cx, RuntimeEvent::SessionUpdated(other.clone())), 1);
+                let moved = |row: &crate::sessions::SessionSummary| RuntimeEvent::SessionMoved {
+                    target: row.target(),
+                    target_project: project.clone(),
+                    paths: Arc::new([(row.path.clone(), project.join("moved"))].into()),
+                };
+                let deleted =
+                    |row: &crate::sessions::SessionSummary| RuntimeEvent::SessionDeleted {
+                        generation,
+                        paths: Arc::new([row.path.clone()].into()),
+                    };
+                assert_eq!(publish(cx, moved(&other)), 1);
+                assert_eq!(publish(cx, deleted(&other)), 1);
+                assert_eq!(app.read(cx).activity.row_focus[&worker_key], focus);
+
+                let other_status =
+                    AgentActivity::from_worker_status(&other, WorkerStatus::Running, false);
+                assert_eq!(
+                    publish(
+                        cx,
+                        RuntimeEvent::AgentActivityUpdated {
+                            key: other.activity_key(),
+                            activity: other_status,
+                        }
+                    ),
+                    1
+                );
+                let mut activity =
+                    AgentActivity::from_worker_status(&worker, WorkerStatus::NeedsInput, false);
+                // Native activity retains the original locator even if its alias has
+                // disappeared by the time the UI drains the event.
+                activity.session_path = project.join("removed-alias").join("worker");
+                assert_eq!(
+                    publish(
+                        cx,
+                        RuntimeEvent::AgentActivityUpdated {
+                            key: worker_key.clone(),
+                            activity,
+                        }
+                    ),
+                    2
+                );
+                assert_eq!(
+                    app.read(cx).activity.agents[&worker_key].lifecycle,
+                    AgentLifecycle::NeedsInput
+                );
+
+                let parent = worker_session(&project, 9, "new-parent", None);
+                // Switch away before painting. The prepared orphan still needs
+                // invalidation when its missing parent arrives in the background.
+                let select = |cx: &mut gpui::App, path: &Path| {
+                    app.update(cx, |app, _| {
+                        Arc::make_mut(&mut app.snapshot).selected_session = Some(path.to_owned());
+                    });
+                };
+                select(cx, &other.path);
+                drain(cx, RuntimeEvent::SessionUpdated(parent.clone()));
+                assert!(panel.read(cx).prepared_worker_root().is_none());
+                select(cx, &worker.path);
+                assert_eq!(publish(cx, RuntimeEvent::SessionUpdated(other.clone())), 3);
+                assert!(
+                    panel
+                        .read(cx)
+                        .has_prepared_workers_for(&parent.catalog_key())
+                );
+                assert_eq!(app.read(cx).activity.row_focus[&worker_key], focus);
+                // A sibling move/delete in this family must still invalidate the cache.
+                let sibling = worker_session(&project, 4, "sibling", Some(9));
+                assert_eq!(
+                    publish(cx, RuntimeEvent::SessionUpdated(sibling.clone())),
+                    4
+                );
+                assert_eq!(publish(cx, moved(&sibling)), 5);
+                assert_eq!(publish(cx, deleted(&sibling)), 6);
+
+                let native_parent = worker_session(&project, 5, "native-parent", Some(9));
+                let mut legacy = worker_session(&project, 6, "legacy-worker", None);
+                legacy.parent_session = Some(native_parent.id.clone());
+                assert_eq!(
+                    publish(cx, RuntimeEvent::SessionUpdated(native_parent.clone())),
+                    7
+                );
+                assert_eq!(publish(cx, RuntimeEvent::SessionUpdated(legacy.clone())), 8);
+                // Both parents now have the same native ID. Catalog order gives the link
+                // to the older row in the other family.
+                let mut competing = other.clone();
+                competing.id = native_parent.id;
+                competing.modified = SystemTime::UNIX_EPOCH - std::time::Duration::from_secs(1);
+                assert_eq!(publish(cx, RuntimeEvent::SessionUpdated(competing)), 9);
+                assert_eq!(
+                    app.read(cx)
+                        .sessions
+                        .all
+                        .root_for_row(&legacy)
+                        .unwrap()
+                        .path,
+                    other.path
+                );
+                assert_eq!(publish(cx, RuntimeEvent::SessionUpdated(other)), 10);
+                assert_eq!(
+                    app.read(cx)
+                        .sessions
+                        .all
+                        .root_for_row(&legacy)
+                        .unwrap()
+                        .path,
+                    parent.path
+                );
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn session_updates_refresh_metadata_only_worker_activity_and_parent_waiting(
+    cx: &mut gpui::TestAppContext,
+) {
+    use crate::{
+        app::session::status::roots_waiting_for_active_descendants,
+        runtime::{RunStatus, RuntimeEvent},
+    };
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::session_updates_refresh_metadata_only_worker_activity_and_parent_waiting"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let root = worker_session(project, 1, "root", None);
+            let mut worker = worker_session(project, 2, "worker", Some(1));
+            let key = worker.activity_key();
+            cx.update(|_, cx| {
+                let publish = |cx: &mut gpui::App, event| {
+                    runtime.send_event(event);
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                };
+                let state = |cx: &gpui::App| {
+                    let app = app.read(cx);
+                    let catalog = &app.sessions.all;
+                    let rows = run_panel_agent_rows(
+                        catalog,
+                        &app.activity.agents,
+                        catalog.by_key(&root.catalog_key()),
+                    );
+                    assert_eq!(rows.len(), 1);
+                    assert_eq!(rows[0].2.activity_key(), key);
+                    let waiting =
+                        roots_waiting_for_active_descendants(catalog, &app.activity.agents);
+                    (
+                        rows[0].0.lifecycle,
+                        app.rail_row_status(&root, waiting.contains(&root.catalog_key())),
+                        app.activity.row_focus[&key].clone(),
+                    )
+                };
+                publish(cx, RuntimeEvent::SessionUpdated(root.clone()));
+                worker.is_running = true;
+                publish(cx, RuntimeEvent::SessionUpdated(worker.clone()));
+                let (lifecycle, parent, focus) = state(cx);
+                assert_eq!(
+                    (lifecycle, parent),
+                    (AgentLifecycle::Working, RunStatus::Waiting)
+                );
+
+                worker.is_running = false;
+                publish(cx, RuntimeEvent::SessionUpdated(worker.clone()));
+                assert_eq!(
+                    state(cx),
+                    (
+                        AgentLifecycle::Completed(AgentOutcome::Complete),
+                        RunStatus::Done,
+                        focus.clone()
+                    )
+                );
+
+                let native = AgentActivity::from_worker_status(
+                    &worker,
+                    crate::agents::WorkerStatus::NeedsInput,
+                    false,
+                );
+                publish(
+                    cx,
+                    RuntimeEvent::AgentActivityUpdated {
+                        key: key.clone(),
+                        activity: native,
+                    },
+                );
+                worker.title = "Updated title".into();
+                publish(cx, RuntimeEvent::SessionUpdated(worker));
+                assert_eq!(
+                    state(cx),
+                    (AgentLifecycle::NeedsInput, RunStatus::Waiting, focus)
+                );
+            });
+        },
     );
 }

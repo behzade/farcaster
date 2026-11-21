@@ -53,16 +53,28 @@ pub(super) enum FolderRow {
     New,
 }
 
+#[cfg(test)]
 pub(super) fn folder_rows(
     items: Vec<ActiveSessionItem>,
     folders: &SessionFolders,
 ) -> Vec<FolderRow> {
+    folder_rows_with_pending(items, folders, &Default::default())
+}
+
+pub(super) fn folder_rows_with_pending(
+    items: Vec<ActiveSessionItem>,
+    folders: &SessionFolders,
+    pending: &std::collections::HashMap<String, u64>,
+) -> Vec<FolderRow> {
     let mut sections = std::collections::BTreeMap::<Option<u64>, Vec<ActiveSessionItem>>::new();
     for item in items {
-        sections
-            .entry(folders.folder_for(item.app_session_id()))
-            .or_default()
-            .push(item);
+        let folder = match &item {
+            ActiveSessionItem::Draft(draft) => {
+                crate::app::session_folders::draft_folder(draft, folders, pending)
+            }
+            _ => folders.folder_for(item.app_session_id()),
+        };
+        sections.entry(folder).or_default().push(item);
     }
     let mut rows = sections
         .remove(&None)

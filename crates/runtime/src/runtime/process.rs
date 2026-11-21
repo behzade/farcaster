@@ -141,7 +141,7 @@ impl RuntimeOwner {
             self.process_command = match configuration_for_target(
                 &self.process_command,
                 self.state.as_ref(),
-                LaunchTarget::Session(path),
+                LaunchTarget::Session(path, self.harness),
             ) {
                 Ok(config) => config,
                 Err(error) => {

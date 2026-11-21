@@ -1,4 +1,4 @@
-use super::worker::WorkerSnapshot;
+use super::{WorkerPoolUpdate, worker::WorkerSnapshot};
 use std::{
     sync::{
         Arc, Mutex,
@@ -26,11 +26,12 @@ pub(super) fn spawn(
     snapshot: Arc<Mutex<WorkerSnapshot>>,
     slot: super::WorkerSlot,
     parent: Option<WorkerParent>,
-    updates: async_channel::Sender<()>,
+    updates: async_channel::Sender<WorkerPoolUpdate>,
     cleanup_confirmed: Arc<AtomicBool>,
     save_status: impl Fn(WorkerStatus) + Send + 'static,
 ) -> Result<(mpsc::Sender<RunCommand>, thread::JoinHandle<()>), String> {
     let (commands, receiver) = mpsc::channel();
+    let id = id.to_owned();
     let handle = thread::Builder::new()
         .name(format!("farcaster-worker-{id}"))
         .spawn(move || {
@@ -41,6 +42,7 @@ pub(super) fn spawn(
                 slot,
                 parent,
                 &updates,
+                &id,
                 &cleanup_confirmed,
                 save_status,
             )
@@ -55,7 +57,8 @@ fn run(
     snapshot: Arc<Mutex<WorkerSnapshot>>,
     slot: super::WorkerSlot,
     parent: Option<WorkerParent>,
-    updates: &async_channel::Sender<()>,
+    updates: &async_channel::Sender<WorkerPoolUpdate>,
+    worker_id: &str,
     cleanup_confirmed: &AtomicBool,
     save_status: impl Fn(WorkerStatus),
 ) {
@@ -87,7 +90,7 @@ fn run(
                         current.error = None;
                     }
                 });
-                notify(updates);
+                notify_status(updates, worker_id);
                 return;
             }
             Ok(RunCommand::Retire) => {
@@ -100,7 +103,7 @@ fn run(
                         current.error = Some(format!("worker cleanup failed: {error}"));
                     });
                 }
-                notify(updates);
+                notify_status(updates, worker_id);
                 return;
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -118,7 +121,7 @@ fn run(
             input_leases.retain(|(input_id, _)| input_id != &id);
             approvals.remove(&id);
             refresh_inputs(&snapshot, &approvals, &questions, turn_active);
-            notify(updates);
+            notify_status(updates, worker_id);
         }
         while let Some(event) = session.poll() {
             match event {
@@ -126,6 +129,7 @@ fn run(
                     save_status(WorkerStatus::Running);
                     turn_active = true;
                     refresh_inputs(&snapshot, &approvals, &questions, turn_active);
+                    notify_status(updates, worker_id);
                 }
                 WorkerEvent::Settled { output } => {
                     save_status(WorkerStatus::Idle);
@@ -145,13 +149,13 @@ fn run(
                         current.pending_input = None;
                     });
                     refresh_inputs(&snapshot, &approvals, &questions, turn_active);
-                    notify(updates);
+                    notify_status(updates, worker_id);
                 }
                 WorkerEvent::SessionChanged { locator } => {
                     update(&snapshot, |current| {
                         current.session_locator = Some(locator);
                     });
-                    notify(updates);
+                    let _ = updates.try_send(WorkerPoolUpdate::Catalog);
                 }
                 WorkerEvent::NeedsInput(input) => {
                     if let Some(parent) = &parent {
@@ -166,7 +170,7 @@ fn run(
                     }
                     approvals.insert(input.id.clone(), input);
                     refresh_inputs(&snapshot, &approvals, &questions, turn_active);
-                    notify(updates);
+                    notify_status(updates, worker_id);
                 }
                 WorkerEvent::QuestionsRequested(request) => {
                     if let Some(parent) = &parent {
@@ -186,14 +190,14 @@ fn run(
                     }
                     questions.insert(request.id, request.blocking);
                     refresh_inputs(&snapshot, &approvals, &questions, turn_active);
-                    notify(updates);
+                    notify_status(updates, worker_id);
                 }
                 WorkerEvent::InputResolved { id } => {
                     approvals.remove(&id);
                     questions.remove(&id);
                     input_leases.retain(|(input_id, _)| input_id != &id);
                     refresh_inputs(&snapshot, &approvals, &questions, turn_active);
-                    notify(updates);
+                    notify_status(updates, worker_id);
                 }
                 WorkerEvent::Activity(_) => {}
                 WorkerEvent::RequestFailed { operation, error } => {
@@ -219,7 +223,7 @@ fn run(
     if let Some(parent) = &parent {
         parent.report(format!("Worker failed: {error}"));
     }
-    notify(updates);
+    notify_status(updates, worker_id);
 }
 
 fn refresh_inputs(
@@ -242,8 +246,8 @@ fn refresh_inputs(
     });
 }
 
-fn notify(updates: &async_channel::Sender<()>) {
-    let _ = updates.try_send(());
+fn notify_status(updates: &async_channel::Sender<WorkerPoolUpdate>, id: &str) {
+    let _ = updates.try_send(WorkerPoolUpdate::Status(id.to_owned()));
 }
 
 fn update(snapshot: &Mutex<WorkerSnapshot>, change: impl FnOnce(&mut WorkerSnapshot)) {

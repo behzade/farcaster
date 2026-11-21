@@ -228,8 +228,7 @@ impl FarcasterApp {
             | EditorRequest::File { project, .. }
             | EditorRequest::Review { project, .. } => project,
         };
-        let choice = effective_editor_choice(self.settings.editor_choice, project);
-        if !self.project.repository.execution_allowed {
+        if !self.project.repository.allows_execution_in(project) {
             self.request_project_trust_for_action(
                 project.clone(),
                 crate::app::project::trust::PendingTrustAction::Editor(request),
@@ -238,6 +237,7 @@ impl FarcasterApp {
             );
             return;
         }
+        let choice = effective_editor_choice(self.settings.editor_choice, project);
         if let Err(error) = backend(choice).open(self, request, window, cx) {
             self.notify_workspace_error(choice.label(), error, cx);
         }
@@ -251,7 +251,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         self.engage_current_draft();
-        if !self.project.repository.execution_allowed {
+        if !self.project.repository.allows_execution_in(&project) {
             self.request_project_trust_for_action(
                 project.clone(),
                 crate::app::project::trust::PendingTrustAction::EditorTab {

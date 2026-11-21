@@ -99,7 +99,13 @@ fn accepted_draft_moves_to_its_discovered_session_without_losing_identity() {
         establish_submission(&mut associations, "draft:accepted", true, None),
         Some("accepted".into())
     );
-    assert!(reconciliation_candidates(&associations, [path.as_path()].into_iter()).is_empty());
+    assert!(
+        reconciliation_candidates(
+            &associations,
+            std::iter::from_fn(|| panic!("no bound draft needs a catalog lookup")),
+        )
+        .is_empty()
+    );
     assert_eq!(
         fill_session_association(&mut associations, "draft:accepted", Some(&path)),
         Some(path.clone())

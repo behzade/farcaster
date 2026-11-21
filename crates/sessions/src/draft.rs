@@ -186,6 +186,9 @@ pub fn reconciliation_candidates<'a>(
     submitted_drafts: &HashMap<String, Option<PathBuf>>,
     discovered_paths: impl Iterator<Item = &'a Path>,
 ) -> Vec<(String, PathBuf)> {
+    if submitted_drafts.values().all(Option::is_none) {
+        return Vec::new();
+    }
     let discovered_paths = discovered_paths.collect::<Vec<_>>();
     submitted_drafts
         .iter()

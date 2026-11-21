@@ -152,6 +152,9 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if open && self.workspace.runtime_picker.worker.is_none() && !self.can_submit() {
+            return;
+        }
         self.workspace.runtime_picker.open = open;
         if open {
             if self.workspace.runtime_picker.worker.is_none()

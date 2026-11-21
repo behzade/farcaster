@@ -20,7 +20,7 @@ use crate::{
     agents::ConfigurationCatalog,
     projects::{self, Registry},
     protocol::{Model, PromptImage, PromptMode},
-    sessions::{DraftSession, SessionImport, SessionSummary, UsageSummary},
+    sessions::{self, DraftSession, SessionImport, SessionSummary, UsageSummary},
 };
 
 #[test]
@@ -1088,6 +1088,49 @@ fn composer_session_targets_resolve_file_aliases() -> Result<(), Box<dyn std::er
 
     store.delete_composer_session(&target)?;
     assert!(store.load_composer_sessions()?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn shared_locator_composers_survive_reopen_and_delete_independently()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let path = temp.path().canonicalize()?.join("shared.jsonl");
+    let address = sessions::session_target(&path);
+    let store = StateStore::open_at(&database)?;
+    for harness in [Backend::Pi, Backend::Codex] {
+        store.enqueue_prompt(
+            &address,
+            harness,
+            temp.path(),
+            None,
+            PromptMode::Normal,
+            "setup",
+            &[],
+        )?;
+        let record = ComposerRecord {
+            target: sessions::session_buffer(harness, &path),
+            text: harness.to_string(),
+            history: vec![format!("sent to {harness}")].into(),
+            ..Default::default()
+        };
+        store.save_composer_session(&record)?;
+    }
+    drop(store);
+    let store = StateStore::open_at(&database)?;
+    let records = store.load_composer_sessions()?;
+    assert_eq!(records.len(), 2);
+    for harness in [Backend::Pi, Backend::Codex] {
+        let key = sessions::session_buffer(harness, &path);
+        let record = records.iter().find(|record| record.target == key).unwrap();
+        assert_eq!(record.text, harness.to_string());
+        assert_eq!(record.history.as_slice(), &[format!("sent to {harness}")]);
+    }
+    store.delete_composer_session(&sessions::session_buffer(Backend::Pi, &path))?;
+    let remaining = store.load_composer_sessions()?;
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].text, Backend::Codex.as_str());
     Ok(())
 }
 
@@ -2374,6 +2417,7 @@ fn cross_harness_worker_families_survive_reopen() -> Result<(), String> {
         cached[0].model,
         Some(("opencode-go".into(), "glm-5.3-flash".into()))
     );
+    assert_eq!(cached[0].worker_profile.as_deref(), Some("fast"));
     assert_eq!(cached[0].thinking_level, None);
 
     let mut legacy = serde_json::to_value(&link).map_err(|error| error.to_string())?;

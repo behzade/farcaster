@@ -1,28 +1,12 @@
-use std::{
-    collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
-};
-
 use gpui::{
     Bounds, Div, DragMoveEvent, FontWeight, InteractiveElement as _, ListState, Pixels, Point,
     Stateful, Styled as _, WeakEntity, div,
 };
 
-use super::{
-    FarcasterApp,
-    drag::DraggedSession,
-    groups::{SessionRailItem, SessionRailKind},
-};
-use crate::{
-    app::{
-        session::status::resolved_session_status,
-        ui::{
-            primitives::{PanelSlot, ReorderPosition},
-            theme::theme,
-        },
-    },
-    runtime::RunStatus,
-    sessions::SessionCatalog,
+use super::{FarcasterApp, drag::DraggedSession, groups::SessionRailKind};
+use crate::app::ui::{
+    primitives::{PanelSlot, ReorderPosition},
+    theme::theme,
 };
 
 pub(super) const ARCHIVED_OPEN_ROWS: usize = 5;
@@ -111,38 +95,6 @@ pub(super) fn session_section_drop_target(
         })
 }
 
-pub(super) fn subagent_counts(sessions: &SessionCatalog) -> HashMap<PathBuf, usize> {
-    sessions
-        .iter()
-        .filter_map(|session| {
-            let count = sessions.child_count(session);
-            (count > 0).then(|| (session.path.clone(), count))
-        })
-        .collect()
-}
-
-pub(super) fn inactive_session_badge(
-    kind: SessionRailKind,
-    item: &SessionRailItem,
-    run_statuses: &HashMap<String, RunStatus>,
-    live_session: Option<&Path>,
-    live_status: RunStatus,
-    waiting_roots: &HashSet<PathBuf>,
-) -> Option<RunStatus> {
-    if kind != SessionRailKind::Archived {
-        return None;
-    }
-    let target = format!("session:{}", item.session.path.display());
-    let status = resolved_session_status(
-        &item.session,
-        run_statuses.get(&target).copied(),
-        live_session,
-        live_status,
-        waiting_roots.contains(&item.session.path),
-    );
-    (status != RunStatus::Done).then_some(status)
-}
-
 pub(super) fn archived_panel_height(rows: usize) -> Pixels {
     theme().controls.icon_button + super::session_row_height(false) * rows as f32
 }
@@ -157,6 +109,7 @@ pub(super) fn archived_panel_slot(archived: usize, collapsed: bool) -> PanelSlot
     )
 }
 
+#[cfg(test)]
 pub(super) fn archived_panel_rows(height: Pixels) -> usize {
     ((height - theme().controls.icon_button) / super::session_row_height(false)).max(0.0) as usize
 }

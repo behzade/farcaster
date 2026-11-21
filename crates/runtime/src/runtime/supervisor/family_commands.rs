@@ -3,9 +3,88 @@ use farcaster_sessions::archived_root_family_for_path;
 use std::path::Path;
 
 impl Supervisor {
-    fn stop_session_family_work(&mut self, path: &Path, archive: bool) -> Result<(), String> {
-        let family = session_family_for_path(&self.catalog_sessions, path)
-            .ok_or_else(|| "The session family is no longer available".to_owned())?;
+    fn stop_session_family_work(
+        &mut self,
+        path: &Path,
+        key: Option<&sessions::SessionKey>,
+        archive: bool,
+    ) -> Result<(), String> {
+        let requested = match key {
+            Some(key) => self
+                .catalog_sessions
+                .by_key(key)
+                .filter(|row| row.path == path),
+            None => self.catalog_sessions.by_path(path),
+        }
+        .ok_or("The session family is no longer available")?;
+        let target = sessions::AppSessionId::new(requested.app_session_id)
+            .map(ArchiveTarget::App)
+            .unwrap_or_else(|| ArchiveTarget::Native(requested.target()));
+        self.stop_family_work(
+            Some(requested.catalog_key()),
+            requested.project.clone(),
+            target,
+            None,
+            archive,
+        )
+    }
+
+    fn stop_and_archive_draft(
+        &mut self,
+        draft: &str,
+        identity: &DraftArchiveIdentity,
+    ) -> Result<(), String> {
+        let id = match identity {
+            DraftArchiveIdentity::Saved(id) => *id,
+            DraftArchiveIdentity::Pending(saved) => {
+                saved.recv_blocking().map_err(|e| e.to_string())??
+            }
+        };
+        let (project, row) = self
+            .catalog_state
+            .as_ref()
+            .ok_or("Session state is unavailable")?
+            .with(|store| store.draft_archive_session(id, draft))?;
+        let _ = self.event_tx.send(RuntimeEvent::DraftArchiveIdentity {
+            draft: draft.to_owned(),
+            app_session_id: id,
+        });
+        let key = row.as_ref().map(SessionSummary::catalog_key);
+        if let Some(row) = row
+            && self.catalog_sessions.by_app_id(id.get()).is_none()
+        {
+            self.handle_actor_event(self.catalog_key.clone(), RuntimeEvent::SessionUpdated(row));
+        }
+        self.stop_family_work(
+            key,
+            project,
+            ArchiveTarget::App(id),
+            Some((id, sessions::draft_target(draft))),
+            true,
+        )
+    }
+
+    fn stop_family_work(
+        &mut self,
+        key: Option<sessions::SessionKey>,
+        project: PathBuf,
+        archive_target: ArchiveTarget,
+        draft_actor: Option<(sessions::AppSessionId, String)>,
+        archive: bool,
+    ) -> Result<(), String> {
+        let catalog = &self.catalog_sessions;
+        let family = match key.as_ref() {
+            Some(key) => {
+                let root = catalog
+                    .by_key(key)
+                    .and_then(|row| catalog.root_for_row(row))
+                    .ok_or("The session family is no longer available")?;
+                std::iter::once(root)
+                    .chain(catalog.descendants(root).into_iter().map(|(row, _)| row))
+                    .collect::<Vec<_>>()
+            }
+            None => Vec::new(),
+        };
         let family_paths = family
             .iter()
             .map(|session| session.path.clone())
@@ -13,6 +92,13 @@ impl Supervisor {
         let prior_actor_failures = family_paths
             .iter()
             .filter_map(|path| self.failed_actor_shutdowns.get(path))
+            .chain(
+                family
+                    .iter()
+                    .filter_map(|row| sessions::AppSessionId::new(row.app_session_id))
+                    .chain(draft_actor.as_ref().map(|(id, _)| *id))
+                    .filter_map(|id| self.failed_draft_shutdowns.get(&id)),
+            )
             .cloned()
             .collect::<Vec<_>>();
         if !prior_actor_failures.is_empty() {
@@ -21,12 +107,16 @@ impl Supervisor {
                 prior_actor_failures.join("; ")
             ));
         }
-        let project = family[0].project.clone();
-        let worker_keys = family
+        let mut worker_keys = family
             .iter()
             .map(|session| session.key())
             .collect::<Vec<_>>();
-        self.require_current_family_keys(&project, &worker_keys)?;
+        if worker_keys.is_empty()
+            && let Some((id, _)) = &draft_actor
+        {
+            worker_keys.push(sessions::SessionKey::App(*id));
+        }
+        self.require_current_family_keys(&project, &family)?;
         if let Err(message) = self
             .host
             .stop_session_family_workers(&project, &worker_keys)
@@ -35,7 +125,7 @@ impl Supervisor {
                 "Could not stop the whole session family: {message}"
             ));
         }
-        if let Err(message) = self.require_current_family_keys(&project, &worker_keys) {
+        if let Err(message) = self.require_current_family_keys(&project, &family) {
             if let Err(cleanup) = self
                 .host
                 .finish_session_family_worker_stop(&project, &worker_keys)
@@ -46,11 +136,25 @@ impl Supervisor {
             }
             return Err(message);
         }
-        let family_actor_keys = self
-            .actor_paths
+        let family_actor_keys = family
             .iter()
-            .filter(|(path, key)| family_paths.contains(*path) && *key != &self.catalog_key)
-            .map(|(_, key)| key.clone())
+            .map(|row| documents::catalog_actor_key(row, catalog, &self.actor_paths, &self.latest))
+            .chain(draft_actor.as_ref().map(|(_, actor)| actor.clone()))
+            .filter(|key| {
+                key != &self.catalog_key
+                    && (self.actors.contains_key(key) || self.latest.contains_key(key))
+            })
+            .collect::<HashSet<_>>();
+        // Legacy catalog paths can retain a symlink. The worker pool needs
+        // normalized keys, while these rows still use their stored locators.
+        let family_keys = family
+            .iter()
+            .map(|row| row.catalog_key())
+            .collect::<HashSet<_>>();
+        let shared = family
+            .iter()
+            .filter(|row| catalog.has_shared_path(&row.path))
+            .map(|row| row.path.clone())
             .collect::<HashSet<_>>();
         let mut stopped_sessions = Vec::new();
         let mut actor_stop_failures = Vec::new();
@@ -67,6 +171,11 @@ impl Supervisor {
                         self.failed_actor_shutdowns
                             .insert(path.clone(), message.clone());
                     }
+                    if let Some((id, actor)) = &draft_actor
+                        && actor == key
+                    {
+                        self.failed_draft_shutdowns.insert(*id, message.clone());
+                    }
                     actor_stop_failures.push(message);
                 }
             }
@@ -76,7 +185,14 @@ impl Supervisor {
                     .clone()
                     .or_else(|| snapshot.selected_session.clone())
             });
-            stopped_sessions.push((key.clone(), session));
+            let record = resident_status_record(
+                &self.published_statuses,
+                &self.catalog_sessions,
+                key,
+                self.latest.get(key).map(AsRef::as_ref),
+                session.as_deref(),
+            );
+            stopped_sessions.push((key.clone(), session, record));
             self.latest.remove(key);
             self.last_touch.remove(key);
             self.pending_extensions.remove(key);
@@ -86,9 +202,9 @@ impl Supervisor {
             self.published_statuses.remove(key);
         }
         self.document_revisions
-            .retain(|path, _| !family_paths.contains(path));
+            .retain(|key, _| !family_actor_keys.contains(key));
         self.actor_paths
-            .retain(|path, _| !family_paths.contains(path));
+            .retain(|_, key| !family_actor_keys.contains(key));
         if family_actor_keys.contains(&self.selected) {
             self.selected = self.catalog_key.clone();
         }
@@ -101,21 +217,52 @@ impl Supervisor {
                 actor_stop_failures.join("; ")
             ));
         }
-        for (target, session) in stopped_sessions {
+        for (target, session, record) in stopped_sessions {
+            if record.is_none() && session.as_ref().is_some_and(|path| shared.contains(path)) {
+                continue;
+            }
             let _ = self.event_tx.send(RuntimeEvent::SessionStatus {
                 target,
                 session,
+                record,
                 status: RunStatus::Stopped,
             });
         }
-        for session in &mut self.catalog_sessions {
-            if family_paths.contains(&session.path) {
+        for session in self.catalog_sessions.iter_mut() {
+            if family_keys.contains(&session.catalog_key()) {
                 session.is_running = false;
+                if shared.contains(&session.path) {
+                    let _ = self
+                        .event_tx
+                        .send(RuntimeEvent::SessionUpdated(session.clone()));
+                    let record = SessionStatusRecord::for_row(session);
+                    let _ = self.event_tx.send(RuntimeEvent::SessionStatus {
+                        target: record.status_key(),
+                        record: Some(record),
+                        session: Some(session.path.clone()),
+                        status: RunStatus::Stopped,
+                    });
+                    continue;
+                }
                 let _ = self.event_tx.send(RuntimeEvent::SessionStatus {
                     target: format!("session:{}", session.path.display()),
+                    record: Some(SessionStatusRecord::for_row(session)),
                     session: Some(session.path.clone()),
                     status: RunStatus::Stopped,
                 });
+            }
+        }
+        if archive && let Ok(snapshots) = self.host.worker_snapshots() {
+            let stopped = self
+                .catalog_sessions
+                .iter()
+                .filter(|session| family_keys.contains(&session.catalog_key()))
+                .cloned()
+                .collect::<Vec<_>>();
+            for (key, activity) in catalog::worker_activities(&stopped, snapshots) {
+                let _ = self
+                    .event_tx
+                    .send(RuntimeEvent::AgentActivityUpdated { key, activity });
             }
         }
         if let Err(message) = self
@@ -127,25 +274,23 @@ impl Supervisor {
             ));
         }
         if archive {
-            let archive_result = self
-                .catalog_state
-                .as_ref()
-                .ok_or_else(|| "Session state is unavailable".to_owned())
-                .and_then(|state| state.with(|store| sessions::set_archived(store, path, true)));
-            if let Err(message) = archive_result {
-                return Err(format!(
-                    "Session family stopped, but could not be archived: {message}"
-                ));
-            }
-            if let Some(root) = self
-                .catalog_sessions
-                .iter_mut()
-                .find(|session| session.path == *path)
-            {
-                root.archived = true;
-            }
-        }
-        if let Some(catalog) = self.actors.get(&self.catalog_key) {
+            let catalog = self
+                .actors
+                .get(&self.catalog_key)
+                .ok_or("Session family stopped, but the session catalog is unavailable")?;
+            catalog
+                .try_send(RuntimeCommand::SetSessionArchived {
+                    request: ArchiveRequest {
+                        target: archive_target,
+                        archived: true,
+                        sequence: None,
+                    },
+                    draft_saved: None,
+                })
+                .map_err(|message| {
+                    format!("Session family stopped, but could not be archived: {message}")
+                })?;
+        } else if let Some(catalog) = self.actors.get(&self.catalog_key) {
             catalog.send(RuntimeCommand::RefreshSessions);
         }
         Ok(())
@@ -154,20 +299,13 @@ impl Supervisor {
     fn require_current_family_keys(
         &self,
         project: &Path,
-        keys: &[crate::sessions::SessionKey],
+        rows: &[&SessionSummary],
     ) -> Result<(), String> {
-        let app_keys = keys
-            .iter()
-            .filter(|key| matches!(key, crate::sessions::SessionKey::App(_)))
-            .collect::<HashSet<_>>();
-        if app_keys.is_empty() {
+        if rows.iter().all(|row| row.app_session_id <= 0) {
             return Ok(());
         }
         self.catalog_state.as_ref().ok_or("Session state is unavailable")?.with(|store| {
-            let current = store.cached_sessions("")?.into_iter()
-                .filter(|session| session.project == project)
-                .map(|session| session.key()).collect::<HashSet<_>>();
-            if app_keys.iter().all(|key| current.contains(*key)) { Ok(()) }
+            if store.contains_project_sessions(project, rows)? { Ok(()) }
             else { Err("The session identity changed; refresh the session list before stopping its family".into()) }
         })
     }
@@ -216,7 +354,9 @@ impl Supervisor {
             return;
         };
         let session = session.clone();
-        let key = format!("session:{}", session.path.display());
+        let key = self
+            .actor_paths
+            .session_key(&session.path, session.harness, &self.latest);
         let actor = SessionRuntimeHandle::spawn(
             session.project.clone(),
             self.process_command.clone(),
@@ -232,50 +372,37 @@ impl Supervisor {
                 harness: session.harness,
                 session_id: session.id,
                 project: session.project.clone(),
+                key: None,
+                request: None,
             },
             &self.configurations,
-            saved_access_mode(self.catalog_state.as_ref(), &session.path),
+            saved_access_mode(
+                self.catalog_state.as_ref(),
+                &session.path,
+                Some(session.harness),
+            ),
             session.profile_id.as_deref(),
         );
         self.generation = self.generation.saturating_add(1);
         self.selected = key.clone();
         self.selected_project = session.project;
-        self.actor_paths.insert(session.path, key.clone());
+        self.actor_paths
+            .insert(session.path, session.harness, key.clone());
         self.actors.insert(key, actor);
     }
 
     pub(super) fn handle_session_family_command(&mut self, command: &RuntimeCommand) -> bool {
-        if let RuntimeCommand::SetAppSessionArchived {
-            app_session_id,
-            archived,
-        } = command
-        {
-            let result = self
-                .catalog_state
-                .as_ref()
-                .ok_or_else(|| "Session state is unavailable".to_owned())
-                .and_then(|state| {
-                    state.with(|store| store.set_app_session_archived(*app_session_id, *archived))
-                });
-            if let Err(message) = result {
+        if let RuntimeCommand::StopAndArchiveDraft { draft, identity } = command {
+            if let Err(message) = self.stop_and_archive_draft(draft, identity) {
                 let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
                     generation: self.catalog_generation,
                     message,
                 });
-            } else {
-                for session in &mut self.catalog_sessions {
-                    if session.app_session_id == app_session_id.get() {
-                        session.archived = *archived;
-                    }
-                }
-            }
-            if let Some(catalog) = self.actors.get(&self.catalog_key) {
-                catalog.send(RuntimeCommand::RefreshSessions);
             }
             return true;
         }
-        if let RuntimeCommand::StopSessionFamily { path } = command {
-            if let Err(message) = self.stop_session_family_work(path, true) {
+        if let RuntimeCommand::StopSessionFamily { path, key } = command {
+            if let Err(message) = self.stop_session_family_work(path, key.as_ref(), true) {
                 let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
                     generation: self.catalog_generation,
                     message,
@@ -286,7 +413,7 @@ impl Supervisor {
         if let RuntimeCommand::StopAndDeleteSessionFamily { path } = command {
             let archived = archived_root_family_for_path(&self.catalog_sessions, path).is_some();
             let result = if archived {
-                self.stop_session_family_work(path, false)
+                self.stop_session_family_work(path, None, false)
                     .and_then(|()| self.discard_family_queue(path))
             } else {
                 Err("Only an archived root session can be deleted".to_owned())
@@ -320,7 +447,7 @@ impl Supervisor {
                         .collect::<Vec<_>>();
                     agents::validate_session_move(&owned)
                 })
-                .and_then(|()| self.stop_session_family_work(path, false));
+                .and_then(|()| self.stop_session_family_work(path, None, false));
             if let Err(message) = result {
                 let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
                     generation: self.catalog_generation,
@@ -342,7 +469,7 @@ impl Supervisor {
         }
         if let RuntimeCommand::DeleteSessionFamily { path } = &command {
             let result = (|| {
-                self.stop_session_family_work(path, false)?;
+                self.stop_session_family_work(path, None, false)?;
                 self.discard_family_queue(path)?;
                 let family = session_family_for_path(&self.catalog_sessions, path)
                     .ok_or_else(|| "The session is no longer available to delete".to_owned())?;
@@ -375,7 +502,7 @@ impl Supervisor {
                     self.published_statuses.remove(key);
                 }
                 self.document_revisions
-                    .retain(|path, _| !family_paths.contains(path));
+                    .retain(|_, (path, _, _)| !family_paths.contains(path));
                 self.actor_paths
                     .retain(|path, _| !family_paths.contains(path));
                 if family_actor_keys.contains(&self.selected) {
@@ -497,7 +624,7 @@ impl Supervisor {
                     self.published_statuses.remove(key);
                 }
                 self.document_revisions
-                    .retain(|path, _| !family_paths.contains(path));
+                    .retain(|_, (path, _, _)| !family_paths.contains(path));
                 self.actor_paths
                     .retain(|path, _| !family_paths.contains(path));
                 let source_was_selected = family_actor_keys.contains(&self.selected);

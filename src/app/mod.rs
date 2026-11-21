@@ -71,10 +71,7 @@ use crate::{
     protocol::{BackgroundJob, Model},
     runtime::{RuntimeCommand, RuntimeEvent, RuntimeHandle, RuntimeSnapshot},
     sessions,
-    sessions::{
-        SessionRootIndex, SessionSummary, SessionTarget, descendant_sessions_for_root,
-        root_session_for_path,
-    },
+    sessions::{SessionSummary, SessionTarget},
 };
 #[cfg(test)]
 use crate::{app::views::transcript::transcript_splice, protocol::ExtensionUiRequest};

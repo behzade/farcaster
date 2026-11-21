@@ -6,7 +6,7 @@ use crate::app::infrastructure::persistence::ComposerAttachment;
 
 impl FarcasterApp {
     pub(in crate::app) fn save_composer_attachments(&mut self, target: &str) {
-        if self.composer.sessions.current_target() == target && self.has_composer_attachments() {
+        if self.composer.sessions.current_buffer() == target && self.has_composer_attachments() {
             self.engage_current_draft();
         }
         let pending = self
@@ -65,7 +65,7 @@ impl FarcasterApp {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let target = self.composer.sessions.current_target().to_owned();
+        let target = self.composer.sessions.current_buffer().to_owned();
         let selected = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: true,
             directories: false,
@@ -102,7 +102,7 @@ impl FarcasterApp {
                 }
                 this.save_composer_attachments(&target);
                 this.notify_composer(cx);
-                if this.composer.sessions.current_target() == target {
+                if this.composer.sessions.current_buffer() == target {
                     this.composer.focus.focus(window, cx);
                 }
                 if !errors.is_empty() {

@@ -36,6 +36,13 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn notify_archived_session_rail(&self, cx: &mut Context<Self>) {
+        self.views.archived_session_rail.update(cx, |rail, cx| {
+            rail.invalidate_rows();
+            cx.notify();
+        });
+    }
+
+    pub(in crate::app) fn repaint_archived_session_rail(&self, cx: &mut Context<Self>) {
         Self::notify_region(&self.views.archived_session_rail, cx);
     }
 
@@ -48,10 +55,7 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn notify_run_panel(&self, cx: &mut Context<Self>) {
-        self.views.run_panel.update(cx, |view, cx| {
-            view.invalidate_workers();
-            cx.notify();
-        });
+        Self::notify_region(&self.views.run_panel, cx);
     }
 
     pub(in crate::app) fn notify_appearance(&self, cx: &mut Context<Self>) {
@@ -77,9 +81,16 @@ impl FarcasterApp {
                 | RuntimeCommand::SetServiceTier(_)
                 | RuntimeCommand::SetAccessMode(_)
         ) {
+            if !self.can_submit() {
+                return;
+            }
             self.engage_current_draft();
         }
+        let selection = self.record_selection_dispatch(&command);
         if let Err(error) = self.runtime.send(command) {
+            if let Some(request) = selection {
+                self.finish_selection_route(request, false, cx);
+            }
             let snapshot = Arc::make_mut(&mut self.snapshot);
             let index = snapshot.conversation.items.len();
             Arc::make_mut(&mut snapshot.conversation).push_transport_error(error);

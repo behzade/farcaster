@@ -1,7 +1,7 @@
 use crate::agents::Backend;
 use std::path::{Path, PathBuf};
 
-use gpui::{Context, Window};
+use gpui::{AppContext as _, Context, Window};
 
 use super::FarcasterApp;
 use crate::{
@@ -82,8 +82,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_project_trust(window, cx);
-        self.project.trust_project = Some(project);
+        self.open_project_trust_for(project, None, window, cx);
         self.project.pending_trust_action = Some(action);
     }
 
@@ -136,21 +135,69 @@ impl FarcasterApp {
         if self.project.pending_trust_command.is_some() {
             return;
         }
-        match startup_trust(project) {
-            Ok(StartupTrust::Ready) => {
-                let backend = command_backend(&command).or(self.snapshot.harness);
-                if backend
-                    .is_none_or(|backend| self.ensure_backend_trust(backend, project, window, cx))
-                {
-                    self.send(command, cx);
-                } else {
-                    self.project.pending_trust_command = Some(command);
-                }
+        if self.project.navigation_trust.take().is_some() {
+            self.restore_rejected_selection(window, cx);
+        }
+        let backend = command_backend(&command).or(self.snapshot.harness);
+        let check = command_trust(project, backend);
+        self.finish_command_trust(project.to_owned(), command, check, window, cx);
+    }
+
+    pub(in crate::app) fn send_navigation_command(
+        &mut self,
+        project: &Path,
+        mut command: RuntimeCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.project.pending_trust_command.is_some() {
+            return;
+        }
+        let sequence = self.lifecycle.awaiting_switch_route;
+        match &mut command {
+            RuntimeCommand::NewSession { request, .. }
+            | RuntimeCommand::ResumeDraft { request, .. }
+            | RuntimeCommand::SelectSession { request, .. } => {
+                *request = sequence;
             }
-            result => {
-                self.open_project_trust(window, cx);
-                self.project.trust_project = Some(project.to_path_buf());
-                self.project.trust_error = result.err();
+            _ => {}
+        }
+        if matches!(&command, RuntimeCommand::NewSession { id, .. }
+            if self.sessions.pending_folder_drafts.contains_key(id))
+        {
+            // Saving the folder draft will dispatch the latest selection.
+            return;
+        }
+        let backend = command_backend(&command).or(self.snapshot.harness);
+        let project = project.to_owned();
+        self.project.navigation_trust = Some(cx.spawn_in(window, async move |weak, cx| {
+            let path = project.clone();
+            let check = cx
+                .background_spawn(async move { command_trust(&path, backend) })
+                .await;
+            let _ = weak.update_in(cx, |app, window, cx| {
+                if app.project.path == project && app.lifecycle.awaiting_switch_route == sequence {
+                    app.project.navigation_trust = None;
+                    app.finish_command_trust(project, command, check, window, cx);
+                    app.notify_composer(cx);
+                }
+            });
+        }));
+    }
+
+    fn finish_command_trust(
+        &mut self,
+        project: PathBuf,
+        command: RuntimeCommand,
+        check: Result<(), (Option<Backend>, Option<String>)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match check {
+            Ok(()) => self.send(command, cx),
+            Err((backend, error)) => {
+                self.open_project_trust_for(project, backend, window, cx);
+                self.project.trust_error = error;
                 self.project.pending_trust_command = Some(command);
             }
         }
@@ -175,7 +222,13 @@ impl FarcasterApp {
         match applied {
             Ok(applied) => {
                 if backend.is_none() {
-                    self.set_repository_project_execution(project.clone(), applied.trusted, cx);
+                    if self.project.repository.project == project
+                        || self.workspace_project() == project
+                    {
+                        self.set_repository_project_execution(project.clone(), applied.trusted, cx);
+                    } else {
+                        self.forget_repository_project(&project);
+                    }
                 }
                 let scope = applied.saved_path.map_or_else(
                     || project.display().to_string(),
@@ -184,6 +237,9 @@ impl FarcasterApp {
                 self.project.trust_error = None;
                 self.project.trust_project = None;
                 self.project.trust_backend = None;
+                if !applied.trusted && self.project.pending_trust_command.is_some() {
+                    self.restore_rejected_selection(window, cx);
+                }
                 let pending =
                     take_trust_command(&mut self.project.pending_trust_command, applied.trusted);
                 let pending_action = take_trust_action(
@@ -225,10 +281,8 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if cancel_pending_command(&mut self.project.pending_trust_command)
-            && let Some((_, timing)) = self.lifecycle.pending_session_switch.take()
-        {
-            timing.cancel();
+        if cancel_pending_command(&mut self.project.pending_trust_command) {
+            self.restore_rejected_selection(window, cx);
         }
         self.project.trust_error = None;
         self.project.trust_project = None;
@@ -266,10 +320,25 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_project_trust(window, cx);
-        self.project.trust_project = Some(project);
-        self.project.trust_backend = Some(backend);
+        self.open_project_trust_for(project, Some(backend), window, cx);
     }
+}
+
+fn command_trust(
+    project: &Path,
+    backend: Option<Backend>,
+) -> Result<(), (Option<Backend>, Option<String>)> {
+    match startup_trust(project) {
+        Ok(StartupTrust::Ready) => {}
+        result => return Err((None, result.err())),
+    }
+    if let Some(backend) = backend {
+        match crate::agents::project_trust(backend, project) {
+            Ok(StartupTrust::Ready) => {}
+            result => return Err((Some(backend), result.err())),
+        }
+    }
+    Ok(())
 }
 
 fn command_backend(command: &RuntimeCommand) -> Option<Backend> {
@@ -304,11 +373,15 @@ fn restart_session_after_trust(command: RuntimeCommand) -> RuntimeCommand {
             harness,
             session_id,
             project,
+            key,
+            request,
         } => RuntimeCommand::RestartSession {
             path,
             harness,
             session_id,
             project,
+            key,
+            request,
         },
         command => command,
     }

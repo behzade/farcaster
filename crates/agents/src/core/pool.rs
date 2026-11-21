@@ -31,6 +31,12 @@ use family::{FamilyFence, family_is_stopping};
 
 const MAX_TERMINAL_HISTORY: usize = 64;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkerPoolUpdate {
+    Catalog,
+    Status(String),
+}
+
 #[derive(Clone)]
 pub struct WorkerPool {
     inner: Arc<PoolInner>,
@@ -45,8 +51,8 @@ struct PoolInner {
     app_proxy: Mutex<Option<String>>,
     concurrency: WorkerConcurrency,
     process_limit: usize,
-    updates: async_channel::Sender<()>,
-    update_receiver: async_channel::Receiver<()>,
+    updates: async_channel::Sender<WorkerPoolUpdate>,
+    update_receiver: async_channel::Receiver<WorkerPoolUpdate>,
     state: Mutex<PoolState>,
 }
 
@@ -156,7 +162,7 @@ impl WorkerPool {
             .map_err(|_| "worker status sink already installed".into())
     }
 
-    pub fn updates(&self) -> async_channel::Receiver<()> {
+    pub fn updates(&self) -> async_channel::Receiver<WorkerPoolUpdate> {
         self.inner.update_receiver.clone()
     }
 
@@ -639,6 +645,36 @@ impl WorkerPool {
         state.records.values().map(snapshot).collect()
     }
 
+    /// Return a live update only when one worker owns this session. Shared bindings
+    /// need the same ordering and outcome reconciliation as full catalog discovery.
+    pub fn status_snapshot(&self, id: &str) -> Result<Option<WorkerSnapshot>, String> {
+        let state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| "worker pool state is unavailable")?;
+        let Some(record) = state.records.get(id) else {
+            return Ok(None);
+        };
+        let worker = snapshot(record)?;
+        let Some(key) = worker.session_key.as_ref() else {
+            return Ok(None);
+        };
+        for (other_id, other) in &state.records {
+            if other_id == id || other.launch.project != worker.project {
+                continue;
+            }
+            let binding = other
+                .session_binding
+                .lock()
+                .map_err(|_| "worker session binding is unavailable")?;
+            if binding.as_ref().and_then(|owner| owner.key.as_ref()) == Some(key) {
+                return Ok(None);
+            }
+        }
+        Ok(Some(worker))
+    }
+
     pub fn stop_session_family(
         &self,
         project: &Path,
@@ -721,9 +757,12 @@ impl WorkerPool {
                     current.status = WorkerStatus::Stopped;
                     super::activity::record(&current.project);
                     current.pending_input = None;
+                    let _ = self
+                        .inner
+                        .updates
+                        .try_send(WorkerPoolUpdate::Status(id.clone()));
                 }
             }
-            notify(&self.inner.updates);
             drop(state);
             for (_, setup_done, _, _) in &setup_waiters {
                 wait_for_setup(setup_done)?;
@@ -751,6 +790,10 @@ impl WorkerPool {
                 current.status = WorkerStatus::Stopped;
                 super::activity::record(&current.project);
                 current.pending_input = None;
+                let _ = self
+                    .inner
+                    .updates
+                    .try_send(WorkerPoolUpdate::Status(id.clone()));
             }
             let current = snapshot(record)?;
             if current.status != WorkerStatus::Stopped
@@ -760,9 +803,6 @@ impl WorkerPool {
                     format!("worker {} process cleanup was not confirmed", current.id)
                 }));
             }
-        }
-        if !ids.is_empty() {
-            notify(&self.inner.updates);
         }
         if failures.is_empty() {
             Ok(ids.len())
@@ -937,8 +977,8 @@ fn find_pending_child<'a>(
     })
 }
 
-fn notify(updates: &async_channel::Sender<()>) {
-    let _ = updates.try_send(());
+fn notify(updates: &async_channel::Sender<WorkerPoolUpdate>) {
+    let _ = updates.try_send(WorkerPoolUpdate::Catalog);
 }
 
 impl Drop for PoolInner {

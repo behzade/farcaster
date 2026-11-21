@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     app::ui::primitives::ReorderPosition,
-    sessions::{DraftSession, SessionSummary, root_sessions},
+    sessions::{DraftSession, SessionSummary},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -63,6 +63,7 @@ pub(super) struct SessionRailLists {
     pub(super) archived_count: usize,
 }
 
+#[cfg(test)]
 pub(super) fn session_rail_lists(
     sessions: &[SessionSummary],
     drafts: &[DraftSession],
@@ -70,7 +71,7 @@ pub(super) fn session_rail_lists(
     manual_order: &[i64],
 ) -> SessionRailLists {
     session_rail_lists_for_roots(
-        root_sessions(sessions),
+        crate::sessions::root_sessions(sessions),
         drafts,
         project_filter,
         manual_order,
@@ -95,9 +96,24 @@ pub(super) fn active_session_rail_lists_for_roots<'a>(
     build_session_rail_lists(roots, drafts, project_filter, manual_order, false)
 }
 
-fn build_session_rail_lists<'a>(
+pub(super) fn archived_session_rows_for_roots<'a>(
     roots: impl IntoIterator<Item = &'a SessionSummary>,
     drafts: &[DraftSession],
+    project_filter: Option<&Path>,
+) -> Vec<ActiveSessionItem> {
+    build_session_rail_lists(
+        roots.into_iter().filter(|row| row.archived),
+        drafts.iter().filter(|draft| draft.archived),
+        project_filter,
+        &[],
+        true,
+    )
+    .archived
+}
+
+fn build_session_rail_lists<'a, 'd>(
+    roots: impl IntoIterator<Item = &'a SessionSummary>,
+    drafts: impl IntoIterator<Item = &'d DraftSession>,
     project_filter: Option<&Path>,
     manual_order: &[i64],
     include_archived: bool,
@@ -109,12 +125,14 @@ fn build_session_rail_lists<'a>(
     let mut archived_count = 0;
     let mut shadowed = HashSet::new();
     for draft in drafts
-        .iter()
+        .into_iter()
         .filter(|draft| project_filter.is_none_or(|filter| filter == draft.project))
     {
         if draft.archived {
             archived_count += 1;
-            shadowed.insert(draft.app_session_id);
+            if draft.app_session_id > 0 {
+                shadowed.insert(draft.app_session_id);
+            }
             if include_archived {
                 archived.push(ActiveSessionItem::Draft(draft.clone()));
             }
@@ -167,6 +185,9 @@ fn build_session_rail_lists<'a>(
 }
 
 fn apply_manual_order<T>(items: &mut [T], order: &[i64], app_session_id: impl Fn(&T) -> i64) {
+    if order.is_empty() || items.len() < 2 {
+        return;
+    }
     let rank = order
         .iter()
         .enumerate()
