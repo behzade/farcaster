@@ -925,6 +925,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
     assert_eq!(
         store.prompt_presentations(&session_path.canonicalize()?)?,
         vec![crate::agents::PromptPresentation {
+            submission_id: Some("presentation-delivered".into()),
             resolved_message: "expanded prompt".into(),
             display_message: "$commit hello".into(),
             invocation: "expanded prompt".into(),

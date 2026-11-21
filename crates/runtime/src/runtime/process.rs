@@ -104,6 +104,8 @@ impl RuntimeOwner {
     }
 
     pub(super) fn reset_process_runtime(&mut self) {
+        self.flush_live_transcript();
+        self.live_transcript = None;
         self.idle_retirement = Default::default();
         self.complete_current_delivered_prompt();
         self.finish_current_prompt(false);
@@ -305,6 +307,19 @@ impl RuntimeOwner {
         });
         self.replay_child_inputs();
         self.publish();
+        self.live_transcript = self
+            .harness
+            .zip(self.state.as_ref())
+            .map(|(harness, store)| {
+                live_transcript::LiveTranscript::new(
+                    harness,
+                    session.as_deref(),
+                    &self.project,
+                    self.process_command.profile_id.as_deref(),
+                    session.is_none() && fork.is_none(),
+                    store,
+                )
+            });
         let start = if let Some(source) = fork {
             SessionStart::Fork(source)
         } else if let Some(session) = session {
@@ -442,6 +457,15 @@ impl RuntimeOwner {
                         zlog::warn!("Ignoring malformed prompt delivery event");
                         return SnapshotChange::None;
                     };
+                    // Retired receipts can belong to a previous process on this actor.
+                    if self
+                        .retired_prompts
+                        .get(&delivery.submission_id)
+                        .is_none_or(|prompt| prompt.session == self.active_session)
+                        && let Some(capture) = &mut self.live_transcript
+                    {
+                        capture.observe(&event);
+                    }
                     if self.apply_cancelled_prompt(delivery) {
                         return SnapshotChange::Immediate;
                     }
@@ -449,6 +473,8 @@ impl RuntimeOwner {
                         return change;
                     }
                     self.apply_prompt_delivery_receipt(delivery);
+                } else if let Some(capture) = &mut self.live_transcript {
+                    capture.observe(&event);
                 }
                 let settled = event.kind() == &SessionActivityKind::AgentSettled;
                 match event.kind() {

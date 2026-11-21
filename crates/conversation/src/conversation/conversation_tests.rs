@@ -131,11 +131,13 @@ fn saved_presentations_restore_compact_history_in_order() {
         &mut messages,
         &[
             farcaster_agent_protocol::PromptPresentation {
+                submission_id: None,
                 resolved_message: "same expansion".into(),
                 display_message: "$commit first".into(),
                 invocation: "same expansion".into(),
             },
             farcaster_agent_protocol::PromptPresentation {
+                submission_id: None,
                 resolved_message: "same expansion".into(),
                 display_message: "$commit second".into(),
                 invocation: "same expansion".into(),
@@ -177,6 +179,7 @@ fn presentation_matching_keeps_text_block_and_fallback_rules() {
     for (mut message, expected) in messages {
         message["role"] = "user".into();
         let presentation = farcaster_agent_protocol::PromptPresentation {
+            submission_id: None,
             resolved_message: expected.into(),
             display_message: "$example".into(),
             invocation: "resolved".into(),
@@ -1268,4 +1271,32 @@ fn tool_metadata_is_identical_in_live_and_history_projection() {
     assert_eq!(left.arguments, right.arguments);
     assert_eq!(left.state, right.state);
     assert_eq!(left.summary(), right.summary());
+}
+
+#[test]
+fn repeated_prompts_restore_invocations_by_submission_id() {
+    let presentation = |id: &str, display: &str| farcaster_agent_protocol::PromptPresentation {
+        submission_id: Some(id.into()),
+        resolved_message: "same".into(),
+        display_message: display.into(),
+        invocation: "command".into(),
+    };
+    let mut messages = [
+        json!({"role":"user","content":"same","submissionId":"b"}),
+        json!({"role":"user","content":"same"}),
+        json!({"role":"user","content":"same","submissionId":"a"}),
+        json!({"role":"user","content":"same"}),
+    ];
+    annotate_prompt_presentations(
+        &mut messages,
+        &[
+            presentation("a", "$first"),
+            presentation("b", "$second"),
+            presentation("missing", "$unknown"),
+        ],
+    );
+    assert_eq!(messages[0]["farcasterUserInvocation"], "$second");
+    assert_eq!(messages[2]["farcasterUserInvocation"], "$first");
+    assert!(messages[1].get("farcasterUserInvocation").is_none());
+    assert!(messages[3].get("farcasterUserInvocation").is_none());
 }

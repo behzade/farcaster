@@ -207,8 +207,34 @@ pub(super) fn metadata(item: &Value, kind: &str) -> ToolMetadata {
         category: Some(category),
         title,
         targets,
-        native: Some(item.clone()),
+        native: Some(call_metadata(item, kind)),
     }
+}
+
+// The result owns MCP envelope extensions. Keep the original block encoding in
+// call metadata because MCP text envelopes can expand into several display blocks.
+fn call_metadata(item: &Value, kind: &str) -> Value {
+    if kind != "mcpToolCall" {
+        return item.clone();
+    }
+    let Some(fields) = item.as_object() else {
+        return item.clone();
+    };
+    let mut native = serde_json::Map::new();
+    for (key, value) in fields {
+        match key.as_str() {
+            "error" if !value.is_null() => {}
+            "result" if value.is_object() => {
+                if let Some(content) = value.get("content") {
+                    native.insert(key.clone(), json!({"content":content}));
+                }
+            }
+            _ => {
+                native.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    Value::Object(native)
 }
 
 fn paths(items: Option<&Value>) -> Vec<String> {
@@ -318,6 +344,121 @@ pub(super) fn web_search_query(item: &Value) -> Option<&str> {
                 .into_iter()
                 .find_map(|field| action.get(field).and_then(Value::as_str))
         })
+}
+
+// Keep completed tool output identical when the app sees it live or imports the turn later.
+pub(super) fn completion(item: &Value, kind: &str) -> (Value, bool) {
+    let failed = item
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| matches!(status, "failed" | "declined"))
+        || item["success"] == false
+        || item.pointer("/result/isError").and_then(Value::as_bool) == Some(true);
+    let result = if kind == "imageGeneration" {
+        Value::Array(image_output(item))
+    } else if kind == "mcpToolCall" && item.pointer("/result/content").is_some_and(Value::is_array)
+    {
+        Value::Array(mcp_output(item))
+    } else if let Some(parts) = item["contentItems"].as_array() {
+        Value::Array(parts.iter().map(dynamic_output_block).collect())
+    } else if let Some(content) = item.pointer("/result/content").and_then(Value::as_array) {
+        Value::Array(content.clone())
+    } else if failed
+        && let Some(error) = item
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .or_else(|| item.get("error").and_then(Value::as_str))
+    {
+        json!([{"type": "text", "text": error}])
+    } else if let Some(output) = item.get("aggregatedOutput").and_then(Value::as_str) {
+        json!([{"type": "text", "text": output}])
+    } else if let Some(output) = item
+        .get("result")
+        .filter(|value| !value.is_null())
+        .or_else(|| item.get("output").filter(|value| !value.is_null()))
+    {
+        json!([{
+            "type": "text",
+            "text": output.as_str().map(str::to_owned).unwrap_or_else(|| output.to_string()),
+        }])
+    } else if kind == "commandExecution" && item.get("aggregatedOutput").is_none_or(Value::is_null)
+    {
+        json!([{"type": "text", "text": ""}])
+    } else if kind == "webSearch" {
+        json!([{"type": "text", "text": web_search_query(item).unwrap_or_default()}])
+    } else if kind == "fileChange" && !failed {
+        json!([{"type": "text", "text": "Applied patch"}])
+    } else if kind == "imageView" {
+        json!([{
+            "type": "text",
+            "text": item.get("path").and_then(Value::as_str).unwrap_or_default(),
+        }])
+    } else if kind == "sleep" {
+        json!([{
+            "type": "text",
+            "text": format!("Waited {}", wait_duration(item)),
+        }])
+    } else if kind == "subAgentActivity" {
+        json!([{"type": "text", "text": subagent_summary(item)}])
+    } else if kind == "collabAgentToolCall" {
+        json!([{
+            "type": "text",
+            "text": item
+                .get("agentsStates")
+                .map(Value::to_string)
+                .unwrap_or_else(|| item.get("status").map(Value::to_string).unwrap_or_default()),
+        }])
+    } else {
+        zlog::warn!("Codex {kind} completion has no displayable result");
+        json!([])
+    };
+    let mut details = serde_json::Map::new();
+    for key in ["exitCode", "durationMs"] {
+        if let Some(value) = item.get(key).filter(|value| !value.is_null())
+            && !(key == "durationMs" && kind == "sleep")
+        {
+            details.insert(key.into(), value.clone());
+        }
+    }
+    if kind == "mcpToolCall" {
+        let mut native = serde_json::Map::new();
+        if let Some(result) = item["result"].as_object() {
+            let fields: serde_json::Map<_, _> = result
+                .iter()
+                .filter(|(field, _)| field.as_str() != "content")
+                .map(|(field, value)| (field.clone(), value.clone()))
+                .collect();
+            if !fields.is_empty() {
+                native.insert("result".into(), Value::Object(fields));
+            }
+        }
+        if let Some(error) = item.get("error").filter(|error| !error.is_null()) {
+            native.insert("error".into(), error.clone());
+        }
+        if !native.is_empty() {
+            details.insert("native".into(), Value::Object(native));
+        }
+    }
+    if details.is_empty() {
+        (result, failed)
+    } else {
+        (json!({"content": result, "details": details}), failed)
+    }
+}
+
+fn dynamic_output_block(block: &Value) -> Value {
+    match block["type"].as_str() {
+        Some("inputText") if block["text"].is_string() => {
+            json!({"type":"text","text":block["text"]})
+        }
+        Some("inputImage") => block["imageUrl"]
+            .as_str()
+            .and_then(|url| url.strip_prefix("data:")?.split_once(";base64,"))
+            .filter(|(mime, _)| mime.starts_with("image/"))
+            .map(|(mime, data)| json!({"type":"image", "mimeType":mime, "data":data}))
+            .unwrap_or_else(|| block.clone()),
+        _ => block.clone(),
+    }
 }
 
 pub(super) fn mcp_output(item: &Value) -> Vec<Value> {

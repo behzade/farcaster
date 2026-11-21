@@ -335,6 +335,8 @@ pub struct RuntimeSnapshot {
     pub connected: bool,
     /// A complete session document can remain ready without a running harness.
     pub document_ready: bool,
+    /// Displayed from the local transcript, before any needed native reconciliation.
+    pub saved_transcript: bool,
     pub status: String,
     pub harness: Option<Backend>,
     pub profile_id: Option<String>,

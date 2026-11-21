@@ -48,13 +48,21 @@ fn message_bytes(messages: &Vec<serde_json::Value>) -> usize {
         + messages.iter().map(heap_bytes).sum::<usize>()
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, serde::Serialize)]
 pub(super) struct FileStamp {
     modified: SystemTime,
     len: u64,
+    #[cfg(unix)]
+    identity: (u64, u64, i64, i64),
 }
 
 impl FileStamp {
+    pub(super) fn local_revision(path: &Path) -> Option<serde_json::Value> {
+        let path = path.canonicalize().ok()?;
+        let stamp = Self::read(&path)?;
+        serde_json::to_value((path, stamp)).ok()
+    }
+
     pub(super) fn read(path: &Path) -> Option<Self> {
         if !path.is_absolute() {
             return None;
@@ -63,7 +71,11 @@ impl FileStamp {
         if !meta.is_file() {
             return None;
         }
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt as _;
         Some(Self {
+            #[cfg(unix)]
+            identity: (meta.dev(), meta.ino(), meta.ctime(), meta.ctime_nsec()),
             modified: meta.modified().ok()?,
             len: meta.len(),
         })

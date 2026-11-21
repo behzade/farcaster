@@ -211,13 +211,21 @@ impl TranscriptView {
     pub(crate) fn preserve_painted_history(
         &mut self,
         items: &PersistentVec<Arc<crate::conversation::TranscriptItem>>,
+        saved_transcript: bool,
     ) {
         if self.allows_history_tail()
             && let Some(page) = &self.history_tail
-            && let Some((anchor, offset, unseen)) = page.anchor_before_append(&self.rows, items)
+            && page.list.painted_history_top().is_some()
         {
-            self.restore_reading_anchor(anchor, offset);
-            self.unseen = unseen;
+            if let Some((anchor, offset, unseen)) = page.anchor_before_append(&self.rows, items) {
+                self.restore_reading_anchor(anchor, offset);
+                self.unseen = unseen;
+            } else if saved_transcript
+                && let Some(offset) = page.matching_suffix_top(&self.rows, items)
+            {
+                // The backend can append before the saved document gets a draw.
+                self.list.inherit_painted_top(offset);
+            }
         }
     }
 

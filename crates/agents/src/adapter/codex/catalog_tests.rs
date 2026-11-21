@@ -293,7 +293,7 @@ fn preview_stops_at_the_first_incomplete_turn_in_descending_order() {
         let page = json!({"data":[newer, incomplete, older], "nextCursor":null});
         let tail = recent_page_messages(&page).unwrap();
         assert_eq!(tail.coverage, crate::HistoryCoverage::Suffix);
-        assert_eq!(tail.content, history_messages(&newer["items"][0]));
+        assert_eq!(tail.content, turn_item_messages(&newer, &newer["items"][0]));
         let page = json!({"data":[incomplete, older]});
         assert!(recent_page_messages(&page).unwrap().content.is_empty());
     }
@@ -308,7 +308,7 @@ fn preview_stops_at_the_first_incomplete_turn_in_descending_order() {
         .as_array()
         .unwrap()
         .iter()
-        .flat_map(history_messages)
+        .flat_map(|item| turn_item_messages(&native, item))
         .collect();
     for (page, coverage) in [
         (json!({"data":[native]}), crate::HistoryCoverage::Suffix),
@@ -529,4 +529,62 @@ fn restored_nested_mcp_images_reach_the_conversation() {
             .as_ref(),
         Some(&item)
     );
+}
+
+#[test]
+fn completed_tool_details_survive_history_import() {
+    let turn = json!({"id":"turn"});
+    let command = json!({
+        "id":"command", "type":"commandExecution", "command":"false", "status":"failed",
+        "durationMs":37,"exitCode":1,"aggregatedOutput":"diagnostic","futureMetadata":{"test":true}
+    });
+    let messages = turn_item_messages(&turn, &command);
+    assert_eq!(
+        messages[0]["content"][0]["toolMetadata"]["native"]["futureMetadata"],
+        json!({"test":true})
+    );
+    assert_eq!(
+        messages[1]["details"],
+        json!({"durationMs":37,"exitCode":1})
+    );
+    assert_eq!(messages[1]["isError"], true);
+    assert_eq!(messages[1]["content"][0]["text"], "diagnostic");
+    let dynamic = json!({"type":"dynamicToolCall","id":"custom","tool":"lookup","arguments":{"term":"x"},"contentItems":[{"type":"inputText","text":"match"},{"type":"inputImage","imageUrl":"data:image/png;base64,YQ=="}],"success":true});
+    let messages = turn_item_messages(&turn, &dynamic);
+    assert_eq!(messages[0]["content"][0]["arguments"]["term"], "x");
+    assert_eq!(
+        messages[1]["content"],
+        json!([{"type":"text","text":"match"},{"type":"image","mimeType":"image/png","data":"YQ=="}])
+    );
+    assert_eq!(messages[1]["nativeTurnId"], "turn");
+}
+
+#[test]
+fn mcp_history_retains_structured_results_even_without_text() {
+    for content in [json!([]), json!([{"type":"text","text":"summary"}])] {
+        let item = json!({"id":"call","type":"mcpToolCall","server":"s","tool":"t",
+            "status":"completed","extension":{"future":true},"arguments":{"id":1},
+            "result":{"content":content,"structuredContent":{"id":123},"_meta":{"v":2}}});
+        let rows = history_messages(&item);
+        assert_eq!(
+            rows[0]["content"][0]["toolMetadata"]["native"]["extension"],
+            item["extension"]
+        );
+        assert_eq!(rows[1]["content"], content);
+        assert_eq!(
+            rows[1]["details"]["native"]["result"],
+            json!({"structuredContent":{"id":123},"_meta":{"v":2}})
+        );
+        assert!(
+            rows[0]["content"][0]["toolMetadata"]["native"]["result"]
+                .get("structuredContent")
+                .is_none()
+        );
+    }
+    let error = json!({"code":413,"message":"too large","data":{"limit":500}});
+    let failed = history_messages(
+        &json!({"id":"call","type":"mcpToolCall","status":"failed","error":error}),
+    );
+    assert_eq!(failed[1]["details"]["native"]["error"], error);
+    assert_eq!(failed[1]["content"][0]["text"], "too large");
 }

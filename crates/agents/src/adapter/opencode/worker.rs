@@ -718,6 +718,7 @@ impl OpenCodeWorkerSession {
                 .run_command(&self.session_id, name, text, files)?;
             self.ignore_execution_events = false;
             let activity = WorkerActivity::InputDelivered {
+                source: None,
                 submission_id,
                 mode,
                 message,
@@ -876,7 +877,8 @@ impl OpenCodeWorkerSession {
         if delivery.clears_abort_barrier {
             self.ignore_execution_events = false;
         }
-        let activity = delivery.input.into_activity();
+        let mut activity = delivery.input.into_activity();
+        activity.link_delivered_input(native_id, None);
         Some(WorkerEvent::Activity(activity))
     }
 

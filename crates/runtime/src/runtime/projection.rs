@@ -374,6 +374,9 @@ impl RuntimeOwner {
                         }
                         zlog::warn!("Save session facts: {error}");
                     }
+                    if let (Some(capture), Some(store)) = (&mut self.live_transcript, &self.state) {
+                        capture.bind(path, store);
+                    }
                     self.unbound_prompt_draft = None;
                 }
                 if !state.session_id.is_empty() {
@@ -422,26 +425,25 @@ impl RuntimeOwner {
                 } = history
                 {
                     let mut messages = Arc::new(messages);
-                    if let (Some(state), Some(session), Some(evidence)) = (
-                        self.state.as_mut(),
-                        self.active_session.as_deref(),
-                        prompt_deliveries.as_ref(),
-                    ) && let Err(error) =
-                        state.with(|store| store.reconcile_prompt_deliveries(session, evidence))
+                    if let Some(capture) = &mut self.live_transcript {
+                        capture.replace_startup_history(&messages);
+                    }
+                    if let (Some(state), Some(path), Some(harness)) =
+                        (&self.state, self.active_session.as_deref(), self.harness)
                     {
-                        zlog::error!("Reconcile saved prompt deliveries: {error}");
+                        history::annotate_session_prompts(
+                            state,
+                            farcaster_storage::TranscriptSession {
+                                harness,
+                                path,
+                                project: &self.project,
+                                profile_id: self.process_command.profile_id.as_deref(),
+                            },
+                            prompt_deliveries.as_ref(),
+                            &mut messages,
+                        );
                     }
                     self.reconcile_saved_prompts();
-                    if let (Some(state), Some(session)) =
-                        (self.state.as_ref(), self.active_session.as_deref())
-                    {
-                        if let Err(error) = state.with(|store| {
-                            annotate_history_presentations(Some(store), session, &mut messages);
-                            Ok(())
-                        }) {
-                            zlog::error!("Annotate prompt deliveries: {error}");
-                        }
-                    }
                     let conversation = conversation_mut(self.active_snapshot_mut());
                     conversation.replace_history(&messages);
                     if let Some(prompt) = &mut self.pending_prompt {

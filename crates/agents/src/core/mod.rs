@@ -26,7 +26,7 @@ pub use prompt_store::{
     queued as queued_prompts,
 };
 pub use worker::{
-    ChildSessionOutcome, TokenUsage, ToolReviewState, WorkerActivity, WorkerActivityState,
-    WorkerEvent, WorkerLaunch, WorkerModelSelection, WorkerSendMode, WorkerSession,
-    WorkerSessionFactory, WorkerSnapshot, WorkerUsage,
+    ChildSessionOutcome, MessageSource, TokenUsage, ToolReviewState, WorkerActivity,
+    WorkerActivityState, WorkerEvent, WorkerLaunch, WorkerModelSelection, WorkerSendMode,
+    WorkerSession, WorkerSessionFactory, WorkerSnapshot, WorkerUsage,
 };

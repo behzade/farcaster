@@ -98,15 +98,20 @@ fn hit_skips_preview_and_thread_read_and_preserves_full_history() {
     );
     let mut previews = Vec::new();
     for _ in 0..2 {
-        let history = super::super::load_history_with_client(
+        let (history, _) = super::super::load_history_with_client(
             &mut connection,
             home.path(),
             "thread",
             scope(),
             Some(&mut |messages| previews.push(messages)),
+            false,
         )
         .unwrap();
         assert_eq!(history.messages.len(), 5);
+        assert_eq!(history.messages[0]["submissionId"], "codex-cli-prompt");
+        assert_eq!(history.messages[1]["nativeMessageId"], "command");
+        assert_eq!(history.messages[1]["nativeTurnId"], earlier["id"]);
+        assert_eq!(history.messages[2]["toolCallId"], "command");
         assert_eq!(history.messages[1]["content"][0]["type"], "toolCall");
         assert_eq!(history.messages[2]["content"][0]["text"], "/project");
         assert_eq!(history.messages[3]["content"][0]["text"], "first answer");
@@ -195,12 +200,13 @@ fn only_confirmed_paginated_history_in_the_effective_home_requests_a_preview() {
         replies
             .push(json!({"thread":{"turns":[{"items":[{"type":"agentMessage","text":"full"}]}]}}));
         let mut connection = super::super::CodexConnection::new(rpc_results(replies), Vec::new());
-        let history = super::super::load_history_with_client(
+        let (history, _) = super::super::load_history_with_client(
             &mut connection,
             home.path(),
             "thread",
             scope,
             Some(&mut |_| panic!("unexpected preview for {mode}")),
+            false,
         )
         .unwrap();
         assert_eq!(history.messages[0]["content"][0]["text"], "full");
@@ -507,4 +513,74 @@ fn live_threads_and_relocated_or_unknown_config_bypass_cache() {
     let mut command = Command::new("codex");
     command.env("CODEX_SQLITE_HOME", home.path());
     assert!(Scope::new(&command, None, None).has_sqlite_home_override());
+}
+
+#[test]
+fn durable_history_revision_requires_matching_native_home_config_and_source() {
+    let (home, _, rollout) = fixture();
+    let other = tempfile::tempdir().unwrap();
+    let mut scope = scope();
+    scope.program = std::env::current_exe().unwrap().into_os_string();
+    scope.inherited_env.retain(|(key, _)| key != "CODEX_HOME");
+    scope
+        .inherited_env
+        .push(("CODEX_HOME".into(), home.path().as_os_str().into()));
+    let mut connection = super::super::CodexConnection::new(
+        rpc_results([
+            json!({"data":[]}),
+            json!({"config":{}}),
+            json!({"thread":{"turns":[]}}),
+        ]),
+        Vec::new(),
+    );
+    let (_, imported) = super::super::load_history_with_client(
+        &mut connection,
+        home.path(),
+        "thread",
+        scope.clone(),
+        None,
+        true,
+    )
+    .unwrap();
+    let imported = imported.unwrap();
+    assert_eq!(scope.local_revision("thread", None), Some(imported.clone()));
+    assert!(scope.local_revision("thread", Some(other.path())).is_none());
+    let mut profile_scope = scope.clone();
+    profile_scope.profile = Some("work".into());
+    profile_scope.env = vec![("CODEX_HOME".into(), Some(other.path().as_os_str().into()))];
+    assert!(
+        profile_scope
+            .local_revision("thread", Some(home.path()))
+            .is_none()
+    );
+    profile_scope.env = vec![("CODEX_HOME".into(), Some(home.path().as_os_str().into()))];
+    assert!(
+        profile_scope
+            .local_revision("thread", Some(home.path()))
+            .is_some()
+    );
+    std::fs::write(&rollout, "new rollout").unwrap();
+    assert_ne!(scope.local_revision("thread", None), Some(imported));
+    let mut connection = super::super::CodexConnection::new(
+        rpc_results([
+            json!({"data":[]}),
+            json!({"config":{"sqlite_home":other.path()}}),
+            json!({"thread":{"turns":[]}}),
+        ]),
+        Vec::new(),
+    );
+    let (_, stamp) = super::super::load_history_with_client(
+        &mut connection,
+        home.path(),
+        "thread",
+        scope.clone(),
+        None,
+        true,
+    )
+    .unwrap();
+    assert!(stamp.is_none());
+    scope
+        .inherited_env
+        .push(("CODEX_SQLITE_HOME".into(), other.path().as_os_str().into()));
+    assert!(scope.local_revision("thread", None).is_none());
 }

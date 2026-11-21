@@ -753,6 +753,7 @@ fn history_follows_the_current_branch_and_projects_display_entries() {
 
     assert_eq!(history.len(), 3);
     assert_eq!(history[0]["content"], "root");
+    assert_eq!(history[1]["nativeMessageId"], "two");
     assert_eq!(history[1]["content"][0]["text"], "current");
     assert_eq!(history[2]["role"], "custom");
 }
@@ -811,7 +812,9 @@ fn cold_preview_uses_the_active_branch_and_keeps_owned_payloads_in_full_history(
     assert_eq!(history.messages, load_history(&path)?.messages);
     assert_eq!(history.messages.len(), 5);
     assert_eq!(previews.as_slice(), &[history.messages[1..].to_vec()]);
-    assert_eq!(previews[0][0], user);
+    let mut expected = user;
+    expected["nativeMessageId"] = "recent".into();
+    assert_eq!(previews[0][0], expected);
     assert_eq!(
         previews[0][1]["content"][0]["toolMetadata"]["category"],
         "read"

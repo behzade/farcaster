@@ -566,7 +566,11 @@ fn append_history_chunk(
         }
         return;
     }
-    history.push(json!({"role": role, "content": [content]}));
+    let mut message = json!({"role": role, "content": [content]});
+    if let Some(id) = message_id {
+        message["nativeMessageId"] = Value::from(id);
+    }
+    history.push(message);
     *last_chunk = Some(key);
 }
 

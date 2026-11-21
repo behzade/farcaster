@@ -460,7 +460,7 @@ fn take_entry_message(entry: &mut Value) -> Option<Value> {
 }
 
 fn entry_message(kind: &str, mut field: impl FnMut(&str) -> Option<Value>) -> Option<Value> {
-    match kind {
+    let mut message = match kind {
         "message" => {
             let mut message = field("message")?;
             crate::annotate_history_message(Backend::Pi, &mut message);
@@ -481,7 +481,13 @@ fn entry_message(kind: &str, mut field: impl FnMut(&str) -> Option<Value>) -> Op
             ("summary", field("summary").unwrap_or(Value::Null)),
         ])),
         _ => None,
+    }?;
+    if let Some(id @ Value::String(_)) = field("id")
+        && message.is_object()
+    {
+        message["nativeMessageId"] = id;
     }
+    Some(message)
 }
 
 fn json_object<const N: usize>(fields: [(&str, Value); N]) -> Value {

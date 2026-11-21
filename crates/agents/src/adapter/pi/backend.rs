@@ -159,6 +159,15 @@ impl BackendAdapter for PiAdapter {
     ) -> Result<(), String> {
         super::PiRpcProcess::rename_session(config, project, session, name)
     }
+    fn local_history_revision(
+        &self,
+        _config: &AgentLaunchConfig,
+        path: &Path,
+        _project: &Path,
+    ) -> Option<serde_json::Value> {
+        FileStamp::local_revision(path)
+    }
+
     fn supports_history_warming(&self) -> bool {
         true
     }

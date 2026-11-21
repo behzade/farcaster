@@ -401,6 +401,7 @@ fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() -> Result
             mode: WorkerSendMode::Prompt,
             message,
             images,
+            ..
         })) if images.is_empty() && submission_id == unknown_id && message == "after restart"
     ));
     worker.send("still alive".into(), WorkerSendMode::Prompt)?;

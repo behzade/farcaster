@@ -188,6 +188,7 @@ fn replay_keeps_messages_and_tools() {
     ]);
     assert_eq!(history.len(), 3);
     assert_eq!(history[0]["role"], "user");
+    assert_eq!(history[0]["nativeMessageId"], "u1");
     assert_eq!(
         history[0].pointer("/content/0/text"),
         Some(&json!("hello world"))

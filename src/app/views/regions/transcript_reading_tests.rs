@@ -77,7 +77,12 @@ fn transcript_reading_keeps_painted_rows_when_full_history_has_new_turns(
                     app.views.transcript.clone()
                 })
             });
-            for (generation, name, paint) in [(1, "painted", true), (2, "unpainted", false)] {
+            for (generation, name, paint, saved_between) in [
+                (1, "painted", true, false),
+                (2, "unpainted", false, false),
+                (3, "saved", true, true),
+                (4, "unpainted-saved", false, true),
+            ] {
                 let first = reading_snapshot(project, name, 44);
                 let mut tail = crate::conversation::ConversationState::default();
                 tail.items = first
@@ -104,16 +109,31 @@ fn transcript_reading_keeps_painted_rows_when_full_history_has_new_turns(
                         .origin
                         .y
                 });
-                let full = reading_snapshot(project, name, 66);
-                send_snapshot(
-                    runtime,
-                    generation,
-                    Arc::new(RuntimeSnapshot {
-                        document_ready: true,
-                        ..(*full).clone()
-                    }),
-                );
-                cx.update(|_, cx| app.update(cx, |app, cx| app.drain_runtime(cx)));
+                cx.update(|_, cx| {
+                    if saved_between {
+                        // The native refresh completes before the next draw of the full SQLite document.
+                        send_snapshot(
+                            runtime,
+                            generation,
+                            Arc::new(RuntimeSnapshot {
+                                document_ready: true,
+                                saved_transcript: true,
+                                ..(*first).clone()
+                            }),
+                        );
+                        app.update(cx, |app, cx| app.drain_runtime(cx));
+                    }
+                    let full = reading_snapshot(project, name, 66);
+                    send_snapshot(
+                        runtime,
+                        generation,
+                        Arc::new(RuntimeSnapshot {
+                            document_ready: true,
+                            ..(*full).clone()
+                        }),
+                    );
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                });
                 for _ in 0..3 {
                     cx.update(|window, cx| window.draw(cx).clear(cx));
                     if let Some(y) = original_y {

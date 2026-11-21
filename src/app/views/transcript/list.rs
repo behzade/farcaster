@@ -240,9 +240,14 @@ impl TranscriptListState {
         self.0.borrow().painted_history_top
     }
 
+    pub(crate) fn inherit_painted_top(&self, offset: ListOffset) {
+        self.0.borrow_mut().painted_history_top = Some(offset);
+    }
+
     pub(crate) fn reset(&self) {
         let mut state = self.0.borrow_mut();
         state.heights = HeightIndex::default();
+        state.painted_history_top = None;
         state.scroll_y = px(0.0);
         state.pending_scroll = px(0.0);
         state.following_tail = false;
@@ -256,6 +261,7 @@ impl TranscriptListState {
         size_hints: impl IntoIterator<Item = Pixels>,
     ) {
         let mut state = self.0.borrow_mut();
+        state.painted_history_top = None;
         let was_empty = state.heights.is_empty();
         let anchor = state.logical_scroll_top();
         let old_len = old_range.len();
@@ -580,7 +586,7 @@ impl Element for TranscriptList {
         } else {
             bounds.top() + self.state.0.borrow().heights.prefix(visible_range.start) - scroll_y
         };
-        let history_top = history_tail_first_safe_row.map(|_| ListOffset {
+        let history_top = (!visible_range.is_empty()).then(|| ListOffset {
             item_ix: visible_range.start,
             offset_in_item: bounds.top() - row_y,
         });
@@ -629,6 +635,7 @@ impl Element for TranscriptList {
         window: &mut Window,
         cx: &mut App,
     ) {
+        self.state.0.borrow_mut().painted_history_top = prepaint.history_top;
         if self.state.is_history_tail() {
             let shield = prepaint.hitbox.id;
             window.on_mouse_event(move |_: &MouseDownEvent, phase, window, cx| {
@@ -638,7 +645,6 @@ impl Element for TranscriptList {
                 }
             });
             prepaint.paint_rows(bounds, window, cx);
-            self.state.0.borrow_mut().painted_history_top = prepaint.history_top;
             return;
         }
         let current_view = window.current_view();

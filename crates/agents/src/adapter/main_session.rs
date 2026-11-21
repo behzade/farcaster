@@ -12,7 +12,7 @@ use std::{
 use serde_json::{Value, json};
 
 use crate::{
-    DeliveredMessage, DeliveryStatus, SessionCommand, SessionEvent, SessionHistory,
+    DeliveredMessage, DeliveryStatus, MessageSource, SessionCommand, SessionEvent, SessionHistory,
     SessionOperation, SessionResponse, SessionResponsePayload as Payload, SessionTransport,
     TokenUsage, ToolReviewState, WorkerActivity, WorkerEvent, WorkerInput, WorkerInputResponse,
     WorkerSendMode, WorkerSession, WorkerUsage,
@@ -101,6 +101,7 @@ pub(super) struct WorkerSessionTransport {
     follow_up_ids: Vec<String>,
     assistant_message: AssistantMessage,
     observed_text: String,
+    last_native_text_start: Option<usize>,
     model: Option<(String, String)>,
     effort: Option<String>,
     metadata: MainSessionMetadata,
@@ -179,6 +180,7 @@ impl WorkerSessionTransport {
             follow_up_ids: Vec::new(),
             assistant_message: AssistantMessage::default(),
             observed_text: String::new(),
+            last_native_text_start: None,
             model: selection.model,
             effort: selection.effort,
             metadata,
@@ -471,6 +473,7 @@ impl WorkerSessionTransport {
                     self.running = true;
                     self.assistant_message.clear();
                     self.observed_text.clear();
+                    self.last_native_text_start = None;
                     self.usage.turn = TokenUsage::default();
                     self.pending
                         .push_back(activity(json!({"type": "agent_start"})));
@@ -485,6 +488,7 @@ impl WorkerSessionTransport {
                 self.pending
                     .push_back(activity(json!({"type": "agent_settled"})));
                 self.observed_text.clear();
+                self.last_native_text_start = None;
             }
             WorkerEvent::SessionChanged { locator } => {
                 self.locator = locator;
@@ -551,6 +555,7 @@ impl WorkerSessionTransport {
                 return;
             }
             WorkerActivity::InputDelivered {
+                source,
                 submission_id,
                 mode,
                 message,
@@ -567,7 +572,7 @@ impl WorkerSessionTransport {
                     }));
                     json!(content)
                 };
-                self.input_delivered(submission_id.as_deref(), mode, &message, content);
+                self.input_delivered(submission_id.as_deref(), mode, &message, content, source);
                 return;
             }
             WorkerActivity::PeerInputDelivered { message } => {
@@ -579,6 +584,13 @@ impl WorkerSessionTransport {
                 })
             }
             WorkerActivity::TurnStarted => json!({"type": "turn_start"}),
+            WorkerActivity::AssistantItem {
+                source,
+                final_content,
+            } => {
+                self.assistant_item(source, final_content);
+                return;
+            }
             WorkerActivity::TextDelta {
                 content_index,
                 delta,
@@ -812,9 +824,14 @@ impl WorkerSessionTransport {
         mode: WorkerSendMode,
         text: &str,
         content: Value,
+        source: Option<MessageSource>,
     ) {
         let submission_id = self.acknowledge_delivery(submission_id, mode, text);
         self.finish_assistant_message(None);
+        let mut metadata = serde_json::Map::new();
+        if let Some(source) = source {
+            source.insert_into(&mut metadata);
+        }
         if let Some(id) = submission_id {
             self.pending.push_back(SessionEvent::Activity(
                 crate::contract::PromptDelivery {
@@ -824,6 +841,7 @@ impl WorkerSessionTransport {
                         role: Some(crate::contract::DeliveredRole::User),
                         content,
                         queued: mode != WorkerSendMode::Prompt,
+                        metadata,
                         ..Default::default()
                     }),
                 }
@@ -831,27 +849,81 @@ impl WorkerSessionTransport {
             ));
             return;
         }
-        let message =
-            json!({"role":"user", "content":content, "queued":mode != WorkerSendMode::Prompt});
+        let mut message = Value::Object(metadata);
+        message["role"] = "user".into();
+        message["content"] = content;
+        message["queued"] = (mode != WorkerSendMode::Prompt).into();
         for event_type in ["message_start", "message_end"] {
             self.pending
                 .push_back(activity(json!({"type":event_type, "message":message})));
         }
     }
 
+    fn assistant_item(&mut self, source: MessageSource, final_content: Option<Value>) {
+        if self
+            .assistant_message
+            .source
+            .as_ref()
+            .is_some_and(|previous| previous != &source)
+        {
+            self.finish_assistant_message(None);
+        }
+        // A legacy stream can omit item/started and mix reasoning with text before
+        // sending its first item ID. Keep that content and leave its source unbound.
+        let mixed = self.assistant_message.source.is_none()
+            && final_content.as_ref().is_some_and(|block| {
+                self.assistant_message
+                    .content
+                    .values()
+                    .any(|part| part["type"] != block["type"])
+            });
+        if mixed {
+            return;
+        }
+        self.assistant_message.source = Some(source);
+        if let Some(block) = final_content {
+            let text = block["text"]
+                .as_str()
+                .or_else(|| block["thinking"].as_str());
+            if let Some(text) = text.filter(|text| !text.is_empty()) {
+                self.assistant_message.completed = false;
+                self.start_assistant_message();
+                if block["type"] == "text" {
+                    // Some backends settle with the whole turn, others with just the last reply.
+                    let partial = self.assistant_message.text().unwrap_or_default();
+                    let prefix = self
+                        .observed_text
+                        .strip_suffix(partial)
+                        .map_or(self.observed_text.len(), str::len);
+                    self.observed_text.truncate(prefix);
+                    self.last_native_text_start = Some(prefix);
+                    self.observed_text.push_str(text);
+                }
+                self.assistant_message.content.clear();
+                self.assistant_message.content.insert(0, block);
+            }
+            self.assistant_message.completed = self.assistant_message.started;
+        }
+    }
+
     fn start_assistant_message(&mut self) {
+        if self.assistant_message.completed {
+            self.finish_assistant_message(None);
+        }
         if self.assistant_message.started {
             return;
         }
         self.assistant_message.started = true;
-        self.pending.push_back(activity(json!({
-            "type": "message_start",
-            "message": {"role": "assistant", "content": []}
-        })));
+        let mut message = json!({"role": "assistant", "content": []});
+        self.assistant_message.add_source(&mut message);
+        self.pending.push_back(activity(
+            json!({"type": "message_start", "message": message}),
+        ));
     }
 
     fn finish_assistant_message(&mut self, usage: Option<TokenUsage>) {
         if !self.assistant_message.started {
+            self.assistant_message.clear();
             return;
         }
         self.message_count = self.message_count.saturating_add(1);
@@ -859,6 +931,7 @@ impl WorkerSessionTransport {
             "role": "assistant",
             "content": self.assistant_message.content(),
         });
+        self.assistant_message.add_source(&mut message);
         if let Some(usage) = usage {
             message["usage"] = usage_json(usage);
         }
@@ -871,7 +944,12 @@ impl WorkerSessionTransport {
 
     fn reconcile_completed_output(&mut self, output: &str) {
         let current_text = self.assistant_message.text().unwrap_or_default();
-        if output == current_text {
+        if output == current_text
+            || self
+                .last_native_text_start
+                .and_then(|start| self.observed_text.get(start..))
+                == Some(output)
+        {
             return;
         }
         match TextUpdate::between(&self.observed_text, output) {
@@ -1167,11 +1245,21 @@ impl SessionTransport for WorkerSessionTransport {
 #[derive(Default)]
 struct AssistantMessage {
     started: bool,
+    source: Option<MessageSource>,
+    completed: bool,
     content: BTreeMap<usize, Value>,
 }
 
 impl AssistantMessage {
+    fn add_source(&self, message: &mut Value) {
+        if let Some(source) = &self.source {
+            source.insert_into(message.as_object_mut().expect("assistant message object"));
+        }
+    }
+
     fn clear(&mut self) {
+        self.source = None;
+        self.completed = false;
         self.started = false;
         self.content.clear();
     }

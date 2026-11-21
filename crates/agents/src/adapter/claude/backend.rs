@@ -90,6 +90,14 @@ impl BackendAdapter for ClaudeAdapter {
         true
     }
 
+    fn local_history_revision(
+        &self,
+        config: &AgentLaunchConfig,
+        path: &Path,
+        _project: &Path,
+    ) -> Option<serde_json::Value> {
+        super::catalog::local_history_revision(config, path)
+    }
     fn load_history_for_profile(
         &self,
         config: &AgentLaunchConfig,

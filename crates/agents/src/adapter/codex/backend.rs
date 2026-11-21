@@ -179,6 +179,25 @@ impl BackendAdapter for CodexAdapter {
     fn external_history(&self, path: &Path, _project: &Path) -> Result<DiscoveredHistory, String> {
         super::load_history(path)
     }
+    fn local_history_revision(
+        &self,
+        config: &AgentLaunchConfig,
+        path: &Path,
+        project: &Path,
+    ) -> Option<serde_json::Value> {
+        super::catalog::local_history_revision(config, path, project)
+    }
+    fn load_history_for_import(
+        &self,
+        config: &AgentLaunchConfig,
+        path: &Path,
+        project: &Path,
+        preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
+    ) -> Result<(farcaster_sessions::LoadedHistory, Option<serde_json::Value>), String> {
+        let (history, revision) =
+            super::catalog::load_history_for_import(config, path, project, preview)?;
+        Ok((loaded_history(history), revision))
+    }
     fn load_history_for_profile(
         &self,
         config: &AgentLaunchConfig,

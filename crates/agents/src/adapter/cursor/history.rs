@@ -19,7 +19,15 @@ pub(super) fn load(bridge: &Bridge, id: &str, project: &Path) -> Result<Discover
             if !seen.insert(id.to_owned()) {
                 return Err("Cursor SDK repeated a history page".into());
             }
-            messages.extend(expand_message(message, id)?);
+            let mut expanded = expand_message(message, id)?;
+            for item in &mut expanded {
+                if item["id"] == id {
+                    item["nativeMessageId"] = id.into();
+                } else {
+                    item["nativeTurnId"] = id.into();
+                }
+            }
+            messages.extend(expanded);
         }
         if items.len() < 200 {
             return Ok(DiscoveredHistory {

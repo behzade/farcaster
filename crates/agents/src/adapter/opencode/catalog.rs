@@ -250,7 +250,7 @@ pub(super) fn history_messages(value: &Value) -> Vec<Value> {
             _ => None,
         }
     });
-    match role {
+    let mut messages = match role {
         Some("user") => {
             let mut message = json!({
                 "role": "user",
@@ -265,7 +265,15 @@ pub(super) fn history_messages(value: &Value) -> Vec<Value> {
         Some("assistant") => assistant_history_messages(value),
         Some(_) if value.get("role").is_some() => vec![value.clone()],
         _ => Vec::new(),
+    };
+    if let Some(id) = value["id"].as_str() {
+        for message in &mut messages {
+            if message["role"] != "toolResult" {
+                message["nativeMessageId"] = Value::from(id);
+            }
+        }
     }
+    messages
 }
 
 fn opencode_user_content(value: &Value) -> Vec<Value> {

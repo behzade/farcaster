@@ -26,6 +26,23 @@ pub struct EnqueuedPrompt {
     pub bound_session: Option<sessions::SessionTarget>,
 }
 
+#[derive(Default)]
+pub struct PromptHistoryOverlay {
+    pub accepted: Vec<serde_json::Value>,
+    pub presentations: Vec<PromptPresentation>,
+}
+
+fn unique_prompt_session(db: &Connection, session: &Path) -> Result<Option<i64>, String> {
+    let locator = sessions::normalize_session_path(session);
+    db.query_row(
+        "SELECT min(id) FROM sessions WHERE locator=?1 HAVING count(*)=1",
+        [locator.to_string_lossy()],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|error| format!("locate unambiguous session for prompt history: {error}"))
+}
+
 impl StateStore {
     pub(super) fn pending_prompt_target(
         &self,
@@ -48,17 +65,20 @@ impl StateStore {
         ).map_err(|error| format!("resolve pending prompt {outbox_id}: {error}"))
     }
 
-    pub fn dismiss_prompt_receipt(&self, session: &Path, receipt_id: &str) -> Result<(), String> {
-        let session = crate::sessions::normalize_session_path(session);
+    pub(super) fn dismiss_prompt_receipt(
+        &self,
+        session_id: i64,
+        receipt_id: &str,
+    ) -> Result<(), String> {
         self.connection.execute(
             "INSERT INTO session_events(session_id,seq,t,schema_version,body)
              SELECT s.id, (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=s.id),
                     ?3,1,json_object('type','prompt_delivery_resolution','submissionId',?2,'status','cancelled')
-               FROM sessions s WHERE s.locator=?1
+               FROM sessions s WHERE s.id=?1
                 AND NOT EXISTS (SELECT 1 FROM session_events e WHERE e.session_id=s.id
                   AND json_extract(e.body,'$.submissionId')=?2
                   AND json_extract(e.body,'$.type') IN ('prompt_delivery_receipt','prompt_delivery_resolution'))",
-            params![session.to_string_lossy(), receipt_id, now_ms()],
+            params![session_id, receipt_id, now_ms()],
         ).map_err(|error| format!("save pending message dismissal: {error}"))?;
         Ok(())
     }
@@ -336,18 +356,37 @@ impl StateStore {
     }
 
     pub fn prompt_presentations(&self, session: &Path) -> Result<Vec<PromptPresentation>, String> {
-        let locator = crate::sessions::normalize_session_path(session);
+        self.presentations_for_id(unique_prompt_session(&self.connection, session)?)
+    }
+
+    fn presentations_for_id(
+        &self,
+        session_id: Option<i64>,
+    ) -> Result<Vec<PromptPresentation>, String> {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT e.body FROM session_events e
-                   JOIN sessions s ON s.id = e.session_id
-                  WHERE s.locator=?1 AND json_extract(e.body, '$.type')='prompt_presentation'
+                // Before presentation events carried an id, the delivery transaction
+                // wrote its receipt in the following slot. Verify its outbox payload
+                // before using that relationship for older databases.
+                "SELECT e.body, COALESCE(json_extract(e.body,'$.submissionId'), (
+                    SELECT json_extract(r.body,'$.submissionId')
+                    FROM session_events r JOIN session_events a ON a.session_id=e.session_id
+                      AND json_extract(a.body,'$.type')='accepted_prompt'
+                      AND json_extract(a.body,'$.submissionId')=json_extract(r.body,'$.submissionId')
+                    JOIN outbox o ON o.id=json_extract(a.body,'$.outboxId') AND o.session_id=e.session_id
+                    WHERE r.session_id=e.session_id AND r.seq=e.seq+1
+                      AND json_extract(r.body,'$.type')='prompt_delivery_receipt'
+                      AND o.message=json_extract(e.body,'$.resolved')
+                      AND o.display_message=json_extract(e.body,'$.display')
+                      AND o.invocation=json_extract(e.body,'$.invocation')
+                )) FROM session_events e
+                  WHERE e.session_id=?1 AND json_extract(e.body, '$.type')='prompt_presentation'
                   ORDER BY e.seq",
             )
             .map_err(|error| format!("prepare prompt presentations: {error}"))?;
         statement
-            .query_map([locator.to_string_lossy()], |row| {
+            .query_map([session_id], |row| {
                 let body = row.get::<_, String>(0)?;
                 let value: serde_json::Value = serde_json::from_str(&body).map_err(|error| {
                     rusqlite::Error::FromSqlConversionFailure(
@@ -357,6 +396,7 @@ impl StateStore {
                     )
                 })?;
                 Ok(PromptPresentation {
+                    submission_id: row.get(1)?,
                     resolved_message: value
                         .get("resolved")
                         .and_then(serde_json::Value::as_str)
@@ -382,11 +422,14 @@ impl StateStore {
     /// Displaying a page on its own is safe when full-history projection cannot
     /// append a local delivery or substitute a stored prompt presentation.
     pub fn can_display_history_tail(&self, session: &Path) -> Result<bool, String> {
-        let locator = crate::sessions::normalize_session_path(session);
+        self.can_display_tail_for_id(unique_prompt_session(&self.connection, session)?)
+    }
+
+    pub(super) fn can_display_tail_for_id(&self, session_id: Option<i64>) -> Result<bool, String> {
         self.connection.query_row(
             "SELECT NOT EXISTS (
-                SELECT 1 FROM session_events e JOIN sessions s ON s.id=e.session_id
-                WHERE s.locator=?1 AND (
+                SELECT 1 FROM session_events e
+                WHERE e.session_id=?1 AND (
                     json_extract(e.body,'$.type')='prompt_presentation' OR (
                         json_extract(e.body,'$.type')='accepted_prompt'
                         AND json_extract(e.body,'$.deliveryTracked')=1
@@ -399,13 +442,20 @@ impl StateStore {
                     )
                 )
             )",
-            [locator.to_string_lossy()], |row| row.get(0)
+            [session_id], |row| row.get(0)
         ).map_err(|error| format!("check local history presentation: {error}"))
     }
 
     pub fn accepted_prompt_history(
         &self,
         session: &Path,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        self.accepted_history_for_id(unique_prompt_session(&self.connection, session)?)
+    }
+
+    fn accepted_history_for_id(
+        &self,
+        session_id: Option<i64>,
     ) -> Result<Vec<serde_json::Value>, String> {
         #[derive(serde::Deserialize)]
         struct AcceptedPrompt {
@@ -421,12 +471,11 @@ impl StateStore {
             images: Vec<super::images::StoredImage>,
         }
 
-        let locator = crate::sessions::normalize_session_path(session);
         let mut statement = self
             .connection
             .prepare(
-                "SELECT e.body FROM session_events e JOIN sessions s ON s.id=e.session_id
-                  WHERE s.locator=?1 AND json_extract(e.body,'$.type')='accepted_prompt'
+                "SELECT e.body FROM session_events e
+                  WHERE e.session_id=?1 AND json_extract(e.body,'$.type')='accepted_prompt'
                     AND COALESCE(json_extract(e.body,'$.deliveryStatus'),'accepted')='accepted'
                      AND NOT EXISTS (
                         SELECT 1 FROM session_events resolution
@@ -440,7 +489,7 @@ impl StateStore {
             )
             .map_err(|error| format!("read accepted prompts: {error}"))?;
         let rows = statement
-            .query_map([locator.to_string_lossy()], |row| row.get::<_, String>(0))
+            .query_map([session_id], |row| row.get::<_, String>(0))
             .map_err(|error| format!("query accepted prompts: {error}"))?;
         rows.map(|row| {
             let body = row.map_err(|error| error.to_string())?;
@@ -478,24 +527,37 @@ impl StateStore {
         session: &Path,
         evidence: &crate::sessions::PromptDeliveryReconciliation,
     ) -> Result<(), String> {
-        let locator = crate::sessions::normalize_session_path(session);
+        let id = unique_prompt_session(&self.connection, session)?;
+        self.reconcile_deliveries_for_id(id, evidence)
+    }
+
+    pub(super) fn transcript_prompt_overlay(
+        &mut self,
+        session: TranscriptSession<'_>,
+        evidence: Option<&sessions::PromptDeliveryReconciliation>,
+    ) -> Result<PromptHistoryOverlay, String> {
+        let id = session.find(&self.connection).map_err(|e| e.to_string())?;
+        if let Some(evidence) = evidence {
+            self.reconcile_deliveries_for_id(id, evidence)?;
+        }
+        Ok(PromptHistoryOverlay {
+            accepted: self.accepted_history_for_id(id)?,
+            presentations: self.presentations_for_id(id)?,
+        })
+    }
+
+    fn reconcile_deliveries_for_id(
+        &mut self,
+        session_id: Option<i64>,
+        evidence: &sessions::PromptDeliveryReconciliation,
+    ) -> Result<(), String> {
+        let Some(session_id) = session_id else {
+            return Ok(());
+        };
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| format!("start prompt delivery reconciliation: {error}"))?;
-        let session_id = transaction
-            .query_row(
-                "SELECT id FROM sessions WHERE locator=?1",
-                [locator.to_string_lossy()],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()
-            .map_err(|error| format!("locate session prompt deliveries: {error}"))?;
-        let Some(session_id) = session_id else {
-            return transaction
-                .commit()
-                .map_err(|error| format!("finish missing-session reconciliation: {error}"));
-        };
         let unresolved = {
             let mut statement = transaction
                 .prepare(
@@ -668,11 +730,11 @@ impl StateStore {
             Some(id) => Some(id),
             None => transaction
                 .query_row(
-                    "SELECT json_extract(body,'$.outboxId') FROM session_events
+                    "SELECT min(json_extract(body,'$.outboxId')) FROM session_events
                   WHERE json_extract(body,'$.submissionId')=?1
                     AND json_extract(body,'$.type') IN ('prompt_dispatch','accepted_prompt')
                     AND json_extract(body,'$.outboxId') IS NOT NULL
-                  ORDER BY t DESC, seq DESC LIMIT 1",
+                  HAVING COUNT(DISTINCT json_extract(body,'$.outboxId'))=1",
                     [receipt_id],
                     |row| row.get::<_, i64>(0),
                 )
@@ -685,10 +747,11 @@ impl StateStore {
             .query_row(
                 "SELECT session_id FROM outbox WHERE id=?2
                  UNION ALL
-                 SELECT session_id FROM session_events
+                 SELECT min(session_id) FROM session_events
                   WHERE json_extract(body,'$.type')='accepted_prompt'
                     AND json_extract(body,'$.submissionId')=?1
-                 LIMIT 1",
+                    AND (?2 IS NULL OR json_extract(body,'$.outboxId')=?2)
+                 HAVING count(DISTINCT session_id)=1",
                 rusqlite::params![receipt_id, outbox_id],
                 |row| row.get::<_, i64>(0),
             )
@@ -789,11 +852,11 @@ fn record_prompt_delivery(
                  SELECT o.session_id,
                         (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=o.session_id),
                         o.created_ms, 1,
-                        json_object('type','prompt_presentation','resolved',o.message,
+                        json_object('type','prompt_presentation','submissionId',?2,'resolved',o.message,
                                     'display',o.display_message,'invocation',o.invocation)
                    FROM outbox o
                   WHERE o.id=?1 AND o.display_message IS NOT NULL AND o.invocation IS NOT NULL",
-                [id],
+                params![id, receipt_id],
             ).map_err(|error| format!("save prompt presentation {id}: {error}"))?;
         transaction.execute(
                 "INSERT INTO session_events(session_id, seq, t, schema_version, body)

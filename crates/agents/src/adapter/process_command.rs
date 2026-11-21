@@ -70,6 +70,15 @@ impl AgentLaunchConfig {
         self.command_with_environment(project, environment)
     }
 
+    /// Reconstruct the command only if its environment is available without a shell launch.
+    pub(super) fn cached_command(&self, project: &Path) -> Option<std::process::Command> {
+        #[cfg(all(not(test), any(target_os = "linux", target_os = "macos")))]
+        let environment = Some(super::shell_environment::cached_environment(project)?);
+        #[cfg(any(test, not(any(target_os = "linux", target_os = "macos"))))]
+        let environment = None;
+        self.command_with_environment(project, environment).ok()
+    }
+
     fn command_with_environment(
         &self,
         project: &Path,

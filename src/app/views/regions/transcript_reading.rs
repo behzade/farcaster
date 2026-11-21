@@ -205,15 +205,65 @@ impl ReadingAnchor {
     }
 }
 
+impl TranscriptView {
+    pub(crate) fn prepare_saved_history_append(&mut self, previous: &Items, next: &Items) {
+        let Some(top) = self.list.painted_history_top() else {
+            return;
+        };
+        if self.list.has_pending_scroll() || self.list.has_pending_restore() {
+            return;
+        }
+        let Some(start) = unique_page_before_append(next, previous) else {
+            return;
+        };
+        let Some(row) = self.rows.get(top.item_ix) else {
+            return;
+        };
+        if let Some(anchor) =
+            ReadingAnchor::at(row.at_item(start + row.key()), top.offset_in_item, next)
+        {
+            self.restore_reading_anchor(anchor, top);
+        }
+    }
+}
+
 impl HistoryTail {
     pub(super) fn anchor_before_append(
         &self,
         rows: &PersistentVec<TranscriptRow>,
         items: &Items,
     ) -> Option<(ReadingAnchor, gpui::ListOffset, usize)> {
-        let top = self.list.painted_history_top()?;
         let page = &self.presentation.items;
         let start = unique_page_before_append(items, page)?;
+        let top = self.top_in(rows, start)?;
+        let end = start + page.len();
+        let unseen = rows.iter().filter(|row| row.key() >= end).count();
+        Some((
+            ReadingAnchor::at(rows[top.item_ix], top.offset_in_item, items)?,
+            top,
+            unseen,
+        ))
+    }
+
+    pub(super) fn matching_suffix_top(
+        &self,
+        rows: &PersistentVec<TranscriptRow>,
+        items: &Items,
+    ) -> Option<gpui::ListOffset> {
+        let page = &self.presentation.items;
+        let start = items.len().checked_sub(page.len())?;
+        if !items.iter_range(start..items.len()).eq(page.iter()) {
+            return None;
+        }
+        self.top_in(rows, start)
+    }
+
+    fn top_in(
+        &self,
+        rows: &PersistentVec<TranscriptRow>,
+        start: usize,
+    ) -> Option<gpui::ListOffset> {
+        let top = self.list.painted_history_top()?;
         let row = self.rows.get(top.item_ix)?;
         let expected = row.at_item(start + row.key());
         let item_ix = rows.position(|row| row.same_position(&expected))?;
@@ -226,13 +276,7 @@ impl HistoryTail {
         {
             return None;
         }
-        let end = start + page.len();
-        let unseen = rows.iter().filter(|row| row.key() >= end).count();
-        Some((
-            ReadingAnchor::at(actual, top.offset_in_item, items)?,
-            gpui::ListOffset { item_ix, ..top },
-            unseen,
-        ))
+        Some(gpui::ListOffset { item_ix, ..top })
     }
 }
 

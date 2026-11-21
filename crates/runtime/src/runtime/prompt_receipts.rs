@@ -217,8 +217,17 @@ impl RuntimeOwner {
             {
                 state.with(|store| store.cancel_queued_prompts(&[outbox_id]))?;
             }
-            if let Some(session) = self.active_session.as_deref() {
-                state.with(|store| store.dismiss_prompt_receipt(session, id))?;
+            if let (Some(harness), Some(path)) = (self.harness, self.active_session.as_deref()) {
+                farcaster_storage::SessionRepository::dismiss_transcript_receipt(
+                    state,
+                    farcaster_storage::TranscriptSession {
+                        harness,
+                        path,
+                        project: &self.project,
+                        profile_id: self.process_command.profile_id.as_deref(),
+                    },
+                    id,
+                )?;
             }
             Ok::<_, String>(())
         })();

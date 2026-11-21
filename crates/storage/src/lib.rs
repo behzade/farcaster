@@ -30,6 +30,7 @@ mod accounts;
 mod backend;
 mod composer;
 mod composer_worker;
+mod conversation_store;
 #[path = "drafts.rs"]
 mod draft_storage;
 mod editor_setting;
@@ -67,10 +68,11 @@ mod worker_status;
 mod workgraph_identity;
 
 pub use composer_worker::ComposerPersistenceWorker;
+pub use conversation_store::{StoredTranscript, TranscriptSession};
 use draft_storage::{remove_draft_row, save_draft};
 pub use editor_setting::EditorChoice;
 use identity::{bind_locator, ensure_locator_session, ensure_project, target_for_session};
-pub use prompts::{EnqueuedPrompt, PromptSubmission};
+pub use prompts::{EnqueuedPrompt, PromptHistoryOverlay, PromptSubmission};
 pub use relocation::relocate_snapshot_session_locators;
 pub use session_controls::SessionControlSelection;
 pub use session_metrics::{SessionFacts, SessionOutcome};
@@ -79,7 +81,7 @@ pub use session_state::SessionStateChanges;
 pub use session_writer::SessionStateWriter;
 pub use snapshot::snapshot_database;
 
-const SCHEMA_VERSION: i64 = 24;
+const SCHEMA_VERSION: i64 = 25;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 const LEGACY_PI_GPUI_IMPORT_KEY: &str = "legacy_pi_gpui_state_imported";
 const REPOSITORY_BACKENDS: [&str; 3] = ["auto", "git", "jj"];
@@ -90,11 +92,26 @@ pub struct StateStore {
 }
 
 #[derive(Clone)]
-pub struct SharedStateStore(Arc<Mutex<StateStore>>);
+pub struct SharedStateStore(Arc<Mutex<StateStore>>, Option<Arc<TranscriptDatabase>>);
+
+struct TranscriptDatabase {
+    path: PathBuf,
+    images: PathBuf,
+}
 
 impl SharedStateStore {
     pub fn new(store: StateStore) -> Self {
-        Self(Arc::new(Mutex::new(store)))
+        let database = store
+            .connection
+            .path()
+            .filter(|p| !p.is_empty())
+            .map(|path| {
+                Arc::new(TranscriptDatabase {
+                    path: PathBuf::from(path),
+                    images: store.image_directory.clone(),
+                })
+            });
+        Self(Arc::new(Mutex::new(store)), database)
     }
 
     pub fn lock(&self) -> Result<MutexGuard<'_, StateStore>, String> {

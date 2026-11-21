@@ -50,7 +50,7 @@ impl StateStore {
                     migrate_v14_to_v15(&migration)?;
                 }
                 Some(14) => migrate_v14_to_v15(&migration)?,
-                Some(15..=23) => {}
+                Some(15..=24) => {}
                 Some(version) => {
                     return Err(format!(
                         "GUI state schema {version} is not supported by this build"
@@ -67,6 +67,9 @@ impl StateStore {
             migration.execute_batch("CREATE TABLE IF NOT EXISTS account_state (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL);")
                 .map_err(|e| format!("Create account state: {e}"))?;
             super::worker_status::migrate(&migration)?;
+            migration
+                .execute_batch(include_str!("transcript_schema.sql"))
+                .map_err(|error| format!("create stored transcripts: {error}"))?;
             migration
                 .execute(
                     "INSERT INTO meta(key, value) VALUES('schema_version', ?1)

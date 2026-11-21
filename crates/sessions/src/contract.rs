@@ -288,7 +288,7 @@ pub struct SessionTransfer {
     pub paths: HashMap<PathBuf, PathBuf>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RestoredQuestion {
     pub id: String,
     pub title: String,

@@ -1795,7 +1795,14 @@ impl CodexWorkerSession {
                             );
                         }
                         CodexMethod::ItemStarted => {
-                            if let Some(activity) = self.input_delivery(&params["item"]) {
+                            let batch_input = params["item"]["clientId"]
+                                .as_str()
+                                .and_then(|id| self.batch_deliveries.get(id))
+                                .is_some_and(|batch| batch.len() > 1);
+                            if let Some(mut activity) = self.input_delivery(&params["item"]) {
+                                if !batch_input && let Some(id) = params["item"]["id"].as_str() {
+                                    activity.link_delivered_input(id, params["turnId"].as_str());
+                                }
                                 return Some(WorkerEvent::Activity(activity));
                             }
                             let item_type = params.pointer("/item/type").and_then(Value::as_str);
@@ -1804,6 +1811,9 @@ impl CodexWorkerSession {
                             }
                             if item_type == Some("reasoning") {
                                 self.reasoning_started = true;
+                            }
+                            if let Some(activity) = assistant_item(&params, false) {
+                                return Some(WorkerEvent::Activity(activity));
                             }
                             if item_type == Some("contextCompaction") {
                                 self.compacting = true;
@@ -1884,6 +1894,9 @@ impl CodexWorkerSession {
                             }
                             if let Some(output) = codex_agent_message_text(&params["item"]) {
                                 self.output = output;
+                            }
+                            if let Some(activity) = assistant_item(&params, true) {
+                                return Some(WorkerEvent::Activity(activity));
                             }
                             if item_type == Some("contextCompaction") {
                                 self.compacting = false;
@@ -3074,6 +3087,26 @@ fn codex_input_delivery(item: &Value) -> Option<NativeInputDelivery> {
     })
 }
 
+fn assistant_item(params: &Value, completed: bool) -> Option<WorkerActivity> {
+    let item = &params["item"];
+    let id = item["id"].as_str()?;
+    let final_content = match item["type"].as_str()? {
+        "agentMessage" => completed.then(
+            || json!({"type":"text","text":codex_agent_message_text(item).unwrap_or_default()}),
+        ),
+        "reasoning" => completed
+            .then(|| json!({"type":"thinking","thinking":super::catalog::reasoning_text(item)})),
+        _ => return None,
+    };
+    Some(WorkerActivity::AssistantItem {
+        source: crate::MessageSource {
+            id: id.into(),
+            turn_id: params["turnId"].as_str().map(str::to_owned),
+        },
+        final_content,
+    })
+}
+
 fn codex_agent_message_text(item: &Value) -> Option<String> {
     if item.get("type").and_then(Value::as_str) != Some("agentMessage") {
         return None;
@@ -3318,62 +3351,7 @@ fn codex_tool_end(params: &Value) -> Option<WorkerActivity> {
         return None;
     }
     let id = item.get("id")?.as_str()?;
-    let failed = item
-        .get("status")
-        .and_then(Value::as_str)
-        .is_some_and(|status| matches!(status, "failed" | "declined"));
-    let result = if kind == "imageGeneration" {
-        Value::Array(tool::image_output(item))
-    } else if kind == "mcpToolCall" && item.pointer("/result/content").is_some_and(Value::is_array)
-    {
-        Value::Array(tool::mcp_output(item))
-    } else if let Some(content) = item.pointer("/result/content").and_then(Value::as_array) {
-        Value::Array(content.clone())
-    } else if failed
-        && let Some(error) = item
-            .pointer("/error/message")
-            .and_then(Value::as_str)
-            .or_else(|| item.get("error").and_then(Value::as_str))
-    {
-        json!([{"type": "text", "text": error}])
-    } else if let Some(output) = item.get("aggregatedOutput").and_then(Value::as_str) {
-        json!([{"type": "text", "text": output}])
-    } else if let Some(output) = item.get("result").or_else(|| item.get("output")) {
-        json!([{
-            "type": "text",
-            "text": output.as_str().map(str::to_owned).unwrap_or_else(|| output.to_string()),
-        }])
-    } else if kind == "commandExecution" && item.get("aggregatedOutput").is_none_or(Value::is_null)
-    {
-        json!([{"type": "text", "text": ""}])
-    } else if kind == "webSearch" {
-        json!([{"type": "text", "text": tool::web_search_query(item).unwrap_or_default()}])
-    } else if kind == "fileChange" && !failed {
-        json!([{"type": "text", "text": "Applied patch"}])
-    } else if kind == "imageView" {
-        json!([{
-            "type": "text",
-            "text": item.get("path").and_then(Value::as_str).unwrap_or_default(),
-        }])
-    } else if kind == "sleep" {
-        json!([{
-            "type": "text",
-            "text": format!("Waited {}", tool::wait_duration(item)),
-        }])
-    } else if kind == "subAgentActivity" {
-        json!([{"type": "text", "text": tool::subagent_summary(item)}])
-    } else if kind == "collabAgentToolCall" {
-        json!([{
-            "type": "text",
-            "text": item
-                .get("agentsStates")
-                .map(Value::to_string)
-                .unwrap_or_else(|| item.get("status").map(Value::to_string).unwrap_or_default()),
-        }])
-    } else {
-        zlog::warn!("Codex tool completion had no mappable result: {item}");
-        json!([])
-    };
+    let (result, failed) = tool::completion(item, kind);
     Some(WorkerActivity::ToolFinished {
         id: id.to_owned(),
         result,

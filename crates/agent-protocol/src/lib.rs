@@ -132,6 +132,7 @@ pub struct QueuedPrompt {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PromptPresentation {
+    pub submission_id: Option<String>,
     pub resolved_message: String,
     pub display_message: String,
     pub invocation: String,

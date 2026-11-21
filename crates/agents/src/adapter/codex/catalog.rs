@@ -223,7 +223,7 @@ fn delete_session_using(
 }
 
 pub fn load_history(path: &Path) -> Result<DiscoveredHistory, String> {
-    load_history_using(None, path, None, None)
+    load_history_using(None, path, None, None, false).map(|(history, _)| history)
 }
 
 pub(super) fn load_history_with_config(
@@ -232,7 +232,32 @@ pub(super) fn load_history_with_config(
     project: &Path,
     preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
 ) -> Result<DiscoveredHistory, String> {
-    load_history_using(Some(config), path, Some(project), preview)
+    load_history_using(Some(config), path, Some(project), preview, false)
+        .map(|(history, _)| history)
+}
+
+pub(super) fn load_history_for_import(
+    config: &crate::AgentLaunchConfig,
+    path: &Path,
+    project: &Path,
+    preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
+) -> Result<(DiscoveredHistory, Option<Value>), String> {
+    load_history_using(Some(config), path, Some(project), preview, true)
+}
+
+pub(super) fn local_history_revision(
+    config: &crate::AgentLaunchConfig,
+    path: &Path,
+    project: &Path,
+) -> Option<Value> {
+    let thread = external_session_locator(Backend::Codex, path)?;
+    let mut command = if config.profile_id.is_some() {
+        config.cached_command(project)?
+    } else {
+        default_catalog_command()
+    };
+    command.args(["app-server", "--stdio"]);
+    history_cache::Scope::new(&command, Some(config), Some(project)).local_revision(&thread, None)
 }
 
 fn load_history_using(
@@ -240,11 +265,19 @@ fn load_history_using(
     path: &Path,
     project: Option<&Path>,
     preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
-) -> Result<DiscoveredHistory, String> {
+    capture_revision: bool,
+) -> Result<(DiscoveredHistory, Option<Value>), String> {
     let locator = external_session_locator(Backend::Codex, path)
         .ok_or_else(|| format!("invalid Codex session locator: {}", path.display()))?;
     with_connection_and_home_and_scope_using(config, project, |connection, codex_home, scope| {
-        load_history_with_client(connection, codex_home, &locator, scope, preview)
+        load_history_with_client(
+            connection,
+            codex_home,
+            &locator,
+            scope,
+            preview,
+            capture_revision,
+        )
     })
 }
 
@@ -254,17 +287,30 @@ fn load_history_with_client<R: std::io::BufRead, W: std::io::Write>(
     locator: &str,
     scope: history_cache::Scope,
     preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
-) -> Result<DiscoveredHistory, String> {
+    capture_revision: bool,
+) -> Result<(DiscoveredHistory, Option<Value>), String> {
     if scope.has_sqlite_home_override() {
-        return read_history(connection, home, locator, None);
+        return read_history(connection, home, locator, None).map(|history| (history, None));
     }
     if !history_cache::has_revision(home, locator) || !can_cache_persisted_history(connection, home)
     {
-        return read_history(connection, home, locator, None);
+        return read_history(connection, home, locator, None).map(|history| (history, None));
     }
-    history_cache::load(home, locator, scope, || {
+    let before = capture_revision
+        .then(|| scope.local_revision(locator, Some(home)))
+        .flatten();
+    let after_scope = before.as_ref().map(|_| scope.clone());
+    let history = history_cache::load(home, locator, scope, || {
         read_history(connection, home, locator, preview)
-    })
+    })?;
+    let revision = before.filter(|before| {
+        after_scope
+            .as_ref()
+            .and_then(|scope| scope.local_revision(locator, Some(home)))
+            .as_ref()
+            == Some(before)
+    });
+    Ok((history, revision))
 }
 
 fn can_cache_persisted_history<R: std::io::BufRead, W: std::io::Write>(
@@ -337,7 +383,7 @@ fn read_history<R: std::io::BufRead, W: std::io::Write>(
             if let Some(id) = delivered_submission_id(item) {
                 delivered.push(id.to_owned());
             }
-            messages.extend(history_messages(item));
+            messages.extend(turn_item_messages(turn, item));
         }
     }
     history_images::restore(&mut messages, thread, codex_home, locator);
@@ -411,7 +457,10 @@ fn recent_page_messages(page: &Value) -> Option<crate::HistoryPage> {
         }) {
             break;
         }
-        let messages: Vec<_> = items.iter().flat_map(history_messages).collect();
+        let messages: Vec<_> = items
+            .iter()
+            .flat_map(|item| turn_item_messages(turn, item))
+            .collect();
         // Only the full read has a rollout path for restoring these images.
         if history_images::needs_restore(&messages) {
             break;
@@ -478,6 +527,14 @@ fn with_connection_and_home_using<T>(
     })
 }
 
+fn default_catalog_command() -> Command {
+    Command::new(
+        std::env::var_os("FARCASTER_CODEX_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| "codex".into()),
+    )
+}
+
 fn with_connection_and_home_and_scope_using<T>(
     config: Option<&crate::AgentLaunchConfig>,
     project: Option<&Path>,
@@ -491,11 +548,7 @@ fn with_connection_and_home_and_scope_using<T>(
         };
         config.command(&project)?
     } else {
-        Command::new(
-            std::env::var_os("FARCASTER_CODEX_PATH")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| "codex".into()),
-        )
+        default_catalog_command()
     };
     command.args(["app-server", "--stdio"]);
     let scope = history_cache::Scope::new(&command, config, project);
@@ -706,6 +759,23 @@ fn codex_usage(thread: &Value) -> DiscoveredUsage {
     }
 }
 
+fn turn_item_messages(turn: &Value, item: &Value) -> Vec<Value> {
+    let mut messages = history_messages(item);
+    for message in &mut messages {
+        if let Some(id) = item["id"].as_str() {
+            message["nativeMessageId"] = Value::from(id);
+        }
+        if let Some(id) = turn["id"].as_str() {
+            message["nativeTurnId"] = Value::from(id);
+        }
+        if let Some(id) = delivered_submission_id(item) {
+            message["submissionId"] = Value::from(id);
+            message["deliveryStatus"] = Value::from("delivered");
+        }
+    }
+    messages
+}
+
 fn history_messages(item: &Value) -> Vec<Value> {
     match item.get("type").and_then(Value::as_str) {
         Some("userMessage") => vec![json!({
@@ -730,10 +800,15 @@ fn history_tool_messages(item: &Value, kind: &str) -> Vec<Value> {
         return Vec::new();
     };
     let projection = tool::project(item, kind);
-    let is_error = item
-        .get("status")
-        .and_then(Value::as_str)
-        .is_some_and(|status| matches!(status, "failed" | "declined"));
+    let (result, is_error) = tool::completion(item, kind);
+    let mut result = match result {
+        Value::Object(fields) => Value::Object(fields),
+        content => json!({"content":content}),
+    };
+    result["role"] = "toolResult".into();
+    result["toolCallId"] = id.into();
+    result["toolName"] = Value::from(projection.name.as_str());
+    result["isError"] = is_error.into();
     vec![
         json!({
             "role": "assistant",
@@ -745,49 +820,8 @@ fn history_tool_messages(item: &Value, kind: &str) -> Vec<Value> {
                 "toolMetadata": projection.metadata,
             }],
         }),
-        json!({
-            "role": "toolResult",
-            "toolCallId": id,
-            "toolName": projection.name,
-            "content": history_tool_output(item, kind, is_error),
-            "isError": is_error,
-        }),
+        result,
     ]
-}
-
-fn history_tool_output(item: &Value, kind: &str, is_error: bool) -> Vec<Value> {
-    if kind == "imageGeneration" {
-        return tool::image_output(item);
-    }
-    if kind == "subAgentActivity" {
-        return vec![json!({"type": "text", "text": tool::subagent_summary(item)})];
-    }
-    if kind == "mcpToolCall" {
-        if is_error {
-            return item
-                .pointer("/error/message")
-                .and_then(Value::as_str)
-                .map(|text| vec![json!({"type": "text", "text": text})])
-                .unwrap_or_default();
-        }
-        return tool::mcp_output(item);
-    }
-    let output = item
-        .get("aggregatedOutput")
-        .and_then(Value::as_str)
-        .or_else(|| {
-            (kind == "webSearch")
-                .then(|| tool::web_search_query(item))
-                .flatten()
-        })
-        .unwrap_or_else(|| {
-            if kind == "fileChange" && !is_error {
-                "Applied patch"
-            } else {
-                ""
-            }
-        });
-    vec![json!({"type": "text", "text": output})]
 }
 
 pub(super) fn user_content(content: Option<&Value>) -> Vec<Value> {
@@ -814,7 +848,7 @@ pub(super) fn user_content(content: Option<&Value>) -> Vec<Value> {
         .collect()
 }
 
-fn reasoning_text(item: &Value) -> String {
+pub(super) fn reasoning_text(item: &Value) -> String {
     string(item, &["text"])
         .map(str::to_owned)
         .or_else(|| {

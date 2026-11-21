@@ -20,7 +20,7 @@ fn tool_screenshots_reach_live_and_restored_conversations() {
             _ => None,
         })
         .unwrap();
-    let history = history_messages(&json!({"role":"user","content":[result]}));
+    let history = history_messages(&json!({"message":{"role":"user","content":[result]}}));
     assert_eq!(live_result["content"], history[0]["content"]);
     for result in [live_result, history[0].clone()] {
         let mut state = farcaster_conversation::ConversationState::default();
@@ -43,8 +43,10 @@ fn blocks_borrows_array_content_and_normalizes_strings() {
             .as_ptr()
     );
     assert_eq!(
-        history_messages(&json!({"role":"assistant","content":"answer"})),
-        history_messages(&json!({"role":"assistant","content":[{"type":"text","text":"answer"}]}))
+        history_messages(&json!({"message":{"role":"assistant","content":"answer"}})),
+        history_messages(
+            &json!({"message":{"role":"assistant","content":[{"type":"text","text":"answer"}]}})
+        )
     );
 }
 
@@ -166,4 +168,22 @@ fn native_agent_tasks_publish_sidebar_lifecycle_without_child_text() {
         ]
     );
     assert!(events.output.is_empty());
+}
+
+#[test]
+fn persisted_and_live_claude_shell_results_keep_separate_output_streams() {
+    let result = json!({"type":"tool_result","tool_use_id":"cmd","content":"all output"});
+    let native = json!({"stdout":"out","stderr":"err","interrupted":false});
+    let mut events = Events::default();
+    events.tools.insert("cmd".into());
+    let message = json!({"role":"user","content":[result]});
+    events.message(&json!({"type":"user","message":message,"tool_use_result":native}));
+    let Some(WorkerEvent::Activity(WorkerActivity::ToolFinished { result, .. })) =
+        events.pending.pop_front()
+    else {
+        panic!("missing live shell result")
+    };
+    let saved = history_messages(&json!({"message":message,"toolUseResult":native}));
+    assert_eq!(result["details"]["native"], native);
+    assert_eq!(saved[0]["details"], result["details"]);
 }

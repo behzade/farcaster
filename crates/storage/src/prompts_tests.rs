@@ -384,6 +384,7 @@ fn every_delivery_path_preserves_expanded_prompt_after_restart_and_repeated_comp
             assert_eq!(
                 presentations,
                 vec![PromptPresentation {
+                    submission_id: Some("expanded-receipt".into()),
                     resolved_message: "Expanded instructions that should stay collapsed".into(),
                     display_message: "$prompt:commit".into(),
                     invocation: "commit".into(),
@@ -574,5 +575,91 @@ fn late_receipt_resolves_accepted_history_without_an_outbox_row()
         |row| row.get(0),
     )?;
     assert_eq!(receipts, 1);
+    Ok(())
+}
+
+#[test]
+fn transcript_prompt_overlay_scopes_deliveries_and_presentations_to_the_owner()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let repository = SharedStateStore::open_at(&root.path().join("state.sqlite3"))?;
+    let path = root.path().join("shared");
+    let session = |harness| TranscriptSession {
+        harness,
+        path: &path,
+        project: root.path(),
+        profile_id: None,
+    };
+    let image = PromptImage::new("YWJj".into(), "image/png".into());
+    for (harness, display) in [(Backend::Pi, "$pi"), (Backend::Codex, "$codex")] {
+        repository.with(|store| {
+            let id = store.enqueue_prompt_with_presentation(
+                "session:shared",
+                harness,
+                root.path(),
+                Some(&path),
+                PromptMode::FollowUp,
+                "same input",
+                Some(display),
+                Some(display),
+                std::slice::from_ref(&image),
+            )?;
+            store.record_prompt_dispatch(id, "shared-receipt")?;
+            store.record_prompt_acceptance(
+                id,
+                "session:shared",
+                Some(&path),
+                "shared-receipt",
+                true,
+            )
+        })?;
+    }
+    let evidence = sessions::PromptDeliveryReconciliation {
+        delivered: vec!["shared-receipt".into()],
+        pending: vec![],
+        absence_is_not_delivered: true,
+    };
+    repository.with(|store| store.record_prompt_receipt_delivered("shared-receipt", None))?;
+    assert_eq!(repository.with(|store| store.queued_prompts())?.len(), 2);
+    let pi = repository.transcript_prompt_overlay(session(Backend::Pi), Some(&evidence))?;
+    assert!(pi.accepted.is_empty());
+    assert_eq!(pi.presentations[0].display_message, "$pi");
+    assert_eq!(
+        pi.presentations[0].submission_id.as_deref(),
+        Some("shared-receipt")
+    );
+    // Reopen a presentation written by the preceding schema version.
+    repository.with(|store| {
+        store.connection.execute(
+            "UPDATE session_events SET body=json_remove(body,'$.submissionId') WHERE json_extract(body,'$.type')='prompt_presentation'",
+            [],
+        ).map_err(|error|error.to_string())?;
+        Ok(())
+    })?;
+    assert_eq!(
+        repository
+            .transcript_prompt_overlay(session(Backend::Pi), None)?
+            .presentations,
+        pi.presentations
+    );
+    let codex = repository.transcript_prompt_overlay(session(Backend::Codex), None)?;
+    assert!(codex.presentations.is_empty());
+    assert_eq!(codex.accepted.len(), 1);
+    assert_eq!(codex.accepted[0]["content"][1]["data"], image.data);
+    let wrong = TranscriptSession {
+        profile_id: Some("different"),
+        ..session(Backend::Codex)
+    };
+    assert!(
+        repository
+            .transcript_prompt_overlay(wrong, Some(&evidence))?
+            .accepted
+            .is_empty()
+    );
+    assert!(repository.can_display_transcript_tail(wrong)?);
+    assert!(!repository.can_display_transcript_tail(session(Backend::Codex))?);
+    let pending = repository.with(|store| store.queued_prompts())?;
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].harness, Backend::Codex);
     Ok(())
 }

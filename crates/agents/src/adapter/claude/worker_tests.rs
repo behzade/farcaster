@@ -963,6 +963,7 @@ fn queued_batch_round_trip(interrupt: bool) {
                 mode,
                 message,
                 images,
+                ..
             }) => Some((
                 submission_id.clone(),
                 *mode,

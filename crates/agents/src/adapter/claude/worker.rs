@@ -356,6 +356,7 @@ impl ClaudeSession {
             .collect::<Result<Vec<_>, _>>()?;
         let message_frame = prompt(&self.id, &message, inline_images)?;
         let delivery = WorkerActivity::InputDelivered {
+            source: None,
             submission_id: submission_id.map(str::to_owned),
             mode,
             message,
@@ -387,7 +388,7 @@ impl ClaudeSession {
         }
     }
 
-    fn deliver(&mut self, message: SDKUserMessage, deliveries: Vec<WorkerActivity>) {
+    fn deliver(&mut self, message: SDKUserMessage, mut deliveries: Vec<WorkerActivity>) {
         let active_uuid = match &message.uuid {
             Presence::Present(uuid) => uuid.clone(),
             Presence::Missing => {
@@ -398,6 +399,9 @@ impl ClaudeSession {
             }
         };
         self.active_uuid = Some(active_uuid.clone());
+        if let [delivery] = deliveries.as_mut_slice() {
+            delivery.link_delivered_input(&active_uuid, None);
+        }
         let deliveries = PromptBatch::from(deliveries);
         self.caller
             .begin_execution(deliveries.first_submission_id());

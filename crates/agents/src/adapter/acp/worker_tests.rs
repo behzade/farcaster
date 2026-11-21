@@ -2074,6 +2074,7 @@ fn acp_user_message_chunk_delivers_current_inputs_before_the_model_reply() {
     assert_eq!(
         session.poll(),
         Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            source: None,
             submission_id: Some("prompt".into()),
             mode: WorkerSendMode::Prompt,
             message: "work".into(),
@@ -2083,6 +2084,7 @@ fn acp_user_message_chunk_delivers_current_inputs_before_the_model_reply() {
     assert_eq!(
         session.poll(),
         Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            source: None,
             submission_id: Some("follow-up".into()),
             mode: WorkerSendMode::Queue,
             message: "follow-up with image".into(),
@@ -2285,6 +2287,7 @@ fn acp_user_message_chunk_accepts_empty_text_and_non_text_content() {
         assert_eq!(
             session.poll(),
             Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                source: None,
                 submission_id: Some("prompt".into()),
                 mode: WorkerSendMode::Prompt,
                 message: "work".into(),
@@ -2726,7 +2729,8 @@ fn natural_completion_batches_all_pending_inputs_with_original_receipts() {
             session.poll(),
             Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
                 submission_id: Some(submission_id), mode, message, images,
-            })) if submission_id == id && mode == expected_mode
+            ..
+        })) if submission_id == id && mode == expected_mode
                 && message == "same" && images == vec![image.clone()]
         ));
         assert_eq!(session.poll_prompt_ack(), Some((id.into(), Ok(()))));

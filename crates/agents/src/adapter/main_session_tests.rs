@@ -508,6 +508,7 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
             .expect("test lock should not be poisoned")
             .events
             .push_back(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                source: None,
                 submission_id: Some(old_id.clone()),
                 mode: worker_mode,
                 message: "same text".into(),
@@ -598,6 +599,7 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
             .expect("test lock should not be poisoned")
             .events
             .push_back(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                source: None,
                 submission_id: Some(new_id.clone()),
                 mode: worker_mode,
                 message: "same text".into(),
@@ -691,6 +693,7 @@ fn abort_before_ack_retains_unknown_then_reconciles_by_submission_id() {
             "interrupt is not a prompt acknowledgement"
         );
         let delivered = WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            source: None,
             submission_id: Some(id.clone()),
             mode: WorkerSendMode::Queue,
             message: "duplicate text".into(),
@@ -868,6 +871,7 @@ fn equal_text_submissions_stay_distinct_through_out_of_order_receipts_and_abort(
         .expect("test lock should not be poisoned")
         .events
         .push_back(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            source: None,
             submission_id: Some(first.clone()),
             mode: WorkerSendMode::Steer,
             message: "same text".into(),
@@ -884,6 +888,7 @@ fn equal_text_submissions_stay_distinct_through_out_of_order_receipts_and_abort(
         .expect("test lock should not be poisoned")
         .events
         .push_back(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            source: None,
             submission_id: Some(second),
             mode: WorkerSendMode::Steer,
             message: "same text".into(),
@@ -971,6 +976,7 @@ fn normal_receipt_and_user_echo_share_identity_and_emit_delivery_evidence() {
         .expect("test lock should not be poisoned")
         .events
         .push_back(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            source: None,
             submission_id: Some(id.clone()),
             mode: WorkerSendMode::Prompt,
             message: "normal text".into(),
@@ -1057,6 +1063,7 @@ fn acknowledged_queue_stays_off_transcript_until_late_delivery_after_abort() {
         "history refresh must not expose undelivered input"
     );
     transport.enqueue_activity(WorkerActivity::InputDelivered {
+        source: None,
         submission_id: Some(id),
         mode: WorkerSendMode::Steer,
         message: "keep this accepted instruction".into(),
@@ -1100,6 +1107,7 @@ fn delivered_image_only_prompt_survives_transcript_finalization() {
     )
     .expect("test operation should succeed");
     transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+        source: None,
         submission_id: None,
         mode: WorkerSendMode::Prompt,
         message: String::new(),
@@ -1614,6 +1622,7 @@ fn applying_steering_preserves_the_running_worker_and_pending_delivery() {
         assert_eq!(queued, &["redirect"]);
         assert!(other.is_empty());
         transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            source: None,
             submission_id: None,
             mode,
             message: "redirect".into(),
@@ -1669,6 +1678,7 @@ impl WorkerSession for DeliveryBeforeAckWorker {
         self.polls += 1;
         match self.polls {
             1 => Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                source: None,
                 submission_id: None,
                 mode: WorkerSendMode::Queue,
                 message: "next task".into(),
@@ -1743,6 +1753,7 @@ fn queue_tracking_correlates_real_ids_across_event_orders_and_rejection() {
     let ack_first = submit(&mut transport, "same text");
     transport.finish_prompt_ack(ack_first, Ok(()));
     transport.enqueue_activity(WorkerActivity::InputDelivered {
+        source: None,
         submission_id: None,
         mode: WorkerSendMode::Queue,
         message: "same text".into(),
@@ -1754,6 +1765,7 @@ fn queue_tracking_correlates_real_ids_across_event_orders_and_rejection() {
     let second = submit(&mut transport, "same text");
     transport.finish_prompt_ack(second.clone(), Ok(()));
     transport.enqueue_activity(WorkerActivity::InputDelivered {
+        source: None,
         submission_id: Some("unknown-submission".into()),
         mode: WorkerSendMode::Queue,
         message: "same text".into(),
@@ -1761,6 +1773,7 @@ fn queue_tracking_correlates_real_ids_across_event_orders_and_rejection() {
     });
     assert_eq!(transport.follow_up, ["same text"]);
     transport.enqueue_activity(WorkerActivity::InputDelivered {
+        source: None,
         submission_id: Some(second),
         mode: WorkerSendMode::Queue,
         message: "same text".into(),
@@ -2122,6 +2135,7 @@ fn delivered_worker_message_leaves_the_queue_and_enters_the_transcript() {
 
     transport.steering.push("redirect".into());
     transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+        source: None,
         submission_id: None,
         mode: WorkerSendMode::Steer,
         message: "redirect".into(),
@@ -2199,6 +2213,7 @@ fn tracked_admission_waits_for_delivery_and_duplicate_ack_is_idempotent() {
         .expect("test lock should not be poisoned")
         .events
         .push_back(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            source: None,
             submission_id: Some(id.clone()),
             mode: WorkerSendMode::Queue,
             message: "do this next".into(),
@@ -2477,6 +2492,7 @@ fn worker_session_state_retains_titles_and_counts_new_messages() {
         assert_eq!(transport.state().message_count, turn * 2 + 1);
         transport.enqueue_worker_event(WorkerEvent::Started);
         transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            source: None,
             submission_id: None,
             mode: WorkerSendMode::Prompt,
             message: prompt,
@@ -2785,5 +2801,67 @@ fn retry_activity_projects_to_shared_conversation_status() {
             .items
             .iter()
             .any(|item| item.text == "Retry finished")
+    );
+}
+
+#[test]
+fn completed_native_items_keep_distinct_sources_across_streaming_and_settlement() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "thread".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .unwrap();
+    let source = |id: &str| crate::MessageSource {
+        id: id.into(),
+        turn_id: Some("turn".into()),
+    };
+    for id in ["commentary", "answer"] {
+        transport.enqueue_activity(WorkerActivity::AssistantItem {
+            source: source(id),
+            final_content: None,
+        });
+        transport.enqueue_activity(WorkerActivity::TextDelta {
+            content_index: 0,
+            delta: "par".into(),
+        });
+        transport.enqueue_activity(WorkerActivity::AssistantItem {
+            source: source(id),
+            final_content: Some(json!({"type":"text","text":"same reply"})),
+        });
+    }
+    transport.enqueue_worker_event(WorkerEvent::Settled {
+        output: "same replysame reply".into(),
+    });
+    transport.enqueue_activity(WorkerActivity::InputDelivered {
+        source: Some(source("user-item")),
+        submission_id: None,
+        mode: WorkerSendMode::Prompt,
+        message: "hello".into(),
+        images: Vec::new(),
+    });
+    let messages = transport
+        .pending
+        .iter()
+        .filter_map(|event| {
+            let SessionEvent::Activity(event) = event else {
+                return None;
+            };
+            let value = event.value();
+            (value["type"] == "message_end").then_some(&value["message"])
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(messages.len(), 3);
+    assert_eq!(messages[0]["nativeMessageId"], "commentary");
+    assert_eq!(messages[1]["nativeMessageId"], "answer");
+    assert_eq!(messages[1]["content"][0]["text"], "same reply");
+    assert_eq!(messages[2]["nativeMessageId"], "user-item");
+    assert!(
+        messages
+            .iter()
+            .all(|message| message["nativeTurnId"] == "turn")
     );
 }

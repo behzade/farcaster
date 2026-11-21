@@ -224,7 +224,7 @@ fn delivered_inputs_preserve_images() {
                 content.insert(0, json!({"type":"text", "text":text}));
             }
             let item = json!({
-                "type":"userMessage", "clientId":format!("{prefix}1"),
+                "type":"userMessage", "id":"user-1", "clientId":format!("{prefix}1"),
                 "content":content,
             });
             for method in ["item/started", "item/completed"] {
@@ -238,6 +238,10 @@ fn delivered_inputs_preserve_images() {
             assert_eq!(
                 session.poll(),
                 Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                    source: Some(crate::MessageSource {
+                        id: "user-1".into(),
+                        turn_id: None
+                    }),
                     submission_id: None,
                     mode,
                     message: text.unwrap_or_default().into(),
@@ -1728,6 +1732,11 @@ fn answer_before_reasoning_uses_a_separate_content_slot() {
         }
         assert!(matches!(
             session.poll(),
+            Some(WorkerEvent::Activity(WorkerActivity::AssistantItem { source, .. }))
+                if source.id == "final" && source.turn_id.as_deref() == Some(turn_id)
+        ));
+        assert!(matches!(
+            session.poll(),
             Some(WorkerEvent::Settled { output }) if output == "Final answer"
         ));
     }
@@ -2980,6 +2989,7 @@ fn native_queue_delivery_correlates_duplicate_text_before_other_rejection() {
             mode: WorkerSendMode::Queue,
             message,
             images,
+            ..
         })) if images.is_empty() && submission_id == "second-submission" && message == "same text"
     ));
     assert_eq!(
@@ -3611,6 +3621,7 @@ fn normal_prompt_delivery_uses_backend_client_id_and_original_submission_id() {
             mode: WorkerSendMode::Prompt,
             message,
             images,
+            ..
         })) if images.is_empty() && submission_id == "normal-1" && message == "new work"
     ));
 }
@@ -4148,4 +4159,42 @@ fn native_quota_notifications_publish_account_facts_and_ignore_old_read_response
     assert_eq!(reports.len(), 1);
     assert_eq!(reports[0][0].remaining_percent, Some(58.));
     assert_eq!(reports[0][0].duration_seconds, Some(604800));
+}
+
+#[test]
+fn native_command_completion_emits_exit_code_duration_and_output() {
+    let completion = codex_tool_end(&json!({"item":{
+        "id":"run","type":"commandExecution","command":"command","status":"failed",
+        "durationMs":37,"exitCode":4,"aggregatedOutput":"diagnostic"
+    }}));
+    let Some(WorkerActivity::ToolFinished {
+        id,
+        result,
+        is_error,
+    }) = completion
+    else {
+        panic!("missing tool completion")
+    };
+    assert_eq!(id, "run");
+    assert!(is_error);
+    assert_eq!(result["details"], json!({"exitCode":4,"durationMs":37}));
+    assert_eq!(result["content"][0]["text"], "diagnostic");
+}
+
+#[test]
+fn live_mcp_result_preserves_structured_content_and_native_error() {
+    let structured = json!({"id":123});
+    let error = json!({"message":"warning","code":27,"data":["first"]});
+    let Some(WorkerActivity::ToolFinished { result, .. }) = codex_tool_end(&json!({"item":{
+        "type":"mcpToolCall","id":"mcp","status":"failed","result":{
+            "content":[{"type":"text","text":"partial"}],"structuredContent":structured},"error":error
+    }})) else {
+        panic!("missing live MCP result")
+    };
+    assert_eq!(
+        result["details"]["native"]["result"]["structuredContent"],
+        structured
+    );
+    assert_eq!(result["details"]["native"]["error"], error);
+    assert_eq!(result["content"][0]["text"], "partial");
 }

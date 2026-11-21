@@ -352,16 +352,23 @@ impl FarcasterApp {
             && self.snapshot.selected_session == snapshot.selected_session
             && !self.snapshot.conversation.items.is_empty()
             && (snapshot.status != "Loading history" || snapshot.conversation.items.is_empty());
-        let history_handoff = !session_changed
-            && self.awaiting_history_rows()
-            && self.snapshot.history_tail.is_some()
+        let same_ready_document = !session_changed
             && snapshot.document_ready
             && snapshot.status == "Ready"
             && self.snapshot.selected_session == snapshot.selected_session
             && self.snapshot.project == snapshot.project
             && self.snapshot.harness == snapshot.harness
             && self.snapshot.profile_id == snapshot.profile_id;
+        let history_handoff = same_ready_document
+            && self.awaiting_history_rows()
+            && self.snapshot.history_tail.is_some();
         let transcript_changed = self.views.transcript.update(cx, |transcript, _| {
+            if same_ready_document && self.snapshot.saved_transcript && !snapshot.saved_transcript {
+                transcript.prepare_saved_history_append(
+                    &previous_items,
+                    &snapshot.transcript_presentation().items,
+                );
+            }
             if replacing_stand_in {
                 // Save the complete stand-in's reading position at the handoff.
                 transcript.reset(&previous_items);
@@ -427,8 +434,10 @@ impl FarcasterApp {
         if tail_changed || transcript_changed || session_changed {
             self.views.transcript.update(cx, |transcript, _| {
                 if history_handoff {
-                    transcript
-                        .preserve_painted_history(&self.snapshot.transcript_presentation().items);
+                    transcript.preserve_painted_history(
+                        &self.snapshot.transcript_presentation().items,
+                        self.snapshot.saved_transcript,
+                    );
                 }
                 transcript.set_history_tail(
                     self.snapshot

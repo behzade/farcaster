@@ -131,6 +131,8 @@ pub(super) fn clear_fork_parent(tx: &Transaction<'_>, id: i64) -> Result<(), Str
 
 pub(super) fn merge_session(tx: &Transaction<'_>, keep: i64, other: i64) -> Result<(), String> {
     super::workgraph_identity::merge(tx, keep, other)?;
+    super::conversation_store::merge(tx, keep, other)
+        .map_err(|e| format!("merge stored transcript: {e}"))?;
     let offset: i64 = tx
         .query_row(
             "SELECT COALESCE(MAX(seq), 0) FROM session_events WHERE session_id=?1",

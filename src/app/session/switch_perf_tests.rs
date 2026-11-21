@@ -233,6 +233,138 @@ fn switch_to(
     started.elapsed()
 }
 
+#[gpui::test]
+fn saved_transcript_reopens_offline_and_keeps_painted_rows_after_refresh(
+    cx: &mut gpui::TestAppContext,
+) {
+    use crate::storage::{SessionRepository as _, TranscriptSession};
+
+    const SAVED: usize = 24;
+    const APPENDED: usize = 12;
+    let executor = cx.background_executor.clone();
+    crate::app::test_support::with_runtime_app(
+        concat!(
+            module_path!(),
+            "::saved_transcript_reopens_offline_and_keeps_painted_rows_after_refresh"
+        ),
+        cx,
+        |project| {
+            let project = project.canonicalize().unwrap();
+            let path = write_session_file(&project, "saved", SAVED);
+            let history =
+                crate::agents::load_session_history(Backend::Pi, &path, &project).unwrap();
+            let store = crate::app::persistence::shared().unwrap();
+            let session = TranscriptSession {
+                harness: Backend::Pi,
+                path: &path,
+                project: &project,
+                profile_id: None,
+            };
+            assert!(
+                store
+                    .replace_transcript(session, 0, &history.messages, &serde_json::json!({}))
+                    .unwrap()
+            );
+            // The new runtime opens a separate SQLite connection. Neither the
+            // native file nor an in-memory window snapshot can supply the first frame.
+            drop(store);
+            fs::remove_file(path).unwrap();
+            RuntimeHandle::spawn(
+                project.clone(),
+                crate::sessions::DraftSession::with_id(None, "start".into(), project),
+                None,
+                AgentLaunchConfig::default(),
+                crate::app::runtime_host::host(executor.clone()),
+            )
+        },
+        |cx, app, project| {
+            let project = project.canonicalize().unwrap();
+            let path = project.join("saved.jsonl");
+            trust::apply(&project, TrustChoice::TrustProject).unwrap();
+            cx.simulate_resize(gpui::size(gpui::px(1600.), gpui::px(900.)));
+            switch_to(cx, app, &path, &project, SAVED);
+            let selectors = [
+                "transcript-row-21",
+                "transcript-row-22",
+                "transcript-row-23",
+            ];
+            let deadline = Instant::now() + SWITCH_TIMEOUT;
+            let original = loop {
+                cx.run_until_parked();
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                    window.draw(cx).clear(cx);
+                });
+                let origins = selectors.map(|key| cx.debug_bounds(key).map(|bounds| bounds.origin));
+                if origins.last().unwrap().is_some() {
+                    break origins;
+                }
+                if Instant::now() >= deadline {
+                    cx.update(|_, cx| {
+                        let app = app.read(cx);
+                        let view = app.views.transcript.read(cx);
+                        panic!("saved tail did not paint: rows={} status={} selected_draft={:?} pending={:?} following={} height={:?} top={:?} painted={:?}",
+                            view.rows.len(), app.snapshot.status, app.sessions.selected_draft, app.lifecycle.pending_session_switch.as_ref().map(|(p,_)| p), view.following,
+                            view.list.viewport_height(), view.list.logical_scroll_top(), view.list.painted_history_top());
+                    });
+                }
+                thread::sleep(SWITCH_POLL);
+            };
+            assert!(
+                original.iter().flatten().count() >= 2,
+                "only one row visible: {original:?}"
+            );
+            cx.update(|_, cx| {
+                let snapshot = &app.read(cx).snapshot;
+                assert!(snapshot.saved_transcript);
+                assert!(
+                    snapshot.conversation.items[SAVED - 1]
+                        .text
+                        .starts_with("23 ")
+                );
+            });
+
+            // The provider returns with a longer transcript. Continue drawing
+            // the same rows until its authoritative result, then for eight frames.
+            write_session_file(&project, "saved", SAVED + APPENDED);
+            refresh_document(cx, app, &path, &project);
+            let deadline = Instant::now() + SWITCH_TIMEOUT;
+            let mut settled = 0;
+            while settled < 8 {
+                assert!(
+                    Instant::now() < deadline,
+                    "updated native history never arrived"
+                );
+                cx.run_until_parked();
+                let updated = cx.update(|window, cx| {
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                    window.draw(cx).clear(cx);
+                    let snapshot = &app.read(cx).snapshot;
+                    snapshot.document_ready
+                        && !snapshot.saved_transcript
+                        && snapshot.conversation.items.len() == SAVED + APPENDED
+                });
+                let origins = selectors.map(|key| cx.debug_bounds(key).map(|bounds| bounds.origin));
+                assert_eq!(
+                    origins, original,
+                    "saved rows shifted during external refresh"
+                );
+                assert!(cx.debug_bounds("transcript-row-35").is_none());
+                settled += usize::from(updated);
+                thread::sleep(SWITCH_POLL);
+            }
+            cx.update(|window, cx| {
+                let view = app.read(cx).views.transcript.read(cx);
+                assert!(!view.following);
+                assert_eq!(view.unseen, APPENDED);
+                app.update(cx, |app, cx| app.jump_to_latest(cx));
+                window.draw(cx).clear(cx);
+            });
+            assert!(cx.debug_bounds("transcript-row-35").is_some());
+        },
+    );
+}
+
 fn refresh_document(
     cx: &mut VisualTestContext,
     app: &Entity<FarcasterApp>,
@@ -749,6 +881,31 @@ fn cold_codex_frame_check(cx: &mut gpui::TestAppContext, name: &str, turn_count:
     );
 }
 
+fn report_saved_history_storage(stage: &str) {
+    let path = crate::app::persistence::state_path().unwrap();
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let busy: i64 = db
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(busy, 0, "checkpoint the isolated benchmark database");
+    let items: i64 = db
+        .query_row("SELECT COUNT(*) FROM transcript_messages", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let images = path.parent().unwrap().join("images");
+    let image_bytes: u64 = images
+        .read_dir()
+        .into_iter()
+        .flatten()
+        .map(|entry| entry.unwrap().metadata().unwrap().len())
+        .sum();
+    eprintln!(
+        "Real history storage: {stage}, sqlite_bytes={}, image_bytes={image_bytes}, transcript_items={items}",
+        path.metadata().unwrap().len()
+    );
+}
+
 /// Run against an existing paginated chat without resuming it or sending a prompt.
 #[gpui::test]
 #[ignore = "requires FARCASTER_TEST_CODEX_THREAD, FARCASTER_TEST_CODEX_HOME and FARCASTER_TEST_CODEX_PROGRAM"]
@@ -756,6 +913,7 @@ fn cold_saved_codex_chat_draws_recent_rows_before_full_read(cx: &mut gpui::TestA
     const PROFILE: &str = "11111111-1111-4111-8111-111111111111";
     let thread = std::env::var("FARCASTER_TEST_CODEX_THREAD").unwrap();
     let full_only = std::env::var_os("FARCASTER_TEST_FULL_HISTORY_ONLY").is_some();
+    let reopen_saved = std::env::var_os("FARCASTER_TEST_REOPEN_SAVED").is_some();
     let executor = cx.background_executor.clone();
     crate::app::test_support::with_runtime_app(
         concat!(
@@ -790,6 +948,46 @@ fn cold_saved_codex_chat_draws_recent_rows_before_full_read(cx: &mut gpui::TestA
                     ),
                 }])
                 .unwrap();
+            if reopen_saved {
+                use crate::storage::{SessionRepository as _, TranscriptSession};
+
+                let project = project.canonicalize().unwrap();
+                let path = project
+                    .join("profiles")
+                    .join(PROFILE)
+                    .join(Backend::Codex.as_str())
+                    .join(&thread);
+                let session = TranscriptSession {
+                    harness: Backend::Codex,
+                    path: &path,
+                    project: &project,
+                    profile_id: Some(PROFILE),
+                };
+                let profile = AgentLaunchConfig {
+                    profile_id: Some(PROFILE.into()),
+                    ..config.clone()
+                };
+                let (history, revision) = crate::agents::load_session_history_for_import(
+                    &profile,
+                    Backend::Codex,
+                    &path,
+                    &project,
+                    None,
+                )
+                .expect("import real Codex history before the timed reopen");
+                let metadata = serde_json::json!({
+                    "sourceRevision": revision, "model": history.model,
+                    "thinkingLevel": history.thinking_level, "pendingQuestion": history.pending_question,
+                });
+                let store = crate::app::persistence::shared().unwrap();
+                report_saved_history_storage("before import");
+                assert!(
+                    store
+                        .replace_transcript(session, 0, &history.messages, &metadata)
+                        .unwrap()
+                );
+                report_saved_history_storage("after import");
+            }
             RuntimeHandle::spawn(
                 project.into(),
                 crate::sessions::DraftSession::with_id(None, "start".into(), project.into()),
@@ -834,6 +1032,8 @@ fn cold_saved_codex_chat_draws_recent_rows_before_full_read(cx: &mut gpui::TestA
             });
             let mut first = None;
             let mut page_rows = 0;
+            let mut full_paint = None;
+            let mut ready_frames = 0;
             let mut selectors = std::collections::HashMap::new();
             loop {
                 assert!(
@@ -850,6 +1050,9 @@ fn cold_saved_codex_chat_draws_recent_rows_before_full_read(cx: &mut gpui::TestA
                         return (false, 0);
                     }
                     if snapshot.document_ready {
+                        if reopen_saved {
+                            assert!(snapshot.saved_transcript, "timed open bypassed SQLite");
+                        }
                         return (true, app.views.transcript.read(cx).rows.len());
                     }
                     (
@@ -875,17 +1078,25 @@ fn cold_saved_codex_chat_draws_recent_rows_before_full_read(cx: &mut gpui::TestA
                         .collect();
                     if !bounds.is_empty() {
                         let (when, initial) = first.get_or_insert_with(|| {
-                            assert_eq!(ready, full_only, "unexpected first paint ({page_rows} provisional rows, {count} final rows)");
+                            if !reopen_saved {
+                                assert_eq!(ready, full_only, "unexpected first paint ({page_rows} provisional rows, {count} final rows)");
+                            }
                             (started.elapsed(), bounds.clone())
                         });
                         assert_eq!(initial, &bounds, "visible tail shifted on actual history");
                         if ready {
-                            eprintln!(
-                                "Real cold open: first readable {when:?}, full {:?}, {} visible rows at identical bounds",
-                                started.elapsed(),
-                                bounds.len()
-                            );
-                            break;
+                            let full = full_paint.get_or_insert_with(|| started.elapsed());
+                            ready_frames += 1;
+                            if ready_frames == 8 {
+                                eprintln!(
+                                    "Real cold open: saved={reopen_saved}, first readable {when:?}, full {full:?}, {} visible rows at identical bounds",
+                                    bounds.len()
+                                );
+                                if reopen_saved {
+                                    report_saved_history_storage("after reopen");
+                                }
+                                break;
+                            }
                         }
                     } else {
                         assert!(!ready, "full transcript has no visible tail");

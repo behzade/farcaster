@@ -9,6 +9,7 @@ mod facts;
 mod history;
 mod idle;
 mod launch_context;
+mod live_transcript;
 mod notifications;
 mod pending_prompt;
 mod process;
@@ -23,7 +24,6 @@ mod status;
 
 pub use crate::agents::HarnessAccessMode;
 use access_mode::AccessModeChangeState;
-use history::annotate_history_presentations;
 use launch_context::{LaunchTarget, configuration_for_target};
 use notifications::interaction_notification;
 use pending_prompt::{PendingPrompt, PromptInput, PromptPhase};
@@ -65,7 +65,9 @@ use crate::{
     },
     sessions::{self, LoadedHistory, SessionSummary, session_family_for_path},
 };
-use farcaster_storage::{SessionFacts, SessionOutcome, SharedStateStore, StateStore};
+#[cfg(test)]
+use farcaster_storage::StateStore;
+use farcaster_storage::{SessionFacts, SessionOutcome, SharedStateStore};
 use session_controls::PendingSessionControls;
 use session_identity::HarnessConfigurationStore;
 pub use session_identity::SessionIdentity;
@@ -138,6 +140,7 @@ struct RuntimeOwner {
     process_command: AgentLaunchConfig,
     process: Option<Box<dyn SessionTransport>>,
     idle_retirement: idle::IdleRetirement,
+    live_transcript: Option<live_transcript::LiveTranscript>,
     snapshot: RuntimeSnapshot,
     owns_session_catalog: bool,
     session_generation: u64,
@@ -206,6 +209,11 @@ enum HistoryLoadKind {
 }
 
 enum HistoryUpdate {
+    Saved {
+        complete: bool,
+        result: HistoryResult,
+        refreshing: bool,
+    },
     Tail {
         generation: u64,
         page: agents::HistoryPage,

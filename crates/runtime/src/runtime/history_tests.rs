@@ -227,6 +227,8 @@ fn dismissed_queue_row_does_not_return_on_history_refresh_or_reopen() -> Result<
     state.record_prompt_acceptance(id, "draft:cancel", Some(&session), "stale-id", true)?;
     let (mut owner, _) = owner_without_process(temp.path().into());
     owner.state = Some(state.into());
+    owner.harness = Some(Backend::Codex);
+    owner.snapshot.project = temp.path().into();
     owner.snapshot.selected_session = Some(session.clone());
     owner.snapshot.history_preview = true;
     let mut history = Arc::new(vec![]);
@@ -284,6 +286,7 @@ fn authoritative_delivery_evidence_resolves_saved_receipts_by_exact_id()
     }
 
     let (mut owner, _events) = owner_without_process(temp.path().to_owned());
+    owner.harness = Some(Backend::Codex);
     owner.state = Some(store.into());
     owner.active_session = Some(session.clone());
     owner.apply_response(crate::agents::SessionResponse::success(
@@ -706,4 +709,155 @@ fn reselect_keeps_in_flight_history_and_displays_load_failure() {
             .iter()
             .any(|item| item.is_error)
     );
+}
+
+#[test]
+fn imported_transcript_reopens_from_sqlite_and_survives_a_failed_native_refresh() {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().canonicalize().unwrap();
+    let database = project.join("state.sqlite");
+    let path = project.join("reopen.jsonl");
+    let rows = [
+        json!({"type":"session","version":3,"id":"reopen","cwd":project}),
+        json!({"type":"message","id":"a","message":{"role":"user","content":"question"}}),
+        json!({"type":"message","id":"b","parentId":"a","message":{
+            "role":"assistant","content":[{"type":"text","text":"saved answer"}]}}),
+    ];
+    std::fs::write(
+        &path,
+        rows.iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .unwrap();
+    let open = |state: SharedStateStore| {
+        let (mut owner, _) = crate::runtime::tests::owner_without_process(project.clone());
+        owner.state = Some(state);
+        let (sender, updates) = mpsc::channel();
+        owner.history_tx = sender;
+        owner.select_history(path.clone(), project.clone());
+        let mut used_adapter = false;
+        while owner.history_selection_generation.is_some() {
+            let update = updates
+                .recv_timeout(Duration::from_secs(10))
+                .expect("history result");
+            used_adapter |= matches!(update, HistoryUpdate::Finished(_));
+            owner.apply_history_update(update);
+        }
+        assert!(owner.snapshot.document_ready);
+        assert_eq!(owner.snapshot.conversation.items.len(), 2);
+        assert_eq!(owner.snapshot.conversation.items[1].text, "saved answer");
+        (owner.snapshot.saved_transcript, used_adapter)
+    };
+    assert_eq!(
+        open(SharedStateStore::open_at(&database).unwrap()),
+        (false, true)
+    );
+    // A fresh runtime with the same source revision needs no native history read.
+    assert_eq!(
+        open(SharedStateStore::open_at(&database).unwrap()),
+        (true, false)
+    );
+    std::fs::remove_file(&path).unwrap();
+    // An unavailable source still leaves the saved conversation fully readable.
+    assert_eq!(
+        open(SharedStateStore::open_at(&database).unwrap()),
+        (true, true)
+    );
+}
+
+#[test]
+fn refresh_preserves_linked_submission_image_in_the_published_and_reopened_transcript()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().canonicalize()?;
+    let path = project.join("screenshot.jsonl");
+    let database = project.join("state.sqlite3");
+    let receipt = "submission-with-screenshot";
+    let image = crate::protocol::PromptImage::new(ONE_PIXEL_PNG.into(), "image/png".into());
+    let bytes = image.bytes()?;
+    let state = SharedStateStore::open_at(&database)?;
+    state.with(|store| {
+        let id = store.enqueue_prompt(
+            "session:screenshot",
+            Backend::Pi,
+            &project,
+            Some(&path),
+            crate::protocol::PromptMode::Normal,
+            "look at this",
+            std::slice::from_ref(&image),
+        )?;
+        store.complete_delivered_prompt(id, "session:screenshot", Some(&path), receipt, true)
+    })?;
+
+    let write_native = |include_original: bool| {
+        let mut user = json!({"role":"user","content":[{"type":"text","text":"look at this"}]});
+        if include_original {
+            user["submissionId"] = receipt.into();
+            user["content"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"type":"image","mimeType":"image/png","data":ONE_PIXEL_PNG}));
+        }
+        std::fs::write(
+            &path,
+            format!(
+                "{}\n{}\n",
+                json!({"type":"session","version":3,"id":"screenshot","cwd":project}),
+                json!({"type":"message","id":"native-user","message":user}),
+            ),
+        )
+    };
+    let assert_visible = |snapshot: &RuntimeSnapshot| {
+        assert!(snapshot.document_ready);
+        assert_eq!(snapshot.conversation.items.len(), 1);
+        let user = &snapshot.conversation.items[0];
+        assert_eq!(user.kind, TranscriptKind::User);
+        assert_eq!(user.text, "look at this");
+        assert_eq!(user.images.len(), 1);
+        assert_eq!(user.images[0].bytes(), bytes.as_slice());
+    };
+    write_native(true)?;
+    let (mut owner, _) = crate::runtime::tests::owner_without_process(project.clone());
+    owner.state = Some(state);
+    let (sender, updates) = mpsc::channel();
+    owner.history_tx = sender;
+    owner.select_history(path.clone(), project.clone());
+    while owner.history_selection_generation.is_some() {
+        owner.apply_history_update(updates.recv_timeout(Duration::from_secs(10))?);
+    }
+    assert_visible(&owner.snapshot);
+
+    write_native(false)?;
+    owner.refresh_session_document(path.clone(), project.clone());
+    let response = updates.recv_timeout(Duration::from_secs(10))?;
+    let HistoryUpdate::Finished(result) = &response else {
+        panic!("expected changed native history")
+    };
+    let refreshed = result.result.as_ref().expect("import");
+    assert_eq!(refreshed.messages.len(), 1);
+    assert_eq!(refreshed.messages[0]["nativeMessageId"], "native-user");
+    assert_eq!(refreshed.messages[0]["submissionId"], receipt);
+    owner.apply_history_update(response);
+    assert_visible(&owner.snapshot);
+    assert!(!owner.snapshot.saved_transcript);
+    drop(owner);
+
+    std::fs::remove_file(&path)?;
+    let (mut owner, _) = crate::runtime::tests::owner_without_process(project.clone());
+    owner.state = Some(SharedStateStore::open_at(&database)?);
+    let (sender, updates) = mpsc::channel();
+    owner.history_tx = sender;
+    owner.select_history(path, project);
+    let saved = updates.recv_timeout(Duration::from_secs(10))?;
+    assert!(matches!(saved, HistoryUpdate::Saved { .. }));
+    owner.apply_history_update(saved);
+    assert_visible(&owner.snapshot);
+    assert!(owner.snapshot.saved_transcript);
+    while owner.history_selection_generation.is_some() {
+        owner.apply_history_update(updates.recv_timeout(Duration::from_secs(10))?);
+    }
+    assert_visible(&owner.snapshot);
+    Ok(())
 }

@@ -134,7 +134,16 @@ impl RuntimeOwner {
                     .as_ref()
                     .ok_or_else(|| "State unavailable".to_owned())
                     .and_then(|state| {
-                        state.with(|store| store.dismiss_prompt_receipt(&session, &id))
+                        farcaster_storage::SessionRepository::dismiss_transcript_receipt(
+                            state,
+                            farcaster_storage::TranscriptSession {
+                                harness: self.harness.ok_or("Session backend unavailable")?,
+                                path: &session,
+                                project: &self.snapshot.project,
+                                profile_id: self.snapshot.profile_id.as_deref(),
+                            },
+                            &id,
+                        )
                     });
                 match result {
                     Ok(()) => conversation_mut(&mut self.snapshot).dismiss_pending_receipt(&id),

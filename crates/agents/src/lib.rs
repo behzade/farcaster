@@ -24,8 +24,9 @@ pub use adapter::{
     backend_display_name, backend_statuses, default_login_shell, delete_session_family,
     delete_session_family_with_config, discover_sessions_for, discover_sessions_for_profile,
     effort_label, external_session_identity, generate_session_title, historical_worker_status,
-    load_configuration_catalog, load_session_history, load_session_history_for_profile,
-    load_session_history_with_page, load_session_history_with_preview, move_session_family,
+    load_configuration_catalog, load_session_history, load_session_history_for_import,
+    load_session_history_for_profile, load_session_history_with_page,
+    load_session_history_with_preview, local_history_revision, move_session_family,
     move_session_family_with_config, project_trust, project_trust_description,
     refresh_configuration_catalog, rename_session, saved_project_trust, seed_configuration_catalog,
     service_tier_policy, session_fork_source, spawn_session, supports_auto_title_generation,
@@ -75,10 +76,10 @@ pub struct AgentLaunchConfig {
 }
 pub use core::{
     CallerContext, CallerProfile, CallerRegistry, ChildSessionOutcome, CommonTool,
-    ExecutionBinding, PromptStore, TokenUsage, ToolCategory, ToolMetadata, ToolReviewState,
-    WorkerActivity, WorkerActivityState, WorkerAssignment, WorkerEvent, WorkerExecution,
-    WorkerFamilyLink, WorkerLaunch, WorkerModelSelection, WorkerPool, WorkerPoolUpdate,
-    WorkerProfile, WorkerProfiles, WorkerRouting, WorkerSendMode, WorkerSession,
+    ExecutionBinding, MessageSource, PromptStore, TokenUsage, ToolCategory, ToolMetadata,
+    ToolReviewState, WorkerActivity, WorkerActivityState, WorkerAssignment, WorkerEvent,
+    WorkerExecution, WorkerFamilyLink, WorkerLaunch, WorkerModelSelection, WorkerPool,
+    WorkerPoolUpdate, WorkerProfile, WorkerProfiles, WorkerRouting, WorkerSendMode, WorkerSession,
     WorkerSessionFactory, WorkerSnapshot, WorkerUsage, begin_prompt, has_queued_prompts_for,
     is_child_input_id, queued_prompts,
 };

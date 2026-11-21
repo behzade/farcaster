@@ -137,6 +137,30 @@ pub fn load_session_history(
     for_backend(harness).load_history(path, project)
 }
 
+/// Reads a backend's local history stamp without starting a shell or provider.
+pub fn local_history_revision(
+    config: &crate::AgentLaunchConfig,
+    harness: Backend,
+    path: &Path,
+    project: &Path,
+) -> Option<serde_json::Value> {
+    profile_history_adapter(config, harness, path)
+        .ok()?
+        .local_history_revision(config, path, project)
+}
+
+/// Returns a source stamp only when the adapter could verify it across this import.
+pub fn load_session_history_for_import(
+    config: &crate::AgentLaunchConfig,
+    harness: Backend,
+    path: &Path,
+    project: &Path,
+    preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
+) -> Result<(LoadedHistory, Option<serde_json::Value>), String> {
+    profile_history_adapter(config, harness, path)?
+        .load_history_for_import(config, path, project, preview)
+}
+
 pub fn load_session_history_for_profile(
     config: &crate::AgentLaunchConfig,
     harness: Backend,

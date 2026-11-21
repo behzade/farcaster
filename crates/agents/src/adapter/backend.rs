@@ -235,6 +235,31 @@ pub(super) trait BackendAdapter: Sync {
     fn supports_history_warming(&self) -> bool {
         false
     }
+    fn local_history_revision(
+        &self,
+        _config: &AgentLaunchConfig,
+        _path: &Path,
+        _project: &Path,
+    ) -> Option<serde_json::Value> {
+        None
+    }
+    fn load_history_for_import(
+        &self,
+        config: &AgentLaunchConfig,
+        path: &Path,
+        project: &Path,
+        preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
+    ) -> Result<(LoadedHistory, Option<serde_json::Value>), String> {
+        let before = self.local_history_revision(config, path, project);
+        let history = match preview {
+            Some(preview) => self.load_history_with_preview(config, path, project, preview)?,
+            None => self.load_history_for_profile(config, path, project)?,
+        };
+        let revision = before.filter(|stamp| {
+            self.local_history_revision(config, path, project).as_ref() == Some(stamp)
+        });
+        Ok((history, revision))
+    }
     fn load_history_for_profile(
         &self,
         _config: &AgentLaunchConfig,

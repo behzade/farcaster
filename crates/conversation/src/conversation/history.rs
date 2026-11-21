@@ -107,9 +107,44 @@ impl ConversationState {
                 .get("toolCallId")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            if !id.is_empty()
-                && let Some(index) = self.tool_index(id)
-            {
+            let previous = (!id.is_empty()).then(|| self.tool_index(id)).flatten();
+            if let Some(call) = message.get("farcasterToolCall").filter(|call| {
+                call.get("type").and_then(Value::as_str) == Some("toolCall")
+                    && call.get("id").and_then(Value::as_str) == Some(id)
+            }) {
+                // Standalone execution events carry their declaration with the result.
+                // Pi may also have declared the same call inside an earlier message.
+                let mut call = call.clone();
+                if let Some(details) =
+                    previous.and_then(|index| self.items[index].tool_details.as_ref())
+                {
+                    if call.get("name").is_none() {
+                        call["name"] = details.name.as_str().into();
+                    }
+                    if call.get("arguments").is_none() {
+                        call["arguments"] = details.arguments.clone();
+                    }
+                    if call.get("toolMetadata").is_none() {
+                        call["toolMetadata"] = serde_json::json!(details.metadata);
+                    }
+                }
+                let call = serde_json::json!({"role":"assistant","content":[call]});
+                if let Some(input) = project_message_items(&call).into_iter().next() {
+                    let mut item = apply_tool_result(&input, message, true);
+                    if message.get("farcasterToolState").and_then(Value::as_str) == Some("running")
+                        && let Some(details) = item.tool_details.as_mut()
+                    {
+                        Arc::make_mut(details).state = ToolExecutionState::Running;
+                    }
+                    if let Some(index) = previous {
+                        self.items.set(index, Arc::new(item));
+                    } else {
+                        self.items.push(Arc::new(item));
+                    }
+                    return;
+                }
+            }
+            if let Some(index) = previous {
                 let item = apply_tool_result(&self.items[index], message, true);
                 self.items.set(index, Arc::new(item));
                 return;
@@ -431,20 +466,47 @@ pub fn annotate_prompt_presentations(
     messages: &mut [Value],
     presentations: &[farcaster_agent_protocol::PromptPresentation],
 ) {
+    let submitted = messages
+        .iter()
+        .enumerate()
+        .filter_map(|(index, message)| {
+            if message["role"] != "user" {
+                return None;
+            }
+            Some((message.get("submissionId")?.as_str()?.to_owned(), index))
+        })
+        .collect::<HashMap<_, _>>();
     let mut cursor = 0;
     for presentation in presentations {
-        let Some((offset, message)) =
-            messages[cursor..]
-                .iter_mut()
+        let exact = presentation
+            .submission_id
+            .as_ref()
+            .and_then(|id| submitted.get(id))
+            .copied();
+        let index = if let Some(index) = exact {
+            index
+        } else {
+            let mut matches = messages[cursor..]
+                .iter()
                 .enumerate()
-                .find(|(_, message)| {
-                    message.get("role").and_then(Value::as_str) == Some("user")
+                .filter(|(_, message)| {
+                    message["role"] == "user"
+                        && message.get("submissionId").is_none()
+                        && message.get("farcasterUserInvocation").is_none()
                         && message_text_equals(message, &presentation.resolved_message)
-                })
-        else {
-            continue;
+                });
+            let Some((offset, _)) = matches.next() else {
+                continue;
+            };
+            // Older backends may omit submission ids. A single match may restore the
+            // display annotation, but must never attribute a repeated prompt by text.
+            if presentation.submission_id.is_some() && matches.next().is_some() {
+                continue;
+            }
+            cursor += offset + 1;
+            cursor - 1
         };
-        cursor += offset + 1;
+        let message = &mut messages[index];
         let Some(message) = message.as_object_mut() else {
             continue;
         };
