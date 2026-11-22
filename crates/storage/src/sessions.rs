@@ -147,9 +147,11 @@ impl StateStore {
         update: &crate::agents::SessionMetadata,
     ) -> Result<SessionSummary, String> {
         let path = crate::sessions::normalize_session_path(&update.path);
+        // Profile resolution reads before the first write. Reserve the writer now
+        // so SQLite can wait for another writer without upgrading a stale snapshot.
         let tx = self
             .connection
-            .transaction()
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| error.to_string())?;
         let profile_id = super::identity::resolve_harness_profile(
             &tx,

@@ -1,6 +1,33 @@
 use super::*;
 use crate::agents::Backend;
 
+#[test]
+fn session_metadata_waits_for_a_concurrent_writer_before_reading_its_profile()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Release the other writer on SQLite's first busy callback, without sleeps.
+    thread_local! {
+        static BLOCKER: std::cell::RefCell<Option<rusqlite::Connection>> = const { std::cell::RefCell::new(None) };
+    }
+    let dir = tempfile::tempdir()?;
+    let db = dir.path().join("state.sqlite3");
+    let mut store = StateStore::open_at(&db)?;
+    let mut update = metadata("busy");
+    let original = store.update_session_metadata(&update)?;
+    let other = rusqlite::Connection::open(&db)?;
+    other.execute_batch("BEGIN IMMEDIATE; UPDATE projects SET added_ms=added_ms+1")?;
+    BLOCKER.set(Some(other));
+    store.connection.busy_handler(Some(|_| {
+        BLOCKER
+            .take()
+            .is_some_and(|writer| writer.execute_batch("COMMIT").is_ok())
+    }))?;
+    update.title = Some("Updated".into());
+    let saved = store.update_session_metadata(&update)?;
+    assert_eq!(saved.app_session_id, original.app_session_id);
+    assert_eq!(saved.title, "Updated");
+    Ok(())
+}
+
 #[cfg(unix)]
 use std::{fs, os::unix::fs::symlink};
 

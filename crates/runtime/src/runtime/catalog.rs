@@ -120,18 +120,15 @@ impl RuntimeOwner {
             }));
     }
 
-    pub(super) fn update_session_metadata(&mut self, metadata: agents::SessionMetadata) {
-        let result = self
-            .session_repository()
-            .and_then(|repo| repo.record_session_metadata(&metadata));
-        let event = match result {
-            Ok(session) => RuntimeEvent::SessionUpdated(session),
-            Err(message) => RuntimeEvent::SessionsFailed {
-                generation: self.session_generation,
-                message,
-            },
-        };
-        let _ = self.event_tx.send(event);
+    pub(super) fn update_session_metadata(
+        &self,
+        metadata: &agents::SessionMetadata,
+    ) -> Result<(), String> {
+        let session = self
+            .session_repository()?
+            .record_session_metadata(metadata)?;
+        let _ = self.event_tx.send(RuntimeEvent::SessionUpdated(session));
+        Ok(())
     }
 
     pub(super) fn set_catalog_archive(

@@ -113,7 +113,7 @@ impl FarcasterApp {
         self.lifecycle.navigation_intent += 1;
         self.lifecycle.opening_local = None;
         self.lifecycle.display_fit = None;
-        if self.sessions.error.as_deref() == Some("Refreshing session details…") {
+        if self.sessions.error.as_deref() == Some(super::REFRESHING_SESSION_DETAILS) {
             self.sessions.error = None;
             self.notify_session_rail_shell(cx);
         }
@@ -442,7 +442,8 @@ impl FarcasterApp {
                         if this.lifecycle.switch_sequence != sequence
                             || this.composer.sessions.current_buffer() != current_target
                         {
-                            if this.sessions.error.as_deref() == Some("Refreshing session details…")
+                            if this.sessions.error.as_deref()
+                                == Some(super::REFRESHING_SESSION_DETAILS)
                             {
                                 this.sessions.error = None;
                                 this.notify_session_rail(cx);
@@ -519,7 +520,7 @@ impl FarcasterApp {
     ) -> Option<SessionTarget> {
         let target = self.target_for_path(path);
         if target.is_none() {
-            self.sessions.error = Some("Refreshing session details…".into());
+            self.sessions.error = Some(super::REFRESHING_SESSION_DETAILS.into());
             self.send(RuntimeCommand::RefreshSessions, cx);
             self.notify_session_rail(cx);
         }
@@ -1160,7 +1161,7 @@ impl FarcasterApp {
             });
             let Some(target) = target else {
                 let draft = draft.clone();
-                self.sessions.error = Some("Refreshing session details…".into());
+                self.sessions.error = Some(super::REFRESHING_SESSION_DETAILS.into());
                 self.send(RuntimeCommand::RefreshSessions, cx);
                 self.notify_session_rail(cx);
                 self.retry_after_catalog_refresh(

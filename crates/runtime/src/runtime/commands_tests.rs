@@ -115,5 +115,23 @@ fn historical_rename_uses_target_profile_and_not_receiving_actor() -> Result<(),
         );
     }
     assert!(!actor_executable.with_extension("requests").exists());
+    let conn = rusqlite::Connection::open(project.path().join("state.sqlite3"))
+        .map_err(|error| error.to_string())?;
+    conn.execute_batch(
+        "CREATE TRIGGER reject_title BEFORE UPDATE OF title ON sessions
+         BEGIN SELECT RAISE(ABORT, 'catalog title write failed'); END;",
+    )
+    .map_err(|error| error.to_string())?;
+    owner.apply_command(RuntimeCommand::RenameSession {
+        path: project.path().join("builtin.jsonl"),
+        harness: Backend::Pi,
+        session_id: "builtin".into(),
+        project: project.path().into(),
+        name: "Another name".into(),
+    });
+    assert!(matches!(
+        events.try_recv(),
+        Ok(RuntimeEvent::SessionsFailed { message, .. }) if message.contains("catalog title write failed")
+    ));
     Ok(())
 }

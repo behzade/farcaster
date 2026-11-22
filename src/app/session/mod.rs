@@ -21,3 +21,5 @@ pub(in crate::app) mod status;
 #[path = "switch_perf_tests.rs"]
 mod switch_perf_tests;
 mod titles;
+
+pub(in crate::app) const REFRESHING_SESSION_DETAILS: &str = "Refreshing session details…";

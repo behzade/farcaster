@@ -24,6 +24,7 @@ pub(crate) struct SessionRailView {
     resize_start: Option<(Pixels, Pixels)>,
     grouped: bool,
     prepared: Option<super::super::session_rail::PreparedActiveRows>,
+    error_expiry: Option<(String, gpui::Task<()>)>,
     #[cfg(test)]
     render_count: usize,
 }
@@ -69,10 +70,47 @@ impl SessionRailView {
             width: theme().layout.session_rail,
             resize_start: None,
             grouped: false,
+            error_expiry: None,
             prepared: None,
             #[cfg(test)]
             render_count: 0,
         }
+    }
+
+    fn sync_error_expiry(&mut self, app: &gpui::Entity<FarcasterApp>, cx: &mut Context<Self>) {
+        let sessions = &app.read(cx).sessions;
+        let error = sessions
+            .error
+            .as_deref()
+            .filter(|message| *message != crate::app::session::REFRESHING_SESSION_DETAILS);
+        if self
+            .error_expiry
+            .as_ref()
+            .map(|(message, _)| message.as_str())
+            == error
+        {
+            return;
+        }
+        self.error_expiry = error.map(str::to_owned).map(|message| {
+            let expected = message.clone();
+            let app = self.app.clone();
+            let timer = cx
+                .background_executor()
+                .timer(crate::app::extensions::NOTIFICATION_LIFETIME);
+            let task = cx.spawn(async move |rail, cx| {
+                timer.await;
+                let _ = app.update(cx, |app, cx| {
+                    if app.sessions.error.as_deref() == Some(&expected) {
+                        app.sessions.error = None;
+                        app.notify_session_rail_shell(cx);
+                    }
+                });
+                let _ = rail.update(cx, |rail, _| {
+                    rail.error_expiry.take();
+                });
+            });
+            (message, task)
+        });
     }
 
     pub(in crate::app::views) fn prepared_rows(
@@ -222,6 +260,7 @@ impl Render for SessionRailView {
         let Some(app) = self.app.upgrade() else {
             return gpui::div().into_any_element();
         };
+        self.sync_error_expiry(&app, cx);
         let prepared = self.prepared_rows(app.read(cx));
         let content = app
             .read(cx)

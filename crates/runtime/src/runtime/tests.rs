@@ -1272,6 +1272,30 @@ fn catalog_discovery_is_the_authoritative_generation_namespace() {
 }
 
 #[test]
+fn background_metadata_failure_does_not_publish_a_sidebar_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut owner, events) = owner_without_process(dir.path().into());
+    let metadata: agents::SessionMetadata = serde_json::from_value(json!({
+        "harness": Backend::Pi, "project": dir.path(), "id": "chat",
+        "path": dir.path().join("chat.jsonl"), "is_running": false,
+    }))
+    .unwrap();
+    owner.state = None;
+    owner.apply_command(RuntimeCommand::UpdateSessionMetadata(metadata.clone()));
+    assert!(matches!(events.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    owner.state = Some(
+        StateStore::open_at(&dir.path().join("state.sqlite3"))
+            .unwrap()
+            .into(),
+    );
+    owner.apply_command(RuntimeCommand::UpdateSessionMetadata(metadata));
+    assert!(matches!(
+        events.try_recv(),
+        Ok(RuntimeEvent::SessionUpdated(_))
+    ));
+}
+
+#[test]
 fn non_catalog_discovery_failures_also_refresh_instead_of_publishing() {
     let action = route_session_discovery(
         "session:/one",

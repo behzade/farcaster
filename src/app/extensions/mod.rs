@@ -15,7 +15,7 @@ const MAX_STATUSES: usize = 12;
 const MAX_WIDGETS: usize = 8;
 const MAX_WIDGET_LINES: usize = 24;
 const MAX_WIDGET_LINE_CHARS: usize = 512;
-const NOTIFICATION_LIFETIME: Duration = Duration::from_secs(5);
+pub(in crate::app) const NOTIFICATION_LIFETIME: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Notification {

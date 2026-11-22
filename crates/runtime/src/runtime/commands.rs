@@ -283,12 +283,9 @@ impl RuntimeOwner {
                         &session_id,
                         &name,
                     )?;
-                    Ok(config.profile_id)
-                });
-                match result {
-                    Ok(profile_id) => self.update_session_metadata(agents::SessionMetadata {
+                    self.update_session_metadata(&agents::SessionMetadata {
                         harness,
-                        profile_id,
+                        profile_id: config.profile_id,
                         id: session_id,
                         path,
                         project,
@@ -303,13 +300,13 @@ impl RuntimeOwner {
                         access_mode: None,
                         usage: None,
                         is_running: false,
-                    }),
-                    Err(message) => {
-                        let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
-                            generation: self.session_generation,
-                            message,
-                        });
-                    }
+                    })
+                });
+                if let Err(message) = result {
+                    let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
+                        generation: self.session_generation,
+                        message,
+                    });
                 }
             }
             RuntimeCommand::MoveSession { .. }
@@ -441,7 +438,12 @@ impl RuntimeOwner {
             RuntimeCommand::RefreshSessions => self.refresh_sessions(),
             RuntimeCommand::RefreshWorkerStatus(id) => self.refresh_worker_status(&id),
             RuntimeCommand::UpdateSessionMetadata(metadata) => {
-                self.update_session_metadata(metadata)
+                if let Err(error) = self.update_session_metadata(&metadata) {
+                    zlog::warn!(
+                        "Could not save background session metadata for {}: {error}",
+                        metadata.path.display()
+                    );
+                }
             }
             RuntimeCommand::PreviewImport {
                 harness,

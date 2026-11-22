@@ -307,22 +307,24 @@ fn quit_waits_for_changes_queued_after_its_first_flush(cx: &mut gpui::TestAppCon
 }
 
 #[test]
-fn recovery_keeps_other_writer_failures_and_unrelated_errors() {
+fn save_warnings_track_recovery_and_dismissal_per_writer() {
     use PersistenceSource::{Composer, Session};
     let (mut writer, _) = SessionStateWriter::spawn(|| Err("unused".into()));
-    let mut displayed = None;
-    for composer_error in ["same error", "composer error"] {
-        writer.update_error(Session, Err("same error".into()), &mut displayed);
-        writer.update_error(Composer, Err(composer_error.into()), &mut displayed);
-        writer.update_error(Composer, Ok(()), &mut displayed);
-        assert_eq!(displayed.as_deref(), Some("same error"));
-        writer.update_error(Session, Ok(()), &mut displayed);
-        assert_eq!(displayed, None);
-    }
-    writer.update_error(Composer, Err("composer".into()), &mut displayed);
-    displayed = Some("unrelated".into());
-    writer.update_error(Composer, Ok(()), &mut displayed);
-    assert_eq!(displayed.as_deref(), Some("unrelated"));
+    writer.update_error(Session, Err("locked".into()));
+    writer.update_error(Composer, Err("locked".into()));
+    assert_eq!(writer.warning(), Some((Composer, "locked")));
+    writer.dismiss_warning(Composer, "locked");
+    writer.update_error(Composer, Err("locked".into()));
+    assert_eq!(writer.warning(), Some((Session, "locked")));
+    writer.update_error(Session, Ok(()));
+    assert_eq!(writer.warning(), None);
+    writer.update_error(Composer, Err("disk full".into()));
+    writer.dismiss_warning(Composer, "locked");
+    assert_eq!(writer.warning(), Some((Composer, "disk full")));
+    writer.dismiss_warning(Composer, "disk full");
+    writer.update_error(Composer, Ok(()));
+    writer.update_error(Composer, Err("disk full".into()));
+    assert_eq!(writer.warning(), Some((Composer, "disk full")));
 }
 
 #[gpui::test]

@@ -153,6 +153,18 @@ impl FarcasterApp {
         session_list: ListState,
         prepared: PreparedActiveRows,
     ) -> impl IntoElement {
+        use crate::app::session::state_writer::PersistenceSource;
+        let notice = self
+            .sessions
+            .error
+            .as_deref()
+            .map(|error| (None, error))
+            .or_else(|| {
+                self.sessions
+                    .writer
+                    .warning()
+                    .map(|(source, detail)| (Some(source), detail))
+            });
         let settings_entity = entity.clone();
         let plan_entity = entity.clone();
         let notice_entity = entity.clone();
@@ -362,8 +374,44 @@ impl FarcasterApp {
                             ),
                     ),
             )
-            .when_some(self.sessions.error.clone(), |rail, error| {
-                rail.child(feedback("sessions-error", error, FeedbackTone::Error))
+            .when_some(notice, |rail, (source, detail)| {
+                let error = detail.to_owned();
+                if source.is_none() && error == crate::app::session::REFRESHING_SESSION_DETAILS {
+                    return rail.child(feedback("sessions-error", error, FeedbackTone::Info));
+                }
+                let dismiss = entity.clone();
+                let message = match source {
+                    Some(PersistenceSource::Composer) => "Couldn’t save your composer changes.",
+                    Some(PersistenceSource::Session) => "Couldn’t save your session changes.",
+                    None => detail,
+                }
+                .to_owned();
+                rail.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .child(div().flex_1().min_w_0().child(feedback(
+                            "sessions-error",
+                            message,
+                            FeedbackTone::Error,
+                        )))
+                        .child(icon_button(
+                            "dismiss-session-error",
+                            AppIcon::X,
+                            "Dismiss session error",
+                            ButtonTone::Quiet,
+                            move |_, cx| {
+                                let _ = dismiss.update(cx, |app, cx| {
+                                    if let Some(source) = source {
+                                        app.sessions.writer.dismiss_warning(source, &error);
+                                    } else if app.sessions.error.as_ref() == Some(&error) {
+                                        app.sessions.error = None;
+                                    }
+                                    app.notify_session_rail_shell(cx);
+                                });
+                            },
+                        )),
+                )
             })
             .child(
                 div()
@@ -414,7 +462,7 @@ impl FarcasterApp {
                             .when(
                                 active_entry_count == 0
                                     && !self.sessions.visible.is_empty()
-                                    && self.sessions.error.is_none(),
+                                    && notice.is_none(),
                                 |list| {
                                     list.child(
                                         div()

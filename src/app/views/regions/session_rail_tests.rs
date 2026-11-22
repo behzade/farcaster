@@ -717,3 +717,54 @@ fn revealing_profile_copies_uses_the_requested_active_or_archived_row() {
         }
     }
 }
+
+#[gpui::test]
+fn stale_session_errors_expire_without_clearing_newer_feedback(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::stale_session_errors_expire_without_clearing_newer_feedback"
+        ),
+        cx,
+        |cx, app, _, _| {
+            let show = |cx: &mut gpui::VisualTestContext, message: &str| {
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| {
+                        app.sessions.error = Some(message.to_owned());
+                        app.notify_session_rail_shell(cx);
+                    });
+                    window.draw(cx).clear(cx);
+                });
+                cx.run_until_parked();
+            };
+            let tick = |cx: &mut gpui::VisualTestContext, seconds| {
+                cx.executor()
+                    .advance_clock(std::time::Duration::from_secs(seconds));
+                cx.run_until_parked();
+            };
+            show(cx, "database is locked");
+            tick(cx, 3);
+            show(cx, "Could not archive the chat");
+            tick(cx, 3);
+            cx.update(|_, cx| {
+                assert_eq!(
+                    app.read(cx).sessions.error.as_deref(),
+                    Some("Could not archive the chat")
+                )
+            });
+            tick(cx, 3);
+            cx.update(|_, cx| assert!(app.read(cx).sessions.error.is_none()));
+            show(cx, "Could not archive the chat");
+            tick(cx, 6);
+            cx.update(|_, cx| assert!(app.read(cx).sessions.error.is_none()));
+            show(cx, crate::app::session::REFRESHING_SESSION_DETAILS);
+            tick(cx, 6);
+            cx.update(|_, cx| {
+                assert_eq!(
+                    app.read(cx).sessions.error.as_deref(),
+                    Some(crate::app::session::REFRESHING_SESSION_DETAILS)
+                )
+            });
+        },
+    );
+}
