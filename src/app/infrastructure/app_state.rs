@@ -1,7 +1,6 @@
 use crate::app::*;
 
 pub(in crate::app) struct AppLifecycle {
-    pub(in crate::app) display_fit: Option<crate::app::views::FitProbe>,
     pub(in crate::app) switch_paint:
         Option<std::sync::Arc<crate::app::infrastructure::performance::SwitchPaintTrace>>,
     pub(in crate::app) performance_monitor: Option<infrastructure::performance::PerformanceMonitor>,

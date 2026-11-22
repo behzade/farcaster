@@ -112,7 +112,6 @@ impl FarcasterApp {
     fn begin_navigation_intent(&mut self, cx: &mut Context<Self>) {
         self.lifecycle.navigation_intent += 1;
         self.lifecycle.opening_local = None;
-        self.lifecycle.display_fit = None;
         if self.sessions.error.as_deref() == Some(super::REFRESHING_SESSION_DETAILS) {
             self.sessions.error = None;
             self.notify_session_rail_shell(cx);
@@ -121,7 +120,6 @@ impl FarcasterApp {
 
     pub(in crate::app) fn cancel_pending_session_switch(&mut self) {
         self.lifecycle.opening_local = None;
-        self.lifecycle.display_fit = None;
         self.project.navigation_trust = None;
         self.lifecycle.switch_recovery = None;
         self.lifecycle.requested_session_key = None;
@@ -707,27 +705,7 @@ impl FarcasterApp {
             let read = query.clone().read(resident, full, cx);
             let intent = self.lifecycle.navigation_intent;
             self.lifecycle.opening_local = Some(cx.spawn_in(window, async move |weak, cx| {
-                let mut page = read.await;
-                let Ok(probe) = weak.update_in(cx, |app, window, cx| {
-                    if app.lifecycle.navigation_intent == intent {
-                        app.check_display_fit(&page, window, cx)
-                    } else {
-                        None
-                    }
-                }) else {
-                    return;
-                };
-                if let Some(probe) = probe
-                    && !probe.await.unwrap_or(false)
-                {
-                    let Ok(Some(read)) = weak.update(cx, |app, cx| {
-                        (app.lifecycle.navigation_intent == intent)
-                            .then(|| query.clone().read(None, true, cx))
-                    }) else {
-                        return;
-                    };
-                    page = read.await;
-                }
+                let page = read.await;
                 let _ = weak.update_in(cx, |app, window, cx| {
                     if app.lifecycle.navigation_intent != intent {
                         return;

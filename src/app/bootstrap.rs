@@ -427,7 +427,6 @@ impl FarcasterApp {
                 switch_sequence: 0,
                 navigation_intent: 0,
                 opening_local: None,
-                display_fit: None,
                 switch_paint: None,
                 awaiting_switch_route: None,
                 awaiting_draft_snapshot: None,

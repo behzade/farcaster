@@ -369,7 +369,8 @@ impl FarcasterApp {
             && (snapshot.status != "Loading history" || snapshot.conversation.items.is_empty());
         let same_ready_document = !session_changed
             && snapshot.document_ready
-            && snapshot.status == "Ready"
+            && (snapshot.status == "Ready"
+                || snapshot.history_coverage() == Some(crate::agents::HistoryCoverage::Suffix))
             && self.snapshot.selected_session == snapshot.selected_session
             && self.snapshot.project == snapshot.project
             && self.snapshot.harness == snapshot.harness
@@ -460,6 +461,8 @@ impl FarcasterApp {
             || self.snapshot.sandbox_adapter != snapshot.sandbox_adapter
             || self.snapshot.access_mode != snapshot.access_mode
             || self.snapshot.session_identity() != snapshot.session_identity();
+        let was_refreshing =
+            self.snapshot.saved_history == Some(crate::runtime::SavedHistory::RefreshingPartial);
         self.snapshot = snapshot;
         if let Some(session) = self.snapshot.selected_session.as_ref()
             && let Some(progress) = self.extensions.question_sessions.remove(session)
@@ -469,7 +472,17 @@ impl FarcasterApp {
         if picker_choices_changed {
             self.refresh_configuration_picker(cx);
         }
-        dirty.transcript |= self.apply_transcript_rows(row_update, &previous_items, cx);
+        let rows_changed = self.apply_transcript_rows(row_update, &previous_items, cx);
+        dirty.transcript |= rows_changed;
+        let refreshing =
+            self.snapshot.saved_history == Some(crate::runtime::SavedHistory::RefreshingPartial);
+        if refreshing != was_refreshing || (refreshing && rows_changed) {
+            self.views
+                .transcript
+                .read(cx)
+                .set_refreshing_prefix(&self.snapshot.transcript_presentation(), refreshing);
+            dirty.transcript = true;
+        }
         if tail_changed || transcript_changed || session_changed {
             self.views.transcript.update(cx, |transcript, _| {
                 if history_handoff {

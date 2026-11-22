@@ -76,7 +76,6 @@ impl FarcasterApp {
         viewport_height: gpui::Pixels,
         request_focused: bool,
         obscured: bool,
-        fit_probe: Option<AnyElement>,
     ) -> AnyElement {
         let native_surface = matches!(
             self.workspace.surface,
@@ -146,7 +145,6 @@ impl FarcasterApp {
                             )
                     })
                     .child(main)
-                    .children(fit_probe)
                     .when(
                         native_surface
                             && self.extensions.active.dialog.is_some()

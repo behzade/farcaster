@@ -88,49 +88,6 @@ impl RowHeightHints {
     }
 }
 
-/// Count only space the closed rows reserve at every wrap width. A Markdown
-/// document with long links or invisible definitions can measure much shorter
-/// than a text-based height estimate. Read all saved rows when in doubt.
-pub(crate) fn suffix_covers_viewport(
-    rows: &PersistentVec<TranscriptRow>,
-    first_safe: usize,
-    items: &PersistentVec<Arc<TranscriptItem>>,
-    viewport_height: Pixels,
-    font_scale: f32,
-) -> bool {
-    let theme = theme();
-    let mut height = rows
-        .last()
-        .filter(|row| latest_allows_tail_reserve(**row, items, false))
-        .map_or(px(0.), |_| tail_reserve(viewport_height));
-    rows.iter_range(first_safe..rows.len()).any(|row| {
-        height += match *row {
-            // The group always includes its one-line title and both insets.
-            TranscriptRow::ActivityGroup { .. } => {
-                theme.type_scale.line_body * font_scale + theme.size(4.)
-            }
-            TranscriptRow::Item { index, .. }
-                if matches!(
-                    items[index].kind,
-                    TranscriptKind::User | TranscriptKind::Assistant
-                ) =>
-            {
-                theme.space.sm * 2.
-            }
-            TranscriptRow::MessageChunk { first, last, .. }
-            | TranscriptRow::StreamChunk { first, last, .. } => {
-                (if first {
-                    theme.space.sm
-                } else {
-                    theme.space.xs
-                }) + if last { theme.space.md } else { px(0.) }
-            }
-            _ => px(0.),
-        };
-        height > viewport_height
-    })
-}
-
 #[cfg(test)]
 pub(crate) fn estimated_row_height(
     row: TranscriptRow,

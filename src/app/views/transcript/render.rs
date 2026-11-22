@@ -98,6 +98,25 @@ pub(crate) fn loading_history() -> AnyElement {
         .into_any_element()
 }
 
+pub(crate) fn loading_earlier(height: Pixels) -> AnyElement {
+    div()
+        .w_full()
+        .h(height)
+        .overflow_hidden()
+        .flex()
+        .flex_col()
+        .justify_end()
+        .debug_selector(|| "transcript-older-loading".into())
+        .child(
+            crate::app::ui::layout::chat_column()
+                .py(theme().space.sm)
+                .text_size(theme().type_scale.body_small)
+                .text_color(theme().colors.muted)
+                .child("Loading earlier messages…"),
+        )
+        .into_any_element()
+}
+
 pub(crate) fn with_saved_position_notice(document: AnyElement) -> AnyElement {
     div()
         .size_full()
@@ -414,7 +433,7 @@ pub(crate) fn render(
                 .bg(theme().colors.canvas)
                 .child(view),
         )
-        .when(!viewport.following, |root| {
+        .when(!history_tail && !viewport.following, |root| {
             root.child(
                 div()
                     .absolute()

@@ -1219,7 +1219,10 @@ fn cold_saved_codex_chat_draws_recent_rows_before_full_read(cx: &mut gpui::TestA
                             }
                             (started.elapsed(), bounds.clone(), before_route)
                         });
-                        assert_eq!(initial, &bounds, "visible tail shifted on actual history");
+                        assert!(
+                            bounds.starts_with(initial),
+                            "visible tail shifted on actual history: {initial:?} -> {bounds:?}"
+                        );
                         if ready {
                             let full = full_paint.get_or_insert_with(|| started.elapsed());
                             ready_frames += 1;
@@ -1227,7 +1230,7 @@ fn cold_saved_codex_chat_draws_recent_rows_before_full_read(cx: &mut gpui::TestA
                                 eprintln!(
                                     "Real cold open: saved={reopen_saved}, first readable {when:?}, before route ACK={first_before_route}, full {full:?}, first draw {:?}, prior visible at {prior_draws} sample(s) (sample upper bound {prior_time:?}), loading {loading_time:?} ({loading_draws} sampled draws), {pending_draws} pending route draws, {} visible rows at identical bounds",
                                     first_draw.unwrap(),
-                                    bounds.len()
+                                    initial.len()
                                 );
                                 if reopen_saved {
                                     if crate::app::infrastructure::performance::tracing_every_operation() {

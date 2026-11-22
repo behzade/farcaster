@@ -432,12 +432,14 @@ fn saved_chat_paints_before_routing_and_ignores_superseded_reads(cx: &mut gpui::
 }
 
 #[gpui::test]
-fn short_saved_suffix_reads_full_document_before_route(cx: &mut gpui::TestAppContext) {
+fn short_saved_suffix_paints_before_route_and_stays_at_its_final_position(
+    cx: &mut gpui::TestAppContext,
+) {
     check_saved_suffix_fit(
         cx,
         concat!(
             module_path!(),
-            "::short_saved_suffix_reads_full_document_before_route"
+            "::short_saved_suffix_paints_before_route_and_stays_at_its_final_position"
         ),
         6000.,
         false,
@@ -502,7 +504,7 @@ fn check_saved_suffix_fit(
                 thread::sleep(SWITCH_POLL);
             }
         },
-        |cx, app, _, project| {
+        |cx, app, runtime, project| {
             let project = project.canonicalize().unwrap();
             trust::apply(&project, TrustChoice::TrustProject).unwrap();
             let rows = crate::app::persistence::open()
@@ -537,7 +539,8 @@ fn check_saved_suffix_fit(
                             );
                             assert!(items.last().unwrap().text.starts_with("Wrapped reply text"));
                         } else {
-                            assert_eq!(view.local_display_row_count(app), 84);
+                            assert!(items.len() < 84);
+                            assert_eq!(items.last().unwrap().text, "tall message 83");
                         }
                     }
                     selected
@@ -545,8 +548,44 @@ fn check_saved_suffix_fit(
                 assert!(cx.debug_bounds("transcript-loading").is_none());
                 if selected {
                     if !wrapped {
-                        assert!(cx.debug_bounds("transcript-row-0").is_some());
-                        assert!(cx.debug_bounds("transcript-row-83").is_some());
+                        let (route, count) = cx.update(|_, cx| {
+                            let app = app.read(cx);
+                            (
+                                app.lifecycle.awaiting_switch_route.unwrap(),
+                                app.views.transcript.read(cx).local_display_row_count(app),
+                            )
+                        });
+                        assert_eq!(count, 64);
+                        let last = cx.debug_bounds("transcript-row-63").unwrap();
+                        let gap = cx.debug_bounds("transcript-older-loading").unwrap();
+                        assert!(gap.bottom() <= last.top());
+                        runtime.send_event(RuntimeEvent::SelectionRouted(route));
+                        let all = messages("tall", 84);
+                        let mut partial = snapshot(row, &all[20..]);
+                        Arc::make_mut(&mut partial).saved_history =
+                            Some(crate::runtime::SavedHistory::RefreshingPartial);
+                        runtime.send_event(RuntimeEvent::Snapshot {
+                            generation: 2,
+                            snapshot: partial,
+                        });
+                        cx.update(|window, cx| {
+                            app.update(cx, |app, cx| app.drain_runtime(cx));
+                            window.draw(cx).clear(cx);
+                        });
+                        assert_eq!(cx.debug_bounds("transcript-row-63"), Some(last));
+                        assert_eq!(cx.debug_bounds("transcript-older-loading"), Some(gap));
+                        runtime.send_event(RuntimeEvent::Snapshot {
+                            generation: 2,
+                            snapshot: snapshot(row, &all),
+                        });
+                        for _ in 0..4 {
+                            cx.update(|window, cx| {
+                                app.update(cx, |app, cx| app.drain_runtime(cx));
+                                window.draw(cx).clear(cx);
+                            });
+                            assert_eq!(cx.debug_bounds("transcript-row-83"), Some(last));
+                            assert!(cx.debug_bounds("transcript-older-loading").is_none());
+                        }
                     }
                     break;
                 }

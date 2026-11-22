@@ -275,7 +275,7 @@ impl ReadingAnchor {
         Self::at(row, offset.offset_in_item, items)
     }
 
-    fn at(row: TranscriptRow, offset: gpui::Pixels, items: &Items) -> Option<Self> {
+    pub(super) fn at(row: TranscriptRow, offset: gpui::Pixels, items: &Items) -> Option<Self> {
         Some(Self {
             row,
             offset,
@@ -323,6 +323,15 @@ impl ReadingAnchor {
 impl TranscriptView {
     pub(crate) fn prepare_saved_history_handoff(&mut self, previous: &Items, next: &Items) {
         if self.coverage == Some(crate::agents::HistoryCoverage::Suffix)
+            && self.list.has_pending_scroll()
+            && let Some((_, following)) = self.list.take_history_handoff_position()
+        {
+            self.following = following;
+            if following {
+                self.unseen = 0;
+            }
+        }
+        if self.coverage == Some(crate::agents::HistoryCoverage::Suffix)
             && (!self.list.is_following_tail()
                 || !self.disclosure_states.is_empty()
                 || !self.file_trees.is_empty())
@@ -355,14 +364,27 @@ impl TranscriptView {
 impl HistoryTail {
     pub(super) fn anchor_before_append(
         &self,
+        top: gpui::ListOffset,
         rows: &PersistentVec<TranscriptRow>,
         items: &Items,
     ) -> Option<(ReadingAnchor, gpui::ListOffset, usize)> {
         let page = &self.presentation.items;
-        let start = unique_page_before_append(items, page)?;
-        let top = self.top_in(rows, start)?;
-        let end = start + page.len();
-        let unseen = rows.iter().filter(|row| row.key() >= end).count();
+        // An earlier review in the same turn can be positioned after the
+        // visible reply even when the provider returned identical final items.
+        let (start, unseen) = if let Some(start) = unique_page_before_append(items, page) {
+            let end = start + page.len();
+            (start, rows.iter().filter(|row| row.key() >= end).count())
+        } else {
+            let start = items.len().checked_sub(page.len())?;
+            let last = self.rows.last()?;
+            let last = last.at_item(start + last.key());
+            if rows.last()?.same_position(&last) || !matches_page_at(items, start, page) {
+                return None;
+            }
+            let position = rows.position(|row| row.same_position(&last))?;
+            (start, rows.len() - position - 1)
+        };
+        let top = self.top_in(top, rows, start)?;
         Some((
             ReadingAnchor::at(rows[top.item_ix], top.offset_in_item, items)?,
             top,
@@ -372,23 +394,27 @@ impl HistoryTail {
 
     pub(super) fn matching_suffix_top(
         &self,
+        top: gpui::ListOffset,
         rows: &PersistentVec<TranscriptRow>,
         items: &Items,
     ) -> Option<gpui::ListOffset> {
         let page = &self.presentation.items;
         let start = items.len().checked_sub(page.len())?;
-        if !matches_page_at(items, start, page) {
+        let last = self.rows.last()?;
+        if !rows.last()?.same_position(&last.at_item(start + last.key()))
+            || !matches_page_at(items, start, page)
+        {
             return None;
         }
-        self.top_in(rows, start)
+        self.top_in(top, rows, start)
     }
 
     fn top_in(
         &self,
+        top: gpui::ListOffset,
         rows: &PersistentVec<TranscriptRow>,
         start: usize,
     ) -> Option<gpui::ListOffset> {
-        let top = self.list.painted_history_top()?;
         let row = self.rows.get(top.item_ix)?;
         let expected = row.at_item(start + row.key());
         let item_ix = rows.position(|row| row.same_position(&expected))?;
