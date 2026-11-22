@@ -24,6 +24,10 @@ CREATE INDEX IF NOT EXISTS transcript_native ON transcript_messages(session_id, 
 CREATE INDEX IF NOT EXISTS transcript_submission ON transcript_messages(session_id, submission_id) WHERE submission_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS transcript_accepted_prompt ON session_events(session_id,CAST(json_extract(body,'$.submissionId') AS TEXT))
   WHERE json_extract(body,'$.type')='accepted_prompt';
+CREATE INDEX IF NOT EXISTS transcript_prompt_receipts ON session_events(session_id,json_extract(body,'$.submissionId'))
+  WHERE json_extract(body,'$.type') IN ('prompt_delivery_receipt','prompt_delivery_resolution');
+CREATE INDEX IF NOT EXISTS transcript_prompt_dispatch ON session_events(session_id,json_extract(body,'$.submissionId'))
+  WHERE json_extract(body,'$.type')='prompt_dispatch';
 CREATE INDEX IF NOT EXISTS transcript_user_ordinals ON transcript_messages(session_id,ordinal) WHERE user_message=1;
 CREATE INDEX IF NOT EXISTS transcript_linked_ordinals ON transcript_messages(session_id,ordinal) WHERE submission_id IS NOT NULL OR inherited_fields=1;
 

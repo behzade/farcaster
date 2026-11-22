@@ -50,7 +50,7 @@ impl StateStore {
                     migrate_v14_to_v15(&migration)?;
                 }
                 Some(14) => migrate_v14_to_v15(&migration)?,
-                Some(15..=25) => {}
+                Some(15..=25 | 29) => {}
                 // Rebuild only derived pages to update the turn boundary, image budget,
                 // and Markdown source positions.
                 Some(26..=27) => {
