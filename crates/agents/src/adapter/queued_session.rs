@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde_json::{Value, json};
 
+use super::MAX_FILTERED_EVENTS_PER_POLL;
 use super::handler::IdempotencyBookkeeping;
 use super::prompt_boundary::{Boundary, PromptBoundary};
 use super::prompt_input::{PromptInput, prompt_mode, worker_mode};
@@ -11,8 +12,6 @@ use crate::{
     SessionResponsePayload as Payload, SessionTransport, SteerErrorRecovery,
     extensions::{ExtensionUiResponse, PromptImage, PromptMode},
 };
-
-const MAX_FILTERED_EVENTS_PER_POLL: usize = 256;
 
 #[derive(Clone, Copy)]
 pub(super) enum SteeringBoundary {

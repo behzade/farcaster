@@ -1229,12 +1229,20 @@ impl SessionTransport for WorkerSessionTransport {
         if let Some(event) = self.pending.pop_front() {
             return Some(event);
         }
-        let event = self.worker.poll();
-        self.drain_prompt_acks();
-        if let Some(event) = event {
+        for _ in 0..super::MAX_FILTERED_EVENTS_PER_POLL {
+            let event = self.worker.poll();
+            self.drain_prompt_acks();
+            let Some(event) = event else {
+                return self.pending.pop_front();
+            };
             self.enqueue_worker_event(event);
+            if let Some(event) = self.pending.pop_front() {
+                return Some(event);
+            }
         }
-        self.pending.pop_front()
+        // Yield to session commands without parking while worker events may remain.
+        std::thread::current().unpark();
+        None
     }
 
     fn close(&mut self) -> Result<(), String> {

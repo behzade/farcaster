@@ -1,4 +1,7 @@
 use crate::Backend;
+
+const MAX_FILTERED_EVENTS_PER_POLL: usize = 256;
+
 mod accounts;
 mod acp;
 pub use accounts::{account_capabilities, logout_account, read_accounts};

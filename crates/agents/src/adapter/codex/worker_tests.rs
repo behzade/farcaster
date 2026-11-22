@@ -1668,6 +1668,59 @@ fn idle_abort_cleans_native_terminals_before_accepting_another_turn() {
 }
 
 #[test]
+fn queued_codex_reply_finishes_on_the_wake_that_delivered_it() {
+    use crate::{SessionEvent, SessionTransport};
+
+    let mut worker = test_session();
+    worker.begin_turn("turn-1");
+    let mut item = json!({"threadId":"thread-1", "turnId":"turn-1",
+        "item":{"type":"agentMessage","id":"reply","text":""}});
+    let started = item.clone();
+    item["item"]["text"] = json!("Finished the task");
+    for (method, params) in [
+        ("item/started", started),
+        ("item/completed", item),
+        (
+            "turn/completed",
+            json!({"threadId":"thread-1",
+            "turn":{"id":"turn-1","status":"completed"}}),
+        ),
+    ] {
+        worker
+            .queued_inbound
+            .push_back(Ok(CodexInbound::Notification {
+                method: method.into(),
+                params,
+            }));
+    }
+
+    let mut transport = main_session::WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "thread-1".into(),
+        Box::new(worker),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let mut conversation = crate::conversation::ConversationState::default();
+    // The runtime ends its drain on the first empty poll.
+    while let Some(event) = transport.poll() {
+        if let SessionEvent::Activity(event) = event {
+            conversation.reduce(event.value());
+        }
+    }
+    assert!(
+        conversation
+            .items
+            .iter()
+            .any(|item| item.text == "Finished the task")
+    );
+    assert!(conversation.settled);
+    assert!(!conversation.running);
+}
+
+#[test]
 fn answer_before_reasoning_uses_a_separate_content_slot() {
     let mut session = test_session();
 
