@@ -11,7 +11,7 @@ test-support = []
 
 [dependencies]
 markdown = "1.0.0"
-base64 = "0.22.1"
+base64 = "0.23.1"
 farcaster-agent-protocol = { path = "../agent-protocol" }
 farcaster-utility = { path = "../utility" }
 serde = { version = "1.0.229", features = ["derive", "rc"] }
