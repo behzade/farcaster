@@ -63,13 +63,19 @@ fn visible_connections(snapshot: &AccountsSnapshot) -> Vec<&AccountConnection> {
                 .as_deref()
                 .and_then(|id| snapshot.account(id))
                 .is_some_and(|account| {
-                    [
-                        account.identity.email.as_deref(),
-                        account.identity.principal_id.as_deref(),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .any(|value| !value.trim().is_empty())
+                    (c.auth == AccountAuthState::SignedIn
+                        && account
+                            .identity
+                            .plan
+                            .as_deref()
+                            .is_some_and(|plan| !plan.trim().is_empty()))
+                        || [
+                            account.identity.email.as_deref(),
+                            account.identity.principal_id.as_deref(),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .any(|value| !value.trim().is_empty())
                 })
         })
         .collect();

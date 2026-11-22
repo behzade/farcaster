@@ -41,6 +41,10 @@ mod shell_environment;
 mod sign_in;
 mod stream_text;
 use backend::for_backend;
+pub fn cli_command_hint(backend: Backend, name: &str) -> Option<&'static str> {
+    for_backend(backend).cli_command_hint(name)
+}
+
 pub fn model_display_name(harness: Backend, model: &crate::extensions::Model) -> String {
     let name = if model.name.is_empty() {
         &model.id

@@ -115,7 +115,7 @@ pub(super) fn serve_acp(mut peer: Peer, state: Arc<Mutex<BackendState>>, stop: A
             "authenticate" | "session/close" | "session/set_mode" | "session/set_model" => {
                 json!({})
             }
-            "session/new" => {
+            "session/new" | "session/resume" => {
                 state.lock().expect("test lock should not be poisoned").main = Some(
                     peer.reader
                         .get_ref()
@@ -143,6 +143,73 @@ pub(super) fn serve_acp(mut peer: Peer, state: Arc<Mutex<BackendState>>, stop: A
             json!({"jsonrpc":"2.0","id":request["id"],"result":result}),
         );
     }
+}
+
+#[test]
+fn antigravity_preview_survives_quota_commands_and_resumed_prompt() {
+    isolated_title(
+        "title_native_tests::antigravity_preview_survives_quota_commands_and_resumed_prompt",
+        || {
+            let mut s = Scenario::new(Backend::Antigravity, None, false);
+            let path = s.owner.active_session.clone().expect("session locator");
+            s.owner.snapshot.selected_session = Some(path.clone());
+            s.owner.snapshot.history_preview = true;
+            s.owner.snapshot.document_ready = true;
+            conversation_mut(&mut s.owner.snapshot).replace_history(&[
+                json!({"role":"user","content":"Earlier question"}),
+                json!({"role":"assistant","content":[{"type":"text","text":"Earlier answer"}]}),
+            ]);
+            for command in ["/usage", "/quota"] {
+                s.owner.send_prompt(
+                    format!("session:{}", path.display()),
+                    PromptMode::Normal,
+                    command.into(),
+                    Vec::new(),
+                    false,
+                );
+                assert!(s.owner.snapshot.history_preview);
+                assert!(s.owner.pending_prompt.is_none());
+                assert!(
+                    s.owner
+                        .snapshot
+                        .conversation
+                        .items
+                        .last()
+                        .expect("CLI hint")
+                        .text
+                        .contains("Antigravity CLI")
+                );
+            }
+
+            s.prompt();
+            assert!(!s.owner.snapshot.history_preview);
+            let texts: Vec<_> = s
+                .owner
+                .snapshot
+                .conversation
+                .items
+                .iter()
+                .map(|item| item.text.as_str())
+                .collect();
+            assert_eq!(&texts[..2], ["Earlier question", "Earlier answer"]);
+            assert_eq!(
+                texts
+                    .iter()
+                    .filter(|text| **text == "Inspect this archive")
+                    .count(),
+                1
+            );
+            assert_eq!(texts.last(), Some(&"Done"));
+            let state = s.backend.state.lock().expect("fixture state");
+            let methods: Vec<_> = state
+                .requests
+                .iter()
+                .filter_map(|r| r["method"].as_str())
+                .filter(|m| matches!(*m, "session/resume" | "session/prompt"))
+                .collect();
+            assert_eq!(methods, ["session/resume", "session/prompt"]);
+        },
+    );
 }
 
 #[test]

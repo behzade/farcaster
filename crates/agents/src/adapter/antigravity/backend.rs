@@ -12,6 +12,10 @@ use std::{path::Path, sync::Arc};
 pub(in crate::adapter) struct AntigravityAdapter;
 
 impl BackendAdapter for AntigravityAdapter {
+    fn cli_command_hint(&self, name: &str) -> Option<&'static str> {
+        matches!(name, "usage" | "quota")
+            .then_some("To view your quota, open the Antigravity CLI (agy) and enter /usage.")
+    }
     fn descriptor(&self) -> AgentBackendDescriptor {
         super::descriptor()
     }
@@ -30,7 +34,10 @@ impl BackendAdapter for AntigravityAdapter {
         project: &Path,
     ) -> Result<ConfigurationCatalog, String> {
         let command = self.launch_configuration(config);
-        let (metadata, _) = acp::load_configuration(&super::PROFILE, &command, project)?;
+        let (mut metadata, _) = acp::load_configuration(&super::PROFILE, &command, project)?;
+        if let Some(identity) = metadata.account.take() {
+            super::observe_account(config, &command.command(project)?, project, identity);
+        }
         super::super::configuration_catalog(metadata)
     }
     fn steering_boundary(&self) -> SteeringBoundary {

@@ -27,6 +27,9 @@ pub(super) fn metadata_from_session(
         .map(Vec::as_slice)
         .unwrap_or_default();
     let (mut metadata, mut ids) = metadata_from_options(profile, options);
+    if profile.backend == crate::Backend::Antigravity {
+        metadata.account = super::super::antigravity::account_identity(response);
+    }
     if metadata.models.is_empty()
         && let Some(models) = response
             .pointer("/models/availableModels")
@@ -162,6 +165,7 @@ pub(super) fn metadata_from_options(
                 .collect();
         } else if category == "thought_level"
             || category == "reasoning"
+            || id == "thought_level"
             || id.contains("effort")
             || id.contains("reasoning")
         {

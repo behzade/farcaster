@@ -25,6 +25,9 @@ pub(super) static STANDARD_SERVICE_TIER: LazyLock<[String; 1]> =
 mod tests;
 
 pub(super) trait BackendAdapter: Sync {
+    fn cli_command_hint(&self, _name: &str) -> Option<&'static str> {
+        None
+    }
     fn account_capabilities(&self) -> crate::accounts::AccountCapabilities {
         crate::accounts::AccountCapabilities::default()
     }

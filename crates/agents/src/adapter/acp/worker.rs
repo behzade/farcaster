@@ -179,6 +179,14 @@ fn spawn_session(
 > {
     let mut prepared = command.command(project)?;
     configure_command(&mut prepared, profile, command.access_mode)?;
+    let permission_mode = if profile.backend == Backend::Antigravity
+        && super::super::antigravity::integrated_cli(&prepared)
+    {
+        // agy takes the access policy at launch. Its session mode is a workflow setting.
+        None
+    } else {
+        profile.permission_mode(command.access_mode)
+    };
     let runtime_key = super::configuration::AcpRuntimeKey::from_command(&prepared);
     let mut child = prepared
         .stdin(Stdio::piped())
@@ -213,7 +221,12 @@ fn spawn_session(
             ));
         }
     };
-    if let Some(mode) = profile.permission_mode(command.access_mode) {
+    if profile.backend == Backend::Antigravity
+        && let Some(identity) = metadata.account.take()
+    {
+        super::super::antigravity::observe_account(command, &prepared, project, identity);
+    }
+    if let Some(mode) = permission_mode {
         let (method, params) = if let Some(id) = &config_ids.mode {
             (
                 "session/set_config_option",
@@ -385,7 +398,7 @@ pub fn configure_command(
     access_mode: HarnessAccessMode,
 ) -> Result<(), String> {
     if profile.backend == Backend::Antigravity {
-        super::super::antigravity::configure(command)?;
+        super::super::antigravity::configure(command, access_mode)?;
     }
     if profile.backend == Backend::Cursor {
         command.args([

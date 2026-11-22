@@ -12,7 +12,6 @@ pub use core::{WorkerActivitySubscription, subscribe_worker_activity};
 mod profiles;
 pub use profiles::{HarnessProfile, HarnessProfiles, profile_id_from_locator};
 
-pub use adapter::model_display_name;
 pub use adapter::profile_data_environment_key;
 pub use adapter::project_shell_environment;
 #[cfg(feature = "test-support")]
@@ -35,6 +34,7 @@ pub use adapter::{
     supports_session_resume, supports_startup_command, supports_steering, validate_launch,
     validate_session_move, warm_session_history_for_profile, worker_factories,
 };
+pub use adapter::{cli_command_hint, model_display_name};
 pub use adapter::{delegated_worker_access_mode, worker_access_modes};
 pub use contract::WorkerStatus;
 pub use contract::extensions;

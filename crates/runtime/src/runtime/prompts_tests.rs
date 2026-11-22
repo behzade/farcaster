@@ -1020,6 +1020,37 @@ fn resumed_prompt_survives_startup_history_without_starting_title_generation() {
 }
 
 #[test]
+fn quota_command_hint_defers_to_native_commands_and_ordinary_prompt_text() -> Result<(), String> {
+    for (backend, advertised, message) in [
+        (Backend::Antigravity, true, "/usage"),
+        (Backend::Antigravity, false, "/usage is what I typed"),
+        (Backend::Claude, false, "/usage"),
+    ] {
+        let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let (mut owner, _, commands) = held_acks_runtime(temp.path())?;
+        owner.harness = Some(backend);
+        if advertised {
+            owner.snapshot.commands.push(
+                serde_json::from_value(json!({"name":"usage","source":"extension"}))
+                    .expect("command fixture"),
+            );
+        }
+        let path = owner.active_session.as_ref().expect("fixture session");
+        owner.send_prompt(
+            format!("session:{}", path.display()),
+            PromptMode::FollowUp,
+            message.into(),
+            Vec::new(),
+            true,
+        );
+        assert!(commands.borrow().iter().any(
+            |cmd| matches!(cmd, SessionCommand::Prompt { message: sent, .. } if sent == message)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn unselected_backend_rejects_prompt_before_enqueuing() {
     let (mut owner, events) = owner_without_process(std::env::temp_dir());
     owner.harness = None;

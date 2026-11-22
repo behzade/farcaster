@@ -162,3 +162,13 @@ fn sidebar_keeps_account_facts_during_rechecks_and_identity_before_first_quota()
     snapshot.connections[0].auth = AccountAuthState::SignedOut;
     assert!(sidebar_summary(&snapshot).is_none());
 }
+
+#[test]
+fn signed_in_connection_can_show_a_reported_plan_without_an_email() {
+    let mut snapshot = accounts(1);
+    snapshot.accounts[0].identity.email = None;
+    snapshot.accounts[0].identity.plan = Some("Google AI Pro".into());
+    assert_eq!(visible_connections(&snapshot).len(), 1);
+    snapshot.connections[0].auth = AccountAuthState::Configured;
+    assert!(visible_connections(&snapshot).is_empty());
+}

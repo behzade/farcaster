@@ -60,6 +60,18 @@ impl RuntimeOwner {
             );
             return;
         };
+        if invocation.is_none()
+            && let Some(name) = message.trim().strip_prefix('/')
+            && let Some(hint) = agents::cli_command_hint(harness, name)
+            && !self
+                .snapshot
+                .commands
+                .iter()
+                .any(|command| command.name == name)
+        {
+            self.reject_prompt(&submission_id, &target, hint.into());
+            return;
+        }
         if let Some(error) = self.pending_session_controls.selection_error() {
             self.reject_prompt(
                 &submission_id,
