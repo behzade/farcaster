@@ -1404,10 +1404,22 @@ fn initial_prompt_is_not_duplicated_when_starting_its_process()
 
     assert!(owner.deferred_prompt().is_some());
     assert_eq!(owner.snapshot.conversation.items.len(), 1);
-    owner.active_session = Some(temp.path().join("session.jsonl"));
-    owner.startup_state_loaded = true;
-    owner.startup_history_loaded = true;
-    owner.maybe_send_deferred_prompt();
+    assert!(owner.snapshot.conversation.awaiting_first_activity());
+    owner.apply_response(agents::SessionResponse::success(
+        None,
+        agents::SessionResponsePayload::LoadState(serde_json::from_value(json!({
+            "isStreaming": false, "isCompacting": false, "sessionId": "new-session",
+            "sessionFile": temp.path().join("session.jsonl"), "autoCompactionEnabled": true,
+            "messageCount": 0, "pendingMessageCount": 0
+        }))?),
+    ));
+    assert!(owner.snapshot.conversation.awaiting_first_activity());
+    owner.apply_response(agents::SessionResponse::success(
+        None,
+        agents::SessionResponsePayload::LoadHistory(agents::SessionHistory::Preserve),
+    ));
+    assert!(owner.pending_request_id().is_some());
+    assert!(owner.snapshot.conversation.awaiting_first_activity());
 
     let user_messages = owner
         .snapshot

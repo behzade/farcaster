@@ -376,9 +376,13 @@ impl ConversationState {
             tool_review: None,
             invocation,
         });
-        self.items.push(item.clone());
-        self.optimistic_user = Some(item.clone());
+        self.append_local_user(item.clone());
         item
+    }
+
+    pub fn append_local_user(&mut self, item: Arc<TranscriptItem>) {
+        self.items.push(item.clone());
+        self.optimistic_user = Some(item);
     }
 
     pub fn rollback_local_user(&mut self, optimistic: &Arc<TranscriptItem>) -> bool {
@@ -436,6 +440,25 @@ impl ConversationState {
                         .unwrap_or(0)
                 })
                 .min(self.items.len())
+        })
+    }
+
+    pub fn awaiting_first_activity(&self) -> bool {
+        self.active_run_start().is_some_and(|start| {
+            self.items
+                .iter_range(start..self.items.len())
+                .all(|item| match item.kind {
+                    TranscriptKind::User | TranscriptKind::PeerMessage => true,
+                    TranscriptKind::Assistant => {
+                        !item.has_attachments()
+                            && item.text.trim_start().is_empty()
+                            && item
+                                .stream_chunks
+                                .iter()
+                                .all(|chunk| chunk.trim_start().is_empty())
+                    }
+                    _ => false,
+                })
         })
     }
 

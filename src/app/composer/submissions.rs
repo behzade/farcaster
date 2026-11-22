@@ -182,8 +182,8 @@ impl FarcasterApp {
                             );
                         }
                     }
+                    conversation.begin_run();
                 }
-                conversation.running = true;
                 snapshot.status = "Working".into();
                 if show_in_transcript {
                     self.mark_transcript_changed(index, index == 0, cx);

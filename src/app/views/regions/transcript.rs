@@ -535,6 +535,7 @@ impl Render for TranscriptView {
                 .filter(|trace| trace.active_for(app.composer.sessions.current_buffer()))
                 .map(|trace| (trace.clone(), app.lifecycle.awaiting_switch_route.is_some())),
             font_scale: self.font_size / crate::app::ui::theme::theme().type_scale.reading,
+            show_working: false,
             following: self.following,
             unseen: self.unseen,
             tail_reserve: transcript::tail_reserve(window.viewport_size().height),
@@ -571,7 +572,10 @@ impl Render for TranscriptView {
         }
         let document = transcript::render(
             &self.list,
-            viewport,
+            transcript::TranscriptViewport {
+                show_working: app.snapshot.conversation.awaiting_first_activity(),
+                ..viewport
+            },
             self.rows.clone(),
             app.snapshot.transcript_presentation(),
             self.disclosure_states.clone(),

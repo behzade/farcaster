@@ -354,7 +354,10 @@ impl RuntimeOwner {
             Payload::LoadState(state) => {
                 let model_change_sent = !self.pending_session_controls.model_pending();
                 let tier_change_sent = !self.pending_session_controls.service_tier_pending();
-                let normal_prompt_in_flight = self.normal_prompt_in_flight;
+                let normal_prompt_active = self.normal_prompt_in_flight
+                    || self
+                        .deferred_prompt()
+                        .is_some_and(|prompt| prompt.mode == PromptMode::Normal);
                 let selected_session = state
                     .session_file
                     .as_ref()
@@ -383,13 +386,13 @@ impl RuntimeOwner {
                     self.session_id = Some(state.session_id.clone());
                 }
                 self.active_session = selected_session.clone();
-                // An idle sample can arrive between a start event and its settlement.
+                // An idle sample can also precede dispatch of the first prompt.
                 self.backend_activity.turn.sample(state.is_streaming);
                 self.backend_activity.compaction.sample(state.is_compacting);
                 let run_active = self.backend_activity.turn.is_active();
                 let snapshot = self.active_snapshot_mut();
                 snapshot.selected_session = selected_session;
-                conversation_mut(snapshot).running = run_active || normal_prompt_in_flight;
+                conversation_mut(snapshot).running = run_active || normal_prompt_active;
                 snapshot.session = Some(*state);
                 let model_confirmed = snapshot
                     .session
@@ -447,7 +450,16 @@ impl RuntimeOwner {
                     let conversation = conversation_mut(self.active_snapshot_mut());
                     conversation.replace_history(&messages);
                     if let Some(prompt) = &mut self.pending_prompt {
-                        prompt.item = None;
+                        if prompt.waiting().is_some() {
+                            // This input has not been sent and cannot be in native history.
+                            if let Some(item) = prompt.item.clone() {
+                                let conversation = conversation_mut(self.active_snapshot_mut());
+                                conversation.append_local_user(item);
+                                conversation.begin_run();
+                            }
+                        } else {
+                            prompt.item = None;
+                        }
                     }
                 }
                 self.startup_history_loaded = true;

@@ -1115,7 +1115,6 @@ impl WorkerSession for CodexWorkerSession {
                     &event,
                     WorkerEvent::Activity(
                         WorkerActivity::TextDelta { .. }
-                            | WorkerActivity::ThinkingStarted { .. }
                             | WorkerActivity::ThinkingDelta { .. }
                             | WorkerActivity::ToolStarted { .. }
                             | WorkerActivity::ToolUpdated { .. }
@@ -2723,15 +2722,9 @@ impl CodexWorkerSession {
         if is_new {
             self.events.push_back(WorkerEvent::Started);
             self.output.clear();
-            self.reasoning_started = false;
+            // Reserve slot zero for reasoning even if answer text arrives first.
+            self.reasoning_started = !self.manual_compaction;
             self.turn_error = None;
-            if !self.manual_compaction {
-                self.reasoning_started = true;
-                self.events
-                    .push_back(WorkerEvent::Activity(WorkerActivity::ThinkingStarted {
-                        content_index: 0,
-                    }));
-            }
         }
     }
 

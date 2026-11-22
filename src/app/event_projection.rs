@@ -113,6 +113,9 @@ impl DirtyRegions {
 
     fn observe_snapshot(&mut self, app: &FarcasterApp, snapshot: &RuntimeSnapshot) {
         self.transcript |= app.lifecycle.pending_session_switch.is_some()
+            || (!Arc::ptr_eq(&app.snapshot.conversation, &snapshot.conversation)
+                && app.snapshot.conversation.awaiting_first_activity()
+                    != snapshot.conversation.awaiting_first_activity())
             || app.snapshot.saved_history != snapshot.saved_history
             || (app.snapshot.status == "Loading history") != (snapshot.status == "Loading history");
         let roots = &app.sessions.visible;

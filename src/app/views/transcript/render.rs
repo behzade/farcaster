@@ -81,6 +81,7 @@ pub(crate) struct TranscriptViewport {
     pub(crate) following: bool,
     pub(crate) unseen: usize,
     pub(crate) tail_reserve: Pixels,
+    pub(crate) show_working: bool,
 }
 
 pub(crate) fn loading_history() -> AnyElement {
@@ -115,6 +116,17 @@ pub(crate) fn loading_earlier(height: Pixels) -> AnyElement {
                 .child("Loading earlier messages…"),
         )
         .into_any_element()
+}
+
+fn working_status(font_scale: f32) -> Div {
+    div()
+        .debug_selector(|| "transcript-working".into())
+        .px(crate::app::ui::grid::transcript_inset())
+        .py(theme().size(2.0))
+        .text_size(theme().type_scale.body_small * font_scale)
+        .line_height(theme().type_scale.line_body * font_scale)
+        .text_color(theme().colors.muted)
+        .child("Working…")
 }
 
 pub(crate) fn with_saved_position_notice(document: AnyElement) -> AnyElement {
@@ -326,8 +338,9 @@ pub(crate) fn build_list(
                 return div().into_any_element();
             };
             let expanded = resolved_expanded(row, &conversation.items, &disclosure_states);
-            let reserves_tail = index + 1 == rows.len()
-                && latest_allows_tail_reserve(row, &conversation.items, expanded);
+            let last = index + 1 == rows.len();
+            let reserves_tail =
+                last && latest_allows_tail_reserve(row, &conversation.items, expanded);
             let column = transcript_column();
             #[cfg(test)]
             let column = column.debug_selector(move || format!("transcript-row-{index}"));
@@ -357,6 +370,9 @@ pub(crate) fn build_list(
                             cx,
                         ))),
                 )
+                .when(last && viewport.show_working, |column| {
+                    column.child(working_status(font_scale))
+                })
                 .into_any_element();
             transcript_context_menu(
                 index,
@@ -387,6 +403,9 @@ pub(crate) fn render(
         return div()
             .size_full()
             .bg(theme().colors.canvas)
+            .when(viewport.show_working, |root| {
+                root.child(transcript_column().child(working_status(viewport.font_scale)))
+            })
             .into_any_element();
     }
 

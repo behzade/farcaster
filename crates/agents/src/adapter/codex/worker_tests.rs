@@ -1447,12 +1447,6 @@ fn confirmed_start_precedes_a_failed_deferred_interrupt() {
         result: json!({"turn": {"id": "turn-1", "status": "inProgress"}}),
     }));
     assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
-    assert!(matches!(
-        session.poll(),
-        Some(WorkerEvent::Activity(
-            WorkerActivity::ThinkingStarted { .. }
-        ))
-    ));
     assert!(matches!(session.poll(), Some(WorkerEvent::Failed(_))));
 }
 
@@ -1728,12 +1722,7 @@ fn answer_before_reasoning_uses_a_separate_content_slot() {
         session.begin_turn(turn_id);
         session.begin_turn(turn_id);
         assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
-        assert!(matches!(
-            session.poll(),
-            Some(WorkerEvent::Activity(WorkerActivity::ThinkingStarted {
-                content_index: 0
-            }))
-        ));
+        assert!(session.poll().is_none(), "turn start alone has no content");
         for (method, delta, index) in [
             ("item/agentMessage/delta", "The answer", 1),
             ("item/reasoning/summaryTextDelta", "A thought", 0),
@@ -3257,12 +3246,6 @@ fn apply_steering_claims_all_queued_inputs_and_fans_out_batch_delivery() {
     }));
     assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
     assert!(matches!(session.poll_prompt_ack(), Some((id, Ok(()))) if id == "steer-1"));
-    assert!(matches!(
-        session.poll(),
-        Some(WorkerEvent::Activity(
-            WorkerActivity::ThinkingStarted { .. }
-        ))
-    ));
     session
         .queued_inbound
         .push_back(Ok(CodexInbound::Notification {
@@ -3564,12 +3547,6 @@ fn assert_second_abort_cancels_auto_started_queue(abort_before_delete_reply: boo
         }));
     assert!(matches!(
         session.poll(),
-        Some(WorkerEvent::Activity(
-            WorkerActivity::ThinkingStarted { .. }
-        ))
-    ));
-    assert!(matches!(
-        session.poll(),
         Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
             submission_id: Some(submission_id),
             ..
@@ -3661,12 +3638,6 @@ fn normal_prompt_delivery_uses_backend_client_id_and_original_submission_id() {
                 "content":[{"type":"text","text":"new work"}]
             }}),
         }));
-    assert!(matches!(
-        session.poll(),
-        Some(WorkerEvent::Activity(
-            WorkerActivity::ThinkingStarted { .. }
-        ))
-    ));
     assert!(matches!(
         session.poll(),
         Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
