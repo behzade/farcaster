@@ -15,6 +15,7 @@ type Items = PersistentVec<Arc<TranscriptItem>>;
 
 // Indices can change when a backend replaces history. Check the source item
 // before restoring an anchor or an expanded detail at that index.
+#[derive(Clone)]
 struct SourceItem {
     index: usize,
     fingerprint: u64,
@@ -62,7 +63,11 @@ fn fingerprint(item: &TranscriptItem, prefix_chars: usize) -> u64 {
     hash.finish()
 }
 
+#[derive(Clone)]
 pub(super) struct ReadingState {
+    // An index in a saved suffix has no absolute origin. Keep the shared items
+    // only while there is a position or disclosure from that suffix to restore.
+    suffix: Option<Items>,
     anchor: Option<ReadingAnchor>,
     disclosures: HashMap<usize, (SourceItem, bool)>,
     file_trees: HashMap<usize, (SourceItem, ChangeTreeState)>,
@@ -70,6 +75,7 @@ pub(super) struct ReadingState {
     unseen: usize,
 }
 
+#[derive(Clone)]
 pub(super) struct ReadingAnchor {
     row: TranscriptRow,
     offset: gpui::Pixels,
@@ -92,6 +98,86 @@ fn text_start(row: TranscriptRow, items: &Items) -> usize {
 }
 
 impl ReadingState {
+    pub(super) fn source_offset(
+        &self,
+        coverage: crate::agents::HistoryCoverage,
+        items: &Items,
+    ) -> Option<usize> {
+        if let Some(suffix) = &self.suffix {
+            return unique_page_start(items, suffix);
+        }
+        (coverage == crate::agents::HistoryCoverage::Complete || self.allows_history_tail())
+            .then_some(0)
+    }
+
+    pub(super) fn rebase(&mut self, start: usize, rows: &PersistentVec<TranscriptRow>) {
+        let Some(suffix) = self.suffix.take() else {
+            return;
+        };
+        // Only rows after the old suffix count as new.
+        let end = start + suffix.len();
+        self.last_count = rows.iter().filter(|row| row.key() < end).count();
+        if start == 0 {
+            return;
+        }
+        if let Some(anchor) = &mut self.anchor {
+            anchor.source.index += start;
+            anchor.row = anchor.row.at_item(anchor.source.index);
+        }
+        fn shift_keys<T>(
+            map: &mut HashMap<usize, (SourceItem, T)>,
+            start: usize,
+            rows: &PersistentVec<TranscriptRow>,
+        ) {
+            *map = std::mem::take(map)
+                .into_iter()
+                .filter_map(|(key, (mut source, value))| {
+                    let group = key != source.index;
+                    source.index += start;
+                    let key = if group {
+                        rows.iter()
+                            .find(|row| {
+                                matches!(row, TranscriptRow::ActivityGroup { .. })
+                                    && row.contains_disclosure_key(source.index)
+                            })?
+                            .disclosure_key()
+                    } else {
+                        source.index
+                    };
+                    Some((key, (source, value)))
+                })
+                .collect();
+        }
+        shift_keys(&mut self.disclosures, start, rows);
+        shift_keys(&mut self.file_trees, start, rows);
+    }
+
+    pub(super) fn apply_to_local(&self, page: &mut HistoryTail) {
+        let items = &page.presentation.items;
+        page.disclosures = self
+            .disclosures
+            .iter()
+            .filter(|(_, (source, _))| source.matches(items))
+            .map(|(key, (_, expanded))| (*key, *expanded))
+            .collect();
+        page.trees = self
+            .file_trees
+            .iter()
+            .filter(|(_, (source, _))| source.matches(items))
+            .map(|(key, (_, tree))| (*key, tree.clone()))
+            .collect();
+        if let Some(offset) = self
+            .anchor
+            .as_ref()
+            .and_then(|anchor| anchor.resolve(&page.rows, items))
+        {
+            page.list.restore_scroll(offset);
+            page.unseen = self
+                .unseen
+                .saturating_add(page.rows.len().saturating_sub(self.last_count));
+        }
+    }
+
     pub(super) fn allows_history_tail(&self) -> bool {
         self.anchor.is_none() && self.disclosures.is_empty() && self.file_trees.is_empty()
     }
@@ -110,7 +196,8 @@ impl ReadingState {
                 items,
             )
         };
-        Self {
+        let mut saved = Self {
+            suffix: None,
             anchor,
             disclosures: std::mem::take(&mut view.disclosure_states)
                 .into_iter()
@@ -122,12 +209,35 @@ impl ReadingState {
                 .collect(),
             last_count: view.last_count,
             unseen: view.unseen,
+        };
+        if view.coverage == Some(crate::agents::HistoryCoverage::Suffix)
+            && !saved.allows_history_tail()
+        {
+            saved.suffix = Some(items.clone());
         }
+        saved
+    }
+
+    pub(super) fn disclosure_states(&self) -> HashMap<usize, bool> {
+        self.disclosures
+            .iter()
+            .map(|(key, (_, value))| (*key, *value))
+            .collect()
+    }
+
+    pub(super) fn file_trees(&self) -> HashMap<usize, ChangeTreeState> {
+        self.file_trees
+            .iter()
+            .map(|(key, (_, value))| (*key, value.clone()))
+            .collect()
     }
 
     pub(super) fn follow_latest(&mut self) {
         self.anchor = None;
         self.unseen = 0;
+        if self.allows_history_tail() {
+            self.suffix = None;
+        }
     }
 
     pub(super) fn restore(self, view: &mut TranscriptView, items: &Items) -> Option<ReadingAnchor> {
@@ -182,7 +292,12 @@ impl ReadingAnchor {
         if !self.source.matches(items) {
             return None;
         }
-        let exact = rows.position(|candidate| candidate.same_position(&self.row));
+        // Prepending earlier tools can move the start of the same activity group.
+        let exact = rows.position(|candidate| {
+            candidate.same_position(&self.row)
+                || (matches!(candidate, TranscriptRow::ActivityGroup { .. })
+                    && candidate.contains_disclosure_key(self.source.index))
+        });
         // Finishing a response replaces streaming chunks with Markdown rows.
         // Keep the text position until paint, even across several row updates.
         let item_ix = exact.or_else(|| {
@@ -206,7 +321,17 @@ impl ReadingAnchor {
 }
 
 impl TranscriptView {
-    pub(crate) fn prepare_saved_history_append(&mut self, previous: &Items, next: &Items) {
+    pub(crate) fn prepare_saved_history_handoff(&mut self, previous: &Items, next: &Items) {
+        if self.coverage == Some(crate::agents::HistoryCoverage::Suffix)
+            && (!self.list.is_following_tail()
+                || !self.disclosure_states.is_empty()
+                || !self.file_trees.is_empty())
+            && let Some(session) = self.session.clone()
+        {
+            let saved = ReadingState::capture(self, previous);
+            self.reading.insert((session, self.record.clone()), saved);
+            return;
+        }
         let Some(top) = self.list.painted_history_top() else {
             return;
         };
@@ -252,7 +377,7 @@ impl HistoryTail {
     ) -> Option<gpui::ListOffset> {
         let page = &self.presentation.items;
         let start = items.len().checked_sub(page.len())?;
-        if !items.iter_range(start..items.len()).eq(page.iter()) {
+        if !matches_page_at(items, start, page) {
             return None;
         }
         self.top_in(rows, start)
@@ -280,13 +405,27 @@ impl HistoryTail {
     }
 }
 
+fn matches_page_at(items: &Items, start: usize, page: &Items) -> bool {
+    items
+        .iter_range(start..items.len())
+        .zip(page.iter())
+        .all(|(full, preview)| crate::conversation::viewport_item_matches(preview, full))
+}
+
 fn unique_page_before_append(items: &Items, page: &Items) -> Option<usize> {
     let last_start = items.len().checked_sub(page.len())?;
-    if page.is_empty()
-        || last_start == 0
-        || items.iter_range(last_start..items.len()).eq(page.iter())
-    {
+    if page.is_empty() || last_start == 0 || matches_page_at(items, last_start, page) {
         return None;
+    }
+    unique_page_start(items, page)
+}
+
+fn unique_page_start(items: &Items, page: &Items) -> Option<usize> {
+    if page.is_empty() || page.len() > items.len() {
+        return None;
+    }
+    if page.len() == items.len() {
+        return (items.shares_storage(page) || matches_page_at(items, 0, page)).then_some(0);
     }
     // Match whole items, including tools and attachments. A prefix table keeps
     // repeated turns linear and lets us detect overlapping copies of the page.
@@ -302,10 +441,13 @@ fn unique_page_before_append(items: &Items, page: &Items) -> Option<usize> {
     matched = 0;
     let mut start = None;
     for (index, item) in items.iter().enumerate() {
-        while matched > 0 && &page[matched] != item {
+        while matched > 0 && !crate::conversation::viewport_item_matches(&page[matched], item) {
             matched = prefix[matched - 1];
         }
-        matched += usize::from(&page[matched] == item);
+        matched += usize::from(crate::conversation::viewport_item_matches(
+            &page[matched],
+            item,
+        ));
         if matched == page.len() {
             if start.replace(index + 1 - matched).is_some() {
                 return None;

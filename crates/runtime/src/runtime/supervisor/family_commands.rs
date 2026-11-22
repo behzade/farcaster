@@ -368,6 +368,7 @@ impl Supervisor {
         send_configured_command(
             &actor,
             RuntimeCommand::SelectSession {
+                display_stamp: None,
                 path: session.path.clone(),
                 harness: session.harness,
                 session_id: session.id,

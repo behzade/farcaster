@@ -21,6 +21,7 @@ fn selecting_after_a_new_trust_decision_restarts_the_project_process() {
     let project = PathBuf::from("/project");
     assert!(matches!(
         restart_session_after_trust(RuntimeCommand::SelectSession {
+            display_stamp: None,
             session_id: path.to_string_lossy().into_owned(),
             path,
             harness: Backend::Pi,

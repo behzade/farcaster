@@ -1,6 +1,5 @@
 use crate::app::ui::primitives::DropdownMenu as _;
 use crate::app::ui::primitives::SelectionStyle as _;
-use std::cell::RefCell;
 
 use gpui::{
     Anchor, AnyElement, InteractiveElement as _, IntoElement, ListState, MouseButton,
@@ -10,12 +9,11 @@ use gpui_component::menu::PopupMenuItem;
 use gpui_component::scroll::Scrollbar;
 
 use super::{
-    FarcasterApp, active_item_identity,
+    FarcasterApp, PreparedActiveRows,
     colors::palette_color,
     draft_row::{DraftRow, DraftRowInput},
     folders::{FolderRow, folder_header, new_folder_row, project_header},
     groups::ActiveSessionItem,
-    reconcile_list_rows,
     rendering::active_session_drop_target,
     rows::{SessionRow, SessionRowInput, project_label},
 };
@@ -153,7 +151,7 @@ impl FarcasterApp {
         session_drag_active: bool,
         accessibility_active: bool,
         session_list: ListState,
-        session_list_rows: &RefCell<Vec<String>>,
+        prepared: PreparedActiveRows,
     ) -> impl IntoElement {
         let settings_entity = entity.clone();
         let plan_entity = entity.clone();
@@ -170,48 +168,14 @@ impl FarcasterApp {
                 OperationTiming::new(OperationKind::SidebarFamilyStatus, self.sessions.all.len());
             roots_waiting_for_active_descendants(&self.sessions.all, &self.activity.agents)
         };
-        let lists = {
-            let _timing = OperationTiming::new(
-                OperationKind::SidebarSessionLists,
-                self.sessions.visible.len(),
-            );
-            self.active_rail_lists(self.sessions.project_filter.as_deref())
-        };
-        let session_colors = self.sessions.folders.session_colors.clone();
-        let active_entry_count = lists.active.len();
-        let archived_entry_count = lists.archived_count;
-        let active_rows = lists.active;
-        let last_active_row = if !self.settings.group_sessions_by_project
-            && self.sessions.folders.folders.is_empty()
-        {
-            active_rows
-                .last()
-                .map(|item| (active_entry_count - 1, item.app_session_id()))
-        } else {
-            None
-        };
+        let active_entry_count = prepared.active_count;
+        let archived_entry_count = prepared.archived_count;
+        let last_active_row = prepared.last_drop_target(self);
+        let active_rows = prepared.rows;
         let active_drop_list = session_list.clone();
-        let mut active_rows = self.session_folder_rows(active_rows);
         let compact = self.settings.group_sessions_by_project;
-        if !compact {
-            active_rows.push(FolderRow::New);
-        }
         let group_drop_target = self.sessions.group_drop_target.clone();
-        let project_colors = self.sessions.folders.project_colors.clone();
         let editing_folder = self.sessions.editing_folder.map(|edit| edit.id);
-        reconcile_list_rows(
-            &session_list,
-            session_list_rows,
-            active_rows
-                .iter()
-                .map(|row| match row {
-                    FolderRow::Session(item) => active_item_identity(item),
-                    FolderRow::Header(folder) => format!("folder:{}", folder.id),
-                    FolderRow::New => "new-folder".into(),
-                    FolderRow::Project { path, .. } => format!("project:{}", path.display()),
-                })
-                .collect(),
-        );
 
         let selected_draft = self.sessions.selected_draft.clone();
         let active_selected_root = selected_root.clone();
@@ -225,7 +189,7 @@ impl FarcasterApp {
         let active_drop_target = self.sessions.drop_target;
         let rail_scrollbar = session_list.clone();
         let active_list = list(session_list, move |index, _, cx| {
-            match active_rows.get(index) {
+            match active_rows.get(index).map(std::rc::Rc::as_ref) {
                 Some(FolderRow::Session(item)) => match item.as_ref() {
                     ActiveSessionItem::Draft(draft) => {
                         let selected = selected_draft.as_deref() == Some(draft.id.as_str());
@@ -253,32 +217,38 @@ impl FarcasterApp {
                         let selected =
                             active_selected_root.as_ref() == Some(&item.session.catalog_key());
                         let app = active_row_entity.upgrade();
-                        let badge = app.as_ref().map(|app| {
-                            app.read(cx).rail_row_status(
-                                &item.session,
-                                waiting_roots.contains(&item.session.catalog_key()),
-                            )
-                        });
+                        let Some(app) = app.as_ref().map(|app| app.read(cx)) else {
+                            return gpui::div().into_any_element();
+                        };
+                        let key = item.session.catalog_key();
+                        let Some(session) = app.sessions.visible.by_key(&key) else {
+                            return gpui::div().into_any_element();
+                        };
+                        let badge = app.rail_row_status(session, waiting_roots.contains(&key));
                         let editing =
                             active_editing_path.as_deref() == Some(item.session.path.as_path());
                         let drop_position = active_drop_target
                             .filter(|(target, _)| *target == item.session.app_session_id)
                             .map(|(_, position)| position);
                         SessionRow::new(
-                            item.clone(),
+                            super::SessionRailItem {
+                                session: session.clone(),
+                                kind: item.kind,
+                            },
                             SessionRowInput {
                                 selected,
-                                color: session_colors
+                                color: app
+                                    .sessions
+                                    .folders
+                                    .session_colors
                                     .get(&item.session.app_session_id)
                                     .copied()
                                     .map(palette_color),
-                                status: badge,
+                                status: Some(badge),
                                 drop_position,
                                 draggable: true,
                                 title_editor: editing.then(|| active_title_input.clone()),
-                                subagents: app.as_ref().map_or(0, |app| {
-                                    app.read(cx).sessions.all.child_count(&item.session)
-                                }),
+                                subagents: app.sessions.all.child_count(session),
                                 compact,
                             },
                             active_row_entity.clone(),
@@ -306,7 +276,15 @@ impl FarcasterApp {
                     label.clone(),
                     *collapsed,
                     *count,
-                    project_colors.get(path).copied(),
+                    active_row_entity.upgrade().and_then(|entity| {
+                        entity
+                            .read(cx)
+                            .sessions
+                            .folders
+                            .project_colors
+                            .get(path)
+                            .copied()
+                    }),
                     group_drop_target
                         .as_ref()
                         .filter(|(target, _)| target == &super::GroupTarget::Project(path.clone()))

@@ -37,6 +37,7 @@ fn repeated_forks_get_distinct_actors_and_selection_reuses_a_fork() {
         }),
     )]);
     let selection = RuntimeCommand::SelectSession {
+        display_stamp: None,
         path: "/fork".into(),
         harness: Backend::Pi,
         session_id: "fork".into(),

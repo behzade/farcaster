@@ -1136,6 +1136,7 @@ fn interacted_session_document_hydrates_in_background_and_becomes_resident() -> 
 fn selecting_a_resident_document_does_not_reload_or_message_its_actor() {
     let path = PathBuf::from("/sessions/one.jsonl");
     let select = |harness: Backend| RuntimeCommand::SelectSession {
+        display_stamp: None,
         path: path.clone(),
         harness,
         session_id: "one".into(),
@@ -1184,6 +1185,7 @@ fn selecting_a_resident_document_does_not_reload_or_message_its_actor() {
 fn saved_path_reuses_the_actor_that_started_as_a_draft() {
     let path = PathBuf::from("/sessions/one.jsonl");
     let command = RuntimeCommand::SelectSession {
+        display_stamp: None,
         path: path.clone(),
         harness: Backend::Pi,
         session_id: path.to_string_lossy().into_owned(),
@@ -2556,6 +2558,7 @@ fn failed_resume_publishes_no_state_from_the_previous_process() {
     );
 
     owner.apply_history(HistoryResult {
+        transcript_stamp: None,
         generation: 1,
         path: PathBuf::from("/stale-history"),
         project: std::env::temp_dir(),
@@ -2644,6 +2647,7 @@ fn prompt_before_history_loads_resumes_the_selected_session() -> Result<(), Stri
     )?);
 
     owner.apply_command(RuntimeCommand::SelectSession {
+        display_stamp: None,
         path: session.clone(),
         harness: Backend::Cursor,
         session_id: "cursor-historical".into(),
@@ -2759,6 +2763,7 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
 
     owner.select_history(old_path.clone(), old_project);
     owner.apply_history(HistoryResult {
+        transcript_stamp: None,
         generation: 1,
         path: new_path.clone(),
         project: new_project.clone(),
@@ -2773,6 +2778,7 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
     });
     assert!(!owner.snapshot.history_preview);
     owner.apply_history(HistoryResult {
+        transcript_stamp: None,
         generation: 2,
         path: new_path.clone(),
         project: new_project.clone(),
@@ -3076,6 +3082,7 @@ fn live_session_history_load_does_not_replace_the_parked_transcript() {
     owner.history_generation = 1;
 
     owner.apply_history(HistoryResult {
+        transcript_stamp: None,
         generation: 1,
         path: path.clone(),
         project: project.clone(),
@@ -3117,6 +3124,7 @@ fn refreshing_visible_external_history_preserves_transcript_ui_state() {
 
     owner.document_refresh_generation = Some(1);
     owner.apply_history(HistoryResult {
+        transcript_stamp: None,
         generation: 1,
         path,
         project,
@@ -3153,6 +3161,7 @@ fn external_write_during_selection_refreshes_the_newly_loaded_document() {
 
     owner.refresh_session_document(path.clone(), project.clone());
     owner.apply_history(HistoryResult {
+        transcript_stamp: None,
         generation: 1,
         path,
         project,
@@ -3187,6 +3196,7 @@ fn external_document_refreshes_coalesce_while_a_load_is_in_flight() {
         Some((path.clone(), project.clone()))
     );
     owner.apply_history(HistoryResult {
+        transcript_stamp: None,
         generation: 1,
         path,
         project,

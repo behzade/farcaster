@@ -43,6 +43,7 @@ fn stopped_session_context_survives_history_selection_and_reopening() {
         (HistoryLoadKind::DocumentRefresh, json!({"totalTokens":99})),
     ] {
         restored.apply_history(HistoryResult {
+            transcript_stamp: None,
             generation: restored.history_generation,
             path: path.clone(),
             project: project.clone(),
@@ -94,6 +95,7 @@ fn background_refresh_updates_a_retired_document_without_losing_metrics() {
     });
     let previous = owner.snapshot.clone();
     owner.apply_history(HistoryResult {
+        transcript_stamp: None,
         generation: owner.history_generation,
         path: path.clone(),
         project,
@@ -673,6 +675,7 @@ fn reselect_keeps_in_flight_history_and_displays_load_failure() {
     owner.apply_history_update(tail(1, "old session"));
     owner.apply_history_update(tail(2, "later revision of the same session"));
     owner.apply_command(RuntimeCommand::SelectSession {
+        display_stamp: None,
         path: path.clone(),
         harness: Backend::Codex,
         session_id: path.to_string_lossy().into_owned(),
@@ -691,6 +694,7 @@ fn reselect_keeps_in_flight_history_and_displays_load_failure() {
         agents::HistoryCoverage::Complete
     );
     owner.apply_history(HistoryResult {
+        transcript_stamp: None,
         generation: 2,
         path,
         project,
@@ -709,6 +713,71 @@ fn reselect_keeps_in_flight_history_and_displays_load_failure() {
             .iter()
             .any(|item| item.is_error)
     );
+}
+
+#[test]
+fn unavailable_native_history_publishes_the_readable_saved_suffix()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let project = directory.path().canonicalize()?;
+    let path = project.join("missing.jsonl");
+    let state = SharedStateStore::open_at(&project.join("state.sqlite3"))?;
+    state.record_session_facts(
+        farcaster_storage::ObservedSession {
+            harness: Backend::Pi,
+            project: &project,
+            path: &path,
+            profile_id: None,
+            draft: None,
+        },
+        &Default::default(),
+    )?;
+    state.upsert_transcript_items(
+        TranscriptSession {
+            harness: Backend::Pi,
+            project: &project,
+            path: &path,
+            profile_id: None,
+        },
+        &[(
+            "saved".into(),
+            json!({"role":"user","content":"saved message"}),
+        )],
+        false,
+    )?;
+    let (mut owner, events) = crate::runtime::tests::owner_without_process(project.clone());
+    owner.state = Some(state);
+    owner.session_id = Some("missing".into());
+    let (sender, updates) = mpsc::channel();
+    owner.history_tx = sender;
+    owner.select_history(path.clone(), project.clone());
+    owner.apply_history_update(updates.recv_timeout(Duration::from_secs(10))?);
+    assert_eq!(
+        owner.snapshot.saved_history,
+        Some(SavedHistory::RefreshingPartial)
+    );
+    owner.apply_command(RuntimeCommand::SelectSession {
+        display_stamp: owner.snapshot.transcript_stamp,
+        path,
+        harness: Backend::Pi,
+        session_id: "missing".into(),
+        project,
+        key: None,
+        request: Some(2),
+    });
+    let failed = updates.recv_timeout(Duration::from_secs(10))?;
+    assert!(matches!(&failed, HistoryUpdate::Finished(result) if result.result.is_err()));
+    owner.apply_history_update(failed);
+    let published: Vec<_> = events
+        .try_iter()
+        .filter_map(|event| match event {
+            RuntimeEvent::Snapshot { snapshot, .. } => snapshot.saved_history,
+            _ => None,
+        })
+        .collect();
+    assert_eq!(published.last(), Some(&SavedHistory::Partial));
+    assert_eq!(owner.snapshot.conversation.items[0].text, "saved message");
+    Ok(())
 }
 
 #[test]
@@ -733,7 +802,7 @@ fn imported_transcript_reopens_from_sqlite_and_survives_a_failed_native_refresh(
     .unwrap();
     let open = |state: SharedStateStore| {
         let (mut owner, _) = crate::runtime::tests::owner_without_process(project.clone());
-        owner.state = Some(state);
+        owner.state = Some(state.clone());
         let (sender, updates) = mpsc::channel();
         owner.history_tx = sender;
         owner.select_history(path.clone(), project.clone());
@@ -748,7 +817,17 @@ fn imported_transcript_reopens_from_sqlite_and_survives_a_failed_native_refresh(
         assert!(owner.snapshot.document_ready);
         assert_eq!(owner.snapshot.conversation.items.len(), 2);
         assert_eq!(owner.snapshot.conversation.items[1].text, "saved answer");
-        (owner.snapshot.saved_transcript, used_adapter)
+        let stamp = state
+            .transcript_stamp(TranscriptSession {
+                harness: Backend::Pi,
+                path: &path,
+                project: &project,
+                profile_id: None,
+            })
+            .unwrap()
+            .expect("import was committed");
+        assert_eq!(owner.snapshot.transcript_stamp, Some(stamp));
+        (owner.snapshot.saved_history.is_some(), used_adapter)
     };
     assert_eq!(
         open(SharedStateStore::open_at(&database).unwrap()),
@@ -841,7 +920,7 @@ fn refresh_preserves_linked_submission_image_in_the_published_and_reopened_trans
     assert_eq!(refreshed.messages[0]["submissionId"], receipt);
     owner.apply_history_update(response);
     assert_visible(&owner.snapshot);
-    assert!(!owner.snapshot.saved_transcript);
+    assert!(owner.snapshot.saved_history.is_none());
     drop(owner);
 
     std::fs::remove_file(&path)?;
@@ -854,7 +933,7 @@ fn refresh_preserves_linked_submission_image_in_the_published_and_reopened_trans
     assert!(matches!(saved, HistoryUpdate::Saved { .. }));
     owner.apply_history_update(saved);
     assert_visible(&owner.snapshot);
-    assert!(owner.snapshot.saved_transcript);
+    assert!(owner.snapshot.saved_history.is_some());
     while owner.history_selection_generation.is_some() {
         owner.apply_history_update(updates.recv_timeout(Duration::from_secs(10))?);
     }

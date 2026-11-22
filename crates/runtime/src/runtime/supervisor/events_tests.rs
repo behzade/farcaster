@@ -161,6 +161,7 @@ fn selecting_a_retired_session_publishes_the_retained_document_without_actor_com
     fixture
         .commands
         .send(RuntimeCommand::SelectSession {
+            display_stamp: None,
             path,
             harness: Backend::Pi,
             session_id: "retired".into(),
@@ -1247,6 +1248,7 @@ fn background_dismissal_removes_cached_dialog_before_selection() -> Result<(), S
     fixture
         .commands
         .send(RuntimeCommand::SelectSession {
+            display_stamp: None,
             path,
             harness: Backend::Codex,
             session_id: "background".into(),
@@ -1396,6 +1398,7 @@ fn same_path_selection_routes_the_requested_backend_and_profile() -> Result<(), 
             fixture
                 .commands
                 .send(RuntimeCommand::SelectSession {
+                    display_stamp: None,
                     path: path.clone(),
                     project: project.clone(),
                     harness: row.harness,
@@ -1449,6 +1452,7 @@ fn cold_selection_reserves_each_backend_actor_before_its_first_snapshot() {
             fixture
                 .commands
                 .send(RuntimeCommand::SelectSession {
+                    display_stamp: None,
                     path: path.clone(),
                     project: project.clone(),
                     harness: row.harness,

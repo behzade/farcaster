@@ -375,6 +375,7 @@ fn restart_session_after_trust(command: RuntimeCommand) -> RuntimeCommand {
             project,
             key,
             request,
+            ..
         } => RuntimeCommand::RestartSession {
             path,
             harness,

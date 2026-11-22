@@ -41,15 +41,11 @@ fn sidebar_prepares_session_lists_once_for_both_panels(cx: &mut gpui::TestAppCon
                         app.sessions.archived_expanded = !collapsed;
                     });
                     LIST_BUILDS.set(0);
+                    let list = ListState::new(0, ListAlignment::Top, px(0.));
+                    let prepared = app.read(cx).prepare_active_rows(&list, &RefCell::default());
                     let _sidebar = app
                         .read(cx)
-                        .render_sessions(
-                            app.downgrade(),
-                            false,
-                            false,
-                            ListState::new(0, ListAlignment::Top, px(0.)),
-                            &RefCell::new(Vec::new()),
-                        )
+                        .render_sessions(app.downgrade(), false, false, list, prepared)
                         .into_any_element();
                     assert_eq!(
                         LIST_BUILDS.get(),
@@ -349,4 +345,91 @@ fn session(id: &str, app_session_id: i64, project: &Path, archived: bool) -> Ses
         String::new(),
     )
     .with_app_session_id(app_session_id)
+}
+
+#[gpui::test]
+fn prepared_active_rail_splices_archive_and_restore_in_display_order(
+    cx: &mut gpui::TestAppContext,
+) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::prepared_active_rail_splices_archive_and_restore_in_display_order"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let fixture = [
+                        session("first", 1, project, false),
+                        session("second", 2, project, false),
+                        session("third", 3, project, false),
+                    ];
+                    let target = fixture[1].catalog_key();
+                    let identity = fixture
+                        .each_ref()
+                        .map(super::super::RailSessionIdentity::for_session);
+                    let neighbor = |rows: &super::super::PreparedActiveRows, index: usize| {
+                        rows.replacement(&identity[index])
+                            .map(|item| item.app_session_id())
+                    };
+                    app.sessions.all = fixture.to_vec().into();
+                    app.sessions.visible = fixture.to_vec().into();
+                    app.sessions.drafts.clear();
+                    app.sessions.selected_draft = None;
+                    app.sessions.order = vec![3, 1, 2];
+                    for grouped in [false, true] {
+                        app.settings.group_sessions_by_project = grouped;
+                        app.notify_session_rail(cx);
+                        let ids = |rows: &super::super::PreparedActiveRows| {
+                            rows.visible_items()
+                                .map(ActiveSessionItem::app_session_id)
+                                .collect::<Vec<_>>()
+                        };
+                        let before = app.prepared_active_rows(cx);
+                        assert_eq!(ids(&before), [3, 1, 2]);
+                        assert_eq!(neighbor(&before, 2), Some(1));
+                        assert_eq!(neighbor(&before, 0), Some(2));
+                        assert_eq!(neighbor(&before, 1), Some(1));
+                        LIST_BUILDS.set(0);
+                        for status in [
+                            crate::runtime::RunStatus::Working,
+                            crate::runtime::RunStatus::Done,
+                        ] {
+                            runtime.send_event(crate::runtime::RuntimeEvent::SessionStatus {
+                                target: crate::sessions::session_target(&fixture[0].path),
+                                session: Some(fixture[0].path.clone()),
+                                record: Some(crate::agent_activity::SessionStatusRecord::for_row(
+                                    &fixture[0],
+                                )),
+                                status,
+                            });
+                            app.drain_runtime(cx);
+                            assert_eq!(app.rail_row_status(&fixture[0], false), status);
+                            assert_eq!(ids(&app.prepared_active_rows(cx)), [3, 1, 2]);
+                        }
+                        app.select_rail_session(target.clone(), window, cx);
+                        assert_eq!(ids(&app.prepared_active_rows(cx)), [3, 1, 2]);
+                        app.request_rail_archive(target.clone(), true, window, cx);
+                        let archived = app.prepared_active_rows(cx);
+                        assert_eq!((ids(&archived), archived.archived_count), (vec![3, 1], 1));
+                        assert_eq!(neighbor(&archived, 0), Some(3));
+                        assert_eq!(neighbor(&archived, 1), None);
+                        app.request_rail_archive(target.clone(), false, window, cx);
+                        let restored = app.prepared_active_rows(cx);
+                        assert_eq!(
+                            (ids(&restored), restored.archived_count),
+                            (vec![3, 1, 2], 0)
+                        );
+                        assert_eq!(neighbor(&restored, 1), Some(1));
+                        assert_eq!(
+                            LIST_BUILDS.get(),
+                            0,
+                            "a warm switch, archive and restore should reuse the sorted rows"
+                        );
+                    }
+                })
+            });
+        },
+    );
 }

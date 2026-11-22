@@ -88,6 +88,49 @@ impl RowHeightHints {
     }
 }
 
+/// Count only space the closed rows reserve at every wrap width. A Markdown
+/// document with long links or invisible definitions can measure much shorter
+/// than a text-based height estimate. Read all saved rows when in doubt.
+pub(crate) fn suffix_covers_viewport(
+    rows: &PersistentVec<TranscriptRow>,
+    first_safe: usize,
+    items: &PersistentVec<Arc<TranscriptItem>>,
+    viewport_height: Pixels,
+    font_scale: f32,
+) -> bool {
+    let theme = theme();
+    let mut height = rows
+        .last()
+        .filter(|row| latest_allows_tail_reserve(**row, items, false))
+        .map_or(px(0.), |_| tail_reserve(viewport_height));
+    rows.iter_range(first_safe..rows.len()).any(|row| {
+        height += match *row {
+            // The group always includes its one-line title and both insets.
+            TranscriptRow::ActivityGroup { .. } => {
+                theme.type_scale.line_body * font_scale + theme.size(4.)
+            }
+            TranscriptRow::Item { index, .. }
+                if matches!(
+                    items[index].kind,
+                    TranscriptKind::User | TranscriptKind::Assistant
+                ) =>
+            {
+                theme.space.sm * 2.
+            }
+            TranscriptRow::MessageChunk { first, last, .. }
+            | TranscriptRow::StreamChunk { first, last, .. } => {
+                (if first {
+                    theme.space.sm
+                } else {
+                    theme.space.xs
+                }) + if last { theme.space.md } else { px(0.) }
+            }
+            _ => px(0.),
+        };
+        height > viewport_height
+    })
+}
+
 #[cfg(test)]
 pub(crate) fn estimated_row_height(
     row: TranscriptRow,
@@ -245,8 +288,19 @@ pub(crate) fn project_rows(
 pub(crate) fn project_presentation_rows(
     presentation: &crate::reviews::presentation::TranscriptPresentation,
 ) -> PersistentVec<TranscriptRow> {
+    project_indexed_rows(presentation, None)
+}
+
+pub(crate) fn project_indexed_rows(
+    presentation: &crate::reviews::presentation::TranscriptPresentation,
+    markdown: Option<&conversation::markdown_structure::MarkdownIndex>,
+) -> PersistentVec<TranscriptRow> {
     review_layout::arrange(
-        project_item_rows(0..presentation.items.len(), presentation.items.iter()),
+        project_item_rows(
+            0..presentation.items.len(),
+            presentation.items.iter(),
+            markdown,
+        ),
         &presentation.items,
         presentation.active_start,
         &presentation.completed_runs,
@@ -355,6 +409,13 @@ pub(crate) struct TranscriptRowUpdate {
 }
 
 impl TranscriptRowUpdate {
+    pub(crate) fn unchanged() -> Self {
+        Self {
+            rows: None,
+            unchanged_prefix_rows: 0,
+        }
+    }
+
     pub(crate) fn replace(rows: PersistentVec<TranscriptRow>) -> Self {
         Self {
             rows: Some(rows),
@@ -658,12 +719,14 @@ fn project_rows_from(
                 .get(index)
                 .expect("projected transcript item should exist")
         }),
+        None,
     )
 }
 
 fn project_item_rows<'a>(
     indices: std::ops::Range<usize>,
     items: impl Iterator<Item = &'a Arc<TranscriptItem>>,
+    markdown: Option<&conversation::markdown_structure::MarkdownIndex>,
 ) -> Vec<TranscriptRow> {
     crate::app::infrastructure::performance::count_transcript_projections(indices.len());
     let mut rows = Vec::new();
@@ -711,10 +774,12 @@ fn project_item_rows<'a>(
             }));
         } else if matches!(item.kind, TranscriptKind::User | TranscriptKind::Assistant)
             && item.invocation.is_none()
-            && (markdown_needs_chunks(&item.text)
-                || (item.streaming && item.text.len() > MARKDOWN_CHUNK_TARGET_BYTES))
+            && let Some(chunks) = projected_markdown_chunks(
+                &item.text,
+                item.streaming,
+                markdown.and_then(|m| m.get(&index)),
+            )
         {
-            let chunks = markdown_chunks(&item.text);
             let last_block = chunks.len().saturating_sub(1);
             rows.extend(chunks.into_iter().enumerate().map(|(block, chunk)| {
                 TranscriptRow::MessageChunk {
@@ -722,7 +787,11 @@ fn project_item_rows<'a>(
                     start: chunk.start,
                     end: chunk.end,
                     block,
-                    revision: text_revision(&markdown_chunk_text(&item.text, chunk)),
+                    revision: text_revision(&chunk_text_with_structure(
+                        &item.text,
+                        chunk,
+                        markdown.and_then(|m| m.get(&index)),
+                    )),
                     first: block == 0,
                     last: block == last_block,
                     fence: chunk.fence,

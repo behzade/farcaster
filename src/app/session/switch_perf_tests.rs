@@ -21,8 +21,8 @@ use crate::{
 };
 
 const SWITCH_MESSAGES: usize = 2_000;
-const SWITCH_POLL: Duration = Duration::from_millis(2);
-const SWITCH_TIMEOUT: Duration = Duration::from_secs(15);
+pub(super) const SWITCH_POLL: Duration = Duration::from_millis(2);
+pub(super) const SWITCH_TIMEOUT: Duration = Duration::from_secs(15);
 const SUMMARY_WINDOW: Duration = Duration::from_millis(1_400);
 
 #[gpui::test]
@@ -316,7 +316,7 @@ fn saved_transcript_reopens_offline_and_keeps_painted_rows_after_refresh(
             );
             cx.update(|_, cx| {
                 let snapshot = &app.read(cx).snapshot;
-                assert!(snapshot.saved_transcript);
+                assert!(snapshot.saved_history.is_some());
                 assert!(
                     snapshot.conversation.items[SAVED - 1]
                         .text
@@ -341,7 +341,7 @@ fn saved_transcript_reopens_offline_and_keeps_painted_rows_after_refresh(
                     window.draw(cx).clear(cx);
                     let snapshot = &app.read(cx).snapshot;
                     snapshot.document_ready
-                        && !snapshot.saved_transcript
+                        && snapshot.saved_history.is_none()
                         && snapshot.conversation.items.len() == SAVED + APPENDED
                 });
                 let origins = selectors.map(|key| cx.debug_bounds(key).map(|bounds| bounds.origin));
@@ -922,6 +922,10 @@ fn cold_saved_codex_chat_draws_recent_rows_before_full_read(cx: &mut gpui::TestA
         ),
         cx,
         |project| {
+            if reopen_saved {
+                crate::app::persistence::initialize()
+                    .expect("initialize production shared session repository");
+            }
             let mut environment = vec![("PATH".into(), "/usr/bin:/bin".into())];
             if full_only {
                 // A SQLite-home override uses the full-read-only path on the same data.
@@ -987,6 +991,25 @@ fn cold_saved_codex_chat_draws_recent_rows_before_full_read(cx: &mut gpui::TestA
                         .unwrap()
                 );
                 report_saved_history_storage("after import");
+                let source_path = write_session_file(&project, "benchmark-source", 2);
+                let source =
+                    crate::agents::load_session_history(Backend::Pi, &source_path, &project)
+                        .unwrap();
+                assert!(
+                    store
+                        .replace_transcript(
+                            TranscriptSession {
+                                harness: Backend::Pi,
+                                path: &source_path,
+                                project: &project,
+                                profile_id: None
+                            },
+                            0,
+                            &source.messages,
+                            &serde_json::json!({})
+                        )
+                        .unwrap()
+                );
             }
             RuntimeHandle::spawn(
                 project.into(),
@@ -1008,7 +1031,7 @@ fn cold_saved_codex_chat_draws_recent_rows_before_full_read(cx: &mut gpui::TestA
                 thread.clone(),
                 Backend::Codex,
                 path.clone(),
-                project,
+                project.clone(),
                 "Saved chat".into(),
                 String::new(),
                 String::new(),
@@ -1021,15 +1044,63 @@ fn cold_saved_codex_chat_draws_recent_rows_before_full_read(cx: &mut gpui::TestA
                 String::new(),
             )
             .with_app_session_id(17);
-            let started = Instant::now();
-            cx.update(|window, cx| {
-                app.update(cx, |app, cx| {
-                    let key = row.catalog_key();
-                    app.sessions.all = vec![row.clone()].into();
-                    app.sessions.visible = vec![row].into();
-                    app.select_rail_session(key, window, cx);
+            let row = if reopen_saved {
+                crate::app::persistence::open()
+                    .unwrap()
+                    .cached_sessions("")
+                    .unwrap()
+                    .into_iter()
+                    .find(|saved| saved.harness == row.harness && saved.path == path)
+                    .expect("saved catalog record")
+            } else {
+                row
+            };
+            let source = reopen_saved.then(|| {
+                let row = crate::app::persistence::open()
+                    .unwrap()
+                    .cached_sessions("")
+                    .unwrap()
+                    .into_iter()
+                    .find(|r| {
+                        r.harness == Backend::Pi && r.path == project.join("benchmark-source.jsonl")
+                    })
+                    .expect("saved source chat");
+                assert!(row.has_local_transcript);
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| {
+                        app.sessions.all.upsert_by_recency(row.clone());
+                        app.sessions.visible.upsert_by_recency(row.clone());
+                        app.select_rail_session(row.catalog_key(), window, cx);
+                    });
+                });
+                wait_for_items(cx, app, &row.path, 2);
+                let bounds = cx
+                    .debug_bounds("transcript-row-1")
+                    .expect("populated source drew its last row");
+                (row, bounds)
+            });
+            let key = row.catalog_key();
+            cx.update(|_, cx| {
+                app.update(cx, |app, _| {
+                    for row in source
+                        .iter()
+                        .map(|(row, _)| row)
+                        .chain(std::iter::once(&row))
+                    {
+                        app.sessions.all.upsert_by_recency(row.clone());
+                        app.sessions.visible.upsert_by_recency(row.clone());
+                    }
                 })
             });
+            let mut clicked = Some(key);
+            let mut first_draw = None;
+            let mut loading_draws = 0;
+            let mut prior_draws = 0;
+            let mut last_unreadable = source.as_ref().map(|_| (Duration::ZERO, true));
+            let mut prior_time = Duration::ZERO;
+            let mut loading_time = Duration::ZERO;
+            let mut pending_draws = 0;
+            let started = Instant::now();
             let mut first = None;
             let mut page_rows = 0;
             let mut full_paint = None;
@@ -1040,29 +1111,93 @@ fn cold_saved_codex_chat_draws_recent_rows_before_full_read(cx: &mut gpui::TestA
                     started.elapsed() < SWITCH_TIMEOUT,
                     "live history did not arrive"
                 );
-                cx.run_until_parked();
-                let (ready, count) = cx.update(|window, cx| {
-                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                if clicked.is_none() {
+                    cx.run_until_parked();
+                }
+                let (ready, count, before_route, prior) = cx.update(|window, cx| {
+                    if let Some(key) = clicked.take() {
+                        app.update(cx, |app, cx| {
+                            app.select_rail_session(key, window, cx);
+                            if reopen_saved && let Some(trace) = &app.lifecycle.switch_paint {
+                                trace.record_geometry();
+                            }
+                        });
+                    } else {
+                        app.update(cx, |app, cx| app.drain_runtime(cx));
+                    }
+                    // Include the initial draw, before any navigation task can update the window.
                     window.draw(cx).clear(cx);
                     let app = app.read(cx);
                     let snapshot = &app.snapshot;
+                    let view = app.views.transcript.read(cx);
+                    if let Some((source, _)) = &source
+                        && app.sidebar_session_path() == Some(&source.path)
+                    {
+                        assert_eq!(app.selected_rail_root().unwrap().path, source.path);
+                        assert_eq!(
+                            app.composer.sessions.current_buffer(),
+                            crate::sessions::session_buffer(source.harness, &source.path)
+                        );
+                        assert_eq!(snapshot.selected_session.as_ref(), Some(&source.path));
+                        assert_eq!(snapshot.conversation.items.len(), 2);
+                        return (false, 0, false, true);
+                    }
+                    let local_rows = view.local_display_row_count(app);
+                    if local_rows > 0 {
+                        return (
+                            false,
+                            local_rows,
+                            app.lifecycle.awaiting_switch_route.is_some(),
+                            false,
+                        );
+                    }
                     if snapshot.selected_session.as_ref() != Some(&path) {
-                        return (false, 0);
+                        return (
+                            false,
+                            0,
+                            app.lifecycle.awaiting_switch_route.is_some(),
+                            false,
+                        );
                     }
                     if snapshot.document_ready {
                         if reopen_saved {
-                            assert!(snapshot.saved_transcript, "timed open bypassed SQLite");
+                            assert!(
+                                snapshot.saved_history.is_some(),
+                                "timed open bypassed SQLite"
+                            );
                         }
-                        return (true, app.views.transcript.read(cx).rows.len());
+                        return (true, view.rows.len(), false, false);
                     }
-                    (
-                        false,
-                        app.views.transcript.read(cx).history_tail_row_count(),
-                    )
+                    (false, view.history_tail_row_count(), false, false)
                 });
+                let drawn = started.elapsed();
+                first_draw.get_or_insert(drawn);
+                if let Some((previous, was_prior)) = last_unreadable.take() {
+                    if was_prior {
+                        prior_time += drawn - previous
+                    } else {
+                        loading_time += drawn - previous
+                    }
+                }
+                if prior {
+                    let (_, initial) = source.as_ref().unwrap();
+                    assert!(first.is_none(), "destination reverted to source");
+                    assert!(
+                        cx.debug_bounds("transcript-loading").is_none(),
+                        "spinner replaced the prior chat"
+                    );
+                    assert_eq!(cx.debug_bounds("transcript-row-1"), Some(*initial));
+                    prior_draws += 1;
+                    last_unreadable = Some((drawn, true));
+                    // GPUI's test executor drives this staged read on the next poll.
+                    // Sleeping here would add a delay before the repository can run.
+                    continue;
+                }
+                pending_draws += usize::from(before_route);
                 if !ready {
                     page_rows = page_rows.max(count);
                 }
+                let mut readable = false;
                 if count > 0 {
                     let bounds: Vec<_> = (0..count.min(24))
                         .map(|offset| {
@@ -1077,11 +1212,12 @@ fn cold_saved_codex_chat_draws_recent_rows_before_full_read(cx: &mut gpui::TestA
                         .flatten()
                         .collect();
                     if !bounds.is_empty() {
-                        let (when, initial) = first.get_or_insert_with(|| {
+                        readable = true;
+                        let (when, initial, first_before_route) = first.get_or_insert_with(|| {
                             if !reopen_saved {
                                 assert_eq!(ready, full_only, "unexpected first paint ({page_rows} provisional rows, {count} final rows)");
                             }
-                            (started.elapsed(), bounds.clone())
+                            (started.elapsed(), bounds.clone(), before_route)
                         });
                         assert_eq!(initial, &bounds, "visible tail shifted on actual history");
                         if ready {
@@ -1089,10 +1225,19 @@ fn cold_saved_codex_chat_draws_recent_rows_before_full_read(cx: &mut gpui::TestA
                             ready_frames += 1;
                             if ready_frames == 8 {
                                 eprintln!(
-                                    "Real cold open: saved={reopen_saved}, first readable {when:?}, full {full:?}, {} visible rows at identical bounds",
+                                    "Real cold open: saved={reopen_saved}, first readable {when:?}, before route ACK={first_before_route}, full {full:?}, first draw {:?}, prior visible at {prior_draws} sample(s) (sample upper bound {prior_time:?}), loading {loading_time:?} ({loading_draws} sampled draws), {pending_draws} pending route draws, {} visible rows at identical bounds",
+                                    first_draw.unwrap(),
                                     bounds.len()
                                 );
                                 if reopen_saved {
+                                    if crate::app::infrastructure::performance::tracing_every_operation() {
+                                        let ((painted, early), frames) = cx.update(|_, cx| {
+                                            let trace = app.read(cx).lifecycle.switch_paint.as_ref().unwrap();
+                                            (trace.result().expect("actual first row paint"), trace.assert_stable_frames())
+                                        });
+                                        assert!(painted <= *when, "actual paint after sampled frame");
+                                        eprintln!("Real first transcript paint: {painted:?}, before route ACK={early}, {frames} actual GPUI paints with identical row bounds");
+                                    }
                                     report_saved_history_storage("after reopen");
                                 }
                                 break;
@@ -1101,6 +1246,20 @@ fn cold_saved_codex_chat_draws_recent_rows_before_full_read(cx: &mut gpui::TestA
                     } else {
                         assert!(!ready, "full transcript has no visible tail");
                     }
+                }
+                if !readable {
+                    assert!(
+                        first.is_none(),
+                        "readable rows disappeared during session open"
+                    );
+                    let loading = cx.debug_bounds("transcript-loading").is_some();
+                    assert!(
+                        loading,
+                        "blank transcript without readable rows or loading state"
+                    );
+                    assert!(!reopen_saved, "saved chat flashed a loading frame");
+                    loading_draws += 1;
+                    last_unreadable = Some((drawn, false));
                 }
                 thread::sleep(SWITCH_POLL);
             }

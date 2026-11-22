@@ -28,8 +28,45 @@ pub struct EnqueuedPrompt {
 
 #[derive(Default)]
 pub struct PromptHistoryOverlay {
+    pub stamp: Option<TranscriptStamp>,
     pub accepted: Vec<serde_json::Value>,
     pub presentations: Vec<PromptPresentation>,
+}
+
+impl PromptHistoryOverlay {
+    pub fn apply(self, messages: &mut Arc<Vec<serde_json::Value>>) {
+        use serde_json::Value;
+        if !self.accepted.is_empty() {
+            let history_was_empty = messages.is_empty();
+            let mut submission_ids = messages
+                .iter()
+                .filter_map(|message| message.get("submissionId").and_then(Value::as_str))
+                .map(str::to_owned)
+                .collect::<std::collections::HashSet<_>>();
+            for message in self.accepted {
+                let Some(id) = message.get("submissionId").and_then(Value::as_str) else {
+                    if history_was_empty {
+                        Arc::make_mut(messages).push(message);
+                    }
+                    continue;
+                };
+                if !history_was_empty
+                    && message.get("deliveryTracked").and_then(Value::as_bool) != Some(true)
+                {
+                    continue;
+                }
+                if submission_ids.insert(id.to_owned()) {
+                    Arc::make_mut(messages).push(message);
+                }
+            }
+        }
+        if !self.presentations.is_empty() {
+            farcaster_conversation::annotate_prompt_presentations(
+                Arc::make_mut(messages).as_mut_slice(),
+                &self.presentations,
+            );
+        }
+    }
 }
 
 fn unique_prompt_session(db: &Connection, session: &Path) -> Result<Option<i64>, String> {
@@ -540,7 +577,27 @@ impl StateStore {
         if let Some(evidence) = evidence {
             self.reconcile_deliveries_for_id(id, evidence)?;
         }
+        // Read the overlay and its version from one SQLite snapshot.
+        let _read = self
+            .connection
+            .unchecked_transaction()
+            .map_err(|e| e.to_string())?;
+        let mut overlay = self.prompt_overlay_for_id(id)?;
+        overlay.stamp = match id {
+            Some(id) => self
+                .transcript_stamp_for_id(id)
+                .map_err(|e| e.to_string())?,
+            None => None,
+        };
+        Ok(overlay)
+    }
+
+    pub(super) fn prompt_overlay_for_id(
+        &self,
+        id: Option<i64>,
+    ) -> Result<PromptHistoryOverlay, String> {
         Ok(PromptHistoryOverlay {
+            stamp: None,
             accepted: self.accepted_history_for_id(id)?,
             presentations: self.presentations_for_id(id)?,
         })

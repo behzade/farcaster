@@ -317,7 +317,7 @@ impl FarcasterApp {
     }
 
     fn scroll_transcript(&mut self, scroll: Scroll, window: &mut Window, cx: &mut Context<Self>) {
-        if self.lifecycle.pending_session_switch.is_some() || self.awaiting_history_rows() {
+        if self.lifecycle.pending_session_switch.is_some() || self.awaiting_history_rows(cx) {
             return;
         }
         let list = &self.views.transcript.read(cx).list;

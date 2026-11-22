@@ -58,7 +58,7 @@ use crate::{
         self, AgentLaunchConfig, SessionActivityKind, SessionCommand, SessionEvent, SessionLaunch,
         SessionOperation, SessionStart, SessionTransport,
     },
-    conversation::{ConversationState, TranscriptItem, annotate_prompt_presentations},
+    conversation::{ConversationState, TranscriptItem},
     protocol::{
         AgentMode, ExtensionUiRequest, ExtensionUiResponse, Model, PromptImage, PromptMode,
         SessionState, SlashCommand,
@@ -95,7 +95,7 @@ use supervisor::{
 };
 pub use types::{
     ArchiveRequest, ArchiveTarget, ConfigurationStatus, DraftArchiveIdentity, RunStatus,
-    RuntimeCommand, RuntimeEvent, RuntimeSignal, RuntimeSnapshot, TaskSettings,
+    RuntimeCommand, RuntimeEvent, RuntimeSignal, RuntimeSnapshot, SavedHistory, TaskSettings,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -205,6 +205,7 @@ struct PendingQueuedPrompt {
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum HistoryLoadKind {
     Selection,
+    DisplayedSelection,
     DocumentRefresh,
 }
 
@@ -222,6 +223,7 @@ enum HistoryUpdate {
 }
 
 struct HistoryResult {
+    transcript_stamp: Option<farcaster_storage::TranscriptStamp>,
     generation: u64,
     path: PathBuf,
     project: PathBuf,

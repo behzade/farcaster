@@ -1,3 +1,5 @@
+pub mod markdown_structure;
+
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
@@ -37,6 +39,9 @@ mod images;
 pub use images::EncodedImage;
 #[path = "conversation/stream.rs"]
 mod stream;
+#[path = "conversation/viewport.rs"]
+mod viewport;
+pub use viewport::viewport_item_matches;
 #[path = "conversation/tool_details.rs"]
 mod tool_details;
 #[path = "conversation/tools.rs"]
@@ -57,7 +62,7 @@ const MAX_DIAGNOSTICS: usize = 32;
 const STREAM_CHUNK_BYTES: usize = 2 * 1024;
 const STREAM_TAIL_MAX_BYTES: usize = STREAM_CHUNK_BYTES;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TranscriptKind {
     User,
     Assistant,
@@ -71,7 +76,7 @@ pub enum TranscriptKind {
     PeerMessage,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CompactionState {
     Aborted,
     Failed,
@@ -88,7 +93,7 @@ impl CompactionState {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct ToolPresentation {
     path: String,
     additions: usize,
@@ -143,7 +148,7 @@ fn change_counts(diff: &str) -> (usize, usize) {
     })
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToolReviewState {
     Reviewing,
     Approved,
@@ -160,17 +165,19 @@ impl ToolReviewState {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct ToolReview {
     pub state: ToolReviewState,
     pub detail: Option<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct TranscriptItem {
     pub kind: TranscriptKind,
     pub label: String,
     pub text: String,
+    // Persist image references through the storage attachment store.
+    #[serde(skip)]
     pub images: Arc<Vec<Arc<EncodedImage>>>,
     pub files: Arc<Vec<FileAttachment>>,
     pub stream_chunks: Arc<Vec<Arc<str>>>,

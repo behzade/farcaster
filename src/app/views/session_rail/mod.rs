@@ -1,4 +1,6 @@
+mod active_cache;
 mod active_rail;
+pub(in crate::app::views) use active_cache::PreparedActiveRows;
 mod colors;
 mod draft_row;
 mod drag;
@@ -15,6 +17,7 @@ mod tests;
 
 use std::{collections::HashSet, path::PathBuf};
 
+use crate::utility::persistent_vec::PersistentVec;
 use gpui::{Pixels, px};
 
 use self::{
@@ -36,7 +39,11 @@ use crate::{
 pub(in crate::app) use group_drag::GroupTarget;
 pub(in crate::app) use groups::SessionRailKind;
 pub(in crate::app) use hover::{session_hover_details, session_tooltip_content};
+#[cfg(test)]
 pub(in crate::app::views) use inactive_rail::ArchivedItem;
+pub(in crate::app::views) use inactive_rail::{
+    ArchivedRow, reconcile_archived_rows, remap_archived_scroll,
+};
 pub(in crate::app) use rows::project_label;
 pub(super) use rows::session_row_height;
 
@@ -107,42 +114,49 @@ fn session_item_identity(item: &SessionRailItem) -> String {
 }
 
 pub(in crate::app::views) fn session_row_identity(session: &SessionSummary) -> String {
-    format!("session:{:?}", session.catalog_key())
+    session_key_identity(&session.catalog_key())
+}
+
+fn session_key_identity(key: &crate::sessions::SessionKey) -> String {
+    format!("session:{key:?}")
 }
 
 fn reconcile_list_rows(
     list: &gpui::ListState,
-    current: &std::cell::RefCell<Vec<String>>,
+    current: &std::cell::RefCell<PersistentVec<String>>,
     next: Vec<String>,
 ) {
     let mut current = current.borrow_mut();
     if let Some((range, count)) = minimal_row_splice(&current, &next) {
-        list.splice(range, count);
-        *current = next;
+        list.splice(range.clone(), count);
+        current.splice(
+            range.clone(),
+            next.into_iter().skip(range.start).take(count),
+        );
     }
 }
 
-fn minimal_row_splice<T: Eq>(current: &[T], next: &[T]) -> Option<(std::ops::Range<usize>, usize)> {
+fn minimal_row_splice<T: Eq + Clone>(
+    current: &PersistentVec<T>,
+    next: &[T],
+) -> Option<(std::ops::Range<usize>, usize)> {
     let prefix = current
         .iter()
         .zip(next)
         .take_while(|(left, right)| left == right)
         .count();
-    let suffix = current[prefix..]
-        .iter()
-        .rev()
-        .zip(next[prefix..].iter().rev())
+    if prefix == current.len() && prefix == next.len() {
+        return None;
+    }
+    let suffix = current
+        .iter_rev()
+        .zip(next.iter().rev())
+        .take(current.len().min(next.len()) - prefix)
         .take_while(|(left, right)| left == right)
         .count();
     let old_end = current.len().saturating_sub(suffix);
     let replacement_count = next.len().saturating_sub(prefix + suffix);
     (prefix != old_end || replacement_count != 0).then_some((prefix..old_end, replacement_count))
-}
-
-fn replacement_index_after_close(len: usize, current: usize) -> Option<usize> {
-    (current + 1 < len)
-        .then_some(current + 1)
-        .or_else(|| current.checked_sub(1))
 }
 
 fn first_unsubmitted_draft(rows: &[ActiveSessionItem]) -> Option<&DraftSession> {
@@ -202,18 +216,11 @@ impl FarcasterApp {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let mut sessions = self.selectable_session_targets();
+        let prepared = self.prepared_active_rows(cx);
         let selected = self
             .selected_rail_root()
             .map(RailSessionIdentity::for_session);
-        let replacement = selected
-            .and_then(|selected| {
-                sessions
-                    .iter()
-                    .position(|session| selected.matches(session))
-            })
-            .and_then(|index| replacement_index_after_close(sessions.len(), index))
-            .map(|index| sessions.swap_remove(index));
+        let replacement = selected.and_then(|selected| prepared.replacement(&selected));
 
         if let Some(key) = self
             .sidebar_catalog_row(&self.sessions.all)
@@ -264,11 +271,7 @@ impl FarcasterApp {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        if let Some(target) = self
-            .selectable_session_targets()
-            .into_iter()
-            .find(|target| replacement.matches(target))
-        {
+        if let Some(target) = self.prepared_active_rows(cx).selectable(&replacement) {
             self.select_visible_session(target, window, cx);
         }
     }
@@ -292,12 +295,10 @@ impl FarcasterApp {
         }
     }
 
-    fn selectable_session_targets(&self) -> Vec<ActiveSessionItem> {
-        let mut targets = self.visible_session_targets();
-        targets.retain(
-            |target| !matches!(target, ActiveSessionItem::Draft(draft) if !draft.submitted),
-        );
-        targets
+    fn prepared_active_rows(&self, cx: &mut gpui::Context<Self>) -> PreparedActiveRows {
+        self.views
+            .session_rail
+            .update(cx, |view, _| view.prepared_rows(self))
     }
 
     fn session_folder_rows(&self, items: Vec<ActiveSessionItem>) -> Vec<folders::FolderRow> {
@@ -332,28 +333,30 @@ impl FarcasterApp {
             &self.sessions.drafts,
             project_filter,
             &self.sessions.order,
-            |draft| {
-                if draft.submitted || self.composer.pending_submissions.is_empty() {
-                    return;
-                }
-                if let Some(pending) = self
-                    .composer
-                    .pending_submissions
-                    .values()
-                    .filter(|pending| {
-                        pending.result.is_none()
-                            && crate::sessions::draft_id(&pending.submitted_target)
-                                == Some(draft.id.as_str())
-                    })
-                    .min_by_key(|pending| (pending.submitted_at, &pending.id))
-                {
-                    draft.submitted = true;
-                    if draft.title.is_none() {
-                        draft.title = crate::sessions::provisional_session_title(&pending.text);
-                    }
-                }
-            },
+            |draft| self.present_rail_draft(draft),
         )
+    }
+
+    fn present_rail_draft(&self, draft: &mut DraftSession) {
+        if draft.submitted || self.composer.pending_submissions.is_empty() {
+            return;
+        }
+        if let Some(pending) = self
+            .composer
+            .pending_submissions
+            .values()
+            .filter(|pending| {
+                pending.result.is_none()
+                    && crate::sessions::draft_id(&pending.submitted_target)
+                        == Some(draft.id.as_str())
+            })
+            .min_by_key(|pending| (pending.submitted_at, &pending.id))
+        {
+            draft.submitted = true;
+            if draft.title.is_none() {
+                draft.title = crate::sessions::provisional_session_title(&pending.text);
+            }
+        }
     }
 
     fn visible_active_items(&self) -> Vec<ActiveSessionItem> {
@@ -412,16 +415,6 @@ impl FarcasterApp {
         )
     }
 
-    fn archived_session_count(&self) -> usize {
-        groups::active_session_rail_lists_for_roots(
-            self.sessions.visible.roots(),
-            &self.sessions.drafts,
-            self.sessions.project_filter.as_deref(),
-            &self.sessions.order,
-            |_| {},
-        )
-        .archived_count
-    }
     pub(in crate::app::views) fn toggle_archive(&mut self, cx: &mut gpui::Context<Self>) {
         self.sessions.archived_expanded = !self.sessions.archived_expanded;
         if self.sessions.archived_expanded {
@@ -435,7 +428,8 @@ impl FarcasterApp {
     }
 
     fn begin_archive_resize(&mut self, pointer_y: Pixels, cx: &mut gpui::Context<Self>) {
-        let bounds = self.archive_bounds(false, self.archived_session_count());
+        let count = self.prepared_active_rows(cx).archived_count;
+        let bounds = self.archive_bounds(false, count);
         self.views.archived_panel.begin_resize(bounds, pointer_y);
         self.notify_session_rail_shell(cx);
     }
@@ -445,7 +439,8 @@ impl FarcasterApp {
         pointer_y: Pixels,
         cx: &mut gpui::Context<Self>,
     ) {
-        let bounds = self.archive_bounds(false, self.archived_session_count());
+        let count = self.prepared_active_rows(cx).archived_count;
+        let bounds = self.archive_bounds(false, count);
         if self.views.archived_panel.update_resize(bounds, pointer_y) {
             self.notify_session_rail_shell(cx);
         }
@@ -461,7 +456,7 @@ impl FarcasterApp {
     pub(super) fn begin_session_drag(&mut self, cx: &mut gpui::Context<Self>) {
         self.sessions.drop_target = None;
         self.sessions.group_drop_target = None;
-        self.notify_session_rail(cx);
+        self.notify_session_rail_shell(cx);
     }
 
     pub(super) fn update_session_drop_target(
@@ -473,14 +468,14 @@ impl FarcasterApp {
         let next = Some((target, position));
         if self.sessions.drop_target != next {
             self.sessions.drop_target = next;
-            self.notify_session_rail(cx);
+            self.notify_session_rail_shell(cx);
         }
     }
 
     pub(super) fn clear_session_drop_target(&mut self, cx: &mut gpui::Context<Self>) {
         self.sessions.drop_target = None;
         self.sessions.group_drop_target = None;
-        self.notify_session_rail(cx);
+        self.notify_session_rail_shell(cx);
     }
 
     fn complete_session_row_drop(

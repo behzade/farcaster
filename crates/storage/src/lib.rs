@@ -64,6 +64,8 @@ mod settings;
 mod snapshot;
 mod traits;
 mod transcript;
+mod transcript_viewport;
+pub use transcript_viewport::StoredViewport;
 mod worker_status;
 mod workgraph_identity;
 
@@ -76,12 +78,12 @@ pub use prompts::{EnqueuedPrompt, PromptHistoryOverlay, PromptSubmission};
 pub use relocation::relocate_snapshot_session_locators;
 pub use session_controls::SessionControlSelection;
 pub use session_metrics::{SessionFacts, SessionOutcome};
-pub use session_repository::{ObservedSession, SessionRepository};
+pub use session_repository::{ObservedSession, SessionRepository, TranscriptStamp};
 pub use session_state::SessionStateChanges;
 pub use session_writer::SessionStateWriter;
 pub use snapshot::snapshot_database;
 
-const SCHEMA_VERSION: i64 = 25;
+const SCHEMA_VERSION: i64 = 28;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 const LEGACY_PI_GPUI_IMPORT_KEY: &str = "legacy_pi_gpui_state_imported";
 const REPOSITORY_BACKENDS: [&str; 3] = ["auto", "git", "jj"];
@@ -95,6 +97,7 @@ pub struct StateStore {
 pub struct SharedStateStore(Arc<Mutex<StateStore>>, Option<Arc<TranscriptDatabase>>);
 
 struct TranscriptDatabase {
+    idle_connection: Mutex<Option<Connection>>,
     path: PathBuf,
     images: PathBuf,
 }
@@ -107,6 +110,7 @@ impl SharedStateStore {
             .filter(|p| !p.is_empty())
             .map(|path| {
                 Arc::new(TranscriptDatabase {
+                    idle_connection: Mutex::default(),
                     path: PathBuf::from(path),
                     images: store.image_directory.clone(),
                 })

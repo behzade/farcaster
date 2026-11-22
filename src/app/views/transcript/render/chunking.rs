@@ -1,4 +1,5 @@
 use super::*;
+use conversation::markdown_structure::MarkdownStructure;
 
 pub(super) const MARKDOWN_CHUNK_TARGET_BYTES: usize = 2 * 1024;
 pub(in crate::app::views::transcript) const MARKDOWN_CHUNK_HARD_BYTES: usize = 8 * 1024;
@@ -25,11 +26,62 @@ pub(in crate::app::views::transcript) struct MarkdownChunk {
     pub(in crate::app::views::transcript) fence: Option<FenceContinuation>,
 }
 
-pub(super) fn markdown_needs_chunks(text: &str) -> bool {
-    text.len() > MARKDOWN_CHUNK_HARD_BYTES || text.lines().take(65).count() > 64
+pub(super) fn projected_markdown_chunks(
+    text: &str,
+    streaming: bool,
+    structure: Option<&MarkdownStructure>,
+) -> Option<Vec<MarkdownChunk>> {
+    if text.len() > MARKDOWN_CHUNK_HARD_BYTES
+        || text.lines().nth(64).is_some()
+        || (streaming && text.len() > MARKDOWN_CHUNK_TARGET_BYTES)
+    {
+        return Some(markdown_chunks_with_structure(text, structure));
+    }
+
+    // Keep reference and footnote definitions in the same document as their uses.
+    if text.len() <= MARKDOWN_CHUNK_TARGET_BYTES
+        || text.contains("]:")
+        || !text
+            .trim_end()
+            .lines()
+            .skip(1)
+            .any(|line| line.trim().is_empty())
+    {
+        return None;
+    }
+    let parsed;
+    let structure = match structure {
+        Some(s) => s,
+        None => {
+            parsed = MarkdownStructure::parse(text)?;
+            &parsed
+        }
+    };
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    // A blank line inside a list or code block still belongs to that block.
+    for &line_start in &structure.block_starts {
+        if line_start - start >= MARKDOWN_CHUNK_TARGET_BYTES {
+            chunks.push(plain_markdown_chunk(start, line_start));
+            start = line_start;
+        }
+    }
+    if chunks.is_empty() {
+        return None;
+    }
+    chunks.push(plain_markdown_chunk(start, text.len()));
+    Some(chunks)
 }
 
+#[cfg(test)]
 pub(in crate::app::views::transcript) fn markdown_chunks(text: &str) -> Vec<MarkdownChunk> {
+    markdown_chunks_with_structure(text, None)
+}
+
+fn markdown_chunks_with_structure(
+    text: &str,
+    structure: Option<&MarkdownStructure>,
+) -> Vec<MarkdownChunk> {
     let mut chunks = Vec::new();
     let mut outside_start = 0;
     let mut offset = 0;
@@ -58,11 +110,17 @@ pub(in crate::app::views::transcript) fn markdown_chunks(text: &str) -> Vec<Mark
         chunks.push(plain_markdown_chunk(0, text.len()));
     }
     // Keep inline links/images atomic even when their URLs exceed the normal chunk size.
-    if text.contains('[')
-        && let Ok(root) = markdown::to_mdast(text, &markdown::ParseOptions::gfm())
-    {
-        let mut spans = Vec::new();
-        protected_spans(&root, &mut spans);
+    let parsed;
+    if text.contains('[') {
+        let spans = if let Some(s) = structure {
+            &s.links
+        } else {
+            let Some(s) = MarkdownStructure::parse(text) else {
+                return chunks;
+            };
+            parsed = s;
+            &parsed.links
+        };
         let mut merged: Vec<MarkdownChunk> = Vec::new();
         for chunk in chunks {
             if let Some(previous) = merged.last_mut()
@@ -80,22 +138,6 @@ pub(in crate::app::views::transcript) fn markdown_chunks(text: &str) -> Vec<Mark
         return merged;
     }
     chunks
-}
-
-fn protected_spans(node: &markdown::mdast::Node, spans: &mut Vec<std::ops::Range<usize>>) {
-    use markdown::mdast::Node;
-    if matches!(
-        node,
-        Node::Image(_) | Node::Link(_) | Node::ImageReference(_) | Node::LinkReference(_)
-    ) && let Some(position) = node.position()
-    {
-        spans.push(position.start.offset..position.end.offset);
-    }
-    if let Some(children) = node.children() {
-        for child in children {
-            protected_spans(child, spans);
-        }
-    }
 }
 
 fn plain_markdown_chunk(start: usize, end: usize) -> MarkdownChunk {
@@ -210,22 +252,42 @@ fn append_fenced_markdown_chunks(
     }
 }
 
+#[cfg(test)]
 pub(in crate::app::views::transcript) fn markdown_chunk_text(
     text: &str,
     chunk: MarkdownChunk,
 ) -> Cow<'_, str> {
+    chunk_text_with_structure(text, chunk, None)
+}
+
+pub(in crate::app::views::transcript) fn chunk_text_with_structure<'a>(
+    text: &'a str,
+    chunk: MarkdownChunk,
+    structure: Option<&MarkdownStructure>,
+) -> Cow<'a, str> {
     let Some(continuation) = chunk.fence else {
         let body = &text[chunk.start..chunk.end];
-        if text.contains("]:")
-            && let Ok(root) = markdown::to_mdast(text, &markdown::ParseOptions::gfm())
-        {
-            let mut definitions = String::new();
-            collect_definitions(&root, text, &mut definitions);
-            if !definitions.is_empty() {
-                return Cow::Owned(format!("{body}\n\n{definitions}"));
+        let parsed;
+        let structure = match structure {
+            Some(structure) => structure,
+            None if text.contains("]:") => {
+                let Some(structure) = MarkdownStructure::parse(text) else {
+                    return Cow::Borrowed(body);
+                };
+                parsed = structure;
+                &parsed
             }
+            None => return Cow::Borrowed(body),
+        };
+        if structure.definitions.is_empty() {
+            return Cow::Borrowed(body);
         }
-        return Cow::Borrowed(body);
+        let mut rendered = format!("{body}\n\n");
+        for range in &structure.definitions {
+            rendered.push_str(&text[range.clone()]);
+            rendered.push('\n');
+        }
+        return Cow::Owned(rendered);
     };
     if !continuation.prepend && !continuation.append {
         return Cow::Borrowed(&text[chunk.start..chunk.end]);
@@ -296,18 +358,4 @@ pub(in crate::app::views::transcript) fn markdown_fence_closes(
         .take_while(|character| *character == fence.marker)
         .count();
     run >= fence.marker_len && trimmed.chars().skip(run).all(char::is_whitespace)
-}
-
-fn collect_definitions(node: &markdown::mdast::Node, text: &str, out: &mut String) {
-    if matches!(node, markdown::mdast::Node::Definition(_))
-        && let Some(position) = node.position()
-    {
-        out.push_str(&text[position.start.offset..position.end.offset]);
-        out.push('\n');
-    }
-    if let Some(children) = node.children() {
-        for child in children {
-            collect_definitions(child, text, out);
-        }
-    }
 }

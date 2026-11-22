@@ -1,6 +1,36 @@
 use super::RecentCache;
 
 #[test]
+fn cold_chunk_text_uses_saved_definitions_and_falls_back_for_unindexed_items() {
+    use super::{MarkdownChunk, TranscriptMarkdownCache};
+    use crate::conversation::markdown_structure::MarkdownStructure;
+
+    let tail = "See [report].";
+    let source = format!("[report]: /report\n\n[other]: /other\n\n{tail}");
+    let chunk = MarkdownChunk {
+        start: source.len() - tail.len(),
+        end: source.len(),
+        fence: None,
+    };
+    // A partial index makes its output distinguishable from a fresh parse.
+    let mut structure = MarkdownStructure::parse(&source).unwrap();
+    assert_eq!(structure.definitions.len(), 2);
+    structure.definitions.truncate(1);
+    let cache = TranscriptMarkdownCache::with_index(std::sync::Arc::new([(4, structure)].into()));
+    let frame_cache = cache.clone();
+    assert_eq!(
+        frame_cache.chunk_text(4, &source, chunk),
+        format!("{tail}\n\n[report]: /report\n")
+    );
+    for (document, item) in [(&frame_cache, 5), (&TranscriptMarkdownCache::default(), 4)] {
+        assert_eq!(
+            document.chunk_text(item, &source, chunk),
+            format!("{tail}\n\n[report]: /report\n[other]: /other\n")
+        );
+    }
+}
+
+#[test]
 fn images_gain_click_targets_without_changing_existing_links_or_code() {
     let source = "![local](a.png)\n\n![ref][image]\n\n[image]: a%20b.png\n\n[![linked](thumb.png)](large.png)\n\n```md\n![code](code.png)\n```";
     let rendered = super::clickable_images(source);

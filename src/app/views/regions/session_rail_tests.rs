@@ -76,11 +76,16 @@ fn first_archive_expansion_does_not_scroll_past_the_selected_row(cx: &mut gpui::
     use gpui::{point, px, size};
     let cx = cx.add_empty_window();
     let list = UniformListScrollHandle::new();
-    let rows = RefCell::new((0..12).map(|index| format!("session:{index}")).collect());
+    let rows: Vec<_> = (0..12).map(|index| format!("session:{index}")).collect();
     let height = session_row_height(false);
     for selected in [5, 4] {
         let mut reveal = Some(SessionReveal::SessionID(format!("session:{selected}")));
-        reveal_archived_session_row(&list, &rows, &mut reveal);
+        reveal_archived_session_row(
+            &list,
+            rows.len(),
+            |id| rows.iter().position(|row| row == id),
+            &mut reveal,
+        );
         cx.draw(
             point(px(0.), px(0.)),
             size(px(120.), height * 2.),
@@ -173,7 +178,7 @@ fn expanding_archive_reveals_newest_once_after_rows_change(cx: &mut gpui::TestAp
                 );
                 cx.update(|_, cx| {
                     let view = rail.read(cx);
-                    assert_eq!(view.rows.borrow()[0], format!("draft:archive-{newest}"));
+                    assert_eq!(view.rows[0].identity, format!("draft:archive-{newest}"));
                     assert_eq!(view.list.0.borrow().base_handle.offset().y, px(0.));
                     assert!(view.reveal.is_none());
                     assert!(view.list.0.borrow().deferred_scroll_to_item.is_none());
@@ -214,11 +219,130 @@ fn expanding_archive_reveals_newest_once_after_rows_change(cx: &mut gpui::TestAp
 #[test]
 fn empty_archive_consumes_top_reveal_without_scheduling_a_scroll() {
     let list = UniformListScrollHandle::new();
-    let rows = RefCell::new(Vec::new());
     let mut reveal = Some(SessionReveal::Index(0));
-    reveal_archived_session_row(&list, &rows, &mut reveal);
+    reveal_archived_session_row(&list, 0, |_| None, &mut reveal);
     assert!(reveal.is_none());
     assert!(list.0.borrow().deferred_scroll_to_item.is_none());
+}
+
+#[gpui::test]
+fn single_archive_change_splices_the_warm_archive(cx: &mut gpui::TestAppContext) {
+    use crate::runtime::{RuntimeCommand, RuntimeEvent};
+    use crate::sessions::SessionSummary;
+    use gpui::{point, px, size};
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::single_archive_change_splices_the_warm_archive"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let sessions: Vec<_> = (1..=256)
+                .map(|id| {
+                    SessionSummary::from_cached(
+                        id.to_string(),
+                        project.join(id.to_string()),
+                        project.into(),
+                        id.to_string(),
+                        String::new(),
+                        String::new(),
+                        None,
+                        std::time::UNIX_EPOCH,
+                        1,
+                        Default::default(),
+                        id % 2 == 0,
+                        false,
+                        String::new(),
+                    )
+                    .with_app_session_id(id)
+                })
+                .collect();
+            let selected = sessions[130].clone();
+            let previous = sessions[131].catalog_key();
+            let next = sessions[129].catalog_key();
+            let rail = cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions.selected_draft = None;
+                    app.sessions.drafts.clear();
+                    let snapshot = std::sync::Arc::make_mut(&mut app.snapshot);
+                    snapshot.selected_session = Some(selected.path.clone());
+                    snapshot.harness = Some(selected.harness);
+                    app.sessions.visible = sessions.clone().into();
+                    app.sessions.all = sessions.into();
+                    app.sessions.archived_expanded = true;
+                    app.notify_session_rail(cx);
+                    app.views.archived_session_rail.clone()
+                })
+            });
+            let height = session_row_height(false);
+            let draw = |cx: &mut gpui::VisualTestContext| {
+                cx.draw(
+                    point(px(0.), px(0.)),
+                    size(px(280.), height * 4.),
+                    |_, _| rail.clone().into_any_element(),
+                )
+            };
+            draw(cx);
+            let preparations = cx.update(|_, cx| {
+                let view = rail.read(cx);
+                assert_eq!(view.rows.len(), 128);
+                view.list
+                    .0
+                    .borrow()
+                    .base_handle
+                    .set_offset(point(px(0.), -(height * 90. + px(5.))));
+                view.preparations
+            });
+            // Insert and remove a row above the viewport, then reject a second archive.
+            for (archive, reject) in [(true, false), (false, false), (true, true)] {
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| {
+                        app.request_rail_archive(selected.catalog_key(), archive, window, cx);
+                    })
+                });
+                let check = |cx: &mut gpui::VisualTestContext, archived: bool| {
+                    draw(cx);
+                    cx.update(|_, cx| {
+                        use crate::app::views::session_rail::ArchivedItem;
+                        let view = rail.read(cx);
+                        let rows = &view.rows;
+                        assert_eq!(rows.len(), 128 + usize::from(archived));
+                        assert!(matches!(&rows[62].item, ArchivedItem::Session(k) if *k == previous));
+                        if archived {
+                            assert!(matches!(&rows[63].item, ArchivedItem::Session(k) if *k == selected.catalog_key()));
+                        }
+                        assert!(matches!(&rows[63 + usize::from(archived)].item, ArchivedItem::Session(k) if *k == next));
+                        assert_eq!(view.preparations, preparations);
+                        let top = if archived { 91. } else { 90. };
+                        assert_eq!(view.list.0.borrow().base_handle.offset().y, -(height * top + px(5.)));
+                        let app = app.read(cx);
+                        assert!(app.sessions.archived_expanded);
+                        assert_eq!(app.selected_rail_root().unwrap().catalog_key(), selected.catalog_key());
+                    });
+                };
+                check(cx, archive);
+                let request = std::iter::from_fn(|| runtime.try_recv_command())
+                    .find_map(|command| match command {
+                        RuntimeCommand::SetSessionArchived { request, .. } => Some(request),
+                        _ => None,
+                    })
+                    .expect("persist the clicked row");
+                let mut stored = selected.clone();
+                stored.archived = archive;
+                runtime.send_event(RuntimeEvent::SessionArchiveResult {
+                    request,
+                    rows: if reject {
+                        Err("fixture archive failure".into())
+                    } else {
+                        Ok(vec![stored])
+                    },
+                });
+                cx.update(|_, cx| app.update(cx, |app, cx| app.drain_runtime(cx)));
+                check(cx, archive && !reject);
+            }
+        },
+    );
 }
 
 #[gpui::test]
@@ -561,7 +685,7 @@ fn revealing_profile_copies_uses_the_requested_active_or_archived_row() {
             session
         });
         let keys = sessions.each_ref().map(session_row_identity);
-        let rows = RefCell::new(keys.to_vec());
+        let rows = RefCell::new(keys.iter().cloned().collect());
         let list = ListState::new(2, ListAlignment::Top, gpui::px(0.0))
             .with_uniform_item_height(session_row_height(false));
         let archived_list = UniformListScrollHandle::new();
@@ -570,7 +694,12 @@ fn revealing_profile_copies_uses_the_requested_active_or_archived_row() {
                 &sessions[index],
             )));
             if archived {
-                reveal_archived_session_row(&archived_list, &rows, &mut reveal);
+                reveal_archived_session_row(
+                    &archived_list,
+                    keys.len(),
+                    |id| keys.iter().position(|row| row == id),
+                    &mut reveal,
+                );
                 assert_eq!(
                     archived_list
                         .0

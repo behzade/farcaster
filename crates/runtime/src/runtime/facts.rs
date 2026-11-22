@@ -17,7 +17,7 @@ impl RuntimeSnapshot {
         self.session_goal = facts.goal;
         self.last_outcome = facts.outcome;
         if facts.cache_usage.prompt_tokens > self.conversation.cache_usage().prompt_tokens {
-            conversation_mut(self).restore_cache_usage(facts.cache_usage);
+            Arc::make_mut(&mut self.conversation).restore_cache_usage(facts.cache_usage);
         }
         self.observed_service_tier = facts.service_tier.clone();
         self.prefill_service_tier = facts.service_tier;

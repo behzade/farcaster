@@ -8,7 +8,7 @@ use farcaster_agent_protocol::{CommonTool, ToolCategory, ToolMetadata};
 #[path = "command_display.rs"]
 mod command_display;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ToolExecutionState {
     #[default]
     Pending,
@@ -17,13 +17,15 @@ pub enum ToolExecutionState {
     Failed,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct ToolDetails {
     pub name: String,
     pub arguments: Value,
     pub result: Option<Value>,
     pub metadata: ToolMetadata,
     pub state: ToolExecutionState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) viewport: Option<super::viewport::ToolPreview>,
 }
 
 impl ToolDetails {
@@ -60,10 +62,14 @@ impl ToolDetails {
             result: None,
             metadata,
             state: ToolExecutionState::Pending,
+            viewport: None,
         }
     }
 
     pub fn summary(&self) -> String {
+        if let Some(viewport) = &self.viewport {
+            return viewport.summary.clone();
+        }
         if self.metadata.category == Some(ToolCategory::Execute)
             && let Some(command) = self.display_command()
         {

@@ -128,3 +128,17 @@ fn review_from_arguments(arguments: &Value) -> Option<Review> {
 #[cfg(test)]
 #[path = "artifact_tests.rs"]
 mod tests;
+
+pub fn hydrated_row(
+    source: &std::sync::Arc<TranscriptItem>,
+    project: &Path,
+) -> std::sync::Arc<TranscriptItem> {
+    let Some(result) = hydration_result(source, project) else {
+        return source.clone();
+    };
+    let mut item = source.as_ref().clone();
+    let details =
+        std::sync::Arc::make_mut(item.tool_details.as_mut().expect("review row has details"));
+    details.result = Some(result);
+    std::sync::Arc::new(item)
+}

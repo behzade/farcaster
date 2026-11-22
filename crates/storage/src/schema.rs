@@ -50,7 +50,14 @@ impl StateStore {
                     migrate_v14_to_v15(&migration)?;
                 }
                 Some(14) => migrate_v14_to_v15(&migration)?,
-                Some(15..=24) => {}
+                Some(15..=25) => {}
+                // Rebuild only derived pages to update the turn boundary, image budget,
+                // and Markdown source positions.
+                Some(26..=27) => {
+                    migration
+                        .execute("DELETE FROM transcript_viewports", [])
+                        .map_err(|error| format!("invalidate old transcript viewports: {error}"))?;
+                }
                 Some(version) => {
                     return Err(format!(
                         "GUI state schema {version} is not supported by this build"
@@ -92,6 +99,7 @@ impl StateStore {
                 .map_err(|error| format!("resolve session locator directory: {error}"))?,
         )?;
         super::workgraph_identity::migrate(&mut store.connection)?;
+        store.schedule_viewport_backfill();
         Ok(store)
     }
 

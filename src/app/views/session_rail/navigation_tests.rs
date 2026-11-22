@@ -377,7 +377,7 @@ fn switching_active_chats_reuses_the_expanded_archive(cx: &mut gpui::TestAppCont
                     let rows = rail.update(cx, |rail, cx| rail.sorted_rows(app.read(cx)));
                     assert_eq!(rows.len(), 1);
                     assert!(matches!(
-                        &rows[0],
+                        &rows[0].item,
                         super::super::ArchivedItem::Session(key) if *key == archived.catalog_key()
                     ));
                 });
@@ -389,7 +389,7 @@ fn switching_active_chats_reuses_the_expanded_archive(cx: &mut gpui::TestAppCont
                     app.request_rail_archive(archived.catalog_key(), false, window, cx)
                 });
                 window.draw(cx).clear(cx);
-                assert_eq!(rail.read(cx).preparations, before + 1);
+                assert_eq!(rail.read(cx).preparations, before);
                 assert!(
                     rail.update(cx, |rail, cx| rail.sorted_rows(app.read(cx)))
                         .is_empty()
@@ -491,6 +491,7 @@ fn archive_uses_exact_unassigned_neighbor_and_rechecks_it_on_confirmation(
                         let b = rows[1].path.clone();
                         let c = rows[2].path.clone();
                         app.sessions.visible = rows.to_vec().into();
+                        app.notify_session_rail(cx);
                         app.lifecycle.pending_session_switch = None;
                         std::sync::Arc::make_mut(&mut app.snapshot).selected_session =
                             Some(rows[0].path.clone());
@@ -504,6 +505,7 @@ fn archive_uses_exact_unassigned_neighbor_and_rechecks_it_on_confirmation(
                             } else {
                                 app.sessions.visible.reverse();
                             }
+                            app.notify_session_rail(cx);
                             app.stop_and_archive_pending_session(window, cx);
                         }
                         let archives: Vec<_> = std::iter::from_fn(|| runtime.try_recv_command())

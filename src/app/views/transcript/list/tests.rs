@@ -387,6 +387,15 @@ fn history_tail_rechecks_measured_room_after_resize(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn tail_paints_only_the_last_row_when_it_fills_the_window(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    let state = state_with_rows(100);
+    state.scroll_to_end();
+    let rows = draw_transcript(cx, &state, theme().size(480.), theme().size(100.));
+    assert_eq!(rows, vec![99]);
+}
+
+#[gpui::test]
 fn measured_overdraw_is_cached_until_invalidated(cx: &mut TestAppContext) {
     let cx = cx.add_empty_window();
     let state = state_with_rows(100);

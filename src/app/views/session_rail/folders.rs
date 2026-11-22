@@ -142,7 +142,7 @@ pub(super) fn project_group_rows(
     rows
 }
 
-fn project_labels(paths: Vec<PathBuf>) -> Vec<String> {
+pub(super) fn project_labels(paths: Vec<PathBuf>) -> Vec<String> {
     let suffixes = paths
         .iter()
         .map(|path| {

@@ -39,7 +39,11 @@ impl FarcasterApp {
         if !current.text.is_empty() {
             self.engage_current_draft();
         }
+        let before = self.sessions.drafts.len();
         self.park_current_draft(&current_target);
+        if self.sessions.drafts.len() != before {
+            self.invalidate_active_rail_rows(cx);
+        }
         self.capture_center_surface();
         let snapshot = self.composer.sessions.switch_to(target, current);
         self.apply_composer_snapshot(snapshot, window, cx);

@@ -26,3 +26,17 @@ CREATE INDEX IF NOT EXISTS transcript_accepted_prompt ON session_events(session_
   WHERE json_extract(body,'$.type')='accepted_prompt';
 CREATE INDEX IF NOT EXISTS transcript_user_ordinals ON transcript_messages(session_id,ordinal) WHERE user_message=1;
 CREATE INDEX IF NOT EXISTS transcript_linked_ordinals ON transcript_messages(session_id,ordinal) WHERE submission_id IS NOT NULL OR inherited_fields=1;
+
+CREATE TABLE IF NOT EXISTS transcript_viewports (
+    session_id INTEGER PRIMARY KEY REFERENCES transcript_documents(session_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    revision INTEGER NOT NULL,
+    event_seq INTEGER NOT NULL,
+    from_beginning INTEGER NOT NULL,
+    items BLOB
+);
+CREATE INDEX IF NOT EXISTS transcript_prompt_events
+  ON session_events(session_id,seq) WHERE json_extract(body,'$.type') IN
+   ('accepted_prompt','prompt_presentation','prompt_delivery_receipt','prompt_delivery_resolution');
+
+INSERT OR IGNORE INTO meta(key,value)
+SELECT 'transcript_viewport_backfill','1' WHERE EXISTS(SELECT 1 FROM transcript_documents);

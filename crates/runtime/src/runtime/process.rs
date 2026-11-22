@@ -849,6 +849,7 @@ impl RuntimeOwner {
 }
 
 pub(super) fn conversation_mut(snapshot: &mut RuntimeSnapshot) -> &mut ConversationState {
+    snapshot.transcript_stamp = None;
     Arc::make_mut(&mut snapshot.conversation)
 }
 

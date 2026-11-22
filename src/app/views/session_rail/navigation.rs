@@ -142,7 +142,7 @@ impl FarcasterApp {
         let current = active_index.or_else(|| {
             archived
                 .iter()
-                .position(|item| item.matches(&selected))
+                .position(|row| row.item.matches(&selected))
                 .map(|i| active.len() + i)
         });
         let Some(step) = session_step(active.len(), archived.len(), current, direction) else {
@@ -151,7 +151,7 @@ impl FarcasterApp {
         let target = match step {
             SessionStep::Active(index) => active.swap_remove(index),
             SessionStep::Archived(index) => {
-                let Some(target) = archived[index].resolve(self) else {
+                let Some(target) = archived[index].item.resolve(self) else {
                     return;
                 };
                 target

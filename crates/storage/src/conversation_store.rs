@@ -22,6 +22,7 @@ pub struct StoredTranscript {
     pub complete_from_start: bool,
     pub total: usize,
     pub revision: i64,
+    pub stamp: TranscriptStamp,
     pub metadata: Value,
 }
 
@@ -36,21 +37,46 @@ impl SharedStateStore {
         let Some(database) = &self.1 else {
             return self.with(operation);
         };
-        let connection = Connection::open_with_flags(
-            &database.path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )
-        .map_err(|e| format!("open transcript database: {e}"))?;
-        connection
-            .busy_timeout(DATABASE_BUSY_TIMEOUT)
-            .map_err(|e| e.to_string())?;
-        connection
-            .pragma_update(None, "foreign_keys", true)
-            .map_err(|e| e.to_string())?;
-        operation(&mut StateStore {
+        // Keep an idle connection for the next open. A concurrent import gets
+        // its own connection and cannot block a viewport read on this mutex.
+        let cached = database
+            .idle_connection
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        let connection = match cached {
+            Some(connection) => connection,
+            None => {
+                let connection = Connection::open_with_flags(
+                    &database.path,
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                        | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+                )
+                .map_err(|e| format!("open transcript database: {e}"))?;
+                connection
+                    .busy_timeout(DATABASE_BUSY_TIMEOUT)
+                    .map_err(|e| e.to_string())?;
+                connection
+                    .pragma_update(None, "foreign_keys", true)
+                    .map_err(|e| e.to_string())?;
+                connection
+            }
+        };
+        let mut store = StateStore {
             connection,
             image_directory: database.images.clone(),
-        })
+        };
+        let result = operation(&mut store);
+        if result.is_ok() && store.connection.is_autocommit() {
+            let mut idle = database
+                .idle_connection
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if idle.is_none() {
+                *idle = Some(store.connection);
+            }
+        }
+        result
     }
 }
 
@@ -138,27 +164,25 @@ struct BlockImage {
 
 // A partial transcript paints only below a user turn. Many sessions have hundreds of
 // consecutive tool items, so seek through the user-only index before loading bodies.
-fn viewport_page_start(
+pub(super) fn viewport_page_start(
     db: &Connection,
     id: i64,
     start: usize,
-    total: usize,
 ) -> rusqlite::Result<usize> {
     const EXTRA_MESSAGES: usize = 1024;
     const EXTRA_BYTES: i64 = 8 * 1024 * 1024;
     let earliest = start.saturating_sub(EXTRA_MESSAGES);
-    let spare = (total - start).min(16);
+    // Start at a turn boundary before the requested rows. A late user message
+    // inside the page can leave too few independent rows to fill the window.
     let anchor = db
         .query_row(
             "SELECT ordinal FROM transcript_messages WHERE session_id=?1 AND user_message=1
             AND ordinal BETWEEN ?2 AND ?3 ORDER BY ordinal DESC LIMIT 1",
-            params![id, earliest, total - spare],
+            params![id, earliest, start],
             |r| r.get::<_, usize>(0),
         )
         .optional()?;
-    let candidate = anchor
-        .unwrap_or(if earliest == 0 { 0 } else { start })
-        .min(start);
+    let candidate = anchor.unwrap_or(if earliest == 0 { 0 } else { start });
     if candidate == start {
         return Ok(start);
     }
@@ -175,7 +199,7 @@ fn viewport_page_start(
     })
 }
 
-const TRANSCRIPT_SELECT: &str = "SELECT m.body,m.images,m.submission_id,COALESCE(o.images_json,json_extract(e.body,'$.images')),o.display_message,o.invocation,m.ordinal,m.source_digest
+pub(super) const TRANSCRIPT_SELECT: &str = "SELECT m.body,m.images,m.submission_id,COALESCE(o.images_json,json_extract(e.body,'$.images')),o.display_message,o.invocation,m.ordinal,m.source_digest
              FROM transcript_messages m
              LEFT JOIN session_events e ON e.session_id=m.session_id AND e.seq=(
                  SELECT min(r.seq) FROM session_events r
@@ -219,11 +243,19 @@ impl StateStore {
         ))
     }
 
-    fn decode_message(&self, row: &Row<'_>) -> Result<Value> {
+    pub(super) fn decode_message(&self, row: &Row<'_>) -> Result<Value> {
+        self.decode_message_with_images(row, |image| Ok(image.into_inline()?))
+    }
+
+    pub(super) fn decode_message_with_images(
+        &self,
+        row: &Row<'_>,
+        mut inline: impl FnMut(PromptImage) -> Result<PromptImage>,
+    ) -> Result<Value> {
         let mut message: Value = serde_json::from_str(row.get_ref(0)?.as_str()?)?;
         let references: Vec<BlockImage> = serde_json::from_str(row.get_ref(1)?.as_str()?)?;
-        let originals: Vec<crate::images::StoredImage> = match row.get::<_, Option<String>>(3)? {
-            Some(images) => serde_json::from_str(&images)?,
+        let originals: Vec<crate::images::StoredImage> = match row.get_ref(3)?.as_str_or_null()? {
+            Some(images) => serde_json::from_str(images)?,
             None => Vec::new(),
         };
         let mut originals = originals.into_iter();
@@ -245,7 +277,7 @@ impl StateStore {
                 // A local delivery receipt identifies the exact submitted files, even
                 // when the backend omitted an image or returned a shortened preview.
                 if let Some(reference) = originals.next().or_else(|| archived.map(|r| r.image)) {
-                    let image = self.decode_prompt_image(reference)?.into_inline()?;
+                    let image = inline(self.decode_prompt_image(reference)?)?;
                     block["data"] = image.data.into();
                     block["mimeType"] = image.mime_type.into();
                 }
@@ -254,9 +286,9 @@ impl StateStore {
                 return Err("invalid stored image block".into());
             }
             for reference in originals {
-                content.push(serde_json::to_value(
-                    self.decode_prompt_image(reference)?.into_inline()?,
-                )?);
+                content.push(serde_json::to_value(inline(
+                    self.decode_prompt_image(reference)?,
+                )?)?);
             }
         }
         if let (Some(display), Some(invocation)) = (
@@ -326,13 +358,37 @@ impl StateStore {
         let Some(id) = session.find(&tx)? else {
             return Ok(None);
         };
-        let Some((revision,full,total,metadata)) = tx.query_row(
-            "SELECT revision,complete,item_count,metadata FROM transcript_documents WHERE session_id=?1",
-            [id],|r| Ok((r.get(0)?,r.get::<_,bool>(1)?,r.get::<_,usize>(2)?,r.get::<_,String>(3)?))
-        ).optional()? else {return Ok(None)};
+        self.read_conversation_transaction(&tx, id, limit, align_to_turn)
+    }
+
+    pub(super) fn read_conversation_transaction(
+        &self,
+        tx: &Transaction<'_>,
+        id: i64,
+        limit: Option<usize>,
+        align_to_turn: bool,
+    ) -> Result<Option<StoredTranscript>> {
+        let select = format!(
+            "SELECT revision,complete,item_count,metadata,({}) FROM transcript_documents WHERE session_id=?1",
+            transcript_viewport::PRESENTATION_STAMP
+        );
+        let Some((revision, full, total, metadata, prompt_event_seq)) = tx
+            .query_row(&select, [id], |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get::<_, bool>(1)?,
+                    r.get::<_, usize>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get(4)?,
+                ))
+            })
+            .optional()?
+        else {
+            return Ok(None);
+        };
         let mut start = total.saturating_sub(limit.unwrap_or(total));
         if align_to_turn && start > 0 {
-            start = viewport_page_start(&tx, id, start, total)?;
+            start = viewport_page_start(&tx, id, start)?;
         }
         let count = total - start;
         let mut statement = tx.prepare_cached(&format!(
@@ -347,6 +403,11 @@ impl StateStore {
             complete: full && count == total,
             complete_from_start: full,
             revision,
+            stamp: TranscriptStamp {
+                session_id: id,
+                revision,
+                prompt_event_seq,
+            },
             total,
             messages,
             metadata: serde_json::from_str(&metadata)?,
@@ -358,9 +419,14 @@ impl StateStore {
         expected: i64,
         messages: &[Value],
         metadata: &Value,
-    ) -> Result<bool, String> {
-        self.replace_conversation_inner(session, expected, messages, metadata)
-            .map_err(|e| format!("import transcript: {e}"))
+    ) -> Result<Option<TranscriptStamp>, String> {
+        let applied = self
+            .replace_conversation_inner(session, expected, messages, metadata)
+            .map_err(|e| format!("import transcript: {e}"))?;
+        if applied.is_some() {
+            self.refresh_viewport_for_session(session);
+        }
+        Ok(applied)
     }
     fn replace_conversation_inner(
         &self,
@@ -368,7 +434,7 @@ impl StateStore {
         expected: i64,
         messages: &[Value],
         metadata: &Value,
-    ) -> Result<bool> {
+    ) -> Result<Option<TranscriptStamp>> {
         // Read only fingerprints in the common append case. Encoding images can touch
         // the filesystem, so do that before taking SQLite's write lock.
         let read = self.connection.unchecked_transaction()?;
@@ -387,7 +453,7 @@ impl StateStore {
             )
             .optional()?;
         if info.as_ref().map_or(0, |header| header.0) != expected {
-            return Ok(false);
+            return Ok(None);
         }
         let fingerprints = {
             let mut stmt=read.prepare("SELECT source_digest FROM transcript_messages WHERE session_id=?1 ORDER BY ordinal")?;
@@ -422,7 +488,7 @@ impl StateStore {
             .optional()?
             .unwrap_or(0);
         if expected != revision {
-            return Ok(false);
+            return Ok(None);
         }
         if prefix == messages.len()
             && prefix == fingerprints.len()
@@ -430,7 +496,7 @@ impl StateStore {
                 .as_ref()
                 .is_some_and(|(_, complete, previous)| *complete && previous == &metadata)
         {
-            return Ok(true);
+            return Ok(self.transcript_stamp_for_id(id)?);
         }
         let mut existing = HashMap::new();
         {
@@ -550,8 +616,9 @@ impl StateStore {
             used_keys.insert(key);
         }
         drop(statement);
+        let stamp = self.transcript_stamp_for_id(id)?;
         tx.commit()?;
-        Ok(true)
+        Ok(stamp)
     }
     pub(super) fn write_conversation_items(
         &self,
@@ -560,7 +627,11 @@ impl StateStore {
         complete: bool,
     ) -> Result<(), String> {
         self.write_conversation_items_inner(session, items, complete)
-            .map_err(|e| format!("save transcript items: {e}"))
+            .map_err(|e| format!("save transcript items: {e}"))?;
+        if !items.is_empty() {
+            self.schedule_session_viewport(session);
+        }
+        Ok(())
     }
     fn write_conversation_items_inner(
         &self,

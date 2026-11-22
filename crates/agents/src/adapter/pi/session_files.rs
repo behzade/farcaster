@@ -855,6 +855,7 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
     }
     Ok(Some((
         SessionSummary {
+            has_local_transcript: false,
             id,
             draft_id: None,
             app_session_id: 0,

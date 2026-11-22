@@ -56,6 +56,7 @@ pub(super) use chunking::{
     MARKDOWN_CHUNK_HARD_BYTES, markdown_chunk_text, markdown_chunks, markdown_fence,
     markdown_fence_closes,
 };
+pub(super) use chunking::{MarkdownChunk, chunk_text_with_structure};
 use detail_rows::{render_agent_message, render_error, render_thinking};
 #[allow(unused_imports)]
 pub(super) use detail_rows::{thinking_has_details, thinking_preview, thinking_preview_emphasis};
@@ -70,8 +71,12 @@ pub(super) use rows::matching_item_prefix;
 pub(crate) use rows::*;
 use tool_rows::{render_activity_group, render_tool};
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct TranscriptViewport {
+    pub(in crate::app) switch_trace: Option<(
+        std::sync::Arc<crate::app::infrastructure::performance::SwitchPaintTrace>,
+        bool,
+    )>,
     pub(crate) font_scale: f32,
     pub(crate) following: bool,
     pub(crate) unseen: usize,
@@ -90,6 +95,24 @@ pub(crate) fn loading_history() -> AnyElement {
                 .text_color(theme().colors.muted)
                 .child("Loading history…"),
         )
+        .into_any_element()
+}
+
+pub(crate) fn with_saved_position_notice(document: AnyElement) -> AnyElement {
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .child(
+            crate::app::ui::layout::chat_column()
+                .debug_selector(|| "transcript-position-unavailable".into())
+                .flex_none()
+                .py(theme().space.sm)
+                .text_size(theme().type_scale.body_small)
+                .text_color(theme().colors.muted)
+                .child("Your saved position is unavailable. Showing the saved part of this conversation."),
+        )
+        .child(div().flex_1().min_h_0().child(document))
         .into_any_element()
 }
 
@@ -254,7 +277,7 @@ pub(super) fn copy_transcript_items(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn render(
+pub(crate) fn build_list(
     list_state: &TranscriptListState,
     viewport: TranscriptViewport,
     rows: std::sync::Arc<PersistentVec<TranscriptRow>>,
@@ -263,25 +286,15 @@ pub(crate) fn render(
     file_trees: std::collections::HashMap<usize, crate::app::ui::change_tree::ChangeTreeState>,
     markdown_cache: TranscriptMarkdownCache,
     entity: WeakEntity<FarcasterApp>,
-) -> AnyElement {
-    if rows.is_empty() {
-        return div()
-            .size_full()
-            .bg(theme().colors.canvas)
-            .into_any_element();
-    }
-
+) -> list::TranscriptList {
     let font_scale = viewport.font_scale;
-    let history_tail = list_state.is_history_tail();
-    let visual_selection_active = list_state.selected_text().is_some();
-    let jump = entity.clone();
     let row_entity = entity;
     let selection_groups = rows.clone();
     let row_selection_groups = rows.clone();
     let selection_copy_rows = rows.clone();
     let selection_items = conversation.items.clone();
     let selection_state = list_state.clone();
-    let view = transcript_list_grouped(
+    transcript_list_grouped(
         list_state.clone(),
         move |index| selection_group_start(&selection_groups, index),
         move |range| copy_transcript_row_range(&selection_items, &selection_copy_rows, range),
@@ -336,8 +349,41 @@ pub(crate) fn render(
                 content,
             )
         },
-    );
+    )
+    .with_switch_trace(viewport.switch_trace)
+}
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render(
+    list_state: &TranscriptListState,
+    viewport: TranscriptViewport,
+    rows: std::sync::Arc<PersistentVec<TranscriptRow>>,
+    conversation: Arc<crate::reviews::presentation::TranscriptPresentation>,
+    disclosure_states: std::collections::HashMap<usize, bool>,
+    file_trees: std::collections::HashMap<usize, crate::app::ui::change_tree::ChangeTreeState>,
+    markdown_cache: TranscriptMarkdownCache,
+    entity: WeakEntity<FarcasterApp>,
+) -> AnyElement {
+    if rows.is_empty() {
+        return div()
+            .size_full()
+            .bg(theme().colors.canvas)
+            .into_any_element();
+    }
+
+    let history_tail = list_state.is_history_tail();
+    let visual_selection_active = list_state.selected_text().is_some();
+    let jump = entity.clone();
+    let view = build_list(
+        list_state,
+        viewport.clone(),
+        rows,
+        conversation,
+        disclosure_states,
+        file_trees,
+        markdown_cache,
+        entity,
+    );
     div()
         .id(if history_tail {
             "history-tail"
@@ -578,7 +624,13 @@ fn render_row(
             follows_tool,
             markdown_cache.state_with(
                 MarkdownStateKey::message_chunk(index, block, revision),
-                || markdown_chunk_text(&items[index].text, MarkdownChunk { start, end, fence }),
+                || {
+                    markdown_cache.chunk_text(
+                        index,
+                        &items[index].text,
+                        MarkdownChunk { start, end, fence },
+                    )
+                },
                 items[index].kind == TranscriptKind::User,
                 cx,
             ),

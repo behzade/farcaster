@@ -9,7 +9,6 @@ use super::{
     hover::session_tooltip_lines,
     minimal_row_splice, numbered_session_items,
     rendering::{archived_panel_rows, archived_panel_slot},
-    replacement_index_after_close,
     rows::run_status_visual,
     session_accessible_label,
 };
@@ -20,13 +19,6 @@ use crate::{
     app::ui::theme::theme,
     sessions::{DraftSession, SessionSummary, UsageSummary},
 };
-
-#[test]
-fn closing_a_session_keeps_its_visual_slot_when_possible() {
-    assert_eq!(replacement_index_after_close(4, 1), Some(2));
-    assert_eq!(replacement_index_after_close(4, 3), Some(2));
-    assert_eq!(replacement_index_after_close(1, 0), None);
-}
 
 #[test]
 fn numbers_follow_visible_order_and_skip_unsubmitted_drafts() {
@@ -299,9 +291,9 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
 
 #[test]
 fn minimal_row_reconciliation_preserves_equal_prefix_and_suffix() {
-    let current = vec!["one", "two", "three"];
+    let current = ["one", "two", "three"].into_iter().collect();
 
-    assert_eq!(minimal_row_splice(&current, &current), None);
+    assert_eq!(minimal_row_splice(&current, &["one", "two", "three"]), None);
     assert_eq!(
         minimal_row_splice(&current, &["one", "changed", "three"]),
         Some((1..2, 1))
@@ -499,11 +491,14 @@ fn profile_copies_keep_distinct_list_and_navigation_keys_when_reordered() {
         });
         assert_ne!(keys[0], keys[1]);
         let reordered = [keys[1].clone(), keys[0].clone()];
-        assert_eq!(minimal_row_splice(&keys, &reordered), Some((0..2, 2)));
+        assert_eq!(
+            minimal_row_splice(&keys.iter().cloned().collect(), &reordered),
+            Some((0..2, 2))
+        );
         let list = gpui::ListState::new(2, gpui::ListAlignment::Top, px(0.0));
-        let current = std::cell::RefCell::new(keys.to_vec());
+        let current = std::cell::RefCell::new(keys.iter().cloned().collect());
         super::reconcile_list_rows(&list, &current, reordered.to_vec());
-        assert_eq!(*current.borrow(), reordered);
+        assert_eq!(*current.borrow(), reordered.to_vec());
     }
 }
 

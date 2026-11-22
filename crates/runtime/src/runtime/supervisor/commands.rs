@@ -82,6 +82,7 @@ impl Supervisor {
                 Some(session.harness),
             );
             let select = RuntimeCommand::SelectSession {
+                display_stamp: None,
                 path: session.path.clone(),
                 harness: session.harness,
                 session_id: session.id.clone(),
@@ -527,7 +528,9 @@ impl Supervisor {
                     };
                     self.selected_project = project.clone();
                     self.selected_session = next_selected_session;
-                    let resident_snapshot = self.latest.get(&key).cloned();
+                    let resident_snapshot = self.latest.get(&key).filter(|snapshot| {
+                        !matches!(&command, RuntimeCommand::SelectSession { display_stamp, .. } if snapshot.needs_saved_revision(*display_stamp))
+                    }).cloned();
                     let access_mode = match &command {
                         RuntimeCommand::ForkSession { path, .. }
                         | RuntimeCommand::SelectSession { path, .. }

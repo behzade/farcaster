@@ -471,6 +471,7 @@ fn failed_move_restores_selected_actor_and_command_route() -> Result<(), String>
         supervisor.command_rx = command_rx;
         commands
             .send(RuntimeCommand::SelectSession {
+                display_stamp: None,
                 path: root.path.clone(),
                 harness: root.harness,
                 session_id: root.id.clone(),

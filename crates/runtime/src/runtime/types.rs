@@ -157,6 +157,7 @@ pub enum RuntimeCommand {
         project: PathBuf,
     },
     SelectSession {
+        display_stamp: Option<farcaster_storage::TranscriptStamp>,
         key: Option<crate::sessions::SessionKey>,
         request: Option<u64>,
         path: PathBuf,
@@ -330,13 +331,22 @@ pub enum ConfigurationStatus {
     Failed(String),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SavedHistory {
+    Complete,
+    RefreshingPartial,
+    Partial,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RuntimeSnapshot {
     pub connected: bool,
     /// A complete session document can remain ready without a running harness.
     pub document_ready: bool,
     /// Displayed from the local transcript, before any needed native reconciliation.
-    pub saved_transcript: bool,
+    pub saved_history: Option<SavedHistory>,
+    /// Source version for a complete, locally persisted history projection.
+    pub transcript_stamp: Option<farcaster_storage::TranscriptStamp>,
     pub status: String,
     pub harness: Option<Backend>,
     pub profile_id: Option<String>,
@@ -379,6 +389,34 @@ pub struct RuntimeSnapshot {
 }
 
 impl RuntimeSnapshot {
+    /// Coverage of the rows the actor can display while opening a document.
+    pub fn history_coverage(&self) -> Option<agents::HistoryCoverage> {
+        if !self.document_ready
+            && self.status == "Loading history"
+            && self.conversation.items.is_empty()
+        {
+            None
+        } else {
+            Some(match self.saved_history {
+                Some(SavedHistory::RefreshingPartial | SavedHistory::Partial) => {
+                    agents::HistoryCoverage::Suffix
+                }
+                _ => agents::HistoryCoverage::Complete,
+            })
+        }
+    }
+
+    pub(super) fn needs_saved_revision(
+        &self,
+        displayed: Option<farcaster_storage::TranscriptStamp>,
+    ) -> bool {
+        displayed.is_some()
+            && !self.connected
+            && !self.conversation.running
+            && self.document_ready
+            && self.transcript_stamp != displayed
+    }
+
     pub fn prompt_queue(&self) -> &crate::conversation::QueueState {
         self.prompt_queue
             .as_deref()

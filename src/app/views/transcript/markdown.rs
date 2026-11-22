@@ -3,6 +3,9 @@ use std::{borrow::Cow, cell::RefCell, collections::HashMap, hash::Hash, rc::Rc};
 use gpui::{AppContext as _, Entity};
 use gpui_component::text::TextViewState;
 
+use super::render::{MarkdownChunk, chunk_text_with_structure};
+use crate::conversation::markdown_structure::MarkdownIndex;
+
 mod user_message;
 
 const MAX_CACHED_MARKDOWN_ROWS: usize = 256;
@@ -90,18 +93,39 @@ impl<K: Copy + Eq + Hash, V: Clone> RecentCache<K, V> {
 
 #[derive(Clone)]
 pub(crate) struct TranscriptMarkdownCache {
-    states: Rc<RefCell<RecentCache<(MarkdownStateKey, bool), Entity<TextViewState>>>>,
+    document: Rc<DocumentMarkdown>,
+}
+
+struct DocumentMarkdown {
+    index: std::sync::Arc<MarkdownIndex>,
+    states: RefCell<RecentCache<(MarkdownStateKey, bool), Entity<TextViewState>>>,
 }
 
 impl Default for TranscriptMarkdownCache {
     fn default() -> Self {
-        Self {
-            states: Rc::new(RefCell::new(RecentCache::new(MAX_CACHED_MARKDOWN_ROWS))),
-        }
+        Self::with_index(Default::default())
     }
 }
 
 impl TranscriptMarkdownCache {
+    pub(in crate::app) fn with_index(index: std::sync::Arc<MarkdownIndex>) -> Self {
+        Self {
+            document: Rc::new(DocumentMarkdown {
+                index,
+                states: RefCell::new(RecentCache::new(MAX_CACHED_MARKDOWN_ROWS)),
+            }),
+        }
+    }
+
+    pub(super) fn chunk_text<'a>(
+        &self,
+        item: usize,
+        source: &'a str,
+        chunk: MarkdownChunk,
+    ) -> Cow<'a, str> {
+        chunk_text_with_structure(source, chunk, self.document.index.get(&item))
+    }
+
     pub(crate) fn state(
         &self,
         key: MarkdownStateKey,
@@ -119,23 +143,24 @@ impl TranscriptMarkdownCache {
         user_message: bool,
         cx: &mut gpui::App,
     ) -> Entity<TextViewState> {
-        let (state, hit) = self
-            .states
-            .borrow_mut()
-            .get_or_insert_with((key, user_message), || {
-                let text = text();
-                let _timing = crate::app::infrastructure::performance::OperationTiming::new(
-                    crate::app::infrastructure::performance::OperationKind::MarkdownParse,
-                    text.len(),
-                );
-                let rendered = if user_message {
-                    user_message::markdown(&text)
-                } else {
-                    Cow::Borrowed(text.as_ref())
-                };
-                let rendered = clickable_images(&rendered);
-                cx.new(|cx| TextViewState::markdown(&rendered, cx))
-            });
+        let (state, hit) =
+            self.document
+                .states
+                .borrow_mut()
+                .get_or_insert_with((key, user_message), || {
+                    let text = text();
+                    let _timing = crate::app::infrastructure::performance::OperationTiming::new(
+                        crate::app::infrastructure::performance::OperationKind::MarkdownParse,
+                        text.len(),
+                    );
+                    let rendered = if user_message {
+                        user_message::markdown(&text)
+                    } else {
+                        Cow::Borrowed(text.as_ref())
+                    };
+                    let rendered = clickable_images(&rendered);
+                    cx.new(|cx| TextViewState::markdown(&rendered, cx))
+                });
         if hit {
             crate::app::infrastructure::performance::count_markdown_cache_hit();
         }

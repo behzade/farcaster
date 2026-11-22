@@ -340,6 +340,73 @@ fn long_assistant_messages_become_independently_virtualized_rows() {
 }
 
 #[test]
+fn a_table_above_the_viewport_is_separate_from_a_medium_reply_tail() {
+    let mut table = String::from("| File | Result |\n|---|---|\n");
+    for row in 0..20 {
+        table.push_str(&format!("| report-{row} | {} |\n", "details ".repeat(20)));
+    }
+    let text = format!("{table}\nAll checks passed.");
+    assert!(text.len() < MARKDOWN_CHUNK_HARD_BYTES);
+    let mut presentation = crate::reviews::presentation::TranscriptPresentation::default();
+    presentation
+        .items
+        .push(item(TranscriptKind::Assistant, "", &text));
+    let markdown = [(
+        0,
+        crate::conversation::markdown_structure::MarkdownStructure::parse(&text).unwrap(),
+    )]
+    .into_iter()
+    .collect();
+    let rows = project_indexed_rows(&presentation, Some(&markdown));
+    let live = project_presentation_rows(&presentation);
+    assert!(rows.iter().eq(live.iter()));
+    assert_eq!(rows.len(), 2);
+    let TranscriptRow::MessageChunk { start, end, .. } = rows[0] else {
+        panic!("expected a table chunk");
+    };
+    assert_eq!(&text[start..end], format!("{table}\n"));
+    let TranscriptRow::MessageChunk { start, end, .. } = rows[1] else {
+        panic!("expected an independently laid out tail");
+    };
+    assert_eq!(&text[start..end], "All checks passed.");
+}
+
+#[test]
+fn a_medium_loose_list_keeps_its_continuation_and_sibling_items_together() {
+    let list = format!(
+        "- {}\n\n  continuation\n\n- second item",
+        "résultat ".repeat(245)
+    );
+    let rows = project_rows(&[item(TranscriptKind::Assistant, "", &list)]);
+    assert_eq!(rows.len(), 1);
+    assert!(matches!(rows[0], TranscriptRow::Item { .. }));
+
+    let text = format!("{list}\n\nSummary.");
+    let rows = project_rows(&[item(TranscriptKind::Assistant, "", &text)]);
+    assert_eq!(rows.len(), 2);
+    let TranscriptRow::MessageChunk { start, end, .. } = rows[0] else {
+        panic!("expected the complete list in one chunk");
+    };
+    assert_eq!(&text[start..end], format!("{list}\n\n"));
+}
+
+#[test]
+fn medium_markdown_keeps_document_wide_references_together() {
+    for (reference, definition) in [
+        ("See [the report][report].", "[report]: /report"),
+        ("See the result[^note].", "[^note]: Explanation"),
+    ] {
+        let text = format!(
+            "{reference} {}\n\nTail.\n\n{definition}",
+            "details ".repeat(300)
+        );
+        let rows = project_rows(&[item(TranscriptKind::Assistant, "", &text)]);
+        assert_eq!(rows.len(), 1);
+        assert!(matches!(rows[0], TranscriptRow::Item { .. }));
+    }
+}
+
+#[test]
 fn link_heavy_user_messages_become_independently_virtualized_rows() {
     let text = (0..200)
         .map(|line| {

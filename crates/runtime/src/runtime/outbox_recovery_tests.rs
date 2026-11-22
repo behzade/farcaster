@@ -1040,6 +1040,7 @@ fn exact_history_delivery_removes_only_the_matching_saved_card() -> Result<(), S
         if cold_history {
             let path = owner.active_session.take().expect("active session");
             owner.apply_history(HistoryResult {
+                transcript_stamp: None,
                 generation: owner.history_generation,
                 path,
                 project: temp.path().into(),

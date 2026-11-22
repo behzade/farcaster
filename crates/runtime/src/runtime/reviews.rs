@@ -1,6 +1,6 @@
 use super::*;
 use crate::reviews::{artifact, presentation::TranscriptPresentation};
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 #[derive(Default)]
 pub(super) struct ReviewProjection {
@@ -27,7 +27,7 @@ impl ReviewProjection {
                     .get(index)
                     .expect("conversation item should exist");
                 self.synced.insert(index, source_item.clone());
-                suffix.push(hydrated_row(source_item, &snapshot.project));
+                suffix.push(artifact::hydrated_row(source_item, &snapshot.project));
             }
             document.items.splice(append_from..append_from, suffix);
             changed = Some(changed.unwrap_or(append_from).min(append_from));
@@ -45,9 +45,10 @@ impl ReviewProjection {
                 continue;
             }
             self.synced.insert(index, source_item.clone());
-            document
-                .items
-                .set(index, hydrated_row(source_item, &snapshot.project));
+            document.items.set(
+                index,
+                artifact::hydrated_row(source_item, &snapshot.project),
+            );
             changed = Some(changed.unwrap_or(index).min(index));
         }
         if let Some(changed) = changed {
@@ -57,16 +58,6 @@ impl ReviewProjection {
         document.update_runs(&source);
         snapshot.transcript = Some(self.document.clone());
     }
-}
-
-fn hydrated_row(source: &Arc<TranscriptItem>, project: &Path) -> Arc<TranscriptItem> {
-    let Some(result) = artifact::hydration_result(source, project) else {
-        return source.clone();
-    };
-    let mut item = source.as_ref().clone();
-    let details = Arc::make_mut(item.tool_details.as_mut().expect("review row has details"));
-    details.result = Some(result);
-    Arc::new(item)
 }
 
 #[cfg(test)]

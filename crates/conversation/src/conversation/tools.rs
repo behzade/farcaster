@@ -330,6 +330,7 @@ impl TranscriptItem {
                     result: result.cloned(),
                     metadata: details.metadata.clone(),
                     state: details.state,
+                    viewport: None,
                 })
             }),
             tool_review: self.tool_review.clone(),

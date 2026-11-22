@@ -45,6 +45,14 @@ fn transcript_reading_matches_only_a_unique_page_before_new_items() {
         conversation.items
     }
     let page = items(&["a", "a"]);
+    assert_eq!(
+        super::unique_page_start(&items(&["x", "a", "a"]), &page),
+        Some(1)
+    );
+    assert_eq!(
+        super::unique_page_start(&items(&["a", "a", "a"]), &page),
+        None
+    );
     for (full, expected) in [
         (vec!["a", "x", "a", "a", "b"], Some(2)),
         (vec!["a", "a", "a", "b"], None),
@@ -117,7 +125,7 @@ fn transcript_reading_keeps_painted_rows_when_full_history_has_new_turns(
                             generation,
                             Arc::new(RuntimeSnapshot {
                                 document_ready: true,
-                                saved_transcript: true,
+                                saved_history: Some(crate::runtime::SavedHistory::Complete),
                                 ..(*first).clone()
                             }),
                         );
@@ -167,6 +175,143 @@ fn transcript_reading_keeps_painted_rows_when_full_history_has_new_turns(
     );
 }
 
+#[test]
+fn transcript_reading_preserves_the_visible_group_when_earlier_tools_join_it() {
+    use crate::app::views::transcript::project_rows;
+    use crate::conversation::ConversationState;
+    let mut full = ConversationState::default();
+    full.replace_history(&(0..3).map(|i| serde_json::json!({
+        "role":"assistant", "content":[{"type":"toolCall", "id":format!("tool-{i}"), "name":"bash","arguments":{}}]
+    })).collect::<Vec<_>>());
+    let suffix: super::Items = full.items.iter_range(1..3).cloned().collect();
+    let old_rows = project_rows(&suffix);
+    let rows = project_rows(&full.items);
+    let source = super::SourceItem::new(0, &suffix).unwrap();
+    let mut saved = super::ReadingState {
+        suffix: Some(suffix.clone()),
+        anchor: super::ReadingAnchor::at(old_rows[0], px(9.), &suffix),
+        disclosures: [(old_rows[0].disclosure_key(), (source, true))].into(),
+        file_trees: Default::default(),
+        last_count: old_rows.len(),
+        unseen: 0,
+    };
+    let start = saved
+        .source_offset(crate::agents::HistoryCoverage::Complete, &full.items)
+        .unwrap();
+    saved.rebase(start, &rows);
+    assert_eq!(rows.len(), 1);
+    assert!(matches!(
+        rows[0],
+        TranscriptRow::ActivityGroup {
+            start: 0,
+            len: 3,
+            ..
+        }
+    ));
+    assert_eq!(
+        saved.anchor.unwrap().resolve(&rows, &full.items),
+        Some(ListOffset {
+            item_ix: 0,
+            offset_in_item: px(9.)
+        })
+    );
+    assert!(saved.disclosures[&rows[0].disclosure_key()].1);
+}
+
+#[gpui::test]
+fn transcript_reading_maps_a_scrolled_suffix_when_older_messages_arrive(
+    cx: &mut gpui::TestAppContext,
+) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::transcript_reading_maps_a_scrolled_suffix_when_older_messages_arrive"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            cx.simulate_resize(size(px(1200.), px(650.)));
+            let transcript = cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions.selected_draft = None;
+                    cx.notify();
+                    app.views.transcript.clone()
+                })
+            });
+            for (generation, name, switch_away) in [(1, "selected", false), (2, "parked", true)] {
+                let mut full = reading_snapshot(project, name, 100);
+                let snapshot = Arc::make_mut(&mut full);
+                snapshot.document_ready = true;
+                // Both indexes contain exactly the same prompt. Only the surrounding page
+                // identifies which turn the user read.
+                let items = &mut Arc::make_mut(&mut snapshot.conversation).items;
+                items.set(84, items[4].clone());
+                let mut suffix = crate::conversation::ConversationState::default();
+                suffix.items = items.iter_range(80..100).cloned().collect();
+                send_snapshot(
+                    runtime,
+                    generation,
+                    Arc::new(RuntimeSnapshot {
+                        status: "Partial saved history".into(),
+                        saved_history: Some(crate::runtime::SavedHistory::RefreshingPartial),
+                        conversation: Arc::new(suffix),
+                        ..snapshot.clone()
+                    }),
+                );
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                    window.draw(cx).clear(cx);
+                    transcript.update(cx, |view, cx| {
+                        view.list.scroll_to(ListOffset {
+                            item_ix: 4,
+                            offset_in_item: px(9.),
+                        });
+                        view.following = false;
+                        view.disclosure_states.insert(4, true);
+                        view.unseen = 2;
+                        cx.notify();
+                    });
+                    window.draw(cx).clear(cx);
+                });
+                let before = cx
+                    .debug_bounds("transcript-row-4")
+                    .expect("visible suffix row");
+                if switch_away {
+                    send_snapshot(
+                        runtime,
+                        generation + 1,
+                        reading_snapshot(project, "other", 20),
+                    );
+                    cx.update(|_, cx| app.update(cx, |app, cx| app.drain_runtime(cx)));
+                }
+                send_snapshot(
+                    runtime,
+                    if switch_away {
+                        generation + 2
+                    } else {
+                        generation
+                    },
+                    full,
+                );
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                    window.draw(cx).clear(cx);
+                    let view = transcript.read(cx);
+                    let offset = view.list.logical_scroll_top();
+                    assert_eq!(offset.item_ix, 84);
+                    assert_eq!(offset.offset_in_item, px(9.));
+                    assert_eq!(view.unseen, 2);
+                    assert_eq!(view.disclosure_states.get(&84), Some(&true));
+                    assert!(!view.disclosure_states.contains_key(&4));
+                });
+                assert_eq!(
+                    cx.debug_bounds("transcript-row-84").unwrap().origin.y,
+                    before.origin.y
+                );
+            }
+        },
+    );
+}
+
 #[gpui::test]
 fn transcript_reading_survives_session_switch_and_loading(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
@@ -210,7 +355,10 @@ fn transcript_reading_survives_session_switch_and_loading(cx: &mut gpui::TestApp
                 .y;
             // A reset can precede a loading snapshot, then a second history
             // reset before the destination is ready. Neither may overwrite A.
-            for (generation, snapshot) in [(2, b), (3, reading_snapshot(project, "a", 64))] {
+            let updated = reading_snapshot(project, "a", 64);
+            for (generation, snapshot) in
+                [(2, b.clone()), (3, updated.clone()), (4, b), (5, updated)]
+            {
                 let items = &snapshot.conversation.items;
                 let mut tail = crate::conversation::ConversationState::default();
                 tail.items = items
@@ -238,9 +386,47 @@ fn transcript_reading_survives_session_switch_and_loading(cx: &mut gpui::TestApp
                     app.update(cx, |app, cx| app.drain_runtime(cx));
                     window.draw(cx).clear(cx);
                 });
-                if generation == 3 {
+                let returning = generation == 3 || generation == 5;
+                if returning {
                     assert!(cx.debug_bounds("transcript-loading").is_some());
                     assert!(cx.debug_bounds("transcript-row-15").is_none());
+                    // This SQLite document contains only the last eight messages.
+                    // Its rows cannot resolve the saved position or disclosures at 12.
+                    let mut partial = crate::conversation::ConversationState::default();
+                    partial.items = items
+                        .iter_range(items.len() - 8..items.len())
+                        .cloned()
+                        .collect();
+                    let partial = Arc::new(RuntimeSnapshot {
+                        status: "Partial saved history".into(),
+                        saved_history: Some(crate::runtime::SavedHistory::RefreshingPartial),
+                        document_ready: true,
+                        conversation: Arc::new(partial),
+                        ..(*snapshot).clone()
+                    });
+                    send_snapshot(runtime, generation, partial.clone());
+                    for _ in 0..2 {
+                        cx.update(|window, cx| {
+                            app.update(cx, |app, cx| app.drain_runtime(cx));
+                            window.draw(cx).clear(cx);
+                        });
+                        assert!(cx.debug_bounds("transcript-loading").is_some());
+                        assert!(cx.debug_bounds("transcript-row-7").is_none());
+                        assert!(cx.debug_bounds("transcript-position-unavailable").is_none());
+                    }
+                    if generation == 5 {
+                        let mut failed = partial;
+                        Arc::make_mut(&mut failed).saved_history =
+                            Some(crate::runtime::SavedHistory::Partial);
+                        send_snapshot(runtime, generation, failed);
+                        cx.update(|window, cx| {
+                            app.update(cx, |app, cx| app.drain_runtime(cx));
+                            window.draw(cx).clear(cx);
+                        });
+                        assert!(cx.debug_bounds("transcript-loading").is_none());
+                        assert!(cx.debug_bounds("transcript-row-7").is_some());
+                        assert!(cx.debug_bounds("transcript-position-unavailable").is_some());
+                    }
                 }
                 runtime.send_event(RuntimeEvent::HistoryReset { generation });
                 send_snapshot(runtime, generation, snapshot);
@@ -248,7 +434,7 @@ fn transcript_reading_survives_session_switch_and_loading(cx: &mut gpui::TestApp
                     app.update(cx, |app, cx| app.drain_runtime(cx));
                     window.draw(cx).clear(cx);
                     let view = transcript.read(cx);
-                    if generation == 2 {
+                    if !returning {
                         assert!(view.list.is_following_tail());
                         assert!(view.disclosure_states.is_empty());
                     } else {
@@ -261,8 +447,9 @@ fn transcript_reading_survives_session_switch_and_loading(cx: &mut gpui::TestApp
                         assert_eq!(view.unseen, 4);
                     }
                 });
-                if generation == 3 {
+                if returning {
                     for _ in 0..3 {
+                        assert!(cx.debug_bounds("transcript-position-unavailable").is_none());
                         let row = cx.debug_bounds("transcript-row-12").expect("restored row");
                         assert_eq!(row.origin.y, saved_y);
                         cx.update(|window, cx| window.draw(cx).clear(cx));
@@ -620,4 +807,276 @@ fn check_stream_reading_restore(
             assert!(!view.following);
         });
     });
+}
+
+#[track_caller]
+fn wait_for_resident_selection(
+    cx: &mut gpui::VisualTestContext,
+    app: &gpui::Entity<crate::app::FarcasterApp>,
+    row: &crate::sessions::SessionSummary,
+) -> u64 {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        cx.run_until_parked();
+        let request = cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let app = app.read(cx);
+            (app.lifecycle.requested_session_key.as_ref() == Some(&row.catalog_key())
+                && app.lifecycle.pending_session_switch.is_some())
+            .then_some(app.lifecycle.switch_sequence)
+        });
+        if let Some(request) = request {
+            return request;
+        }
+        if std::time::Instant::now() >= deadline {
+            cx.update(|_,cx| {
+                let app = app.read(cx);
+                panic!("open {:?} did not route; selected {:?}, requested {:?}, pending {}, trust {}, lookup {}", row.path, app.snapshot.selected_session, app.lifecycle.requested_session_key, app.lifecycle.pending_session_switch.is_some(),app.project.pending_trust_command.is_some(),app.lifecycle.opening_local.is_some());
+            });
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
+
+#[gpui::test]
+fn resident_transcript_draws_saved_anchor_before_routing_and_reuses_layout(
+    cx: &mut gpui::TestAppContext,
+) {
+    use crate::{agents::Backend, sessions::SessionSummary};
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::resident_transcript_draws_saved_anchor_before_routing_and_reuses_layout"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let canonical_project = project.canonicalize().unwrap();
+            let project = canonical_project.as_path();
+            crate::app::project::trust::apply(project, crate::projects::TrustChoice::TrustProject)
+                .unwrap();
+            let row = |name: &str, id| {
+                SessionSummary::from_cached(
+                    name.into(),
+                    project.join(name),
+                    project.into(),
+                    name.into(),
+                    String::new(),
+                    String::new(),
+                    None,
+                    std::time::UNIX_EPOCH,
+                    80,
+                    Default::default(),
+                    false,
+                    false,
+                    String::new(),
+                )
+                .with_app_session_id(id)
+            };
+            let a = row("a", 1);
+            let b = row("b", 2);
+            let snapshot = |name| {
+                let mut snap = reading_snapshot(project, name, 80);
+                let value = Arc::make_mut(&mut snap);
+                value.document_ready = true;
+                value.harness = Some(Backend::Pi);
+                snap
+            };
+            use crate::storage::{SessionRepository as _, TranscriptSession};
+            let session = TranscriptSession {
+                path: &a.path,
+                project,
+                harness: a.harness,
+                profile_id: None,
+            };
+            let repo = crate::app::persistence::shared().unwrap();
+            let mut messages: Vec<_> = (0..80).map(|index| serde_json::json!({
+                "role": if index % 2 == 0 { "user" } else { "assistant" },
+                "content": [{"type": "text", "text": format!("a message {index}: {}", "reading context ".repeat(30))}]
+            })).collect();
+            let stamp = repo
+                .replace_transcript_with_stamp(session, 0, &messages, &serde_json::Value::Null)
+                .unwrap()
+                .unwrap();
+            let mut ready_a = snapshot("a");
+            Arc::make_mut(&mut ready_a).transcript_stamp = Some(stamp);
+            let transcript = cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions.all = vec![a.clone(), b.clone()].into();
+                    app.sessions.visible = vec![a.clone(), b.clone()].into();
+                    app.sessions.selected_draft = None;
+                    cx.notify();
+                    app.views.transcript.clone()
+                })
+            });
+            cx.simulate_resize(size(px(1200.0), px(650.0)));
+            send_snapshot(runtime, 1, ready_a.clone());
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| app.drain_runtime(cx));
+                window.draw(cx).clear(cx);
+                transcript.update(cx, |view, cx| {
+                    view.list.scroll_to(ListOffset {
+                        item_ix: 12,
+                        offset_in_item: px(9.0),
+                    });
+                    view.following = false;
+                    view.unseen = 4;
+                    view.disclosure_states.insert(12, true);
+                    view.file_trees
+                        .entry(12)
+                        .or_default()
+                        .toggle(project, Path::new("src"));
+                    cx.notify();
+                });
+                window.draw(cx).clear(cx);
+            });
+            let y = cx
+                .debug_bounds("transcript-row-12")
+                .expect("reading anchor")
+                .origin
+                .y;
+            let original = cx.update(|_, cx| transcript.read(cx).rows.clone());
+            send_snapshot(runtime, 2, snapshot("b"));
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| app.drain_runtime(cx));
+                window.draw(cx).clear(cx);
+                let view = transcript.read(cx);
+                assert!(view.has_resident_for(&a));
+                let local = repo
+                    .load_transcript_display(session, true)
+                    .unwrap()
+                    .unwrap();
+                let saved = super::super::PreparedPage::from_store(local, project).unwrap();
+                let page = view
+                    .local_layout(saved, &a.path, Some(a.catalog_key()))
+                    .unwrap();
+                assert!(page.list.has_pending_restore());
+                assert_eq!(page.disclosures.get(&12), Some(&true));
+                assert!(!page.trees[&12].is_open(project, Path::new("src")));
+                let mut changed = repo
+                    .load_transcript_display(session, true)
+                    .unwrap()
+                    .unwrap();
+                changed.coverage = crate::agents::HistoryCoverage::Suffix;
+                // A later turn in the suffix repeats the original message at local index 12.
+                // Its text and disclosure fingerprint both agree at the wrong offset.
+                let repeated = changed.content.items[12].clone();
+                changed.content.items = changed.content.items.iter().skip(2).cloned().collect();
+                changed.content.items.set(12, repeated);
+                let saved = super::super::PreparedPage::from_store(changed, project).unwrap();
+                assert!(
+                    view.local_layout(saved, &a.path, Some(a.catalog_key()))
+                        .is_none()
+                );
+                for sibling in [
+                    SessionSummary {
+                        harness: Backend::Codex,
+                        ..a.clone()
+                    },
+                    SessionSummary {
+                        profile_id: Some("other".into()),
+                        ..a.clone()
+                    },
+                    SessionSummary {
+                        message_count: a.message_count + 1,
+                        ..a.clone()
+                    },
+                    SessionSummary {
+                        app_session_id: 55,
+                        ..a.clone()
+                    },
+                ] {
+                    assert!(!view.has_resident_for(&sibling));
+                }
+            });
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.select_rail_session(a.catalog_key(), window, cx)
+                })
+            });
+            let request = wait_for_resident_selection(cx, app, &a);
+            assert_eq!(
+                cx.debug_bounds("transcript-row-12")
+                    .expect("before route")
+                    .origin
+                    .y,
+                y
+            );
+            runtime.send_event(RuntimeEvent::SelectionRouted(request));
+            send_snapshot(runtime, 3, ready_a.clone());
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| app.drain_runtime(cx));
+                window.draw(cx).clear(cx);
+                let view = transcript.read(cx);
+                assert!(
+                    Arc::ptr_eq(&original, &view.rows),
+                    "reused exact projected rows"
+                );
+                assert_eq!(view.disclosure_states.get(&12), Some(&true));
+                assert!(!view.file_trees[&12].is_open(project, Path::new("src")));
+                assert!(!view.following);
+                assert_eq!(view.unseen, 4);
+            });
+            assert_eq!(
+                cx.debug_bounds("transcript-row-12")
+                    .expect("after route")
+                    .origin
+                    .y,
+                y
+            );
+
+            // A notification for parked A clears its saved anchor before its actor responds.
+            send_snapshot(runtime, 4, snapshot("b"));
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.drain_runtime(cx);
+                    app.select_session_at_latest(a.path.clone(), a.project.clone(), window, cx);
+                });
+            });
+            let request = wait_for_resident_selection(cx, app, &a);
+            assert!(cx.debug_bounds("transcript-row-79").is_some());
+            runtime.send_event(RuntimeEvent::SelectionRouted(request));
+            send_snapshot(runtime, 5, ready_a);
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| app.drain_runtime(cx));
+                window.draw(cx).clear(cx);
+                let view = transcript.read(cx);
+                assert!(view.list.is_following_tail());
+                assert_eq!(view.unseen, 0);
+            });
+            assert!(cx.debug_bounds("transcript-row-79").is_some());
+
+            // Same count, same catalog timestamp. A newer saved message must win before routing.
+            send_snapshot(runtime, 6, snapshot("b"));
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| app.drain_runtime(cx));
+                window.draw(cx).clear(cx);
+            });
+            messages[79]["content"][0]["text"] = "edited before returning".into();
+            let updated = repo
+                .replace_transcript_with_stamp(
+                    session,
+                    stamp.revision,
+                    &messages,
+                    &serde_json::Value::Null,
+                )
+                .unwrap()
+                .unwrap();
+            assert_ne!(updated, stamp);
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.select_rail_session(a.catalog_key(), window, cx)
+                });
+            });
+            wait_for_resident_selection(cx, app, &a);
+            cx.update(|_, cx| {
+                let app = app.read(cx);
+                let items = transcript
+                    .read(cx)
+                    .local_display_items(app)
+                    .expect("painted latest saved page");
+                assert_eq!(items.last().unwrap().text, "edited before returning");
+            });
+            assert!(cx.debug_bounds("transcript-loading").is_none());
+        },
+    );
 }

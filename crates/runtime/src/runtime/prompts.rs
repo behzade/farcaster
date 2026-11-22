@@ -1,5 +1,4 @@
 use farcaster_storage::{EnqueuedPrompt, PromptSubmission};
-use std::sync::Arc;
 
 use crate::{
     agents::{self, PromptOutcome, QueuedPrompt, SessionCommand},
@@ -222,7 +221,7 @@ impl RuntimeOwner {
         let native_invocation = self
             .host
             .contains_invocation(&message, &self.snapshot.commands);
-        let conversation = Arc::make_mut(&mut self.snapshot.conversation);
+        let conversation = conversation_mut(&mut self.snapshot);
         let item = (mode == PromptMode::Normal && !was_running).then(|| {
             match (display_message.as_ref(), invocation.as_ref()) {
                 (Some(display), Some(invocation)) => conversation
@@ -313,7 +312,7 @@ impl RuntimeOwner {
         let native_invocation = self
             .host
             .contains_invocation(&prompt.message, &self.snapshot.commands);
-        let conversation = Arc::make_mut(&mut self.snapshot.conversation);
+        let conversation = conversation_mut(&mut self.snapshot);
         let item = (prompt.mode == PromptMode::Normal).then(|| {
             match (&prompt.display_message, &prompt.invocation) {
                 (Some(display), Some(invocation)) => conversation
@@ -608,7 +607,7 @@ impl RuntimeOwner {
     }
 
     pub(super) fn reject_prompt(&mut self, submission_id: &str, target: &str, message: String) {
-        Arc::make_mut(&mut self.snapshot.conversation).push_local_error("Prompt not sent", message);
+        conversation_mut(&mut self.snapshot).push_local_error("Prompt not sent", message);
         self.snapshot.status = "Prompt not sent".into();
         self.emit_prompt_result(
             (!submission_id.is_empty()).then_some(submission_id),
@@ -685,7 +684,7 @@ impl RuntimeOwner {
                 self.pending_prompt.as_mut().expect("waiting prompt").item = Some(optimistic);
             }
             let snapshot = self.active_snapshot_mut();
-            Arc::make_mut(&mut snapshot.conversation).begin_run();
+            conversation_mut(snapshot).begin_run();
             snapshot.status = "Working".into();
             if self.snapshot.history_preview
                 && let Some(snapshot) = self.parked_snapshot.take()

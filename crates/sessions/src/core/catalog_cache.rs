@@ -28,6 +28,7 @@ struct Relationships {
     unbound: Vec<UnboundRow>,
     running: Vec<usize>,
     parents: Vec<Option<usize>>,
+    archived_roots: usize,
     children: Vec<Vec<usize>>,
     native_worker_parents: HashMap<NativeSessionIdentity, usize>,
 }
@@ -57,6 +58,16 @@ fn only_match<T>(mut matches: impl Iterator<Item = T>) -> Option<T> {
 }
 
 impl Relationships {
+    fn update_root_archive_count(&mut self, position: usize, archived: bool) {
+        if self.parents[self.slots[position]].is_none() {
+            if archived {
+                self.archived_roots += 1;
+            } else {
+                self.archived_roots -= 1;
+            }
+        }
+    }
+
     fn move_slot(&mut self, from: usize, to: usize, path: &Path) {
         let slot = self.slots[from];
         let parent = self.parents[slot];
@@ -227,12 +238,15 @@ impl SessionCatalog {
                 .collect();
             let mut children = vec![Vec::new(); self.sessions.len()];
             let mut native_parents = HashSet::new();
+            let mut archived_roots = 0;
             for (child, parent) in parents.iter().enumerate() {
                 if let Some(parent) = parent {
                     children[*parent].push(child);
                     if self.sessions[child].parent_app_session_id.is_none() {
                         native_parents.insert(*parent);
                     }
+                } else if self.sessions[child].archived {
+                    archived_roots += 1;
                 }
             }
             let native_worker_parents: HashMap<_, _> = native_parents
@@ -249,6 +263,7 @@ impl SessionCatalog {
                 unbound,
                 running,
                 parents,
+                archived_roots,
                 children,
                 native_worker_parents,
             }
@@ -376,6 +391,9 @@ impl SessionCatalog {
             }
             self.relationships.take();
         } else {
+            if old.archived != row.archived {
+                cache.update_root_archive_count(from, row.archived);
+            }
             if old.is_running != row.is_running {
                 let slot = cache.slots[from];
                 cache.set_running(slot, row.is_running);
@@ -415,6 +433,17 @@ impl SessionCatalog {
         self.relationships()
             .row_index(row, &self.sessions)
             .map(|index| self.root_at(index))
+    }
+
+    pub fn is_root_row(&self, row: &SessionSummary) -> bool {
+        let links = self.relationships();
+        links
+            .row_index(row, &self.sessions)
+            .is_some_and(|slot| links.parents[slot].is_none())
+    }
+
+    pub fn archived_root_count(&self) -> usize {
+        self.relationships().archived_roots
     }
 
     fn root_at(&self, mut current: usize) -> &SessionSummary {
@@ -528,8 +557,19 @@ impl SessionCatalog {
         archived: bool,
     ) -> Option<usize> {
         let (position, _) = self.archive_result_position(stored, requested_path)?;
-        self.sessions[position].archived = archived;
+        self.set_archive_flag(position, archived);
         Some(position)
+    }
+
+    fn set_archive_flag(&mut self, position: usize, archived: bool) -> bool {
+        if self.sessions[position].archived == archived {
+            return false;
+        }
+        self.sessions[position].archived = archived;
+        if let Some(cache) = self.relationships.get_mut() {
+            cache.update_root_archive_count(position, archived);
+        }
+        true
     }
 
     pub fn set_row_archived(
@@ -547,10 +587,7 @@ impl SessionCatalog {
         });
         let Some(index) = index else { return false };
         let index = cache.positions[index];
-        let row = &mut self.sessions[index];
-        let changed = row.archived != archived;
-        row.archived = archived;
-        changed
+        self.set_archive_flag(index, archived)
     }
 
     pub fn set_running(

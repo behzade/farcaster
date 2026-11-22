@@ -10,8 +10,11 @@ use gpui::{
 #[path = "list/height_index.rs"]
 mod height_index;
 use self::height_index::HeightIndex;
-use crate::app::infrastructure::performance::{OperationKind, OperationTiming};
+use crate::app::infrastructure::performance::{
+    OperationKind, OperationTiming, SwitchPaintStage, SwitchPaintTrace,
+};
 use crate::app::ui::theme::theme;
+use std::{sync::Arc, time::Instant};
 
 type RenderRow = dyn FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static;
 type ScrollHandler = dyn FnMut(bool, &mut Window, &mut App) + 'static;
@@ -23,6 +26,7 @@ pub(crate) const TRANSCRIPT_SELECTION_KEY_CONTEXT: &str = "PiTranscriptSelection
 struct StateInner {
     history_tail_first_safe_row: Option<usize>,
     painted_history_top: Option<ListOffset>,
+    too_short: bool,
     heights: HeightIndex,
     scroll_y: Pixels,
     viewport_height: Pixels,
@@ -236,12 +240,35 @@ impl TranscriptListState {
         self.0.borrow().history_tail_first_safe_row.is_some()
     }
 
+    pub(crate) fn was_too_short(&self) -> bool {
+        self.0.borrow().too_short
+    }
+
     pub(crate) fn painted_history_top(&self) -> Option<ListOffset> {
         self.0.borrow().painted_history_top
     }
 
     pub(crate) fn inherit_painted_top(&self, offset: ListOffset) {
         self.0.borrow_mut().painted_history_top = Some(offset);
+    }
+
+    /// Move the measured heights and scroll offset while keeping the active
+    /// list's event handler bound to its window. Pending input stays local.
+    pub(crate) fn move_layout_to(&self, other: &Self) {
+        let mut source = self.0.borrow_mut();
+        let mut dest = other.0.borrow_mut();
+        dest.heights = std::mem::take(&mut source.heights);
+        dest.scroll_y = source.scroll_y;
+        dest.viewport_height = source.viewport_height;
+        dest.width = source.width;
+        dest.following_tail = source.following_tail;
+        dest.pending_restore = source.pending_restore.take();
+        dest.pending_scroll = px(0.0);
+        dest.scheduled_frame = None;
+        dest.painted_history_top = None;
+        dest.clear_selection();
+        source.pending_scroll = px(0.0);
+        source.scheduled_frame = None;
     }
 
     pub(crate) fn reset(&self) {
@@ -411,14 +438,79 @@ pub(crate) fn transcript_list_grouped(
         selection_key: Rc::new(selection_key),
         selection_text: Rc::new(selection_text),
         render_row: Box::new(render_row),
+        switch_trace: None,
     }
 }
 
+struct FrameTiming {
+    trace: Arc<SwitchPaintTrace>,
+    before_ack: bool,
+    layout: Instant,
+    prepaint: Instant,
+}
+
 pub(crate) struct TranscriptList {
+    switch_trace: Option<FrameTiming>,
     state: TranscriptListState,
     selection_key: Rc<dyn Fn(usize) -> usize>,
     selection_text: Rc<SelectionText>,
     render_row: Box<RenderRow>,
+}
+
+impl TranscriptList {
+    fn layout_row(
+        &mut self,
+        index: usize,
+        available: Size<AvailableSpace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> FrameRow {
+        let mut element = (self.render_row)(index, window, cx);
+        let _timing = OperationTiming::new(OperationKind::TranscriptLayout, 1);
+        let height = element
+            .layout_as_root(available, window, cx)
+            .height
+            .max(theme().size(1.0));
+        FrameRow {
+            index,
+            element,
+            height,
+        }
+    }
+
+    pub(in crate::app) fn covers(
+        &mut self,
+        rows: Range<usize>,
+        size: Size<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let available = gpui::size(size.width.into(), AvailableSpace::MinContent);
+        let mut remaining = size.height;
+        for index in rows.rev() {
+            remaining -= self.layout_row(index, available, window, cx).height;
+            if remaining <= px(0.) {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub(super) fn with_switch_trace(
+        mut self,
+        trace: Option<(Arc<SwitchPaintTrace>, bool)>,
+    ) -> Self {
+        self.switch_trace = trace.map(|(trace, before_ack)| {
+            let now = Instant::now();
+            FrameTiming {
+                trace,
+                before_ack,
+                layout: now,
+                prepaint: now,
+            }
+        });
+        self
+    }
 }
 
 impl IntoElement for TranscriptList {
@@ -436,19 +528,44 @@ struct FrameRow {
 }
 
 pub(crate) struct TranscriptPrepaintState {
+    #[cfg(test)]
+    geometry: Option<Vec<(Pixels, Pixels)>>,
     hitbox: Hitbox,
     rows: Vec<AnyElement>,
     history_top: Option<ListOffset>,
 }
 
 impl TranscriptPrepaintState {
-    fn paint_rows(&mut self, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
+    fn paint_rows(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+        timing: Option<&FrameTiming>,
+    ) {
+        let timing = timing.filter(|_| self.history_top.is_some());
+        if let Some(timing) = timing {
+            timing
+                .trace
+                .mark_at(SwitchPaintStage::ListLayout, timing.layout);
+            timing
+                .trace
+                .mark_at(SwitchPaintStage::Prepaint, timing.prepaint);
+            timing.trace.mark(SwitchPaintStage::Paint);
+        }
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             let _timing = OperationTiming::new(OperationKind::TranscriptPaint, self.rows.len());
             for row in &mut self.rows {
                 row.paint(window, cx);
             }
         });
+        if let Some(timing) = timing {
+            timing.trace.painted(timing.before_ack, self.rows.len());
+            #[cfg(test)]
+            if let Some(bounds) = self.geometry.take() {
+                timing.trace.record_frame(bounds);
+            }
+        }
     }
 }
 
@@ -471,6 +588,9 @@ impl Element for TranscriptList {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        if let Some(timing) = &mut self.switch_trace {
+            timing.layout = Instant::now();
+        }
         let mut style = Style::default();
         style.size.width = relative(1.0).into();
         style.size.height = relative(1.0).into();
@@ -486,6 +606,9 @@ impl Element for TranscriptList {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
+        if let Some(timing) = &mut self.switch_trace {
+            timing.prepaint = Instant::now();
+        }
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         let (_, viewport_scrolled) = self.state.0.borrow_mut().begin_frame(bounds.size);
         let (anchor, handler, following_before_layout) = {
@@ -509,6 +632,28 @@ impl Element for TranscriptList {
         let mut frame_rows = BTreeMap::new();
 
         let (scroll_y, following_tail, visible_range) = loop {
+            if self.state.is_following_tail() {
+                // The end is known. Measure upward from it until the viewport is
+                // full, so an offscreen table never delays painting the last row.
+                let end = self.state.0.borrow().heights.len();
+                let mut start = end;
+                let mut remaining = bounds.size.height;
+                while start > 0 && remaining > px(0.) {
+                    start -= 1;
+                    let row = frame_rows
+                        .entry(start)
+                        .or_insert_with(|| self.layout_row(start, available, window, cx));
+                    self.state
+                        .0
+                        .borrow_mut()
+                        .heights
+                        .set_height(start, row.height);
+                    remaining -= row.height;
+                }
+                let mut state = self.state.0.borrow_mut();
+                state.scroll_y = state.maximum_scroll();
+                break (state.scroll_y, true, start..end);
+            }
             let needed = {
                 let state = self.state.0.borrow();
                 let visible = state.layout_range(px(0.0));
@@ -524,20 +669,7 @@ impl Element for TranscriptList {
             if !needed.is_empty() {
                 let rows = needed
                     .into_iter()
-                    .map(|index| {
-                        let mut element = (self.render_row)(index, window, cx);
-                        let _layout_timing =
-                            OperationTiming::new(OperationKind::TranscriptLayout, 1);
-                        let height = element
-                            .layout_as_root(available, window, cx)
-                            .height
-                            .max(theme().size(1.0));
-                        FrameRow {
-                            index,
-                            element,
-                            height,
-                        }
-                    })
+                    .map(|index| self.layout_row(index, available, window, cx))
                     .collect::<Vec<_>>();
                 let mut state = self.state.0.borrow_mut();
                 for row in rows {
@@ -567,14 +699,29 @@ impl Element for TranscriptList {
         if history_tail_first_safe_row.is_some_and(|first_safe_row| {
             visible_range.start < first_safe_row || visible_range.is_empty()
         }) {
+            let mut state = self.state.0.borrow_mut();
+            if !state.too_short {
+                state.too_short = true;
+                let view = window.current_view();
+                window.on_next_frame(move |_, cx| cx.notify(view));
+            }
+            drop(state);
             let mut loading = super::loading_history();
             loading.prepaint_as_root(bounds.origin, bounds.size.map(Into::into), window, cx);
             return TranscriptPrepaintState {
+                #[cfg(test)]
+                geometry: None,
                 hitbox,
                 rows: vec![loading],
                 history_top: None,
             };
         }
+        #[cfg(test)]
+        let mut geometry = self
+            .switch_trace
+            .as_ref()
+            .filter(|timing| timing.trace.recording_geometry())
+            .map(|_| Vec::with_capacity(visible_range.len()));
         let mut rows = Vec::with_capacity(visible_range.len());
         let mut row_y = if following_tail {
             let mut top = bounds.bottom();
@@ -597,6 +744,10 @@ impl Element for TranscriptList {
                 let mut row = frame_rows
                     .remove(&index)
                     .expect("visible transcript rows must be laid out");
+                #[cfg(test)]
+                if let Some(geometry) = &mut geometry {
+                    geometry.push((row_y, row.height));
+                }
                 let origin = point(bounds.left(), row_y);
                 row.element.prepaint_at(origin, window, cx);
                 row_y += row.height;
@@ -619,6 +770,8 @@ impl Element for TranscriptList {
         }
 
         TranscriptPrepaintState {
+            #[cfg(test)]
+            geometry,
             hitbox,
             rows,
             history_top,
@@ -644,7 +797,7 @@ impl Element for TranscriptList {
                     cx.stop_propagation();
                 }
             });
-            prepaint.paint_rows(bounds, window, cx);
+            prepaint.paint_rows(bounds, window, cx, self.switch_trace.as_ref());
             return;
         }
         let current_view = window.current_view();
@@ -800,7 +953,7 @@ impl Element for TranscriptList {
             }
         });
 
-        prepaint.paint_rows(bounds, window, cx);
+        prepaint.paint_rows(bounds, window, cx, self.switch_trace.as_ref());
 
         if let Some(token) = self.state.0.borrow_mut().continue_selection_scroll() {
             request_scroll_frame(window, current_view, self.state.clone(), token);

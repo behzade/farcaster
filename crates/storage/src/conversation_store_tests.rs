@@ -116,7 +116,7 @@ fn durable_draft_and_native_session_merge_retains_transcript_and_submission_imag
         "INSERT INTO session_events(session_id,seq,t,schema_version,body) VALUES(?1,1,0,1,?2)",
         params![
             keep,
-            json!({"type":"accepted_prompt","submissionId":"receipt","outboxId":outbox,"images":serde_json::from_str::<Value>(&images)?})
+            json!({"type":"accepted_prompt","submissionId":"receipt","message":"run","outboxId":outbox,"images":serde_json::from_str::<Value>(&images)?})
                 .to_string()
         ],
     )?;
@@ -150,6 +150,12 @@ fn durable_draft_and_native_session_merge_retains_transcript_and_submission_imag
     assert_eq!(read.messages[0]["farcasterUserInvocation"], "/go");
     assert_eq!(read.messages[0]["submissionId"], "receipt");
     assert_eq!(read.messages[0]["content"][2]["data"], "ZGVm");
+    let display = store.load_transcript_display(session, false)?.unwrap();
+    assert!(!display.full_document);
+    let prompt = &display.content.items[0];
+    assert_eq!(prompt.images.len(), 2);
+    assert_eq!(prompt.images[0].bytes(), b"abc");
+    assert_eq!(prompt.images[1].bytes(), b"def");
     store.with(|db| {
         db.connection
             .execute("DELETE FROM outbox", [])
@@ -231,7 +237,7 @@ fn viewport_tail_seeks_a_user_turn_before_a_long_run_of_tool_calls() -> Result<(
     let repo = SharedStateStore::open_at(&dir.path().join("state.sqlite"))?;
     let path = dir.path().join("history");
     let s = session(dir.path(), &path);
-    let messages:Vec<_>=(0..200).map(|i|json!({"role":if i==85||i==198 {"user"} else {"toolResult"},"content":format!("item {i}")})).collect();
+    let messages:Vec<_>=(0..200).map(|i|json!({"role":if i==85||i==177||i==198 {"user"} else {"toolResult"},"content":format!("item {i}")})).collect();
     repo.replace_transcript(s, 0, &messages, &Value::Null)?;
     let ordinary = repo.load_transcript(s, Some(64))?.unwrap();
     assert_eq!(ordinary.messages.len(), 64);
@@ -300,5 +306,53 @@ fn failed_replacement_keeps_the_old_rows_and_revision() -> Result<()> {
     let recovered = repo.load_transcript(s, None)?.unwrap();
     assert_eq!(recovered.revision, 1);
     assert_eq!(recovered.messages, [first]);
+    Ok(())
+}
+
+#[test]
+fn transcript_stamp_tracks_same_length_edits_and_prompt_receipts_from_another_connection()
+-> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let db = dir.path().join("state.sqlite");
+    let path = dir.path().join("thread");
+    let session = session(dir.path(), &path);
+    let reader = SharedStateStore::open_at(&db)?;
+    let writer = SharedStateStore::open_at(&db)?;
+    let first = json!({"role":"assistant","content":"old"});
+    let second = json!({"role":"assistant","content":"new"});
+    assert!(reader.transcript_stamp(session)?.is_none());
+    let original = writer
+        .replace_transcript_with_stamp(session, 0, &[first], &Value::Null)?
+        .unwrap();
+    assert_eq!(
+        reader.load_transcript(session, None)?.unwrap().stamp,
+        original
+    );
+    let edited = writer
+        .replace_transcript_with_stamp(session, original.revision, &[second], &Value::Null)?
+        .unwrap();
+    assert_ne!(original.revision, edited.revision);
+    assert_eq!(reader.transcript_stamp(session)?, Some(edited));
+    let raw = writer.lock()?;
+    let append = |event_type| {
+        raw.connection.execute(
+            "INSERT INTO session_events(session_id,seq,t,schema_version,body) SELECT ?1,coalesce(max(seq),0)+1,0,1,json_object('type',?2) FROM session_events WHERE session_id=?1",
+            params![edited.session_id,event_type],
+        )
+    };
+    append("archive_session")?;
+    assert_eq!(reader.transcript_stamp(session)?, Some(edited));
+    append("prompt_delivery_receipt")?;
+    let receipt = reader.transcript_stamp(session)?.unwrap();
+    assert_eq!(receipt.revision, edited.revision);
+    assert!(receipt.prompt_event_seq > edited.prompt_event_seq);
+    assert_eq!(
+        reader.transcript_prompt_overlay(session, None)?.stamp,
+        Some(receipt)
+    );
+    assert_eq!(
+        reader.load_transcript(session, None)?.unwrap().stamp,
+        receipt
+    );
     Ok(())
 }

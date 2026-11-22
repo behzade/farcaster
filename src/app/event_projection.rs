@@ -89,6 +89,7 @@ mod tests;
 struct DirtyRegions {
     root: bool,
     rail: bool,
+    active_rows: bool,
     archived_rail: bool,
     archive_keys: bool,
     transcript: bool,
@@ -100,6 +101,11 @@ struct DirtyRegions {
 }
 
 impl DirtyRegions {
+    fn active_rows_changed(&mut self, changed: bool) {
+        self.active_rows |= changed;
+        self.rail |= changed;
+    }
+
     fn archive_change(&mut self, change: ArchiveChange) {
         self.archive_keys |= change == ArchiveChange::Rebuild;
         self.archived_rail |= change == ArchiveChange::Repaint;
@@ -107,6 +113,7 @@ impl DirtyRegions {
 
     fn observe_snapshot(&mut self, app: &FarcasterApp, snapshot: &RuntimeSnapshot) {
         self.transcript |= app.lifecycle.pending_session_switch.is_some()
+            || app.snapshot.saved_history != snapshot.saved_history
             || (app.snapshot.status == "Loading history") != (snapshot.status == "Loading history");
         let roots = &app.sessions.visible;
         self.rail |= session_rail_snapshot_changed(roots, &app.snapshot, snapshot);
@@ -155,7 +162,7 @@ impl DirtyRegions {
             | RuntimeEvent::ExtensionUi { .. } => {}
             RuntimeEvent::SessionMoved { .. } | RuntimeEvent::SessionDeleted { .. } => {
                 self.root = true;
-                self.rail = true;
+                self.active_rows_changed(true);
                 self.archive_keys = true;
                 self.transcript = true;
                 self.composer = true;
@@ -253,7 +260,9 @@ impl DirtyRegions {
         }
         app.sync_notification_expiries(cx);
         app.sync_recent_completion_expiries(cx);
-        if self.rail {
+        if self.active_rows {
+            app.invalidate_active_rail_rows(cx);
+        } else if self.rail {
             app.notify_session_rail_shell(cx);
         }
         if self.archive_keys {
@@ -329,7 +338,13 @@ impl FarcasterApp {
             dirty.composer = true;
         }
         dirty.observe_snapshot(self, &snapshot);
-        let snapshot = crate::app::session::remembered_transcript::stand_in(snapshot);
+        let snapshot = if snapshot.history_coverage().is_none()
+            && !self.views.transcript.read(cx).has_verified_display(self)
+        {
+            crate::app::session::remembered_transcript::stand_in(snapshot)
+        } else {
+            snapshot
+        };
         if self.pending_switch_matches(&snapshot) {
             drop(self.lifecycle.pending_session_switch.take());
             self.lifecycle.switch_recovery = None;
@@ -360,11 +375,15 @@ impl FarcasterApp {
             && self.snapshot.harness == snapshot.harness
             && self.snapshot.profile_id == snapshot.profile_id;
         let history_handoff = same_ready_document
-            && self.awaiting_history_rows()
+            && self.awaiting_history_rows(cx)
             && self.snapshot.history_tail.is_some();
         let transcript_changed = self.views.transcript.update(cx, |transcript, _| {
-            if same_ready_document && self.snapshot.saved_transcript && !snapshot.saved_transcript {
-                transcript.prepare_saved_history_append(
+            if same_ready_document
+                && self.snapshot.saved_history.is_some()
+                && self.snapshot.saved_history != snapshot.saved_history
+                && snapshot.history_coverage() == Some(crate::agents::HistoryCoverage::Complete)
+            {
+                transcript.prepare_saved_history_handoff(
                     &previous_items,
                     &snapshot.transcript_presentation().items,
                 );
@@ -373,12 +392,32 @@ impl FarcasterApp {
                 // Save the complete stand-in's reading position at the handoff.
                 transcript.reset(&previous_items);
             }
-            let changed =
-                transcript.select_session(snapshot.selected_session.as_deref(), &previous_items);
+            let changed = transcript.select_session(
+                snapshot.selected_session.as_deref(),
+                snapshot
+                    .selected_session
+                    .as_deref()
+                    .and_then(|path| snapshot.catalog_row_at(&self.sessions.all, path))
+                    .map(|row| row.catalog_key()),
+                &previous_items,
+            );
             changed || replacing_stand_in
         });
-        dirty.transcript |= tail_changed;
-        let row_update = if transcript_changed || (session_changed && !transcript_preselected) {
+        let restored_resident = (transcript_changed
+            || self.views.transcript.read(cx).rows.is_empty())
+            && snapshot
+                .selected_session
+                .as_deref()
+                .and_then(|path| snapshot.catalog_row_at(&self.sessions.all, path))
+                .is_some_and(|row| {
+                    self.views
+                        .transcript
+                        .update(cx, |view, _| view.restore_resident(row, &snapshot))
+                });
+        dirty.transcript |= tail_changed || restored_resident;
+        let row_update = if restored_resident {
+            crate::app::views::transcript::TranscriptRowUpdate::unchanged()
+        } else if transcript_changed || (session_changed && !transcript_preselected) {
             let _timing = crate::app::infrastructure::performance::OperationTiming::new(
                 crate::app::infrastructure::performance::OperationKind::FullProjection,
                 snapshot.conversation.items.len(),
@@ -436,7 +475,7 @@ impl FarcasterApp {
                 if history_handoff {
                     transcript.preserve_painted_history(
                         &self.snapshot.transcript_presentation().items,
-                        self.snapshot.saved_transcript,
+                        self.snapshot.saved_history.is_some(),
                     );
                 }
                 transcript.set_history_tail(
@@ -448,9 +487,14 @@ impl FarcasterApp {
                 );
             });
         }
+        if self.lifecycle.pending_session_switch.is_none() && !self.awaiting_history_rows(cx) {
+            self.views.transcript.update(cx, |view, _| {
+                view.finish_local_display(self, self.snapshot.saved_history.is_some())
+            });
+        }
         self.sync_restored_dialog();
         self.sync_composer_history();
-        dirty.rail |= self.reconcile_submitted_drafts(cx);
+        dirty.active_rows_changed(self.reconcile_submitted_drafts(cx));
     }
     fn update_worker_catalog_row(
         &mut self,
@@ -508,12 +552,17 @@ impl FarcasterApp {
             sessions::AppSessionId::new(row.app_session_id),
         ) {
             // A full refresh can see the bound session before the outbox receipt.
+            dirty.active_rows_changed(self.sessions.drafts.iter().any(|candidate| {
+                candidate.id == *draft
+                    && (!candidate.submitted
+                        || (candidate.title.is_none() && !row.title.is_empty()))
+            }));
             self.confirm_draft_submission(
                 draft,
                 (!row.title.is_empty()).then_some(row.title.as_str()),
             );
             if self.adopt_draft_identity(draft.clone(), id) {
-                dirty.rail = true;
+                dirty.active_rows_changed(true);
                 dirty.archive_keys = true;
             }
         }
@@ -641,13 +690,13 @@ impl FarcasterApp {
                 entry.insert(cx.focus_handle());
             }
         }
-        dirty.rail |= catalog_changed;
+        dirty.active_rows_changed(catalog_changed);
         dirty.archive_change(archive_change);
         dirty.composer |= composer_usage_changed;
         dirty.run |= run_catalog_changed;
         dirty.workgraph_session |= graph_identities_changed
             || previous_workgraph_session != self.active_workgraph_session();
-        dirty.rail |= self.reconcile_submitted_drafts(cx);
+        dirty.active_rows_changed(self.reconcile_submitted_drafts(cx));
     }
     fn project_session_deleted(
         &mut self,
@@ -871,6 +920,7 @@ impl FarcasterApp {
             self.select_project(target_project.clone(), cx);
             self.send(
                 RuntimeCommand::SelectSession {
+                    display_stamp: None,
                     session_id: target.id,
                     path: target.path,
                     harness: target.harness,
@@ -907,6 +957,9 @@ impl FarcasterApp {
         dirty: &mut DirtyRegions,
         cx: &mut Context<Self>,
     ) {
+        if sessions::draft_id(&target).is_some() {
+            dirty.active_rows_changed(true);
+        }
         let accepted = outcome == crate::agents::PromptOutcome::Accepted;
         self.workspace.voice.submission_result(
             submission_id.as_deref(),
@@ -949,7 +1002,7 @@ impl FarcasterApp {
                 session,
             );
         }
-        dirty.rail |= self.reconcile_submitted_drafts(cx);
+        dirty.active_rows_changed(self.reconcile_submitted_drafts(cx));
     }
 
     fn project_runtime_event(
@@ -1003,7 +1056,7 @@ impl FarcasterApp {
             } => {
                 self.confirm_draft_submission(&draft, provisional_title.as_deref());
                 dirty.archive_keys |= self.adopt_draft_identity(draft, app_session_id);
-                dirty.rail = true;
+                dirty.active_rows_changed(true);
                 dirty.composer = true;
             }
             RuntimeEvent::DraftIdentitySaved {
@@ -1011,7 +1064,7 @@ impl FarcasterApp {
                 app_session_id,
             } => {
                 if self.adopt_draft_identity(draft, app_session_id) {
-                    dirty.rail = true;
+                    dirty.active_rows_changed(true);
                     dirty.archive_keys = true;
                 }
             }
@@ -1042,6 +1095,23 @@ impl FarcasterApp {
                 dirty.composer |= self.snapshot.selected_session.as_ref() == Some(&session.path);
                 self.update_worker_catalog_row(&session, dirty, cx);
                 let query = self.navigation.search.read(cx).value();
+                let layout_changed = !query.trim().is_empty()
+                    || self
+                        .sessions
+                        .visible
+                        .by_key(&session.catalog_key())
+                        .is_none_or(|old| {
+                            old.app_session_id <= 0
+                                || old.path != session.path
+                                || old.project != session.project
+                                || old.id != session.id
+                                || old.profile_id != session.profile_id
+                                || old.harness != session.harness
+                                || old.parent_session != session.parent_session
+                                || old.parent_app_session_id != session.parent_app_session_id
+                                || old.archived != session.archived
+                        });
+                dirty.active_rows_changed(layout_changed);
                 if query.trim().is_empty() {
                     self.sessions.visible.upsert_by_recency(session);
                 } else {
@@ -1061,7 +1131,7 @@ impl FarcasterApp {
                 dirty.rail = true;
                 dirty.workgraph_session |=
                     previous_workgraph_session != self.active_workgraph_session();
-                dirty.rail |= self.reconcile_submitted_drafts(cx);
+                dirty.active_rows_changed(self.reconcile_submitted_drafts(cx));
             }
             RuntimeEvent::AgentActivityUpdated {
                 key: activity_key,
@@ -1263,7 +1333,7 @@ impl FarcasterApp {
                     self.code_tasks_stopped(&target, session.as_deref(), cx);
                 }
                 self.record_session_status(target, session, status, record.as_ref());
-                dirty.rail |= self.reconcile_submitted_drafts(cx);
+                dirty.active_rows_changed(self.reconcile_submitted_drafts(cx));
             }
             RuntimeEvent::ImportPreview {
                 generation,

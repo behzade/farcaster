@@ -612,7 +612,11 @@ fn should_log_duration(duration: Duration) -> bool {
     duration >= SLOW_OPERATION
 }
 
-fn tracing_every_operation() -> bool {
+#[path = "switch_paint.rs"]
+mod switch_paint;
+pub(in crate::app) use switch_paint::{SwitchPaintStage, SwitchPaintTrace};
+
+pub(in crate::app) fn tracing_every_operation() -> bool {
     *TRACE_ALL.get_or_init(|| {
         let enabled = trace_from_env(std::env::var("FARCASTER_PERF_TRACE").ok().as_deref());
         if enabled {

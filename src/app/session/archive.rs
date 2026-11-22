@@ -8,29 +8,7 @@ use crate::{
     sessions::{AppSessionId, DraftSession, SessionCatalog, SessionSummary},
 };
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::app) enum ChatArchiveTarget {
-    Draft(String),
-    Session(PathBuf),
-}
-
-pub(in crate::app) fn chat_archive_target(
-    drafts: &[DraftSession],
-    sessions: &[SessionSummary],
-    app_session_id: i64,
-) -> Option<ChatArchiveTarget> {
-    if let Some(draft) = drafts
-        .iter()
-        .find(|draft| draft.app_session_id == app_session_id)
-    {
-        return Some(ChatArchiveTarget::Draft(draft.id.clone()));
-    }
-    sessions
-        .iter()
-        .find(|session| session.app_session_id == app_session_id)
-        .map(|session| ChatArchiveTarget::Session(session.path.clone()))
-}
-
+#[derive(Clone, Eq, Hash, PartialEq)]
 pub(in crate::app) enum RailSessionIdentity {
     App(AppSessionId),
     Draft(String),
@@ -378,8 +356,8 @@ impl FarcasterApp {
                 .contains_key(&request.target)
             && value == Some(false)
             && self.sessions.archived_expanded
+            && self.sessions.visible.archived_root_count() == 0
             && !self.sessions.drafts.iter().any(|draft| draft.archived)
-            && !self.sessions.visible.roots().any(|row| row.archived)
         {
             self.sessions.archived_expanded = false;
             self.notify_session_rail_shell(cx);
@@ -413,12 +391,18 @@ impl FarcasterApp {
         };
         let row = row.map(|row| (row.target(), row.app_session_id, row.catalog_key()));
         let mut changed = false;
+        let mut visible_key = None;
+        let mut draft_id = None;
         if let Some((native, id, key)) = row {
             changed |= self.sessions.all.set_row_archived(&native, id, archived);
-            changed |= self
+            if self
                 .sessions
                 .visible
-                .set_row_archived(&native, id, archived);
+                .set_row_archived(&native, id, archived)
+            {
+                visible_key = Some(key.clone());
+                changed = true;
+            }
             if changed
                 && let Some(root) = self
                     .sessions
@@ -442,12 +426,15 @@ impl FarcasterApp {
             ArchiveTarget::App(id) => row.app_session_id == id.get(),
             ArchiveTarget::Draft(key) => row.id == *key,
             ArchiveTarget::Native(_) | ArchiveTarget::Path(_) => false,
-        }) {
-            changed |= draft.archived != archived;
+        }) && draft.archived != archived
+        {
+            draft_id = Some(draft.id.clone());
             draft.archived = archived;
+            changed = true;
         }
         if changed {
-            self.notify_session_rail(cx);
+            self.notify_active_archive_change(visible_key.as_ref(), draft_id.as_deref(), cx);
+            self.update_archive_membership(visible_key.as_ref(), draft_id.as_deref(), cx);
         }
     }
 
@@ -545,27 +532,18 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match chat_archive_target(
-            &self.sessions.drafts,
-            &self.sessions.visible,
-            app_session_id,
-        ) {
-            Some(ChatArchiveTarget::Draft(id)) => {
-                self.request_draft_archive(id, archive, window, cx);
-            }
-            Some(ChatArchiveTarget::Session(path)) => {
-                if let Some(id) = AppSessionId::new(app_session_id) {
-                    self.request_rail_archive(
-                        crate::sessions::SessionKey::App(id),
-                        archive,
-                        window,
-                        cx,
-                    );
-                } else {
-                    self.request_session_archive(path, archive, window, cx);
-                }
-            }
-            None => {}
+        let Some(id) = AppSessionId::new(app_session_id) else {
+            return;
+        };
+        if let Some(draft) = self
+            .sessions
+            .drafts
+            .iter()
+            .find(|row| row.app_session_id == id.get())
+        {
+            self.request_draft_archive(draft.id.clone(), archive, window, cx);
+        } else if self.sessions.visible.by_app_id(id.get()).is_some() {
+            self.request_rail_archive(crate::sessions::SessionKey::App(id), archive, window, cx);
         }
     }
 

@@ -145,11 +145,19 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let record = (!self.sessions.all.has_shared_path(&path))
+            .then(|| self.sessions.all.by_path(&path))
+            .flatten()
+            .map(|row| row.catalog_key());
         self.views.transcript.update(cx, |transcript, cx| {
-            transcript.follow_session(&path);
+            transcript.follow_session(&path, record.clone());
             cx.notify();
         });
-        self.select_session_and_focus(path, project, window, cx);
+        if let Some(key) = record {
+            self.select_catalog_session(key, true, window, cx);
+        } else {
+            self.select_session_and_focus(path, project, window, cx);
+        }
     }
 
     pub(in crate::app) fn show_attention_notification(

@@ -15,7 +15,7 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn notify_session_rail(&self, cx: &mut Context<Self>) {
-        self.notify_session_rail_shell(cx);
+        self.invalidate_active_rail_rows(cx);
         self.notify_archived_session_rail(cx);
     }
 
@@ -27,6 +27,25 @@ impl FarcasterApp {
         self.sessions.archived_expanded = false;
         self.views.session_rail.update(cx, |view, cx| {
             view.reveal = Some(SessionReveal::SessionID(key));
+            cx.notify();
+        });
+    }
+
+    pub(in crate::app) fn invalidate_active_rail_rows(&self, cx: &mut Context<Self>) {
+        self.views.session_rail.update(cx, |rail, cx| {
+            rail.invalidate_rows();
+            cx.notify();
+        });
+    }
+
+    pub(in crate::app) fn notify_active_archive_change(
+        &self,
+        key: Option<&crate::sessions::SessionKey>,
+        draft: Option<&str>,
+        cx: &mut Context<Self>,
+    ) {
+        self.views.session_rail.update(cx, |rail, cx| {
+            rail.patch_archive(self, key, draft);
             cx.notify();
         });
     }

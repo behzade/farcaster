@@ -68,6 +68,28 @@ fn cached_relationships_preserve_profile_identity_orphans_and_cycles() {
 }
 
 #[test]
+fn archive_root_count_tracks_writes_metadata_and_reparenting() {
+    let root = session("root", "/root", None).with_app_session_id(1);
+    let mut child = session("child", "/child", Some("root")).with_app_session_id(2);
+    child.archived = true;
+    let mut catalog = SessionCatalog::from(vec![root.clone(), child.clone()]);
+    assert_eq!(catalog.archived_root_count(), 0);
+    let initial_builds = catalog.relationship_build_count();
+    assert!(catalog.set_row_archived(&root.target(), 1, true));
+    assert_eq!(catalog.archived_root_count(), 1);
+    assert!(catalog.apply_archive_result(&root, None, true).is_some());
+    assert_eq!(catalog.archived_root_count(), 1);
+    catalog.upsert_by_recency(root);
+    assert_eq!(catalog.archived_root_count(), 0);
+    assert_eq!(catalog.relationship_build_count(), initial_builds);
+    child.parent_session = None;
+    catalog.upsert_by_recency(child.clone());
+    assert_eq!(catalog.archived_root_count(), 1);
+    assert!(catalog.apply_archive_result(&child, None, false).is_some());
+    assert_eq!(catalog.archived_root_count(), 0);
+}
+
+#[test]
 fn mutation_rebuilds_relationships_and_returns_current_metadata() {
     let mut catalog = SessionCatalog::from(vec![
         session("root", "/root", None),

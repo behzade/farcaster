@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 const PASTED_FILE_START: &str = "\n\n--- BEGIN PASTED FILE ";
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct FileAttachment {
     pub name: String,
     pub path: PathBuf,

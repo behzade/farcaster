@@ -465,6 +465,7 @@ fn live_e2e_runtime_navigation_keeps_pending_receipts_in_their_origin_session() 
 
             trace.phase("select first session to observe queued follow-up delivery")?;
             runtime.send(RuntimeCommand::SelectSession {
+                display_stamp: None,
                 path: first.path.clone(),
                 harness: first.harness,
                 session_id: first.id.clone(),

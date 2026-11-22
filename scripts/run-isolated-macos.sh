@@ -31,9 +31,13 @@ codesign --force --sign - --identifier io.github.behzade.farcaster.isolated \
     --requirements '=designated => identifier "io.github.behzade.farcaster.isolated"' "$bundle"
 
 # Launch Services reuses this bundle; -g leaves the user's current app active.
+project=${1:-$root}
+set -- -g
 if [ -n "${FARCASTER_DATA_DIR:-}" ]; then
-    open -g --env "FARCASTER_DATA_DIR=$FARCASTER_DATA_DIR" "$bundle" --args --isolated "${1:-$root}"
-else
-    open -g "$bundle" --args --isolated "${1:-$root}"
+    set -- "$@" --env "FARCASTER_DATA_DIR=$FARCASTER_DATA_DIR"
 fi
+if [ -n "${FARCASTER_PERF_TRACE:-}" ]; then
+    set -- "$@" --env "FARCASTER_PERF_TRACE=$FARCASTER_PERF_TRACE"
+fi
+open "$@" "$bundle" --args --isolated "$project"
 printf '%s\n' "$bundle"

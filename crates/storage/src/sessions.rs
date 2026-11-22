@@ -110,7 +110,8 @@ impl StateStore {
                         s.archived_at IS NOT NULL, s.harness,
                         m.provider, m.model, m.effort, COALESCE(s.backend_id, s.locator),
                         parent.harness, s.parent_id, s.created_ms, s.profile_id,
-                        s.forked_from_backend_id, f.routing_json, s.client_key
+                        s.forked_from_backend_id, f.routing_json, s.client_key,
+                        EXISTS (SELECT 1 FROM transcript_documents d WHERE d.session_id=s.id)
                    FROM sessions s
                    JOIN projects p ON p.id = s.project_id
                    LEFT JOIN sessions parent ON parent.id = s.parent_id
@@ -898,6 +899,7 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
     )
     .with_app_session_id(id);
     session.draft_id = row.get(28)?;
+    session.has_local_transcript = row.get(29)?;
     session.profile_id = row.get(25)?;
     session.forked_from = row.get(26)?;
     session.worker_profile = row

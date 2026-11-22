@@ -813,6 +813,7 @@ pub(super) fn initial_draft_command(
     let project = draft.project;
     if let Some(target) = session {
         return RuntimeCommand::SelectSession {
+            display_stamp: None,
             session_id: target.id,
             path: target.path,
             harness: target.harness,

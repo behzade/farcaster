@@ -36,24 +36,25 @@ impl ActiveSessionItem {
         }
     }
 
-    fn recency_ms(&self) -> u64 {
-        match self {
-            Self::Draft(draft) => draft.created_ms,
-            Self::Session(item) => item
-                .session
-                .modified
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|age| age.as_millis().try_into().unwrap_or(u64::MAX))
-                .unwrap_or_default(),
-        }
-    }
-
     pub(super) fn project(&self) -> &Path {
         match self {
             Self::Draft(draft) => draft.project.as_path(),
             Self::Session(item) => item.session.project.as_path(),
         }
     }
+}
+
+pub(super) fn session_archive_order(row: &SessionSummary) -> (u64, i64) {
+    let recency = row
+        .modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|age| age.as_millis().try_into().unwrap_or(u64::MAX))
+        .unwrap_or_default();
+    (recency, row.app_session_id)
+}
+
+pub(super) fn draft_archive_order(draft: &DraftSession) -> (u64, i64) {
+    (draft.created_ms, draft.app_session_id)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -188,7 +189,12 @@ fn build_session_rail_lists<'a, 'd>(
     });
     apply_manual_order(&mut active, manual_order, ActiveSessionItem::app_session_id);
     active.sort_by_key(|item| !matches!(item, ActiveSessionItem::Draft(draft) if !draft.submitted));
-    archived.sort_by_key(|item| Reverse((item.recency_ms(), item.app_session_id())));
+    archived.sort_by_key(|item| {
+        Reverse(match item {
+            ActiveSessionItem::Draft(draft) => draft_archive_order(draft),
+            ActiveSessionItem::Session(item) => session_archive_order(&item.session),
+        })
+    });
 
     SessionRailLists {
         active,

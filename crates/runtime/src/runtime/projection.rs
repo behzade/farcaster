@@ -431,7 +431,7 @@ impl RuntimeOwner {
                     if let (Some(state), Some(path), Some(harness)) =
                         (&self.state, self.active_session.as_deref(), self.harness)
                     {
-                        history::annotate_session_prompts(
+                        let _ = history::annotate_session_prompts(
                             state,
                             farcaster_storage::TranscriptSession {
                                 harness,

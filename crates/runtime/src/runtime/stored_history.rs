@@ -18,9 +18,14 @@ impl HistoryRequest<'_> {
         }
     }
 
-    fn result(&self, result: Result<LoadedHistory, String>) -> HistoryResult {
+    fn result(
+        &self,
+        result: Result<LoadedHistory, String>,
+        transcript_stamp: Option<farcaster_storage::TranscriptStamp>,
+    ) -> HistoryResult {
         HistoryResult {
             generation: self.generation,
+            transcript_stamp,
             kind: self.kind,
             path: self.path.to_owned(),
             project: self.project.to_owned(),
@@ -28,8 +33,12 @@ impl HistoryRequest<'_> {
         }
     }
 
-    pub(super) fn finish(&self, result: Result<LoadedHistory, String>) {
-        self.send(HistoryUpdate::Finished(self.result(result)));
+    pub(super) fn finish(
+        &self,
+        result: Result<LoadedHistory, String>,
+        stamp: Option<farcaster_storage::TranscriptStamp>,
+    ) {
+        self.send(HistoryUpdate::Finished(self.result(result, stamp)));
     }
 
     fn tail(&self, page: agents::HistoryPage) {
@@ -44,18 +53,20 @@ impl HistoryRequest<'_> {
         config: &AgentLaunchConfig,
         harness: Backend,
         repository: Option<&SharedStateStore>,
-    ) -> Result<Option<LoadedHistory>, String> {
+    ) -> Result<Option<(LoadedHistory, Option<farcaster_storage::TranscriptStamp>)>, String> {
         let session = TranscriptSession {
             harness,
             path: self.path,
             project: self.project,
             profile_id: config.profile_id.as_deref(),
         };
-        let selection = self.kind == HistoryLoadKind::Selection;
+        let selection = self.kind != HistoryLoadKind::DocumentRefresh;
         let mut expected_revision = Some(0);
         let mut published_local = false;
         if let Some(repo) = repository {
-            let local = if selection {
+            let local = if self.kind == HistoryLoadKind::DisplayedSelection {
+                repo.load_transcript(session, None)
+            } else if selection {
                 repo.load_transcript_tail(session, FIRST_PAGE_MESSAGES)
             } else {
                 repo.load_transcript(session, Some(0))
@@ -98,9 +109,10 @@ impl HistoryRequest<'_> {
                             Ok(Some(stored)) => {
                                 expected_revision = Some(stored.revision);
                                 let current = source_matches(&stored);
+                                let stamp = stored.stamp;
                                 self.send(HistoryUpdate::Saved {
                                     complete: stored.complete,
-                                    result: self.result(Ok(saved_history(stored))),
+                                    result: self.result(Ok(saved_history(stored)), Some(stamp)),
                                     refreshing: !current,
                                 });
                                 if current {
@@ -149,6 +161,7 @@ impl HistoryRequest<'_> {
                 None,
             )
         };
+        let mut stamp = None;
         if let (Some(repo), Some(expected)) = (repository, expected_revision) {
             let metadata = json!({
                 "sourceRevision": stable_revision,
@@ -156,16 +169,23 @@ impl HistoryRequest<'_> {
                 "thinkingLevel": history.thinking_level,
                 "pendingQuestion": history.pending_question,
             });
-            match repo.replace_transcript(session, expected, &history.messages, &metadata) {
-                Ok(true) => {
+            match repo.replace_transcript_with_stamp(
+                session,
+                expected,
+                &history.messages,
+                &metadata,
+            ) {
+                Ok(Some(committed)) => {
+                    stamp = Some(committed);
                     repo.restore_transcript_links(session, &mut history.messages)?;
                 }
-                Ok(false) => {
+                Ok(None) => {
                     // A live writer or a newer import won while this backend was reading.
                     if let Some(newer) = repo.load_transcript(session, None)? {
+                        let stamp = newer.stamp;
                         self.send(HistoryUpdate::Saved {
                             complete: newer.complete,
-                            result: self.result(Ok(saved_history(newer))),
+                            result: self.result(Ok(saved_history(newer)), Some(stamp)),
                             refreshing: false,
                         });
                         return Ok(None);
@@ -176,7 +196,7 @@ impl HistoryRequest<'_> {
                 }
             }
         }
-        Ok(Some(history))
+        Ok(Some((history, stamp)))
     }
 }
 

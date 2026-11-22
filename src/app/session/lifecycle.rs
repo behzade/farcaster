@@ -109,7 +109,19 @@ impl FarcasterApp {
         catalog.by_path(path)
     }
 
+    fn begin_navigation_intent(&mut self, cx: &mut Context<Self>) {
+        self.lifecycle.navigation_intent += 1;
+        self.lifecycle.opening_local = None;
+        self.lifecycle.display_fit = None;
+        if self.sessions.error.as_deref() == Some("Refreshing session details…") {
+            self.sessions.error = None;
+            self.notify_session_rail_shell(cx);
+        }
+    }
+
     pub(in crate::app) fn cancel_pending_session_switch(&mut self) {
+        self.lifecycle.opening_local = None;
+        self.lifecycle.display_fit = None;
         self.project.navigation_trust = None;
         self.lifecycle.switch_recovery = None;
         self.lifecycle.requested_session_key = None;
@@ -170,7 +182,8 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn awaiting_selection_snapshot(&self) -> bool {
-        self.lifecycle.awaiting_switch_route.is_some()
+        self.lifecycle.opening_local.is_some()
+            || self.lifecycle.awaiting_switch_route.is_some()
             || self.lifecycle.pending_session_switch.is_some()
             || self
                 .lifecycle
@@ -398,13 +411,18 @@ impl FarcasterApp {
         resolve: impl Fn(&Self) -> Option<T> + 'static,
         action: impl FnOnce(&mut Self, T, &mut Window, &mut Context<Self>) + 'static,
     ) {
+        let intent = self.lifecycle.navigation_intent;
         if let Some(owner) = self.modal_owner_window(window, cx) {
             crate::app::views::native_overlay::in_owner_window(
                 cx.entity().downgrade(),
                 Some(owner),
                 window,
                 cx,
-                move |app, window, cx| app.retry_after_catalog_refresh(window, cx, resolve, action),
+                move |app, window, cx| {
+                    if app.lifecycle.navigation_intent == intent {
+                        app.retry_after_catalog_refresh(window, cx, resolve, action);
+                    }
+                },
             );
             return;
         }
@@ -418,6 +436,9 @@ impl FarcasterApp {
                     .await;
                 let done = weak
                     .update_in(cx, |this, window, cx| {
+                        if this.lifecycle.navigation_intent != intent {
+                            return true;
+                        }
                         if this.lifecycle.switch_sequence != sequence
                             || this.composer.sessions.current_buffer() != current_target
                         {
@@ -443,7 +464,8 @@ impl FarcasterApp {
                 }
             }
             let _ = weak.update_in(cx, |this, _, cx| {
-                if this.lifecycle.switch_sequence == sequence
+                if this.lifecycle.navigation_intent == intent
+                    && this.lifecycle.switch_sequence == sequence
                     && this.composer.sessions.current_buffer() == current_target
                 {
                     this.sessions.error = Some(
@@ -555,7 +577,20 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.select_session_with_worker_reveal(path, project, None, true, window, cx);
+        self.begin_navigation_intent(cx);
+        // Path-only entry points, including notifications, can still stage a saved
+        // display when the catalog identifies a unique owner for this locator.
+        let key = self
+            .sessions
+            .all
+            .by_path(&path)
+            .filter(|row| {
+                row.has_local_transcript
+                    && row.project == project
+                    && !self.sessions.all.has_shared_path(&path)
+            })
+            .map(SessionSummary::catalog_key);
+        self.open_session(path, project, key, true, window, cx);
     }
 
     pub(in crate::app) fn select_session_and_focus(
@@ -585,6 +620,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.begin_navigation_intent(cx);
         let Some(row) = self
             .sessions
             .all
@@ -594,11 +630,11 @@ impl FarcasterApp {
             return;
         };
         let (path, project) = (row.path.clone(), row.project.clone());
-        self.select_session_with_worker_reveal(path, project, Some(key), reveal_worker, window, cx);
+        self.open_session(path, project, Some(key), reveal_worker, window, cx);
         self.recover_keyboard_focus(window, cx);
     }
 
-    fn select_session_with_worker_reveal(
+    fn open_session(
         &mut self,
         path: PathBuf,
         project: PathBuf,
@@ -610,6 +646,8 @@ impl FarcasterApp {
         if self.project.pending_trust_command.is_some() {
             return;
         }
+        use crate::app::infrastructure::performance::{self, SwitchPaintStage, SwitchPaintTrace};
+        let click_started = performance::tracing_every_operation().then(std::time::Instant::now);
         let _timing =
             crate::app::infrastructure::performance::Timing::new("switch.session_request");
         let row = key.as_ref().and_then(|key| {
@@ -632,22 +670,112 @@ impl FarcasterApp {
             self.close_sessions_sheet_after_selection(window, cx);
             return;
         }
+        let profile = row
+            .and_then(|row| row.profile_id.clone())
+            .or_else(|| crate::agents::profile_id_from_locator(&path));
+        let view = self.views.transcript.read(cx);
+        let resident = row
+            .filter(|row| view.has_resident_for(row))
+            .map(|row| view.resident_stamp_for(row));
+        let stage_local = row.is_some_and(|row| row.has_local_transcript) || resident.is_some();
+        let full = view.needs_full_display(&path, key.clone());
         let Some(target) = row
             .map(SessionSummary::target)
             .or_else(|| self.backend_target_for_path(&path, cx))
         else {
             self.retry_after_session_refresh(path.clone(), window, cx, move |this, window, cx| {
-                this.select_session_with_worker_reveal(
-                    path,
-                    project,
-                    key,
-                    reveal_worker,
-                    window,
-                    cx,
-                );
+                this.open_session(path, project, key, reveal_worker, window, cx);
             });
             return;
         };
+        if let Some(started) = click_started {
+            self.lifecycle.switch_paint =
+                Some(SwitchPaintTrace::start(started, target.harness, &path));
+        }
+        let query = crate::app::views::DisplayQuery {
+            trace: self.lifecycle.switch_paint.clone(),
+            path: path.clone(),
+            project: project.clone(),
+            harness: target.harness,
+            profile,
+        };
+        if stage_local {
+            // Publish the destination's selection, buffer and saved rows together. An
+            // intervening draw still has the complete previous view. Another navigation
+            // drops this task, including when the user reselects the currently shown row.
+            let read = query.clone().read(resident, full, cx);
+            let intent = self.lifecycle.navigation_intent;
+            self.lifecycle.opening_local = Some(cx.spawn_in(window, async move |weak, cx| {
+                let mut page = read.await;
+                let Ok(probe) = weak.update_in(cx, |app, window, cx| {
+                    if app.lifecycle.navigation_intent == intent {
+                        app.check_display_fit(&page, window, cx)
+                    } else {
+                        None
+                    }
+                }) else {
+                    return;
+                };
+                if let Some(probe) = probe
+                    && !probe.await.unwrap_or(false)
+                {
+                    let Ok(Some(read)) = weak.update(cx, |app, cx| {
+                        (app.lifecycle.navigation_intent == intent)
+                            .then(|| query.clone().read(None, true, cx))
+                    }) else {
+                        return;
+                    };
+                    page = read.await;
+                }
+                let _ = weak.update_in(cx, |app, window, cx| {
+                    if app.lifecycle.navigation_intent != intent {
+                        return;
+                    }
+                    if let Some(trace) = &query.trace {
+                        trace.mark(SwitchPaintStage::Delivered);
+                    }
+                    app.lifecycle.opening_local = None;
+                    if app.project.pending_trust_command.is_some() {
+                        return;
+                    }
+                    let target = if let Some(key) = &key {
+                        let Some(row) = app
+                            .sessions
+                            .all
+                            .by_key(key)
+                            .or_else(|| app.sessions.visible.by_key(key))
+                            .filter(|row| query.matches(row))
+                        else {
+                            return;
+                        };
+                        row.target()
+                    } else {
+                        target
+                    };
+                    app.show_session(query, target, key, reveal_worker, Some(page), window, cx);
+                    // macOS can suspend display frames for an occluded window.
+                    // Publish the saved selection to accessibility when its rows arrive.
+                    crate::app::ui::accessibility::refresh_hidden_accessibility(window, cx);
+                });
+            }));
+            return;
+        }
+        self.show_session(query, target, key, reveal_worker, None, window, cx);
+    }
+
+    fn show_session(
+        &mut self,
+        query: crate::app::views::DisplayQuery,
+        target: SessionTarget,
+        key: Option<crate::sessions::SessionKey>,
+        reveal_worker: bool,
+        prepared: Option<crate::app::views::DisplayRead>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::app::infrastructure::performance::SwitchPaintStage;
+        let path = query.path.clone();
+        let project = query.project.clone();
         let previous_root = self.selected_rail_root();
         let previously_archived = previous_root.is_some_and(|row| row.archived)
             || self.sessions.selected_draft.as_ref().is_some_and(|id| {
@@ -677,6 +805,15 @@ impl FarcasterApp {
             path.clone(),
             crate::app::infrastructure::performance::Timing::new("switch.session_total"),
         ));
+        let display_stamp = prepared
+            .as_ref()
+            .and_then(crate::app::views::DisplayRead::stamp);
+        self.present_or_read_transcript(
+            query,
+            self.lifecycle.requested_session_key.clone(),
+            prepared,
+            cx,
+        );
         self.select_project_for_navigation(project.clone(), cx);
         if USER_SESSION_SWITCH_RESTORES_CENTER {
             self.restore_center_surface(project.clone(), window, cx);
@@ -692,6 +829,7 @@ impl FarcasterApp {
         self.send_navigation_command(
             &project,
             RuntimeCommand::SelectSession {
+                display_stamp,
                 path,
                 harness: target.harness,
                 session_id: target.id,
@@ -716,6 +854,9 @@ impl FarcasterApp {
         self.notify_composer(cx);
         self.notify_run_panel(cx);
         cx.notify();
+        if let Some(trace) = &self.lifecycle.switch_paint {
+            trace.mark(SwitchPaintStage::NavigationDone);
+        }
     }
 
     pub(in crate::app) fn fork_session(
@@ -725,6 +866,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.begin_navigation_intent(cx);
         if self.project.pending_trust_command.is_some() || self.center_surface_switch_blocked() {
             return;
         }
@@ -784,6 +926,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.begin_navigation_intent(cx);
         if folder.is_some_and(|id| {
             !self
                 .sessions
@@ -987,6 +1130,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.begin_navigation_intent(cx);
         if self.project.pending_trust_command.is_some() {
             return;
         }
@@ -1043,6 +1187,7 @@ impl FarcasterApp {
                 return;
             };
             RuntimeCommand::SelectSession {
+                display_stamp: None,
                 path,
                 harness: target.harness,
                 session_id: target.id,
@@ -1115,6 +1260,7 @@ impl FarcasterApp {
         self.activity.recent_completion_expiries.remove(&target);
         self.sessions.pending_folder_drafts.remove(id);
         if was_selected {
+            self.begin_navigation_intent(cx);
             self.project.navigation_trust = None;
             self.sessions.selected_draft = None;
             if let Some(session) = self.sessions.visible.first().cloned() {
@@ -1128,6 +1274,7 @@ impl FarcasterApp {
                 self.send_navigation_command(
                     &session.project,
                     RuntimeCommand::SelectSession {
+                        display_stamp: None,
                         path: session.path,
                         harness: session.harness,
                         session_id: session.id,

@@ -346,6 +346,7 @@ impl RuntimeOwner {
                 ..
             } => self.stage_draft(LaunchTarget::Draft(&id), harness, project),
             RuntimeCommand::SelectSession {
+                display_stamp,
                 path,
                 harness,
                 session_id,
@@ -362,7 +363,9 @@ impl RuntimeOwner {
                 // Reselecting a resident actor can race the first history read.
                 // Keep its existing reply and the reader that will finish the document.
                 if self.history_selection_generation == Some(self.history_generation)
-                    && self.snapshot.status == "Loading history"
+                    && (self.snapshot.status == "Loading history"
+                        || self.snapshot.saved_history == Some(SavedHistory::RefreshingPartial)
+                            && !self.snapshot.needs_saved_revision(display_stamp))
                     && self.snapshot.selected_session.as_ref() == Some(&path)
                     && self.snapshot.project == project
                     && self.harness == Some(harness)
@@ -378,7 +381,7 @@ impl RuntimeOwner {
                 }
                 self.harness = Some(harness);
                 self.session_id = Some(session_id);
-                self.select_history(path, project);
+                self.select_document(path, project, display_stamp);
             }
             RuntimeCommand::RestartSession {
                 path,

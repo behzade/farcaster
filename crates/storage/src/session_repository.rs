@@ -1,5 +1,34 @@
 use super::*;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TranscriptStamp {
+    pub session_id: i64,
+    pub revision: i64,
+    pub prompt_event_seq: i64,
+}
+
+impl StateStore {
+    pub(super) fn transcript_stamp_for_id(
+        &self,
+        id: i64,
+    ) -> rusqlite::Result<Option<TranscriptStamp>> {
+        use rusqlite::OptionalExtension;
+        let mut statement = self.connection.prepare_cached(&format!(
+            "SELECT revision, ({}) FROM transcript_documents WHERE session_id=?1",
+            crate::transcript_viewport::PRESENTATION_STAMP,
+        ))?;
+        statement
+            .query_row([id], |row| {
+                Ok(TranscriptStamp {
+                    session_id: id,
+                    revision: row.get(0)?,
+                    prompt_event_seq: row.get(1)?,
+                })
+            })
+            .optional()
+    }
+}
+
 pub struct ObservedSession<'a> {
     pub harness: Backend,
     pub project: &'a Path,
@@ -10,6 +39,22 @@ pub struct ObservedSession<'a> {
 
 /// Keeps prompt submission, backend registration and catalog writes on the same session.
 pub trait SessionRepository {
+    fn transcript_stamp(
+        &self,
+        session: TranscriptSession<'_>,
+    ) -> Result<Option<TranscriptStamp>, String>;
+    fn replace_transcript_with_stamp(
+        &self,
+        session: TranscriptSession<'_>,
+        expected_revision: i64,
+        messages: &[serde_json::Value],
+        metadata: &serde_json::Value,
+    ) -> Result<Option<TranscriptStamp>, String>;
+    fn load_transcript_display(
+        &self,
+        session: TranscriptSession<'_>,
+        full_document: bool,
+    ) -> Result<Option<StoredViewport>, String>;
     fn restore_transcript_links(
         &self,
         session: TranscriptSession<'_>,
@@ -79,6 +124,43 @@ pub trait SessionRepository {
 }
 
 impl SessionRepository for SharedStateStore {
+    fn transcript_stamp(
+        &self,
+        session: TranscriptSession<'_>,
+    ) -> Result<Option<TranscriptStamp>, String> {
+        self.with_transcript_connection(|store| {
+            let tx = store
+                .connection
+                .unchecked_transaction()
+                .map_err(|e| e.to_string())?;
+            match session.find(&tx).map_err(|e| e.to_string())? {
+                Some(id) => store.transcript_stamp_for_id(id).map_err(|e| e.to_string()),
+                None => Ok(None),
+            }
+        })
+    }
+    fn replace_transcript_with_stamp(
+        &self,
+        session: TranscriptSession<'_>,
+        expected_revision: i64,
+        messages: &[serde_json::Value],
+        metadata: &serde_json::Value,
+    ) -> Result<Option<TranscriptStamp>, String> {
+        self.with_transcript_connection(|store| {
+            store.replace_conversation(session, expected_revision, messages, metadata)
+        })
+    }
+    fn load_transcript_display(
+        &self,
+        session: TranscriptSession<'_>,
+        full_document: bool,
+    ) -> Result<Option<StoredViewport>, String> {
+        self.with_transcript_connection(|store| {
+            store
+                .read_display(session, full_document)
+                .map_err(|e| format!("read prepared viewport: {e}"))
+        })
+    }
     fn restore_transcript_links(
         &self,
         session: TranscriptSession<'_>,
@@ -113,9 +195,8 @@ impl SessionRepository for SharedStateStore {
         messages: &[serde_json::Value],
         metadata: &serde_json::Value,
     ) -> Result<bool, String> {
-        self.with_transcript_connection(|store| {
-            store.replace_conversation(session, expected_revision, messages, metadata)
-        })
+        self.replace_transcript_with_stamp(session, expected_revision, messages, metadata)
+            .map(|stamp| stamp.is_some())
     }
     fn upsert_transcript_items(
         &self,
