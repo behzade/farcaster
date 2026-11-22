@@ -58,6 +58,13 @@ impl StateStore {
                         .execute("DELETE FROM transcript_viewports", [])
                         .map_err(|error| format!("invalidate old transcript viewports: {error}"))?;
                 }
+                Some(28) => {
+                    migration.execute(
+                        "DELETE FROM transcript_viewports WHERE items IS NULL AND EXISTS (
+                         SELECT 1 FROM session_events WHERE session_id=transcript_viewports.session_id
+                         AND json_extract(body,'$.type')='prompt_presentation')", [],
+                    ).map_err(|error| format!("invalidate skipped prompt viewports: {error}"))?;
+                }
                 Some(version) => {
                     return Err(format!(
                         "GUI state schema {version} is not supported by this build"

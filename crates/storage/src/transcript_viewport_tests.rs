@@ -270,6 +270,66 @@ fn saved_image_rows_share_attachment_files_and_restore_their_original_items()
 }
 
 #[test]
+fn command_presentation_in_saved_tail_matches_full_history_after_upgrade() -> Result<(), Error> {
+    let tmp = tempfile::tempdir()?;
+    let db = tmp.path().join("state.sqlite");
+    let path = tmp.path().join("thread");
+    let session = TranscriptSession {
+        harness: Backend::Codex,
+        path: &path,
+        project: tmp.path(),
+        profile_id: None,
+    };
+    let store = StateStore::open_at(&db)?;
+    let mut messages: Vec<_> = (0..100)
+        .map(|i| json!({"role":"assistant","content":[{"type":"text","text":format!("message {i}")}]}))
+        .collect();
+    for (ordinal, id) in [(0, "older"), (34, "boundary"), (95, "recent")] {
+        messages[ordinal] = json!({"role":"user","submissionId":id,"content":"expanded"});
+    }
+    // A repeated unlinked prompt in the suffix must never inherit the older command.
+    messages[98] = json!({"role":"user","content":"expanded"});
+    store.replace_conversation(session, 0, &messages, &json!({}))?;
+    let id = session.find(&store.connection)?.unwrap();
+    for (seq, submission, title) in [(1, "older", "$old"), (2, "recent", "$new")] {
+        let event = json!({"type":"prompt_presentation","submissionId":submission,
+                           "resolved":"expanded","display":title,"invocation":"command"});
+        store.connection.execute(
+            "INSERT INTO session_events VALUES(?1,?2,0,1,?3)",
+            params![id, seq, event.to_string()],
+        )?;
+    }
+    let check = |store: &StateStore| -> Result<(), Error> {
+        let page = store.read_display(session, false)?.unwrap();
+        let full = store.read_display(session, true)?.unwrap();
+        assert!(!page.full_document);
+        assert_eq!(page.coverage, agents::HistoryCoverage::Suffix);
+        let offset = full.content.items.len() - page.content.items.len();
+        assert!(offset > 0 && offset < 95);
+        for (i, item) in page.content.items.iter().enumerate() {
+            assert!(viewport_item_matches(item, &full.content.items[offset + i]));
+        }
+        assert_eq!(page.content.items[95 - offset].text, "$new");
+        assert_eq!(page.content.items[98 - offset].text, "expanded");
+        Ok(())
+    };
+    store.connection.execute_batch(
+        "UPDATE transcript_viewports SET items=NULL,event_seq=2;
+                                    UPDATE meta SET value='28' WHERE key='schema_version'",
+    )?;
+    drop(store);
+    let store = StateStore::open_at(&db)?;
+    check(&store)?;
+    store.prepare_viewport(id)?;
+    check(&store)?;
+    assert!(!store.can_display_history_tail(&path)?); // Native pages lack the stored annotations.
+    store.connection.execute("INSERT INTO session_events VALUES(?1,3,0,1,?2)",
+        params![id,json!({"type":"prompt_presentation","resolved":"expanded","display":"legacy","invocation":"command"}).to_string()])?;
+    assert!(store.read_display(session, false)?.unwrap().full_document);
+    Ok(())
+}
+
+#[test]
 fn v26_upgrade_rebuilds_the_short_page_without_changing_the_document()
 -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;

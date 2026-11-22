@@ -114,7 +114,28 @@ impl StateStore {
             }
             Some((None, _, _, _)) => {
                 self.queue_viewport_preparation(Some(id));
-                return Ok(None);
+                // The document or its prompt receipts changed before background preparation.
+                // Use the newest bounded page for this click under the same read transaction.
+                let (revision, complete, total, seq) = tx.query_row(
+                    &format!(
+                        "SELECT revision,complete,item_count,({PRESENTATION_STAMP})
+                              FROM transcript_documents WHERE session_id=?1"
+                    ),
+                    [id],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get::<_, bool>(1)?,
+                            row.get::<_, usize>(2)?,
+                            row.get(3)?,
+                        ))
+                    },
+                )?;
+                let start = total.saturating_sub(TAIL_MESSAGES);
+                let Some(bytes) = self.prepare_page(tx, id, start, project)? else {
+                    return Ok(None);
+                };
+                (revision, complete && start == 0, bytes, seq)
             }
             _ => return Ok(None),
         };
@@ -128,7 +149,7 @@ impl StateStore {
                     [id],
                     |row| row.get(0),
                 )?;
-                if total <= TAIL_MESSAGES || !self.can_display_tail_for_id(Some(id))? {
+                if total <= TAIL_MESSAGES {
                     return Err(error);
                 }
                 let Some(tail) = self.prepare_page(tx, id, total - TAIL_MESSAGES, project)? else {
@@ -214,27 +235,22 @@ impl StateStore {
             return Ok(());
         }
         let tail_start = total.saturating_sub(TAIL_MESSAGES);
-        let mut start = tail_start;
-        let mut bytes = None;
-        if self.can_display_tail_for_id(Some(id))? {
-            if tail_start > 0 {
-                start = viewport_page_start(&tx, id, tail_start)?;
-            }
-            let prepare = |from| self.prepare_page(&tx, id, from, Path::new(&project));
-            if start < tail_start {
-                bytes = match prepare(start) {
-                    Ok(bytes) => bytes,
-                    Err(error) => {
+        let mut start = viewport_page_start(&tx, id, tail_start)?;
+        let prepare = |from| self.prepare_page(&tx, id, from, Path::new(&project));
+        let bytes = if start < tail_start {
+            match prepare(start) {
+                Ok(Some(bytes)) => Some(bytes),
+                expanded => {
+                    if let Err(error) = expanded {
                         log::warn!("Prepare expanded transcript viewport: {error}");
-                        None
                     }
-                };
+                    start = tail_start;
+                    prepare(start)?
+                }
             }
-            if bytes.is_none() {
-                start = tail_start;
-                bytes = prepare(start)?;
-            }
-        }
+        } else {
+            prepare(start)?
+        };
         tx.commit()?;
         // No reader can publish a stale page after a concurrent append or a receipt.
         self.connection.execute(
@@ -255,10 +271,16 @@ impl StateStore {
         start: usize,
         project: &Path,
     ) -> Result<Option<Vec<u8>>, Error> {
-        match self.viewport_messages(tx, id, start)? {
-            Some(messages) => self.encode_page(&messages, project),
-            None => Ok(None),
+        let Some(presentations) = self.viewport_presentations(id, start)? else {
+            return Ok(None);
+        };
+        let Some(mut messages) = self.viewport_messages(tx, id, start)? else {
+            return Ok(None);
+        };
+        if !presentations.is_empty() {
+            farcaster_conversation::annotate_prompt_presentations(&mut messages, &presentations);
         }
+        self.encode_page(&messages, project)
     }
 
     fn viewport_messages(
