@@ -1,4 +1,20 @@
 use super::*;
+use crate::repository::RepositoryBackend;
+use std::path::Path;
+
+fn git_backend(project: &Path) -> RepositoryBackend {
+    assert!(
+        std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(project)
+            .status()
+            .unwrap()
+            .success()
+    );
+    RepositoryBackend::discover(project, BackendPreference::Git)
+        .unwrap()
+        .unwrap()
+}
 
 #[test]
 fn auto_does_not_select_jj_before_discovery() {
@@ -84,21 +100,9 @@ fn file_counts_and_labels_stay_aligned_during_hover_focus_and_selection(
         ),
         cx,
         |cx, app, _, project| {
-            assert!(
-                std::process::Command::new("git")
-                    .args(["init", "-q"])
-                    .current_dir(project)
-                    .status()
-                    .unwrap()
-                    .success()
-            );
+            let backend = git_backend(project);
             std::fs::write(project.join("long_file_name.rs"), "fn main() {}\n").unwrap();
-            let snapshot =
-                crate::repository::RepositoryBackend::discover(project, BackendPreference::Git)
-                    .unwrap()
-                    .unwrap()
-                    .snapshot()
-                    .unwrap();
+            let snapshot = backend.snapshot().unwrap();
             let change = snapshot.changes[0].clone();
             let key = change.target.key.clone();
             let row_id = repository_row_id(&key);
@@ -165,6 +169,93 @@ fn file_counts_and_labels_stay_aligned_during_hover_focus_and_selection(
                     );
                 }
             }
+        },
+    );
+}
+
+#[gpui::test]
+fn long_change_list_scrolls_below_the_filter(cx: &mut gpui::TestAppContext) {
+    use gpui::{ScrollDelta, ScrollEvent, ScrollSource, px};
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::long_change_list_scrolls_below_the_filter"
+        ),
+        cx,
+        |cx, app, _, project| {
+            let project = project.canonicalize().unwrap();
+            let backend = git_backend(&project);
+            for i in 0..60 {
+                std::fs::write(project.join(format!("changed-{i:02}.rs")), "").unwrap();
+            }
+            let snapshot = backend.snapshot().unwrap();
+            let last = snapshot
+                .changes
+                .iter()
+                .find(|change| change.relative_path.ends_with("changed-59.rs"))
+                .unwrap();
+            let selector: &'static str = Box::leak(
+                format!(
+                    "repository-filename-{}",
+                    repository_row_id(&last.target.key)
+                )
+                .into_boxed_str(),
+            );
+            cx.simulate_resize(gpui::size(px(1600.), px(660.)));
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    let repo = &mut app.project.repository;
+                    repo.project = project.clone();
+                    repo.execution_allowed = true;
+                    for change in &snapshot.changes {
+                        repo.row_focus
+                            .insert(change.target.key.clone(), cx.focus_handle());
+                    }
+                    repo.backend = Some(backend);
+                    repo.snapshot = Some(snapshot);
+                    app.views.run_panel.update(cx, |panel, cx| {
+                        panel.changes.set_all(&project, true);
+                        cx.notify();
+                    });
+                    cx.notify();
+                })
+            });
+            let draw = |cx: &mut gpui::VisualTestContext| {
+                cx.update(|window, cx| window.draw(cx).clear(cx))
+            };
+            draw(cx);
+            let header = cx.debug_bounds("repository-header-and-filter").unwrap();
+            let list = cx.debug_bounds("repository-files").unwrap();
+            assert!(list.top() >= header.bottom());
+            assert!(
+                list.bottom() <= px(660.),
+                "file list extends below the window: {list:?}"
+            );
+            let initial = cx.debug_bounds(selector);
+            assert!(initial.is_none_or(|last| last.top() >= list.bottom()));
+            let wheel = |cx: &mut gpui::VisualTestContext, dy| {
+                cx.simulate_event(ScrollEvent {
+                    source: ScrollSource::Pointer,
+                    position: list.center(),
+                    delta: ScrollDelta::Pixels(gpui::point(px(0.), px(dy))),
+                    ..Default::default()
+                });
+                draw(cx);
+            };
+            wheel(cx, -10000.);
+            let last = cx
+                .debug_bounds(selector)
+                .expect("the final file should be reachable");
+            assert!(
+                last.top() >= list.top() && last.bottom() <= list.bottom(),
+                "last={last:?} initial={initial:?} list={list:?}"
+            );
+            assert_eq!(
+                cx.debug_bounds("repository-header-and-filter"),
+                Some(header)
+            );
+            wheel(cx, 10000.);
+            assert_eq!(cx.debug_bounds(selector), initial);
         },
     );
 }

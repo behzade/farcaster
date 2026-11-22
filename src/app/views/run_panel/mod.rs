@@ -449,19 +449,7 @@ impl FarcasterApp {
             .child(activity.mt(theme().space.xs))
             .when(
                 !expanded && self.project.repository.backend.is_some(),
-                |run| {
-                    run.child(
-                        div()
-                            .mt(theme().space.md + theme().space.sm)
-                            .flex_1()
-                            .min_h_0()
-                            .child(self.render_repository(
-                                entity.clone(),
-                                run_panel.clone(),
-                                browser,
-                            )),
-                    )
-                },
+                |run| run.child(self.render_repository(entity.clone(), run_panel.clone(), browser)),
             );
         panel()
             .size_full()
