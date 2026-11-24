@@ -177,8 +177,6 @@ fn run(
                         if let Err(error) = parent.report_questions(&request) {
                             break 'run error;
                         }
-                        // The parent replies through worker_send. Close the native request
-                        // so a blocking question cannot prevent that message from arriving.
                         if let Err(error) = session.respond_questions(crate::QuestionResponse {
                             id: request.id,
                             answers: Default::default(),

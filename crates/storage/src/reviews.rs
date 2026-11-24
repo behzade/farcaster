@@ -226,8 +226,6 @@ fn register_caller_binding_in(
                 |row| row.get(0),
             )
             .map_err(|error| format!("read caller family: {error}"))?;
-        // Ordinary refreshes preserve the stored family, including a parent ID
-        // replaced by a merge. A new child still needs an atomic attachment.
         if !linked {
             return Err("worker parent session is not bound yet".into());
         }

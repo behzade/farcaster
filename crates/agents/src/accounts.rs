@@ -35,7 +35,6 @@ impl AccountIdentity {
             && self.workspace_id == other.workspace_id
     }
 
-    /// Compare observations from the same credential source, without plan/label changes.
     pub fn same_store_identity(&self, other: &Self) -> bool {
         self.authority == other.authority
             && self.principal_id == other.principal_id
@@ -73,7 +72,6 @@ pub struct AccountSource {
     pub context: String,
     pub provider: String,
     pub credential_source: String,
-    /// Distinguishes a live backend process from the next-launch connection.
     #[serde(default)]
     pub incarnation: Option<String>,
 }
@@ -142,7 +140,6 @@ pub struct AccountObservation {
     pub capabilities: AccountCapabilities,
 }
 
-/// Complete discovery of one credential store, including when it has no accounts.
 pub struct AccountDiscovery {
     pub source: AccountSource,
     pub observations: Vec<AccountObservation>,
@@ -217,7 +214,6 @@ pub struct AccountsSnapshot {
 }
 
 impl AccountsSnapshot {
-    /// Fold older project-scoped records into their credential-source connection.
     pub fn normalize_connections(&mut self) {
         for binding in &mut self.bindings {
             if binding.project.is_empty()
@@ -360,7 +356,6 @@ impl AccountsSnapshot {
         connection.refresh_failed = observation.limits_failed;
     }
 
-    /// Limit events update known identities without changing authentication or run bindings.
     pub fn observe_limits(&mut self, source: &AccountSource, limits: Vec<AccountLimit>) {
         if limits.is_empty() {
             return;
@@ -442,7 +437,6 @@ impl AccountsSnapshot {
     }
 }
 
-/// Adapters publish facts or invalidation signals, independent of the selected session.
 #[derive(Clone, Debug)]
 pub enum AccountEvent {
     Observed {

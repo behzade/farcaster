@@ -139,7 +139,6 @@ impl MessageSource {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorkerActivity {
-    /// A local command completed without a model user-message echo.
     CommandCompleted {
         submission_id: String,
     },
@@ -154,7 +153,6 @@ pub enum WorkerActivity {
         message: PeerMessage,
     },
     TurnStarted,
-    /// The provider started an assistant item, or supplied its final text or reasoning.
     AssistantItem {
         source: MessageSource,
         final_content: Option<Value>,

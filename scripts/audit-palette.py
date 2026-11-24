@@ -31,7 +31,6 @@ FILLS = ("accent", "accent_hover", "accent_active", "danger", "error",
 
 
 def read_colors(css):
-    # This audit deliberately accepts only complete, opaque bundled palettes.
     css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
     entries = re.findall(r"--([\w-]+)\s*:\s*([^;]+);", css)
     names = [name for name, _ in entries]
@@ -46,7 +45,6 @@ def read_colors(css):
     missing = PALETTE - {"backdrop", "terminal_green"} - colors.keys()
     if missing:
         raise ValueError(f"missing palette colors: {sorted(missing)}")
-    # Saved themes from before the separate terminal token retain their green.
     colors.setdefault("terminal_green", colors["success"])
     return colors
 

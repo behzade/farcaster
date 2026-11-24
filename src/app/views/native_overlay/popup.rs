@@ -92,8 +92,6 @@ pub(in crate::app) fn uses_native_popups(window: &Window, cx: &App) -> bool {
     })
 }
 
-// The source keeps this keyed state alive. Removing a trigger closes its panel,
-// even if its content still holds menu or popover entities.
 pub(in crate::app) fn prepare(
     state: Entity<PopupState>,
     visible: bool,

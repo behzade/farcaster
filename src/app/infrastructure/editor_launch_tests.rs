@@ -218,7 +218,6 @@ fn launch_uses_host_path_for_cleanup_before_restoring_project_environment() -> T
     assert!(cleanup.status.success());
     let cleanup = OsString::from_vec(cleanup.stdout.strip_suffix(b"\n").unwrap().to_vec());
     std::os::unix::fs::symlink(Path::new(&cleanup), host_bin.join("rm"))?;
-    // Project tools are not available until after the private script is removed.
     let project_rm = project_bin.join("rm");
     std::fs::write(&project_rm, "#!/bin/sh\nexit 99\n")?;
     std::fs::set_permissions(&project_rm, std::fs::Permissions::from_mode(0o700))?;

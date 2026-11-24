@@ -128,7 +128,6 @@ impl FarcasterApp {
                 let harness = draft.harness;
                 let profile_id = draft.profile_id.clone();
                 previous.app_session_id = draft.app_session_id;
-                // A new profile choice supersedes the same draft's pending trust request.
                 if self.project.pending_trust_command.take().is_some() {
                     self.dismiss_project_trust(window, cx);
                 }
@@ -399,7 +398,6 @@ impl FarcasterApp {
         if !self.sync_draft_before_leaving(target, true) {
             return false;
         }
-        // A parked composer can still be waiting for its first SQLite row.
         for id in self.sessions.pending_draft_saves.clone() {
             if !self.sessions.submitted_drafts.contains_key(&id)
                 && !self.save_draft_before_handoff(&id)
@@ -593,7 +591,6 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn confirm_draft_submission(&mut self, id: &str, title: Option<&str>) {
-        // A delayed receipt can follow promotion or discard.
         if let Some(draft) = self.sessions.drafts.iter_mut().find(|draft| draft.id == id) {
             draft.submitted = true;
             if draft.title.is_none() {
@@ -612,7 +609,6 @@ impl FarcasterApp {
         accepted: bool,
         session: Option<PathBuf>,
     ) {
-        // The actor can acknowledge a prompt after its draft has been promoted.
         if !draft_id(target).is_some_and(|id| self.sessions.drafts.iter().any(|row| row.id == id)) {
             return;
         }
@@ -748,7 +744,6 @@ impl FarcasterApp {
         if let Some(path) = session.as_deref()
             && self.sessions.all.has_shared_path(path)
         {
-            // A path-only stop from the legacy family command stopped every row at this locator.
             if status == RunStatus::Stopped && path_target.as_ref() == Some(&target) {
                 let records: Vec<_> = self
                     .sessions
@@ -838,7 +833,6 @@ impl FarcasterApp {
         self.canonicalize_draft_status(id, path);
         if self.sessions.selected_draft.as_deref() == Some(id) && self.awaiting_selection_snapshot()
         {
-            // The composer has a saved row now, even if the actor has yet to publish it.
             self.lifecycle.requested_session_key = self
                 .bound_draft_row(&self.sessions.all, id, path)
                 .map(crate::sessions::SessionSummary::catalog_key);

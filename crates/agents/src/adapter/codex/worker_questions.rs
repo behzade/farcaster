@@ -50,7 +50,6 @@ impl CodexWorkerSession {
                 .unwrap_or_else(|| text.clone()),
             images: vec![],
         };
-        // Use the same admission, delivery, handoff and Abort tracking as composer input.
         self.send_input(
             vec![CodexUserInput::text(text)],
             mode,

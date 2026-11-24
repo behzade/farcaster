@@ -69,7 +69,6 @@ fn accessible_panels_prepaint_after_parent_redraws_and_cache_transitions(
         );
     }
 
-    // Activation must work even when the previous frame reused the panel's cache.
     cx.update(|window, cx| {
         view.update(cx, |this, cx| {
             this.accessibility_active = true;

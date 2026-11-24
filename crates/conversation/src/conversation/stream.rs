@@ -1,7 +1,6 @@
 use super::*;
 
 impl ConversationState {
-    /// Finish the current run and return the transcript row changed by an interrupted compaction.
     pub fn settle_run(&mut self) -> Option<usize> {
         let changed = self
             .compacting

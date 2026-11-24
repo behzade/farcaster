@@ -137,7 +137,6 @@ pub fn load_session_history(
     for_backend(harness).load_history(path, project)
 }
 
-/// Reads a backend's local history stamp without starting a shell or provider.
 pub fn local_history_revision(
     config: &crate::AgentLaunchConfig,
     harness: Backend,
@@ -149,7 +148,6 @@ pub fn local_history_revision(
         .local_history_revision(config, path, project)
 }
 
-/// Returns a source stamp only when the adapter could verify it across this import.
 pub fn load_session_history_for_import(
     config: &crate::AgentLaunchConfig,
     harness: Backend,

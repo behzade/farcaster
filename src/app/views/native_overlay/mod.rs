@@ -163,9 +163,6 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // A background AX client keeps reading the owner window. Use the
-        // existing inline overlay path instead of opening a separate panel
-        // that would need keyboard focus to become that client's target.
         self.overlays.modal.background_accessibility = NativeHost::background_accessibility(window);
         if self.overlays.modal.observers.is_empty() {
             let id = window.window_handle().window_id();
@@ -217,9 +214,6 @@ fn synchronize(owner: WeakEntity<FarcasterApp>, window: &mut Window, cx: &mut Ap
             .is_ok_and(|view| view.host.hides_on_deactivate())
     });
     let wanted = app.read(cx).modal_uses_native_host()
-        // Retain an existing panel through focus handoffs and app deactivation.
-        // AppKit hides it with the app; removing it while the owner resigns key
-        // can race the panel's activation callback and discard a focused input.
         && (popup::owner_active(window, cx) || popup_active || hides_on_deactivate)
         && window.visibility() == gpui::WindowVisibility::Visible;
     let (bounds, offset, input) = app.read(cx).modal_placement(window, cx);
@@ -268,7 +262,6 @@ fn synchronize(owner: WeakEntity<FarcasterApp>, window: &mut Window, cx: &mut Ap
     } else {
         if let Some(popup) = existing {
             let _ = popup.update(cx, |_, window, cx| stack::close(window, cx));
-            // Closing a modal should not activate the app after the user switched away.
             if popup_active && window.visibility() == gpui::WindowVisibility::Visible {
                 window.activate_window();
             }
@@ -323,8 +316,6 @@ fn open(
                 }
                 let window_id = window.window_handle().window_id();
                 let event_owner = owner.clone();
-                // The app's Escape prefix interceptor only belongs to its main window.
-                // Resolve modal Escape before the global sequence matcher buffers it.
                 subscriptions.push(cx.intercept_keystrokes(move |event, window, cx| {
                     if window.window_handle().window_id() != window_id {
                         return;

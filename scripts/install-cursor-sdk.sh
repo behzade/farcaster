@@ -1,5 +1,4 @@
 #!/bin/sh
-# Install the official bridge and SDK used for live runs and browser sign-in.
 set -eu
 version=1.0.35
 command -v npm >/dev/null 2>&1 || { echo 'Install Node.js 22.13+ and npm for the Cursor SDK' >&2; exit 1; }

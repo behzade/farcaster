@@ -4,7 +4,6 @@ use crate::agents::Backend;
 #[test]
 fn session_metadata_waits_for_a_concurrent_writer_before_reading_its_profile()
 -> Result<(), Box<dyn std::error::Error>> {
-    // Release the other writer on SQLite's first busy callback, without sleeps.
     thread_local! {
         static BLOCKER: std::cell::RefCell<Option<rusqlite::Connection>> = const { std::cell::RefCell::new(None) };
     }
@@ -81,7 +80,6 @@ fn detaching_discovered_forks_preserves_archive_visibility()
             )?;
             drop(store);
             let mut store = StateStore::open_at(&database)?;
-            // No native evidence: migration must retain these links until discovery verifies them.
             let stale = store.cached_sessions("")?;
             assert!(
                 stale
@@ -123,7 +121,6 @@ fn detaching_discovered_forks_preserves_archive_visibility()
                 let worker = cached.iter().find(|s| s.id == id).expect("session");
                 assert_eq!(worker.parent_app_session_id, Some(source.app_session_id));
             }
-            // Once independent, a stale parent must not change archive visibility again.
             store.connection.execute_batch(
                 "UPDATE sessions SET archived_at=NULL WHERE backend_id='fork';
                  UPDATE sessions SET archived_at=789 WHERE backend_id='source';",
@@ -159,7 +156,6 @@ fn fork_ancestry_stays_separate_after_stale_discovery_and_reopen() -> Result<(),
     fork_update.parent_session = None;
     fork_update.forked_from = Some(source.id.clone());
     store.update_session_metadata(&fork_update)?;
-    // An old catalog response must not restore the mistaken family link.
     store.index_sessions(std::slice::from_ref(&stale_fork), false)?;
     assert!(
         store
@@ -176,7 +172,6 @@ fn fork_ancestry_stays_separate_after_stale_discovery_and_reopen() -> Result<(),
             .iter()
             .all(|s| s.parent_session.is_none())
     );
-    // Binding a duplicate record must not restore its stale parent either.
     let tx = store.connection.transaction().map_err(|e| e.to_string())?;
     tx.execute(
         "UPDATE sessions SET archived_at=123 WHERE backend_id='source'",

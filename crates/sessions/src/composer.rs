@@ -241,7 +241,6 @@ impl<A: Clone + Eq> ComposerSessions<A> {
             .unwrap_or_default()
     }
 
-    /// An edit may have reached the composer writer before its draft existed in storage.
     pub fn resave_buffer(&self, target: &str) {
         if let Some(session) = self.sessions.get(target) {
             self.persistence.save(session.record(target.to_owned()));
@@ -464,7 +463,6 @@ pub fn session_target(path: &Path) -> String {
     format!("session:{}", path.display())
 }
 
-/// SQLite identifies a materialized session by (harness, locator).
 pub fn session_buffer(harness: farcaster_contracts::Backend, path: &Path) -> String {
     format!("composer:{harness}:session:{}", path.display())
 }

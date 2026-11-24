@@ -89,7 +89,6 @@ class AppImagePackagingTests(unittest.TestCase):
             tool = self.root / "tools" / name
             tool.write_text(f"#!{sys.executable}\n" + TOOLS)
             tool.chmod(0o755)
-        # Do not accidentally use the host's appimage-run in native-runtime tests.
         for name in ("bash", "sh", "env", "dirname", "realpath", "mkdir", "mktemp",
                      "install", "cp", "stat", "find", "mv", "rm", "python3"):
             (self.root / "tools" / name).symlink_to(shutil.which(name))

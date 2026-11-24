@@ -9,7 +9,6 @@ use crate::app::ui::theme::{Appearance, appearance, theme};
 #[cfg(target_os = "macos")]
 mod macos;
 
-/// Floating surfaces share a shape and depth; inner sections use spacing.
 pub(crate) fn surface_radius() -> Pixels {
     theme().radius.max(theme().size(10.0))
 }
@@ -48,8 +47,6 @@ pub(crate) enum RaisedEdge {
     Right,
 }
 
-/// Paint the bars' shadows over the content, without covering their controls
-/// or letting a later sibling's background hide a sidebar's shadow.
 pub(crate) fn raised_edge_shadow(edge: RaisedEdge, native_surface: bool) -> Div {
     let depth = theme().size(8.0);
     let opacity = if appearance() == Appearance::Dark {

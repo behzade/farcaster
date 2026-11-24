@@ -240,8 +240,6 @@ impl StateStore {
         let draft = sessions::draft_id(target).filter(|key| !key.is_empty());
         if let Some(key) = draft {
             let project = sessions::normalize_session_path(submission.project);
-            // An editor save can still be queued when the first prompt arrives.
-            // After submission or binding, the stored row owns the launch configuration.
             let row = transaction
                 .query_row(
                     "SELECT s.id, s.locator, s.backend_id, CASE WHEN p.path=?2 THEN p.id END,
@@ -292,7 +290,6 @@ impl StateStore {
                 return Ok((id, bound_session));
             }
         }
-        // Promotion may detach the draft key while its actor still knows the locator.
         let existing = if let Some(path) = session {
             self.session_id_for_target(&sessions::session_target(path), Some(path), Some(harness))?
         } else if draft.is_none() {
@@ -456,8 +453,6 @@ impl StateStore {
             .collect()
     }
 
-    /// Displaying a page on its own is safe when full-history projection cannot
-    /// append a local delivery or substitute a stored prompt presentation.
     pub fn can_display_history_tail(&self, session: &Path) -> Result<bool, String> {
         self.can_display_tail_for_id(unique_prompt_session(&self.connection, session)?)
     }
@@ -492,8 +487,6 @@ impl StateStore {
         ).map_err(|error| format!("check local prompt delivery: {error}"))
     }
 
-    /// A suffix can apply exact links. Text-based matches require the full history,
-    /// since the same prompt may also occur before the page.
     pub(super) fn viewport_presentations(
         &self,
         id: i64,
@@ -508,7 +501,6 @@ impl StateStore {
              WHERE session_id=?1 AND submission_id=?2 AND user_message=1",
         )?;
         for presentation in self.presentations_for_id(Some(id))? {
-            // Full-history annotation uses the last user row with this submission ID.
             let ordinal: Option<usize> =
                 locate.query_row(params![id, presentation.submission_id], |row| row.get(0))?;
             let Some(ordinal) = ordinal else {
@@ -615,7 +607,6 @@ impl StateStore {
         if let Some(evidence) = evidence {
             self.reconcile_deliveries_for_id(id, evidence)?;
         }
-        // Read the overlay and its version from one SQLite snapshot.
         let _read = self
             .connection
             .unchecked_transaction()

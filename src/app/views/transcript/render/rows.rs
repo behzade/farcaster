@@ -69,7 +69,6 @@ impl RowHeightHints {
             };
         }
 
-        // Reserve one attachment row until layout measures the actual wrapping.
         let mut has_files = false;
         for item in std::iter::once(item).chain(
             (first + 1..row.item_end())

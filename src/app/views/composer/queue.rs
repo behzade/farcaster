@@ -133,7 +133,6 @@ impl RenderOnce for QueueMessageRow {
                                     .min_w_0()
                                     .text_ellipsis()
                                     .on_children_prepainted(move |_, _, cx| {
-                                        // Use the actual truncated layout, including the current font and width.
                                         let clipped = layout.text() != preview_text;
                                         state.update(cx, |state, cx| {
                                             if state.clipped != clipped {

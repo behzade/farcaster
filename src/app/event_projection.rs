@@ -313,8 +313,6 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         crate::app::session::remembered_transcript::remember(&snapshot);
-        // Events already in flight belong to the previous selection. The
-        // supervisor publishes the routed request before its selected snapshot.
         if self.lifecycle.awaiting_switch_route.is_some() {
             if let Some(recovery) = &mut self.lifecycle.switch_recovery {
                 recovery.snapshot = Some((generation, snapshot));
@@ -393,7 +391,6 @@ impl FarcasterApp {
                 );
             }
             if replacing_stand_in {
-                // Save the complete stand-in's reading position at the handoff.
                 transcript.reset(&previous_items);
             }
             let changed = transcript.select_session(
@@ -525,8 +522,6 @@ impl FarcasterApp {
             .map(SessionSummary::native_identity)
             .filter(|previous| *previous != identity);
         let parent_identities = [Some(&identity), previous_identity.as_ref()];
-        // Updating one row may transfer workers linked by native ID between two
-        // other roots. Compare their resolved families across the catalog edit.
         let native_families = |catalog: &sessions::SessionCatalog| {
             parent_identities.map(|id| {
                 let parent = catalog.native_worker_parent(id?)?;
@@ -551,8 +546,6 @@ impl FarcasterApp {
                 }
             }
         }
-        // An orphan and its subtree can acquire a newly published parent even
-        // though the edited row had no previous family to invalidate.
         dirty.run |= self.sidebar_worker_root().map(SessionSummary::catalog_key) != selected_before;
         if let Some(prepared) = self.views.run_panel.read(cx).prepared_worker_root() {
             dirty.worker_rows |= catalog
@@ -567,7 +560,6 @@ impl FarcasterApp {
             &row.draft_id,
             sessions::AppSessionId::new(row.app_session_id),
         ) {
-            // A full refresh can see the bound session before the outbox receipt.
             dirty.active_rows_changed(self.sessions.drafts.iter().any(|candidate| {
                 candidate.id == *draft
                     && (!candidate.submitted
@@ -1052,7 +1044,6 @@ impl FarcasterApp {
                 self.reset_session_ui(generation, preserve_submission, cx);
             }
             RuntimeEvent::HistoryReset { generation } if generation == self.runtime_generation => {
-                // Keep the displayed tail or stand-in until the replacement snapshot.
                 if self.snapshot.status != "Loading history" {
                     self.reset_transcript_ui(cx);
                 }
@@ -1095,8 +1086,6 @@ impl FarcasterApp {
                 self.reconcile_pending_session_titles(&mut [], std::slice::from_mut(&mut session));
                 dirty.archive_change(archive_row_change(&self.sessions.all, &session));
                 let previous_workgraph_session = self.active_workgraph_session();
-                // Worker cards derive fallback activity from the current catalog row.
-                // Only pool and native events supply an independent activity record.
                 if session.parent_session.is_some() || session.parent_app_session_id.is_some() {
                     self.activity
                         .row_focus

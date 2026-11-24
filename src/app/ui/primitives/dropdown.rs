@@ -112,7 +112,6 @@ impl Dropdown {
         self.anchor = anchor;
         self
     }
-    // Backend choices include installation/sign-in details that need more room.
     pub(crate) fn auto_menu_width(mut self) -> Self {
         self.auto_menu_width = true;
         self
@@ -181,7 +180,6 @@ impl RenderOnce for Dropdown {
                             };
                             menu.item(row.checked(item.selected).disabled(item.disabled).on_click(
                                 move |_, window, cx| {
-                                    // PopupMenu can confirm a disabled first row from the keyboard.
                                     if !disabled {
                                         on_select(window, cx);
                                     }

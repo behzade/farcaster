@@ -23,7 +23,6 @@ pub(super) fn read_harness_profiles(
         .unwrap_or_default())
 }
 
-// Native session history must be read from the same profile that created the locator.
 pub(super) fn read_profile_history<T>(
     profiles: &[agents::HarnessProfile],
     backend: Backend,

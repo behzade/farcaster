@@ -106,8 +106,6 @@ pub(super) struct ModelSelection {
     pub parameters: Vec<(String, String)>,
 }
 
-// Persisted catalogs can still carry the older parameter display syntax.
-// Keep that syntax at the adapter boundary, without changing selection IDs.
 pub(in crate::adapter) fn display_model_name(name: &str) -> String {
     let Some((title, parameters)) = name.rsplit_once(" · ") else {
         return name.to_owned();

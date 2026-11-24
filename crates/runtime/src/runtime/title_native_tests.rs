@@ -267,7 +267,6 @@ fn acp_and_cursor_title_events_reach_runtime_and_cache() {
             for harness in [Backend::Antigravity, Backend::Cursor] {
                 let mut s = Scenario::new(harness, None, false);
                 if harness == Backend::Cursor {
-                    // Exercise metadata propagation on an existing session.
                     s.owner.title_generation.new_session = false;
                     s.backend.state.lock().expect("state").name = Some("Native ACP title".into());
                     s.prompt();

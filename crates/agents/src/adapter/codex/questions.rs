@@ -65,7 +65,6 @@ pub(super) fn async_reply_display(text: &str) -> Option<String> {
 struct Params {
     thread_id: String,
     turn_id: String,
-    // Older app-server versions only sent blocking requests.
     #[serde(default = "blocking")]
     is_blocking: bool,
     questions: Vec<NativeQuestion>,

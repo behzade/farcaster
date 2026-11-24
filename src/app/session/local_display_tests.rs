@@ -174,8 +174,6 @@ fn saved_selection_supersedes_unresolved_catalog_retry(cx: &mut gpui::TestAppCon
                 app.update(cx, |app, cx| {
                     app.select_rail_session(saved.catalog_key(), window, cx);
                     assert!(app.lifecycle.opening_local.is_some());
-                    // The catalog drops the saved row during the read. Its click still
-                    // supersedes the retry even though its route and buffer never change.
                     app.sessions.all = Default::default();
                     app.sessions.visible = Default::default();
                     let mut target = saved.target();
@@ -271,8 +269,6 @@ fn saved_chat_paints_before_routing_and_ignores_superseded_reads(cx: &mut gpui::
                 })
             });
             assert!(rows.iter().all(|row| row.has_local_transcript));
-            // Reselecting the displayed draft while a saved chat's read is
-            // staged keeps that draft selected after the background task settles.
             let draft_id = cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
                     app.new_session(project.clone(), window, cx);
@@ -315,8 +311,6 @@ fn saved_chat_paints_before_routing_and_ignores_superseded_reads(cx: &mut gpui::
             });
             assert_eq!(cx.debug_bounds("transcript-row-1"), Some(pi_bounds));
 
-            // Neither SQLite completion can run until the forced click frame finishes.
-            // During these reads the rail, composer and painted transcript still show Pi.
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
                     app.select_rail_session(codex.catalog_key(), window, cx);
@@ -336,8 +330,6 @@ fn saved_chat_paints_before_routing_and_ignores_superseded_reads(cx: &mut gpui::
                 assert_selected(app, third);
                 app.lifecycle.awaiting_switch_route.unwrap()
             });
-            // The middle click never routed. An old route ACK and either older
-            // actor's snapshot must leave the displayed page on the third chat.
             runtime.send_event(RuntimeEvent::SelectionRouted(old_route));
             for (row, name, count) in [(pi, "pi", 2), (codex, "codex", 4)] {
                 runtime.send_event(RuntimeEvent::Snapshot {
@@ -354,8 +346,6 @@ fn saved_chat_paints_before_routing_and_ignores_superseded_reads(cx: &mut gpui::
                 wait_for_local_paint(cx, app, "third message 5", "transcript-row-5"),
                 bounds
             );
-            // The native file still identifies the old conversation, while SQLite
-            // already supplied six current rows for this selection.
             std::fs::write(&third.path, "{}").unwrap();
             super::remembered_transcript::remember(&snapshot(third, &messages("old", 1)));
             let loading = Arc::new(RuntimeSnapshot {

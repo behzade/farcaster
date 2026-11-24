@@ -159,7 +159,6 @@ pub(super) fn sdk_command(
 struct LoginProcess(Child);
 impl Drop for LoginProcess {
     fn drop(&mut self) {
-        // Closing stdin also aborts the SDK's pending browser login.
         self.0.stdin.take();
         let deadline = Instant::now() + Duration::from_secs(2);
         while matches!(self.0.try_wait(), Ok(None)) && Instant::now() < deadline {

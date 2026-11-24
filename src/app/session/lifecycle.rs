@@ -11,7 +11,6 @@ struct SwitchOrigin {
 
 pub(in crate::app) struct SwitchRecovery {
     origin: SwitchOrigin,
-    // Earlier requests can still be routed while a later click waits for trust.
     sent: HashMap<u64, SwitchOrigin>,
     rejected: bool,
     pub(in crate::app) snapshot: Option<(u64, Arc<RuntimeSnapshot>)>,
@@ -159,7 +158,6 @@ impl FarcasterApp {
             let (path, harness) = (row.path.clone(), row.harness);
             self.bind_legacy_composer(&path, harness);
         }
-        // Preserve the last routed destination across clicks that supersede a trust check.
         let mut recovery = self.lifecycle.switch_recovery.take().unwrap_or_else(|| {
             let mut origin = self.composer_selection();
             if let Some(draft) = previous {
@@ -294,7 +292,6 @@ impl FarcasterApp {
                 key = Some(row.catalog_key());
                 return None;
             }
-            // Leaving an empty, unsaved draft removes it from the rail.
             let id = draft.id.clone();
             self.sessions
                 .draft_session_ids
@@ -336,8 +333,6 @@ impl FarcasterApp {
         if snapshot.selected_session.as_ref() != Some(path) {
             return false;
         }
-        // The route and its buffer share the same (harness, locator). Catalog
-        // rows can disappear or gain native metadata while the actor loads.
         match sessions::composer_buffer_parts(self.composer.sessions.current_buffer()) {
             Some((harness, _)) => snapshot.harness == Some(harness),
             None => self.lifecycle.requested_session_key.is_none(),
@@ -577,8 +572,6 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         self.begin_navigation_intent(cx);
-        // Path-only entry points, including notifications, can still stage a saved
-        // display when the catalog identifies a unique owner for this locator.
         let key = self
             .sessions
             .all
@@ -699,9 +692,6 @@ impl FarcasterApp {
             profile,
         };
         if stage_local {
-            // Publish the destination's selection, buffer and saved rows together. An
-            // intervening draw still has the complete previous view. Another navigation
-            // drops this task, including when the user reselects the currently shown row.
             let read = query.clone().read(resident, full, cx);
             let intent = self.lifecycle.navigation_intent;
             self.lifecycle.opening_local = Some(cx.spawn_in(window, async move |weak, cx| {

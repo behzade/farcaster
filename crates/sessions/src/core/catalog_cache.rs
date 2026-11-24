@@ -17,7 +17,6 @@ pub struct SessionCatalog {
     relationship_builds: std::cell::Cell<usize>,
 }
 
-// Links use stable slots so recency changes can reorder the rows without rebuilding the tree.
 struct Relationships {
     slots: Vec<usize>,
     positions: Vec<usize>,
@@ -274,7 +273,6 @@ impl SessionCatalog {
         &self.sessions[self.relationships().positions[slot]]
     }
 
-    /// Keep the requested spelling until storage publishes the durable identity.
     pub fn remember_archive_path(&mut self, original: &Path) {
         self.requested_archive_paths.insert(original.to_owned());
     }
@@ -291,8 +289,6 @@ impl SessionCatalog {
                     .find(|&s| self.sessions[cache.positions[s]].same_record(row))
             })
             .or_else(|| {
-                // SQLite publishes canonical paths and durable IDs. Only a legacy
-                // catalog can miss both exact lookups when the same chat is published.
                 if row.app_session_id <= 0 {
                     return None;
                 }
@@ -312,8 +308,6 @@ impl SessionCatalog {
                     }))
                 })?;
                 let legacy = &self.sessions[cache.positions[candidate.slot]];
-                // Resolve just this candidate. Defer collisions to the store receipt,
-                // which carries the original requested locator.
                 let same_path = legacy.path == row.path
                     || candidate
                         .canonical_path
@@ -334,7 +328,6 @@ impl SessionCatalog {
         self.record_position(row).map(|i| &self.sessions[i])
     }
 
-    /// The UI catalog sorts the most recently modified records first.
     pub fn upsert_by_recency(&mut self, row: SessionSummary) {
         let previous = self.record_position(&row);
         let split = self
@@ -344,7 +337,6 @@ impl SessionCatalog {
         self.upsert_at(row, previous, to);
     }
 
-    /// The supervisor keeps its published catalog order for incremental events.
     pub fn upsert_in_place(&mut self, row: SessionSummary) -> bool {
         let previous = self.record_position(&row);
         self.upsert_at(row, previous, previous.unwrap_or(self.sessions.len()))
@@ -370,7 +362,6 @@ impl SessionCatalog {
             || old.parent_app_session_id != row.parent_app_session_id
             || old.parent_session != row.parent_session
             || old.parent_harness != row.parent_harness;
-        // A native parent shared by two records can change when their order reverses.
         let range = from.min(to)..=from.max(to);
         let order_changes_lookup = from != to
             && (cache.duplicate_app_ids.contains(&row.app_session_id)
@@ -411,7 +402,6 @@ impl SessionCatalog {
         true
     }
 
-    /// The actual owner of workers linked by native ID, when that link resolves.
     pub fn native_worker_parent(
         &self,
         identity: &NativeSessionIdentity,
@@ -494,7 +484,6 @@ impl SessionCatalog {
         }
     }
 
-    /// Resolve the saved identity while retaining the catalog's other (possibly newer) fields.
     fn archive_result_position(
         &mut self,
         stored: &SessionSummary,
@@ -520,8 +509,6 @@ impl SessionCatalog {
         };
         let requested = requested_path.and_then(&legacy_at);
         if let Some(saved) = saved {
-            // Metadata may already have inserted the saved row. A successful store
-            // receipt identifies which original locator it archived. Keep newer metadata.
             let Some(old) = requested else {
                 return Some((saved, None));
             };
@@ -541,7 +528,6 @@ impl SessionCatalog {
         Some((index, Some(self.sessions[index].target())))
     }
 
-    /// Adopt the first stored ID without overwriting a pending archive or restore.
     pub fn adopt_archive_identity(
         &mut self,
         stored: &SessionSummary,
@@ -669,7 +655,6 @@ impl SessionCatalog {
     }
 
     pub fn active_worker_profile(&self, app_session_id: i64) -> Option<&str> {
-        // Saved routes belong to the child and its immediate parent by database ID.
         let child = self.by_app_id(app_session_id)?;
         let profile = child.worker_profile.as_deref()?;
         let parent = self.by_app_id(child.parent_app_session_id?)?;

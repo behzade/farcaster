@@ -31,8 +31,6 @@ pub(in crate::app::views) type WorkerKeys = Rc<Vec<(String, FocusHandle)>>;
 
 pub(super) type RenderRow = Rc<dyn Fn(usize, &mut App) -> AnyElement>;
 
-// Keep a keyboard-focused row in the dispatch tree even when the uniform list
-// stops rendering it. The list's content mask clips it at its actual row position.
 pub(super) struct FocusedRow {
     pub handles: Rc<Vec<(String, FocusHandle)>>,
     pub render: RenderRow,
@@ -49,7 +47,6 @@ impl UniformListDecoration for FocusedRow {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
-        // The card is the sole focus target in a worker row.
         let focused = window.focused(cx).and_then(|focused| {
             self.handles
                 .iter()
@@ -73,8 +70,6 @@ impl UniformListDecoration for FocusedRow {
     }
 }
 
-// Preserve the top worker and within-row offset when catalog updates insert or
-// remove rows. Pending selection reveals follow their row identity as well.
 pub(super) fn reconcile(
     scroll: &UniformListScrollHandle,
     current: &RefCell<WorkerKeys>,
@@ -104,7 +99,6 @@ pub(super) fn reconcile(
     };
     state.base_handle.set_offset(point(offset.x, y));
     state.deferred_scroll_to_item = state.deferred_scroll_to_item.and_then(|mut pending| {
-        // On first expansion there is no previous row identity to remap.
         if current.is_empty() {
             return Some(pending);
         }

@@ -62,7 +62,6 @@ pub(super) fn migrate(tx: &Transaction<'_>) -> Result<(), String> {
             continue;
         }
         tx.execute(
-            // Keep the old family's archive visibility when making the fork a root.
             "UPDATE sessions SET forked_from_backend_id=?2,
                archived_at=COALESCE(archived_at,?3),
                parent_id=NULL,parent_backend_id=NULL WHERE id=?1",

@@ -1,7 +1,6 @@
 mod backend;
 pub(super) use backend::CursorAdapter;
 
-// Retain the legacy catalog for the existing ACP rename hook. SDK sessions use history.rs.
 #[allow(dead_code)]
 mod catalog;
 pub(super) use catalog::rename as rename_session;

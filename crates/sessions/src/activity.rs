@@ -20,7 +20,6 @@ pub struct WorkerActivityKey {
     pub native: crate::NativeSessionIdentity,
 }
 
-/// Identifies the catalog record independently of the resident process serving it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SessionStatusRecord {
     App(crate::AppSessionId),

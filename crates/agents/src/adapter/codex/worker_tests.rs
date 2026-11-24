@@ -1873,8 +1873,6 @@ fn approval_reviews_do_not_create_or_restart_tool_execution() {
     use crate::conversation::{ConversationState, ToolExecutionState};
     use crate::{SessionEvent, SessionTransport};
 
-    // Reviews may cover a child action, or arrive after the target tool ended.
-    // Neither case supplies a new execution lifecycle for the client to start.
     for native_status in [None, Some("inProgress"), Some("completed"), Some("failed")] {
         for review_status in ["approved", "denied", "aborted", "timedOut"] {
             let mut session = test_session();
@@ -3567,12 +3565,8 @@ fn assert_second_abort_cancels_auto_started_queue(abort_before_delete_reply: boo
 }
 
 #[test]
-fn second_abort_before_failed_delete_cancels_exact_auto_started_queue() {
+fn second_abort_cancels_the_auto_started_queue_before_or_after_the_delete_reply() {
     assert_second_abort_cancels_auto_started_queue(true);
-}
-
-#[test]
-fn second_abort_after_failed_delete_cancels_exact_auto_started_queue() {
     assert_second_abort_cancels_auto_started_queue(false);
 }
 

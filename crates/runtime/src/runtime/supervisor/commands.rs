@@ -307,7 +307,6 @@ impl Supervisor {
             if self.latest.get(&self.selected).is_some_and(matches) {
                 return self.actors.get(&self.selected);
             }
-            // A selection command can overtake a signal on the separate channel.
             let mut owners = self.latest.iter().filter(|(_, snapshot)| matches(snapshot));
             let (key, _) = owners.next()?;
             if owners.next().is_some() {
@@ -492,7 +491,6 @@ impl Supervisor {
                             || snapshot.project != project
                             || snapshot.profile_id != profile_id
                     }) {
-                        // Only the actor can publish the draft under its new configuration.
                         self.latest.remove(&key);
                     }
                     if let Some(harness) = harness {

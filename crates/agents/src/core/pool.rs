@@ -914,7 +914,6 @@ impl WorkerPool {
             if let Ok(mut cancelled) = record.setup_cancelled.lock() {
                 *cancelled = false;
             }
-            // An earlier setup may still hold its completion guard after retirement.
             record.setup_done = Arc::new((Mutex::new(false), Condvar::new()));
             if let Ok(mut current) = record.snapshot.lock() {
                 current.status = WorkerStatus::Pending;
@@ -1078,7 +1077,6 @@ fn retire_idle_for_new_worker(state: &mut PoolState, process_limit: usize) -> Re
         .collect::<Vec<_>>();
     if ids.len() < retire
         && let Some(error) = state.records.values().find_map(|record| {
-            // A reserved worker has no run thread until setup finishes.
             (record.thread.is_none()
                 && !record.cleanup_confirmed.load(Ordering::SeqCst)
                 && record.setup_done.0.lock().is_ok_and(|done| *done))

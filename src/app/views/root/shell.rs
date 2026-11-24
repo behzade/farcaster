@@ -131,8 +131,6 @@ impl FarcasterApp {
                     .relative()
                     .flex_1()
                     .min_h_0()
-                    // Keep the edge targets outside embedded native views, which
-                    // draw above GPUI and receive their own pointer events.
                     .when(native_surface, |center| {
                         center
                             .when(

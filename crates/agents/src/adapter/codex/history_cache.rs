@@ -24,7 +24,6 @@ pub(super) struct Scope {
 impl Scope {
     fn effective_env(&self, key: &str) -> Option<&OsStr> {
         if self.profile.is_some() {
-            // Profile commands clear inherited variables, then install the project's captured environment.
             self.env.iter().find(|(k, _)| k == key)?.1.as_deref()
         } else {
             self.inherited_env
@@ -34,8 +33,6 @@ impl Scope {
         }
     }
 
-    // On import, the server's initialize response must agree with this home and its config/read
-    // must confirm the database location. Later reads compare local source and configuration stamps.
     pub(super) fn local_revision(
         &self,
         thread: &str,
@@ -172,7 +169,6 @@ fn state_database(home: &Path) -> Option<Connection> {
 }
 
 fn known_database_versions(home: &Path) -> Option<bool> {
-    // A newer app-server may leave these older files in place after migration.
     for entry in std::fs::read_dir(home).ok()? {
         let name = entry.ok()?.file_name();
         let Some(stem) = name.to_str().and_then(|name| name.strip_suffix(".sqlite")) else {

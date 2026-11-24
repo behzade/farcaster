@@ -457,7 +457,6 @@ impl RuntimeOwner {
                         zlog::warn!("Ignoring malformed prompt delivery event");
                         return SnapshotChange::None;
                     };
-                    // Retired receipts can belong to a previous process on this actor.
                     if self
                         .retired_prompts
                         .get(&delivery.submission_id)

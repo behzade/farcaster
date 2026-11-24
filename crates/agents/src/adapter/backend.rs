@@ -54,7 +54,6 @@ pub(super) trait BackendAdapter: Sync {
     ) -> Option<crate::WorkerStatus> {
         None
     }
-    /// Return locally verifiable fork ancestry for repairing older catalog rows.
     fn fork_source(
         &self,
         _path: &Path,

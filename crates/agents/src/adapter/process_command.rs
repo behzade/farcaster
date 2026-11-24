@@ -70,7 +70,6 @@ impl AgentLaunchConfig {
         self.command_with_environment(project, environment)
     }
 
-    /// Reconstruct the command only if its environment is available without a shell launch.
     pub(super) fn cached_command(&self, project: &Path) -> Option<std::process::Command> {
         #[cfg(all(not(test), any(target_os = "linux", target_os = "macos")))]
         let environment = Some(super::shell_environment::cached_environment(project)?);
@@ -100,8 +99,6 @@ impl AgentLaunchConfig {
             .map(|(_, value)| value.as_os_str());
         let program = resolve_agent_program(executable, project, search_path)?;
         let mut command = std::process::Command::new(program);
-        // Keep the complete child environment explicit so discovery sees exactly
-        // what the backend will receive, including variables that are absent.
         command
             .args(&self.prefix_args)
             .current_dir(project)
@@ -121,7 +118,6 @@ impl AgentLaunchConfig {
     }
 }
 
-/// Read the explicit environment prepared by `AgentLaunchConfig::command`.
 pub(super) fn environment(
     command: &std::process::Command,
     name: &str,

@@ -38,7 +38,6 @@ pub(super) fn projected_markdown_chunks(
         return Some(markdown_chunks_with_structure(text, structure));
     }
 
-    // Keep reference and footnote definitions in the same document as their uses.
     if text.len() <= MARKDOWN_CHUNK_TARGET_BYTES
         || text.contains("]:")
         || !text
@@ -59,7 +58,6 @@ pub(super) fn projected_markdown_chunks(
     };
     let mut chunks = Vec::new();
     let mut start = 0;
-    // A blank line inside a list or code block still belongs to that block.
     for &line_start in &structure.block_starts {
         if line_start - start >= MARKDOWN_CHUNK_TARGET_BYTES {
             chunks.push(plain_markdown_chunk(start, line_start));
@@ -109,7 +107,6 @@ fn markdown_chunks_with_structure(
     if chunks.is_empty() {
         chunks.push(plain_markdown_chunk(0, text.len()));
     }
-    // Keep inline links/images atomic even when their URLs exceed the normal chunk size.
     let parsed;
     if text.contains('[') {
         let spans = if let Some(s) = structure {
@@ -184,7 +181,6 @@ fn append_fenced_markdown_chunks(
     chunks: &mut Vec<MarkdownChunk>,
 ) {
     const FENCED_CHUNK_LINES: usize = 64;
-    // A presentation action must receive the whole document, including its scripts.
     let opening = &text[fence.opening_start..fence.opening_end];
     let language = opening.trim().trim_start_matches(fence.marker).trim();
     if crate::app::attachment::resolve(crate::app::attachment::AttachmentSource::Code(language))

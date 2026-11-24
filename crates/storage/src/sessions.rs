@@ -189,8 +189,6 @@ impl StateStore {
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(|error| error.to_string())?;
         drop(statement);
-        // The canonical locator and native identity already identify this session.
-        // Only unresolved records need the filesystem lookup used by older stores.
         if !candidates.iter().any(|(_, exact)| *exact)
             && let Some(legacy) = super::identity::legacy_session_id_for_locator(
                 &tx,

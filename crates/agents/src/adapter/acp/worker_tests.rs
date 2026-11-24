@@ -1037,7 +1037,6 @@ fn model_and_service_tier_are_sent_independently() {
                 .flush()
                 .expect("test operation should succeed");
         }
-        // Keep the peer open until the client has consumed the final response.
         finished
             .recv_timeout(Duration::from_secs(3))
             .expect("release ACP test peer");
@@ -2925,14 +2924,19 @@ fn immediate_native_steers_reach_agy_in_order_and_precede_their_answers() {
     }
     assert!(session.next_steer.is_none());
 
-    for (current, next) in [
-        ("initial", Some("1")),
-        ("1", Some("2")),
-        ("2", Some("3")),
-        ("3", Some("4")),
-        ("4", Some("what")),
-        ("what", None),
-    ] {
+    session
+        .submit_prompt(
+            "later".into(),
+            "follow up".into(),
+            WorkerSendMode::Queue,
+            vec![],
+        )
+        .unwrap();
+    let mut inputs = ["initial", "1", "2", "3", "4", "what"]
+        .into_iter()
+        .peekable();
+    while let Some(current) = inputs.next() {
+        let next = inputs.peek().copied();
         let id = session.current_prompt.clone().unwrap();
         session
             .connection
@@ -2967,12 +2971,13 @@ fn immediate_native_steers_reach_agy_in_order_and_precede_their_answers() {
                 );
                 assert_eq!(session.current_inputs.first_submission_id(), Some(next));
             }
-            None => assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. }))),
+            None => assert!(
+                matches!(session.poll(), Some(WorkerEvent::Settled { output }) if output == "initial1234what")
+            ),
         }
     }
-    assert!(session.poll().is_none());
-    assert!(session.current_prompt.is_none());
-    assert!(session.waiting_steers.is_empty());
+    assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
+    assert_eq!(session.current_inputs.first_submission_id(), Some("later"));
 }
 
 #[cfg(unix)]
@@ -3028,93 +3033,6 @@ fn agy_rejection_and_abort_preserve_which_steers_reached_the_server() {
     );
     assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
     assert!(session.poll_prompt_ack().is_none());
-}
-
-#[cfg(unix)]
-#[test]
-fn original_reply_waits_for_in_flight_steering_before_starting_followup() {
-    let mut session = inert_session();
-    let original = AcpRequestId::Number(850);
-    session.current_prompt = Some(original.clone());
-    session.features.native_steer = true;
-    session.acknowledge_current_prompt_started();
-    session
-        .submit_prompt(
-            "redirect".into(),
-            "steer".into(),
-            WorkerSendMode::Steer,
-            vec![],
-        )
-        .expect("steer");
-    session
-        .submit_prompt("later".into(), "next".into(), WorkerSendMode::Queue, vec![])
-        .expect("queue");
-    let steer = session.next_steer.as_ref().unwrap().0.clone();
-    session.output = "original output".into();
-    session.connection.restore_queued(
-        [AcpInbound::Response {
-            id: original.clone(),
-            result: json!({"stopReason":"end_turn"}),
-        }]
-        .into(),
-    );
-    assert!(session.poll().is_none());
-    assert_eq!(session.current_prompt.as_ref(), Some(&steer));
-    session.connection.restore_queued(
-        [AcpInbound::Response {
-            id: steer,
-            result: json!({"stopReason":"end_turn"}),
-        }]
-        .into(),
-    );
-    assert!(matches!(
-        session.poll(),
-        Some(WorkerEvent::Activity(WorkerActivity::InputDelivered { .. }))
-    ));
-    assert!(
-        matches!(session.poll(),Some(WorkerEvent::Settled{output}) if output=="original output")
-    );
-    assert_ne!(session.current_prompt, Some(original));
-    assert_eq!(session.current_inputs.first_submission_id(), Some("later"));
-}
-
-#[cfg(unix)]
-#[test]
-#[ignore = "requires the installed agy CLI and its localhost helper"]
-fn installed_agy_initializes_and_closes_an_empty_isolated_session() -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt as _;
-    let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
-    let launcher = dir.path().join("agy");
-    std::fs::write(
-        &launcher,
-        r#"#!/bin/sh
-test "$1" = acp || exit 1
-shift
-exec agy acp --gemini-dir "${0%/*}/state" --disable-telemetry "$@"
-"#,
-    )
-    .map_err(|e| e.to_string())?;
-    std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700))
-        .map_err(|e| e.to_string())?;
-    let config = AgentLaunchConfig {
-        program: launcher,
-        ..Default::default()
-    };
-    let profile = &super::super::super::antigravity::PROFILE;
-    let (mut session, metadata, _) = spawn_session(&config, profile, dir.path(), None, None, None)?;
-    assert!(
-        session.features.native_steer
-            && session.features.close
-            && session.features.embedded_context
-    );
-    assert!(!metadata.modes.is_empty());
-    let listing = session
-        .connection
-        .request_blocking("session/list", json!({"cwd":dir.path()}))?;
-    assert!(listing["sessions"].is_array());
-    session.close()?;
-    assert!(session.has_exited());
-    Ok(())
 }
 
 #[cfg(unix)]

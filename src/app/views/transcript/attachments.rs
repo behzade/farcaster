@@ -192,7 +192,6 @@ fn attachment_cards(
         .collect()
 }
 
-// Use supplied context, never guess a screenshot's purpose from its pixels or script.
 fn image_caption(item: &TranscriptItem) -> String {
     let Some(details) = &item.tool_details else {
         return item.label.clone();

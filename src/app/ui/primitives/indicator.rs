@@ -2,7 +2,6 @@ use gpui::{AnyElement, IntoElement, Rgba, Styled as _, div};
 
 use crate::app::ui::theme::theme;
 
-/// Paint a focus edge without changing the row's content bounds.
 pub(crate) fn focus_outline(color: Rgba) -> Vec<gpui::BoxShadow> {
     vec![gpui::BoxShadow {
         color: color.into(),

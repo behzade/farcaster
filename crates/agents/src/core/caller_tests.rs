@@ -829,7 +829,6 @@ fn stored_session_presentation_matches_context_lookup_without_rebuilding_context
         "512 callers, 200 lookups: context scan={baseline:?}, presentation scan={:?}",
         started.elapsed()
     );
-    // Ambiguous stored identities must still produce no presentation.
     registry
         .callers
         .lock()
@@ -838,7 +837,6 @@ fn stored_session_presentation_matches_context_lookup_without_rebuilding_context
         .unwrap()
         .session_record = Some(500);
     assert!(registry.session_presentation(&key).is_none());
-    // A record without a bound session must not count as a matching caller.
     registry
         .callers
         .lock()

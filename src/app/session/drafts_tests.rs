@@ -725,8 +725,6 @@ fn user_actions_save_empty_drafts(cx: &mut gpui::TestAppContext) {
         |cx, app, _, project| {
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
-                    // Trust remains off so terminal/editor entry points record the request
-                    // without launching a native process in this test.
                     app.project.repository.execution_allowed = false;
                     let model: crate::protocol::Model = serde_json::from_value(serde_json::json!({
                         "id": "test", "name": "Test", "provider": "test"
@@ -746,7 +744,6 @@ fn user_actions_save_empty_drafts(cx: &mut gpui::TestAppContext) {
                     ] {
                         app.new_session(project.into(), window, cx);
                         let id = app.sessions.selected_draft.clone().expect("draft");
-                        // This offline fixture exercises actions on an already selected draft.
                         app.cancel_pending_session_switch();
                         match action {
                             "harness" => app.change_draft_harness(Backend::Pi, window, cx),

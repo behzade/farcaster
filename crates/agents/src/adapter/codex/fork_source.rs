@@ -10,7 +10,6 @@ use serde_json::Value;
 use super::super::main_session::external_session_locator;
 use crate::Backend;
 
-/// Verify ancestry without starting an app-server during storage migration.
 pub(super) fn read(path: &Path, data_directory: Option<&Path>) -> Option<String> {
     let id = external_session_locator(Backend::Codex, path)?;
     // A custom profile must never read a same-ID session from the default home.

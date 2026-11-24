@@ -228,7 +228,6 @@ fn load(
     super::history::load(&bridge, &id, project)
 }
 fn config_for_path(path: &Path) -> Result<AgentLaunchConfig, String> {
-    // external_session_path is <locator-root>/cursor-cli/<encoded-id>.
     let root = path
         .parent()
         .and_then(Path::parent)

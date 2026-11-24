@@ -87,8 +87,6 @@ struct Node<'a> {
     counts: Option<(usize, usize)>,
 }
 
-/// Exact-parent groups keep every filename at the same depth. Compute the
-/// common path before filtering so searching never changes the path labels.
 pub(crate) fn grouped_rows<'a>(
     files: impl Iterator<Item = (usize, &'a Path, Option<&'a Path>, Option<(usize, usize)>)>,
     query: &str,
@@ -110,7 +108,6 @@ pub(crate) fn grouped_rows<'a>(
             }
         }
     }
-    // Keep a real directory name for a group that sits at the common path.
     if files
         .iter()
         .any(|(_, path, _, _)| path.parent() == Some(prefix.as_path()))
@@ -139,7 +136,6 @@ pub(crate) fn grouped_rows<'a>(
         ));
     }
     let mut groups: Vec<_> = groups.into_iter().collect();
-    // Descendant directories precede files directly in their parent, as in a tree.
     groups.sort_by(|(a, _), (b, _)| {
         if a != b && a.starts_with(b) {
             std::cmp::Ordering::Less

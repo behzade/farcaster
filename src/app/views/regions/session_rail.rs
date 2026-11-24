@@ -202,8 +202,6 @@ impl InactiveSessionRailView {
     pub(in crate::app::views) fn set_membership(&mut self, row: ArchivedRow, archived: bool) {
         let index = self.rows.partition_point(|item| item.order > row.order);
         let matching = self.rows.get(index).filter(|item| item.order == row.order);
-        // Stable recency ties between unassigned IDs follow source catalog order.
-        // Resolving a new tied row or a stale key requires a fresh ordering.
         if archived && matching.is_some()
             || !archived && matching.is_none_or(|item| item.item != row.item)
         {

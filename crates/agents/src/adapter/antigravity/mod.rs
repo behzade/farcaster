@@ -141,7 +141,6 @@ pub(super) fn configure(
     mode: crate::HarnessAccessMode,
 ) -> Result<(), String> {
     if integrated_cli(command) {
-        // Keep the existing Farcaster session IDs and conversation directory.
         command.args(["acp", "--app-data-dir", "antigravity-acp"]);
         if mode == crate::HarnessAccessMode::Full {
             command.arg("--dangerously-skip-permissions");

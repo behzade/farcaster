@@ -379,8 +379,6 @@ impl RuntimeOwner {
                 path: path.clone(),
             }));
         }
-        // Registration and promotion may both occur while a prompt is parked.
-        // Its outbox row keeps the session identity after promotion clears the draft key.
         self.session_repository()?.pending_prompt_target(prompt.id)
     }
 

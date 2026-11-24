@@ -7,7 +7,6 @@ pub(in crate::app) struct AppLifecycle {
     pub(in crate::app) pending_session_switch:
         Option<(PathBuf, infrastructure::performance::Timing)>,
     pub(in crate::app) opening_local: Option<Task<()>>,
-    /// Advances at user selection, before local reads or catalog retries can route it.
     pub(in crate::app) navigation_intent: u64,
     pub(in crate::app) switch_sequence: u64,
     pub(in crate::app) awaiting_switch_route: Option<u64>,

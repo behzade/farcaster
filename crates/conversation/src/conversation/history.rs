@@ -10,7 +10,6 @@ impl ConversationState {
         }
     }
 
-    /// Keep the full observed totals when a history response has less usage.
     pub fn restore_cache_usage(&mut self, usage: CacheUsage) {
         if usage.prompt_tokens > self.prompt_tokens {
             self.cache_read_tokens = usage.read_tokens;
@@ -112,8 +111,6 @@ impl ConversationState {
                 call.get("type").and_then(Value::as_str) == Some("toolCall")
                     && call.get("id").and_then(Value::as_str) == Some(id)
             }) {
-                // Standalone execution events carry their declaration with the result.
-                // Pi may also have declared the same call inside an earlier message.
                 let mut call = call.clone();
                 if let Some(details) =
                     previous.and_then(|index| self.items[index].tool_details.as_ref())

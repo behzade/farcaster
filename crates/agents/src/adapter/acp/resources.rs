@@ -1,8 +1,7 @@
 use serde_json::{Value, json};
 use std::path::Path;
 
-// Farcaster's composer includes the pasted bytes in the prompt. Never read a file
-// named by prompt text, even if it resembles a composer attachment.
+// Prompt paths are untrusted. Use the submitted bytes.
 pub(super) fn pasted_resources(message: &str) -> Option<Vec<Value>> {
     let (summary, _) = message.split_once("\n\n--- BEGIN PASTED FILE ")?;
     let (body, links) = summary

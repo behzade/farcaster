@@ -72,7 +72,6 @@ impl BackendAdapter for CodexAdapter {
         }
     }
     fn fork_source(&self, path: &Path, profile: Option<&crate::HarnessProfile>) -> Option<String> {
-        // A custom executable without a saved data directory may use an unknown home.
         let directory = match profile {
             Some(profile) => Some(profile.data_directory.as_deref()?),
             None => None,

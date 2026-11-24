@@ -90,7 +90,6 @@ export async function checkIsolatedAccessibility(sky, { cycles = 3, background =
         if (surface === 'editor') selectedTab(last.text, editor);
         checks.push({ surface, cycle, firstRead: true, tabs: true, button: true, modalScope: true, restored: true });
       }
-      // Foreground Editor uses a native popup. Background AX stays inline.
       const menu = await press('button', 'Repository actions', surface + '-dropdown-first-read');
       expect(menu.includes('Expand all folders') && menu.includes('Collapse all folders'), 'Dropdown absent on first read');
       if (background) await press('button', 'Repository actions', surface + '-dropdown-dismiss');
@@ -99,15 +98,12 @@ export async function checkIsolatedAccessibility(sky, { cycles = 3, background =
       checks.push({ surface, dropdown: true, restored: true });
     }
     selectedTab(await press('tab (settable, boolean)', chat, 'restore-chat'), chat);
-    // Exercise the other shared trigger (a popover rather than a menu).
     const runtime = await press('button', 'Runtime', 'runtime-first-read');
     findControl(runtime, 'text field (settable)', 'Search models…');
     if (background) await press('button', 'Runtime', 'runtime-dismiss');
     else await sky.press_key({ app: APP, key: 'Escape' });
     workspace(await state('runtime-closed'));
     checks.push({ runtimePopover: true, restored: true });
-    // Focus must return to the composer after a modal closes. Use no typing:
-    // the focused AX line itself is the assertion.
     const focusedComposer = text => /The focused UI element is .*text entry area.*What would you like to work on\?/.test(text);
     const focused = background ? '' : await press('text entry area (settable)', 'What would you like to work on?', 'focus-composer');
     if (background) {
@@ -124,7 +120,6 @@ export async function checkIsolatedAccessibility(sky, { cycles = 3, background =
     }
     return { app: APP, background, passed: true, checks, unverified };
   } finally {
-    // Restore the only preference this check changes, even on assertion failure.
     if (restoreGrouping !== undefined) {
       const text = await state('cleanup');
       const label = 'Group sessions by project';

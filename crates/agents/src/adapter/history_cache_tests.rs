@@ -382,7 +382,6 @@ fn a_selection_receives_the_page_before_a_joined_warm_finishes() {
                         finish
                             .recv_timeout(timeout)
                             .expect("foreground received page");
-                        // A joiner must reuse the result even when it cannot enter the LRU.
                         Ok(history(&"x".repeat(MAX_MESSAGE_BYTES)))
                     },
                 )

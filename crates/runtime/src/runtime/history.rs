@@ -195,7 +195,7 @@ impl RuntimeOwner {
                     .ok_or_else(|| "Choose a backend before loading history.".to_owned())
                     .and_then(|harness| request.read(&config?, harness, repository.as_ref()));
                 match result {
-                    Ok(None) => {} // The local read already published the complete document.
+                    Ok(None) => {}
                     Ok(Some((history, stamp))) => {
                         operation.set_work(history.messages.len());
                         request.finish(Ok(history), stamp);
@@ -303,8 +303,6 @@ impl RuntimeOwner {
                 let Some(path) = self.snapshot.selected_session.as_deref() else {
                     return;
                 };
-                // Full-history reconciliation can append an unresolved local prompt or
-                // replace a repeated prompt's display text. Wait when either is possible.
                 if let (Some(state), Some(harness)) = (&self.state, self.harness)
                     && !state
                         .can_display_transcript_tail(TranscriptSession {

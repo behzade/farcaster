@@ -54,9 +54,6 @@ impl AttachmentRule {
     }
 }
 
-// File references stay compact cards, even when clicking one previews an image.
-// Encoded images share the same card in the composer and transcript. Code blocks
-// keep their code view and expose the same HTML open/source actions as files.
 pub(super) fn resolve(source: AttachmentSource<'_>) -> AttachmentRule {
     use AttachmentView::{Code, File, Image};
     use OpenAction::{Browser, Editor, PreviewImage, System};

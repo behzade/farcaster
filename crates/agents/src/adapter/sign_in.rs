@@ -63,7 +63,6 @@ pub fn supports_sign_in(backend: Backend) -> bool {
     super::for_backend(backend).supports_sign_in()
 }
 
-/// Checks local credentials without starting a process or making a network request.
 pub fn sign_in_required(backend: Backend, config: &AgentLaunchConfig) -> bool {
     super::for_backend(backend).sign_in_required(config)
 }

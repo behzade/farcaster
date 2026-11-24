@@ -80,7 +80,6 @@ pub(super) fn pasted_file_summary_length<'a>(
     None
 }
 
-// Adapters expose output files as resource links; native IDs stay behind the adapter.
 pub(super) fn result_files(content: &serde_json::Value) -> Vec<FileAttachment> {
     content_blocks(content)
         .into_iter()

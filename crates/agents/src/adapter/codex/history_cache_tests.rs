@@ -182,7 +182,6 @@ fn only_confirmed_paginated_history_in_the_effective_home_requests_a_preview() {
         let (home, db, _) = fixture();
         db.execute("UPDATE threads SET history_mode=?1", [mode])
             .unwrap();
-        // Config checks run only after finding a supported backing store.
         if mode == "paginated" && (config.is_some() || env_override) {
             std::fs::write(home.path().join("thread_history_1.sqlite"), "").unwrap();
         }

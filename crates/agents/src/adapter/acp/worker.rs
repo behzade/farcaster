@@ -594,9 +594,7 @@ impl AcpWorkerSession {
         Ok(())
     }
 
-    // Concurrent agy prompt handlers can acquire the session in a different
-    // order from the wire. Wait for execution evidence for this input before
-    // offering its successor. Follow-ups stay separate until settlement.
+    // Concurrent agy handlers can consume prompts out of wire order.
     fn dispatch_next_steer(&mut self) {
         if self.next_steer.is_some()
             || !self.current_inputs.is_delivered()
@@ -810,8 +808,6 @@ impl AcpWorkerSession {
             }
             "user_message_chunk" => {
                 serde_json::from_value::<ContentBlock>(update.get("content")?.clone()).ok()?;
-                // ACP echoes carry no request ID. A concurrent steering reply owns
-                // its own receipt and must not acknowledge the original prompt.
                 if self.next_steer.is_none() {
                     self.acknowledge_current_prompt_started();
                 }
@@ -1218,8 +1214,7 @@ impl AcpWorkerSession {
     }
 
     fn advance_after_prompt_reply(&mut self, id: AcpRequestId) {
-        // agy ends the preceding RPC when a new prompt takes over its stream.
-        // Only the last RPC ends the run. Keep the accumulated output and tools.
+        // agy ends the previous RPC when a steer takes over the stream.
         if let Some((next_id, inputs)) = self.next_steer.take() {
             if let Some((cancelled, _)) = &mut self.cancel_deadline {
                 *cancelled = next_id.clone();
@@ -1782,8 +1777,6 @@ impl WorkerSession for AcpWorkerSession {
                             .as_str()
                             .is_some_and(Self::prompt_stop_reason_is_receipt)
                         {
-                            // The newest prompt finished before the old callback
-                            // was polled. Its completion owns the run.
                             self.advance_after_prompt_reply(id.clone());
                             self.record_prompt_result(id, result);
                         } else {
@@ -1816,8 +1809,6 @@ impl WorkerSession for AcpWorkerSession {
                         continue;
                     }
                     if self.features.native_steer {
-                        // Only prompt RPCs use this asynchronous response path.
-                        // An old callback cannot fail the turn that replaced it.
                         continue;
                     }
                     return Some(WorkerEvent::Failed(format!(

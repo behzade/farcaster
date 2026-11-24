@@ -73,8 +73,6 @@ impl FarcasterApp {
             )
             && self.modal_owner_window(window, cx).is_none()
         {
-            // A new panel sets its initial focus when it renders. An existing
-            // panel can receive the request without focusing its owner's window.
             if let Some(panel) = self.overlays.modal.window {
                 let focus = focus.clone();
                 let _ = panel.update(cx, |_, window, cx| focus.focus(window, cx));

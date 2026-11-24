@@ -30,7 +30,6 @@ pub struct DiscoveredSession {
     pub title: String,
     pub first_user_message: String,
     pub timestamp: String,
-    /// Worker ownership; ordinary fork ancestry belongs in `forked_from`.
     pub parent_session: Option<String>,
     pub forked_from: Option<String>,
     pub modified: SystemTime,
@@ -70,7 +69,6 @@ pub struct SessionMetadata {
     pub project: PathBuf,
     pub title: Option<String>,
     pub first_user_message: Option<String>,
-    /// Worker ownership; ordinary fork ancestry belongs in `forked_from`.
     pub parent_session: Option<String>,
     #[serde(default)]
     pub forked_from: Option<String>,
@@ -443,7 +441,6 @@ pub trait SessionTransport {
 
 #[derive(Clone, Debug)]
 pub enum SessionStart {
-    /// A fresh backend session, optionally created for a persisted draft key.
     New(Option<String>),
     Resume(PathBuf),
     Fork(PathBuf),

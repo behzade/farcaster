@@ -8,7 +8,6 @@ pub(super) fn script(source: &str) -> String {
     format!("{}\n{source}", include_str!("timing.mjs"))
 }
 
-// Accept only our timing schema; never forward arbitrary SDK stderr or error text.
 pub(super) fn log_event(event: &Value) {
     let (Some(pid), Some(id), Some(operation), Some(phase), Some(elapsed)) = (
         event["pid"].as_u64(),

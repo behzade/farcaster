@@ -833,13 +833,11 @@ fn imported_transcript_reopens_from_sqlite_and_survives_a_failed_native_refresh(
         open(SharedStateStore::open_at(&database).unwrap()),
         (false, true)
     );
-    // A fresh runtime with the same source revision needs no native history read.
     assert_eq!(
         open(SharedStateStore::open_at(&database).unwrap()),
         (true, false)
     );
     std::fs::remove_file(&path).unwrap();
-    // An unavailable source still leaves the saved conversation fully readable.
     assert_eq!(
         open(SharedStateStore::open_at(&database).unwrap()),
         (true, true)

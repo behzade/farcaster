@@ -464,7 +464,6 @@ pub(super) fn patch_counts(patch: &str) -> (Option<u64>, Option<u64>) {
 }
 
 fn patch_counts_many(patches: &[&[u8]]) -> (Option<u64>, Option<u64>) {
-    // A partial line can join a header or binary marker in the next output.
     if patches
         .iter()
         .take(patches.len().saturating_sub(1))

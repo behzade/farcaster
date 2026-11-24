@@ -217,8 +217,6 @@ fn catalog_processes() -> &'static Mutex<HashMap<CatalogKey, CatalogSlot>> {
 }
 
 pub(in crate::adapter) fn invalidate_processes(backend: crate::Backend) {
-    // An in-flight operation owns its slot until it finishes. New sessions must
-    // initialize a fresh process with the credentials selected by the user.
     if let Ok(mut processes) = catalog_processes().lock() {
         processes.retain(|(owner, _), _| *owner != backend);
     }

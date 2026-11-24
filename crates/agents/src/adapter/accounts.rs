@@ -48,7 +48,6 @@ pub(super) fn source(
     }
 }
 
-/// Identify the environment's origin, without retaining its credential value.
 pub(super) fn environment_source(
     command: &std::process::Command,
     name: &str,

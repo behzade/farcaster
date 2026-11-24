@@ -186,8 +186,6 @@ pub(super) fn bind_prompt_locator(
     {
         return Err("draft profile conflicts with the session locator".into());
     }
-    // A catalog row may already have this locator. Merge it only within the
-    // draft's project and profile, and only if another draft does not own it.
     let (id, existing): (i64, Option<i64>) = tx.query_row(
         "SELECT d.id, s.id FROM sessions d JOIN projects p ON p.id=d.project_id
            LEFT JOIN sessions s ON s.harness=d.harness AND s.locator=?5 AND s.id<>d.id

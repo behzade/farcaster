@@ -882,12 +882,8 @@ fn claude_ack_uses_the_echoed_uuid_and_survives_queued_delivery() {
 }
 
 #[test]
-fn process_handoff_batches_equal_text_and_images_with_original_receipts() {
+fn handoff_and_completion_batch_equal_text_and_images_with_original_receipts() {
     queued_batch_round_trip(true);
-}
-
-#[test]
-fn natural_completion_batches_equal_text_and_images_with_original_receipts() {
     queued_batch_round_trip(false);
 }
 

@@ -229,7 +229,6 @@ function makeAgent() {
         acks.iter()
             .any(|(id, result)| id == "fallback" && result.is_err())
     );
-    // Once the live handle has gone, the same API explicitly returns to the shared queue.
     assert!(
         !worker
             .submit_prompt(

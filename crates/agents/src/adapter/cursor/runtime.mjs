@@ -1,4 +1,3 @@
-// One SDK instance owns each live agent and its runs. Rust consumes Connect/JSON.
 import http from "node:http";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
@@ -106,7 +105,6 @@ async function send(wire, response) {
     }, {
       model: wire.options?.model,
       mode: wire.options?.mode === "AGENT_MODE_OPTION_PLAN" ? "plan" : "agent",
-      // One ordered event source for text, tools, and turn boundaries.
       onDelta: async ({ update }) => {
         if (!firstDelta) { firstDelta = true; runTiming("first_delta"); }
         if (!firstText && update.type === "text-delta") { firstText = true; runTiming("first_text"); }

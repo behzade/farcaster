@@ -223,7 +223,6 @@ fn transcript_reading_keeps_painted_rows_when_full_history_has_new_turns(
                 });
                 cx.update(|_, cx| {
                     if saved_between {
-                        // The native refresh completes before the next draw of the full SQLite document.
                         send_snapshot(
                             runtime,
                             generation,
@@ -345,8 +344,6 @@ fn transcript_reading_maps_a_scrolled_suffix_when_older_messages_arrive(
                 let mut full = reading_snapshot(project, name, 100);
                 let snapshot = Arc::make_mut(&mut full);
                 snapshot.document_ready = true;
-                // Both indexes contain exactly the same prompt. Only the surrounding page
-                // identifies which turn the user read.
                 let items = &mut Arc::make_mut(&mut snapshot.conversation).items;
                 items.set(84, items[4].clone());
                 let mut suffix = crate::conversation::ConversationState::default();
@@ -473,7 +470,6 @@ fn transcript_reading_survives_session_switch_and_loading(cx: &mut gpui::TestApp
         |cx, app, runtime, project| {
             let transcript = cx.update(|_, cx| {
                 app.update(cx, |app, cx| {
-                    // Injecting snapshots bypasses the sidebar's selection of a saved chat.
                     app.sessions.selected_draft = None;
                     cx.notify();
                     app.views.transcript.clone()
@@ -503,8 +499,6 @@ fn transcript_reading_survives_session_switch_and_loading(cx: &mut gpui::TestApp
                 .expect("saved row")
                 .origin
                 .y;
-            // A reset can precede a loading snapshot, then a second history
-            // reset before the destination is ready. Neither may overwrite A.
             let updated = reading_snapshot(project, "a", 64);
             for (generation, snapshot) in
                 [(2, b.clone()), (3, updated.clone()), (4, b), (5, updated)]
@@ -540,8 +534,6 @@ fn transcript_reading_survives_session_switch_and_loading(cx: &mut gpui::TestApp
                 if returning {
                     assert!(cx.debug_bounds("transcript-loading").is_some());
                     assert!(cx.debug_bounds("transcript-row-15").is_none());
-                    // This SQLite document contains only the last eight messages.
-                    // Its rows cannot resolve the saved position or disclosures at 12.
                     let mut partial = crate::conversation::ConversationState::default();
                     partial.items = items
                         .iter_range(items.len() - 8..items.len())
@@ -651,7 +643,6 @@ fn transcript_reading_return_after_resize_syncs_follow_state(cx: &mut gpui::Test
             let last_row = cx
                 .debug_bounds("transcript-row-59")
                 .expect("last row after resize");
-            // Let the scroll handler's deferred view update run after paint.
             cx.update(|_, cx| {
                 let view = transcript.read(cx);
                 assert!(view.list.is_following_tail());
@@ -920,7 +911,6 @@ fn check_stream_reading_restore(
                 }
                 _ => {}
             }
-            // Without an intervening paint, finalization must remap the pending anchor.
             send_snapshot(runtime, generation, Arc::new(streaming));
             app.update(cx, |app, cx| app.drain_runtime(cx));
 
@@ -1067,7 +1057,6 @@ fn reopened_page_transfers_only_reader_input_over_a_saved_anchor(cx: &mut gpui::
                         .clone();
                     assert_eq!(page.painted_history_top(), Some(old));
                     if delta == 0. {
-                        // A programmatic change to preview geometry cannot replace the saved anchor.
                         page.scroll_to(ListOffset { item_ix: 16, ..old });
                     } else {
                         page.scroll_by(px(delta), window, transcript.entity_id());
@@ -1257,8 +1246,6 @@ fn resident_transcript_draws_saved_anchor_before_routing_and_reuses_layout(
                     .unwrap()
                     .unwrap();
                 changed.coverage = crate::agents::HistoryCoverage::Suffix;
-                // A later turn in the suffix repeats the original message at local index 12.
-                // Its text and disclosure fingerprint both agree at the wrong offset.
                 let repeated = changed.content.items[12].clone();
                 changed.content.items = changed.content.items.iter().skip(2).cloned().collect();
                 changed.content.items.set(12, repeated);
@@ -1324,7 +1311,6 @@ fn resident_transcript_draws_saved_anchor_before_routing_and_reuses_layout(
                 y
             );
 
-            // A notification for parked A clears its saved anchor before its actor responds.
             send_snapshot(runtime, 4, snapshot("b"));
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
@@ -1345,7 +1331,6 @@ fn resident_transcript_draws_saved_anchor_before_routing_and_reuses_layout(
             });
             assert!(cx.debug_bounds("transcript-row-79").is_some());
 
-            // Same count, same catalog timestamp. A newer saved message must win before routing.
             send_snapshot(runtime, 6, snapshot("b"));
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| app.drain_runtime(cx));

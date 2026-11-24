@@ -23,7 +23,6 @@ fn current_model_stays_visible_without_catalog_match_and_reveals_resolved_alias(
                 app.update(cx, |app, cx| {
                     app.snapshot = Arc::new(crate::runtime::RuntimeSnapshot {
                         prefill_model: Some(current),
-                        // The same ID at a different provider is not the current model.
                         models: vec![model("other", "current")],
                         ..Default::default()
                     });

@@ -17,12 +17,9 @@ pub struct StoredViewport {
     pub coverage: agents::HistoryCoverage,
     pub revision: i64,
     pub stamp: TranscriptStamp,
-    /// These items contain every locally saved row and all expanded tool details.
     pub full_document: bool,
 }
 
-// The partial (session_id,seq) index excludes metrics, archive, and other events
-// that cannot affect the transcript. Changes to receipts invalidate the page.
 pub(super) const PRESENTATION_STAMP: &str =
     "SELECT coalesce(max(seq),0) FROM session_events WHERE session_id=?1
      AND json_extract(body,'$.type') IN ('accepted_prompt','prompt_presentation','prompt_delivery_receipt','prompt_delivery_resolution')";
@@ -114,8 +111,6 @@ impl StateStore {
             }
             Some((None, _, _, _)) => {
                 self.queue_viewport_preparation(Some(id));
-                // The document or its prompt receipts changed before background preparation.
-                // Use the newest bounded page for this click under the same read transaction.
                 let (revision, complete, total, seq) = tx.query_row(
                     &format!(
                         "SELECT revision,complete,item_count,({PRESENTATION_STAMP})
@@ -143,7 +138,6 @@ impl StateStore {
         let (content, markdown) = match self.decode_viewport(&bytes) {
             Ok(decoded) => decoded,
             Err(error) => {
-                // A file from the expanded prefix may have disappeared since preparation.
                 let total: usize = tx.query_row(
                     "SELECT item_count FROM transcript_documents WHERE session_id=?1",
                     [id],
@@ -192,8 +186,6 @@ impl StateStore {
         }
     }
 
-    /// A stream flush can change one block several times within a turn. The
-    /// reader falls back to the current document while its viewport catches up.
     pub(super) fn schedule_session_viewport(&self, session: TranscriptSession<'_>) {
         if self.connection.path().is_none_or(str::is_empty) {
             self.refresh_viewport_for_session(session);
@@ -252,7 +244,6 @@ impl StateStore {
             prepare(start)?
         };
         tx.commit()?;
-        // No reader can publish a stale page after a concurrent append or a receipt.
         self.connection.execute(
             &format!("INSERT INTO transcript_viewports(session_id,revision,event_seq,from_beginning,items)
              SELECT session_id,revision,?3,?4,?5 FROM transcript_documents WHERE session_id=?1 AND revision=?2
@@ -388,8 +379,6 @@ impl StateStore {
     }
 }
 
-/// The message body omits externalized image data. Charge its padded base64
-/// length, as the reconstructed adapter message contains that whole string.
 fn inline_viewport_image(image: PromptImage, remaining: &mut usize) -> io::Result<PromptImage> {
     use base64::Engine as _;
 
@@ -563,8 +552,6 @@ impl StateStore {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();
-        // A local user attachment normally already exists under this digest.
-        // Only older inline records and adapter-only attachments need materializing.
         if !self.image_directory.join(&hash).is_file() {
             use base64::Engine;
             let data = base64::engine::general_purpose::STANDARD.encode(image.bytes());
@@ -595,8 +582,6 @@ impl StateStore {
                 return Ok(None);
             }
         }
-        // Keep singleton activity rows exact: a single command can wrap and show its full
-        // command label. Groups use a collapsed category header with a separate change tree.
         let groupable = |item: &TranscriptItem| {
             matches!(item.kind, TranscriptKind::Tool | TranscriptKind::Thinking)
         };

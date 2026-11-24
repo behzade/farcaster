@@ -253,7 +253,6 @@ impl FarcasterApp {
             {
                 self.apply_composer_snapshot(snapshot, window, cx);
             }
-            // Background editor sends may have had no draft row before rejection.
             if let Some(id) = crate::sessions::draft_id(&target)
                 && self
                     .sessions

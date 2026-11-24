@@ -373,8 +373,6 @@ impl RuntimeOwner {
                     .or_else(|| self.active_session.clone());
                 self.active_snapshot_mut().observed_service_tier = state.service_tier.clone();
                 if let Some(path) = &selected_session {
-                    // Bind and save the first observation in one transaction before
-                    // publishing the path to the catalog or dispatching the prompt.
                     if let Err(error) =
                         self.save_observed_facts(path, self.unbound_prompt_draft.as_deref())
                     {
@@ -393,7 +391,6 @@ impl RuntimeOwner {
                     self.session_id = Some(state.session_id.clone());
                 }
                 self.active_session = selected_session.clone();
-                // An idle sample can also precede dispatch of the first prompt.
                 self.backend_activity.turn.sample(state.is_streaming);
                 self.backend_activity.compaction.sample(state.is_compacting);
                 let run_active = self.backend_activity.turn.is_active();
@@ -458,7 +455,6 @@ impl RuntimeOwner {
                     conversation.replace_history(&messages);
                     if let Some(prompt) = &mut self.pending_prompt {
                         if prompt.waiting().is_some() {
-                            // This input has not been sent and cannot be in native history.
                             if let Some(item) = prompt.item.clone() {
                                 let conversation = conversation_mut(self.active_snapshot_mut());
                                 conversation.append_local_user(item);

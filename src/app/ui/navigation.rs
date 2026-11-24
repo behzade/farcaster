@@ -177,7 +177,6 @@ impl FarcasterApp {
                         ) {
                             return false;
                         }
-                        // Run before GPUI buffers Escape as a sequence prefix.
                         if event.keystroke.key == "escape"
                             && !event.keystroke.modifiers.modified()
                             && escape_context.depth_of(&event.context_stack).is_some()

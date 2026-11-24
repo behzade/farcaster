@@ -1363,7 +1363,6 @@ fn same_path_selection_routes_the_requested_backend_and_profile() -> Result<(), 
     let mut codex = pi.clone();
     codex.harness = Backend::Codex;
     codex.profile_id = Some("codex-profile".into());
-    // Both native backends can use the same native ID.
     let mut state = StateStore::open_at(&project.join("state.sqlite3"))?;
     state.replace_sessions(&[pi, codex])?;
     let rows = state.cached_sessions("")?;
