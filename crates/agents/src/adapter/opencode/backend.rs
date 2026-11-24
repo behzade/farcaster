@@ -87,7 +87,7 @@ impl BackendAdapter for OpenCodeAdapter {
         let command = super::super::configuration_launch(config, Backend::OpenCode)?;
         super::load_configuration(&command, project).and_then(super::super::configuration_catalog)
     }
-    fn steering_boundary(&self) -> SteeringBoundary {
+    fn steering_boundary(&self, _config: &crate::AgentLaunchConfig) -> SteeringBoundary {
         SteeringBoundary::Held
     }
     fn spawn(

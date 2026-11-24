@@ -49,7 +49,7 @@ fn submission_queue_matches_backend_steering_support(cx: &mut gpui::TestAppConte
                     let path = project.join("shared.jsonl");
                     app.sessions.selected_draft = None;
                     for (backend, expected_mode) in [
-                        (crate::agents::Backend::Antigravity, PromptMode::FollowUp),
+                        (crate::agents::Backend::Antigravity, PromptMode::Steer),
                         (crate::agents::Backend::Cursor, PromptMode::Steer),
                     ] {
                         app.composer.pending_submissions.clear();

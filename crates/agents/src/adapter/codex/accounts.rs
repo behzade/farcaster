@@ -182,6 +182,7 @@ pub(super) fn identity(value: &Value) -> Option<AccountIdentity> {
             .map(|_| "OpenAI API".into()),
         workspace: text(value, "workspaceName"),
         plan: text(value, "planType"),
+        ..Default::default()
     })
 }
 fn text(value: &Value, key: &str) -> Option<String> {

@@ -1,11 +1,13 @@
 use crate::Backend;
 pub(super) mod backend;
-mod catalog;
+pub(super) mod catalog;
 mod configuration;
 pub(super) use configuration::display_model_name;
-mod connection;
+pub(super) mod connection;
 mod cursor_extension;
-mod events;
+mod elicitation;
+pub(super) mod events;
+mod resources;
 mod translate;
 mod worker;
 

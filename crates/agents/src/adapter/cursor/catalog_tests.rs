@@ -86,7 +86,7 @@ fn acp_catalog_maps_protocol_entries_and_keeps_storage_checks_scoped() {
         session.project,
         std::env::current_dir().expect("test operation should succeed")
     );
-    assert!(session.modified > UNIX_EPOCH);
+    assert!(session.modified > std::time::UNIX_EPOCH);
     assert!(listed_session(root.path(), "does-not-match", &entry).is_none());
     let mut invalid = entry.clone();
     invalid["sessionId"] = "../escape".into();

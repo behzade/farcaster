@@ -1425,6 +1425,7 @@ fn usage_activity_reports_turn_context_and_live_session_totals() {
             output: 9,
             ..Default::default()
         },
+        context_used: None,
         context_window: 200_000,
         cost: None,
     }));
@@ -1589,7 +1590,7 @@ fn applying_steering_preserves_the_running_worker_and_pending_delivery() {
         ("opencode", WorkerSendMode::Steer),
         ("cursor-cli", WorkerSendMode::Steer),
         ("claude", WorkerSendMode::Steer),
-        ("antigravity-acp", WorkerSendMode::Queue),
+        ("antigravity-acp", WorkerSendMode::Steer),
     ] {
         let applied = Arc::new(AtomicBool::new(false));
         let mut transport = WorkerSessionTransport::new(

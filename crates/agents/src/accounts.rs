@@ -16,6 +16,8 @@ pub struct AccountIdentity {
     pub label: Option<String>,
     pub workspace: Option<String>,
     pub plan: Option<String>,
+    pub plan_id: Option<String>,
+    pub upgrade_url: Option<String>,
 }
 
 impl AccountIdentity {

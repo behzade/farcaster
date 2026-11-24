@@ -405,3 +405,18 @@ fn stale_model_failure_does_not_reject_a_newer_startup_choice() {
     assert!(owner.snapshot.pending_initial_model);
     assert!(owner.pending_session_controls.model_pending());
 }
+
+#[test]
+fn occupancy_updates_can_reset_to_zero_without_changing_session_totals() {
+    let mut stats = json!({"tokens":{"totalTokens":300}});
+    for (used, percent) in [(80, 20.0), (0, 0.0)] {
+        let update = json!({"type":"context_usage_update","contextWindow":400,"contextUsed":used});
+        assert!(update_context_from_event(&mut stats, &update));
+        assert!(!update_tokens_from_event(&mut stats, &update));
+        assert_eq!(
+            stats["contextUsage"],
+            json!({"tokens":used,"contextWindow":400,"percent":percent})
+        );
+        assert_eq!(stats["tokens"]["totalTokens"], 300);
+    }
+}

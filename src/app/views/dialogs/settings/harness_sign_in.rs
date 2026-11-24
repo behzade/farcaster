@@ -24,21 +24,33 @@ pub(in crate::app::views) fn render(
             .map(|profile| (profile.backend, Some(profile.id), profile.name)),
     );
     for (backend, profile_id, name) in targets {
-        let sign_in = entity.clone();
-        rows = rows.child(setting_row(name, "").child(button(
-            format!(
-                "harness-sign-in-{backend}-{}",
-                profile_id.as_deref().unwrap_or("default")
-            ),
-            "Sign in",
-            ButtonTone::Quiet,
-            app.settings.sign_in.active.is_none() && !app.settings.sign_in.signing_out,
-            move |_, cx| {
-                let _ = sign_in.update(cx, |this, cx| {
-                    this.sign_in_harness(backend, profile_id.clone(), cx)
-                });
-            },
-        )));
+        let mut row = setting_row(name, "");
+        let mut controls = div().flex().flex_wrap().gap(theme().space.xs);
+        for &(method, label) in crate::agents::sign_in_methods(backend) {
+            let sign_in = entity.clone();
+            let profile_id = profile_id.clone();
+            controls = controls.child(button(
+                format!(
+                    "harness-sign-in-{backend}-{}-{method}",
+                    profile_id.as_deref().unwrap_or("default")
+                ),
+                label,
+                ButtonTone::Quiet,
+                app.settings.sign_in.active.is_none()
+                    && app.settings.sign_in.terminal.is_none()
+                    && !app.settings.sign_in.signing_out,
+                move |window, cx| {
+                    let _ = sign_in.update(cx, |this, cx| {
+                        this.sign_in_harness(backend, profile_id.clone(), method, window, cx)
+                    });
+                },
+            ));
+        }
+        row = row.child(controls);
+        rows = rows.child(row);
+    }
+    if let Some(terminal) = &app.settings.sign_in.terminal {
+        rows = rows.child(div().w_full().h(gpui::px(240.)).child(terminal.clone()));
     }
     if let Some(message) = &app.settings.sign_in.message {
         rows = rows.child(feedback(
@@ -60,7 +72,7 @@ pub(in crate::app::views) fn render(
             move |_, cx| cx.open_url(&url),
         ));
     }
-    if app.settings.sign_in.active.is_some() {
+    if app.settings.sign_in.active.is_some() || app.settings.sign_in.terminal.is_some() {
         rows = rows.child(button(
             "harness-sign-in-cancel",
             "Cancel",

@@ -710,13 +710,23 @@ impl WorkerSessionTransport {
                 "detail": detail,
             }),
             WorkerActivity::Usage(usage) => {
-                self.usage = usage;
-                json!({
-                    "type": "turn_end",
-                    "contextWindow": usage.context_window,
-                    "usage": usage_json(usage.turn),
-                    "sessionUsage": usage_json(usage.session),
-                })
+                if let Some(used) = usage.context_used
+                    && usage.turn == TokenUsage::default()
+                    && usage.session == TokenUsage::default()
+                {
+                    self.usage.context_used = Some(used);
+                    self.usage.context_window = usage.context_window;
+                    json!({"type":"context_usage_update","contextUsed":used,"contextWindow":usage.context_window})
+                } else {
+                    self.usage = usage;
+                    json!({
+                        "type": "turn_end",
+                        "contextWindow": usage.context_window,
+                        "contextUsed": usage.context_used,
+                        "usage": usage_json(usage.turn),
+                        "sessionUsage": usage_json(usage.session),
+                    })
+                }
             }
             WorkerActivity::SelectionChanged { model, effort } => {
                 if let Some(model) = model {

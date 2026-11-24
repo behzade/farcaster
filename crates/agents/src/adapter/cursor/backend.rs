@@ -61,6 +61,7 @@ impl BackendAdapter for CursorAdapter {
         &self,
         config: &AgentLaunchConfig,
         project: &Path,
+        _method: &str,
         cancelled: &std::sync::atomic::AtomicBool,
         on_url: &dyn Fn(String),
     ) -> Result<(), String> {
@@ -91,7 +92,7 @@ impl BackendAdapter for CursorAdapter {
         let bridge = Bridge::start(&self.launch_configuration(config), project)?;
         super::configuration::catalog(&bridge.models()?)
     }
-    fn steering_boundary(&self) -> SteeringBoundary {
+    fn steering_boundary(&self, _config: &crate::AgentLaunchConfig) -> SteeringBoundary {
         SteeringBoundary::Native
     }
     fn supports_auto_title_generation(&self) -> bool {

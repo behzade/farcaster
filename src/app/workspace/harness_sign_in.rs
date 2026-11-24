@@ -10,6 +10,7 @@ use crate::{
 pub(in crate::app) struct HarnessSignInState {
     pub active: Option<SignIn>,
     pub url: Option<String>,
+    pub terminal: Option<gpui::Entity<super::Terminal>>,
     pub message: Option<String>,
     pub failed: bool,
     pub signing_out: bool,
@@ -37,9 +38,14 @@ impl FarcasterApp {
         &mut self,
         backend: Backend,
         profile_id: Option<String>,
+        method: &str,
+        window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        if self.settings.sign_in.active.is_some() || self.settings.sign_in.signing_out {
+        if self.settings.sign_in.active.is_some()
+            || self.settings.sign_in.terminal.is_some()
+            || self.settings.sign_in.signing_out
+        {
             return;
         }
         let result = (|| {
@@ -50,7 +56,54 @@ impl FarcasterApp {
                 app_proxy: crate::app::persistence::open()?.load_network_proxy()?,
                 ..Default::default()
             };
-            crate::agents::sign_in(config, backend, self.project.path.clone())
+            if let Some(command) =
+                crate::agents::terminal_sign_in(&config, backend, &self.project.path, method)?
+            {
+                let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
+                let command = crate::app::infrastructure::editor_launch::prepare_command(
+                    &directory.path().join("login.sh"),
+                    &command,
+                    &self.project.path,
+                )?;
+                let options =
+                    gpui_libghostty::TerminalOptions::new(command, self.project.path.clone());
+                let terminal = super::Terminal::spawn(options, window, cx)?;
+                let monitored = terminal.downgrade();
+                self.settings.sign_in.terminal = Some(terminal);
+                let terminal_profile = profile_id.clone();
+                self.monitor_native_process(window, cx, move |this, _, cx| {
+                    let _directory = &directory;
+                    let Some(terminal) = monitored.upgrade() else {
+                        return false;
+                    };
+                    if this.settings.sign_in.terminal.as_ref() != Some(&terminal) {
+                        return false;
+                    }
+                    if terminal.read(cx).is_alive() {
+                        return true;
+                    }
+                    this.settings.sign_in.terminal = None;
+                    this.settings.sign_in.message = Some("Terminal login finished.".into());
+                    crate::agents::refresh_login(&config, backend);
+                    this.send(RuntimeCommand::RefreshAccounts, cx);
+                    if this.active_profile_id() == terminal_profile
+                        && this.snapshot.harness == Some(backend)
+                    {
+                        this.send(
+                            RuntimeCommand::LoadConfiguration {
+                                harness: backend,
+                                project: this.project.path.clone(),
+                            },
+                            cx,
+                        );
+                    }
+                    cx.notify();
+                    false
+                });
+                return Ok(None);
+            }
+            crate::agents::sign_in_with_method(config, backend, self.project.path.clone(), method)
+                .map(Some)
         })();
         self.settings.sign_in.url = None;
         self.settings.sign_in.failed = false;
@@ -59,7 +112,10 @@ impl FarcasterApp {
                 self.settings.sign_in.message = Some(error);
                 self.settings.sign_in.failed = true;
             }
-            Ok(sign_in) => {
+            Ok(None) => {
+                self.settings.sign_in.message = None;
+            }
+            Ok(Some(sign_in)) => {
                 let events = sign_in.events.clone();
                 self.settings.sign_in.active = Some(sign_in);
                 self.settings.sign_in.message = Some(format!(
@@ -133,7 +189,10 @@ impl FarcasterApp {
         identity: crate::agents::accounts::AccountIdentity,
         cx: &mut Context<Self>,
     ) {
-        if self.settings.sign_in.active.is_some() || self.settings.sign_in.signing_out {
+        if self.settings.sign_in.active.is_some()
+            || self.settings.sign_in.terminal.is_some()
+            || self.settings.sign_in.signing_out
+        {
             return;
         }
         let result = (|| {
@@ -179,6 +238,10 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn cancel_harness_sign_in(&mut self, cx: &mut Context<Self>) {
+        if self.settings.sign_in.terminal.take().is_some() {
+            self.settings.sign_in.message = Some("Terminal login closed.".into());
+            cx.notify();
+        }
         if let Some(sign_in) = &self.settings.sign_in.active {
             sign_in.cancel();
             self.settings.sign_in.url = None;

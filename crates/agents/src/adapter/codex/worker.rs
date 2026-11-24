@@ -1986,6 +1986,7 @@ impl CodexWorkerSession {
                                     .get("modelContextWindow")
                                     .and_then(Value::as_u64)
                                     .unwrap_or(0),
+                                context_used: None,
                                 cost: None,
                             };
                             self.command_state.usage = Some(reported_usage);

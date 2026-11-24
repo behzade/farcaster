@@ -1,7 +1,10 @@
+mod auth;
 mod backend;
+mod options;
 use super::acp::AcpProfile;
 use crate::Backend;
 pub(super) use backend::AntigravityAdapter;
+pub(in crate::adapter) use options::SessionOptions;
 
 pub(super) const PROFILE: AcpProfile = AcpProfile {
     backend: Backend::Antigravity,
@@ -16,7 +19,12 @@ pub(super) const PROFILE: AcpProfile = AcpProfile {
 };
 
 pub(super) fn descriptor() -> crate::contract::AgentBackendDescriptor {
-    super::acp::backend::descriptor(&PROFILE, false)
+    use crate::contract::CapabilitySupport::Available;
+    let mut descriptor = super::acp::backend::descriptor(&PROFILE, true);
+    descriptor.capabilities.turns.steer = Available;
+    descriptor.capabilities.interactions.questions = Available;
+    descriptor.capabilities.observation.usage = Available;
+    descriptor
 }
 
 fn conversation_project(session_id: &str) -> Option<std::path::PathBuf> {
@@ -61,6 +69,16 @@ pub(super) fn account_identity(
     Some(crate::accounts::AccountIdentity {
         authority: "google".into(),
         plan: Some(plan.into()),
+        plan_id: response
+            .pointer("/_meta/antigravity/tier/id")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned),
+        upgrade_url: response
+            .pointer("/_meta/antigravity/tier/upgradeUri")
+            .and_then(|v| v.as_str())
+            .and_then(|v| url::Url::parse(v).ok())
+            .filter(|url| url.scheme() == "https")
+            .map(Into::into),
         ..Default::default()
     })
 }
@@ -72,23 +90,10 @@ pub(super) fn observe_account(
     identity: crate::accounts::AccountIdentity,
 ) {
     use crate::accounts::*;
-    let env = |name| super::process_command::environment(command, name);
-    let Some(home) = env("HOME").or_else(|| env("USERPROFILE")) else {
+    let Some(source) = account_source(config, command, project) else {
         return;
     };
-    let source = super::accounts::source(
-        config,
-        Backend::Antigravity,
-        project,
-        "google",
-        format!(
-            "native:{}",
-            std::path::PathBuf::from(home)
-                .join(".gemini")
-                .join("antigravity-acp")
-                .display()
-        ),
-    );
+    let capabilities = auth::capabilities(command);
     publish_account_event(AccountEvent::Observed {
         observation: AccountObservation {
             source,
@@ -98,11 +103,33 @@ pub(super) fn observe_account(
             complete_limits: true,
             limits_failed: false,
             observed_at: account_now(),
-            capabilities: Default::default(),
+            capabilities,
         },
         run_id: None,
         evidence: AccountBindingEvidence::ObservedAtStartup,
     });
+}
+
+fn account_source(
+    config: &crate::AgentLaunchConfig,
+    command: &std::process::Command,
+    project: &std::path::Path,
+) -> Option<crate::accounts::AccountSource> {
+    let env = |name| super::process_command::environment(command, name);
+    let home = env("GEMINI_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            env("HOME")
+                .or_else(|| env("USERPROFILE"))
+                .map(|home| std::path::PathBuf::from(home).join(".gemini"))
+        })?;
+    Some(super::accounts::source(
+        config,
+        Backend::Antigravity,
+        project,
+        "google",
+        format!("native:{}", home.join("antigravity-acp").display()),
+    ))
 }
 
 pub(super) fn integrated_cli(command: &std::process::Command) -> bool {

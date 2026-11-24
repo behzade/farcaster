@@ -24,11 +24,17 @@ use crate::{AgentLaunchConfig, DiscoveredHistory, HarnessAccessMode, ToolMetadat
 use super::super::{child_stderr, main_session};
 
 pub fn list_sessions(profile: &AcpProfile) -> Result<Vec<Value>, String> {
+    list_sessions_with_config(profile, &default_catalog_config(profile))
+}
+
+pub(in crate::adapter) fn list_sessions_with_config(
+    profile: &AcpProfile,
+    config: &AgentLaunchConfig,
+) -> Result<Vec<Value>, String> {
     let project = std::env::current_dir().map_err(|error| error.to_string())?;
-    let config = default_catalog_config(profile);
     with_connection_kind(
         profile,
-        &config,
+        config,
         &project,
         "listing",
         |connection, _, _, _| {
@@ -210,6 +216,14 @@ fn catalog_processes() -> &'static Mutex<HashMap<CatalogKey, CatalogSlot>> {
     PROCESSES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+pub(in crate::adapter) fn invalidate_processes(backend: crate::Backend) {
+    // An in-flight operation owns its slot until it finishes. New sessions must
+    // initialize a fresh process with the credentials selected by the user.
+    if let Ok(mut processes) = catalog_processes().lock() {
+        processes.retain(|(owner, _), _| *owner != backend);
+    }
+}
+
 fn with_connection<T: Send + 'static>(
     profile: &AcpProfile,
     config: &AgentLaunchConfig,
@@ -332,7 +346,7 @@ fn default_catalog_config(profile: &AcpProfile) -> AgentLaunchConfig {
     }
 }
 
-fn spawn_catalog_child(
+pub(in crate::adapter) fn spawn_catalog_child(
     profile: &AcpProfile,
     mut command: Command,
 ) -> Result<(Child, AcpConnection), String> {
@@ -620,3 +634,65 @@ fn selected_option(response: &Value, categories: &[&str]) -> Option<String> {
 #[cfg(test)]
 #[path = "catalog_tests.rs"]
 mod tests;
+
+pub(in crate::adapter) fn listed_session(
+    profile: &AcpProfile,
+    locator_root: &Path,
+    query: &str,
+    value: &serde_json::Value,
+) -> Option<crate::DiscoveredSession> {
+    let id = value.get("sessionId")?.as_str()?.to_owned();
+    if id.is_empty()
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return None;
+    }
+    let project = std::path::PathBuf::from(value.get("cwd")?.as_str()?);
+    if !project.is_absolute()
+        || !project.is_dir()
+        || farcaster_projects::is_temporary_project(&project)
+    {
+        return None;
+    }
+    let title = value
+        .get("title")
+        .and_then(serde_json::Value::as_str)
+        .filter(|title| !title.trim().is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("New {} session", profile.name));
+    let search = format!("{title} {} {}", project.display(), profile.name);
+    if !query.is_empty() && !search.to_ascii_lowercase().contains(query) {
+        return None;
+    }
+    let timestamp = value
+        .get("updatedAt")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let modified =
+        time::OffsetDateTime::parse(&timestamp, &time::format_description::well_known::Rfc3339)
+            .ok()
+            .map(std::time::SystemTime::from)
+            .unwrap_or(std::time::UNIX_EPOCH);
+    Some(crate::DiscoveredSession {
+        path: super::super::main_session::external_session_path(locator_root, profile.backend, &id),
+        parent_session: crate::core::CallerRegistry::shared().session_parent(profile.backend, &id),
+        forked_from: None,
+        id,
+        harness: profile.backend,
+        project,
+        title,
+        first_user_message: String::new(),
+        timestamp,
+        modified,
+        message_count: 0,
+        usage: Default::default(),
+        archived: false,
+        is_running: false,
+        model: None,
+        thinking_level: None,
+        search,
+    })
+}

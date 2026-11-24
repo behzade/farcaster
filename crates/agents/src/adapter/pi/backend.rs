@@ -48,7 +48,7 @@ impl BackendAdapter for PiAdapter {
     ) -> Result<ConfigurationCatalog, String> {
         load_configuration(config, project)
     }
-    fn steering_boundary(&self) -> SteeringBoundary {
+    fn steering_boundary(&self, _config: &crate::AgentLaunchConfig) -> SteeringBoundary {
         SteeringBoundary::Held
     }
     fn supports_auto_title_generation(&self) -> bool {

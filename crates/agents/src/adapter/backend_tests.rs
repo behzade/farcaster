@@ -5,12 +5,15 @@ use crate::{
 };
 
 #[test]
-fn browser_sign_in_remains_specific_to_cursor() {
+fn only_backends_with_login_support_offer_sign_in() {
     for backend in Backend::ALL {
-        assert_eq!(crate::supports_sign_in(backend), backend == Backend::Cursor);
+        assert_eq!(
+            crate::supports_sign_in(backend),
+            matches!(backend, Backend::Cursor | Backend::Antigravity)
+        );
         assert_eq!(
             super::super::accounts::account_capabilities(backend).login,
-            backend == Backend::Cursor
+            matches!(backend, Backend::Cursor | Backend::Antigravity)
         );
     }
 }

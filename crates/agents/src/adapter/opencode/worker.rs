@@ -532,6 +532,7 @@ impl OpenCodeUsageTracker {
             turn,
             session: self.session,
             context_window,
+            context_used: None,
             cost: self.cost,
         }
     }

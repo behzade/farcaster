@@ -77,3 +77,57 @@ fn only_a_reported_account_tier_creates_an_account_observation() {
     assert!(identity.email.is_none());
     assert!(account_identity(&serde_json::json!({"_meta":{"antigravity":{"tier":{}}}})).is_none());
 }
+
+#[test]
+fn tier_metadata_retains_the_id_and_only_an_https_upgrade_link() {
+    let identity = |uri| {
+        account_identity(&serde_json::json!({"_meta":{"antigravity":{"tier":{
+            "name":"Pro","id":"pro-1","upgradeUri":uri
+        }}}}))
+        .expect("tier")
+    };
+    assert_eq!(
+        identity("https://example.test/plans").plan_id.as_deref(),
+        Some("pro-1")
+    );
+    assert_eq!(
+        identity("https://example.test/plans")
+            .upgrade_url
+            .as_deref(),
+        Some("https://example.test/plans")
+    );
+    assert!(identity("file:///tmp/plan").upgrade_url.is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn account_actions_use_the_negotiated_method_and_same_store() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let directory = tempfile::tempdir().expect("private test store");
+    let agy = directory.path().join("agy");
+    std::fs::write(&agy,r#"#!/bin/sh
+test "$1 $2 $3" = "acp --app-data-dir antigravity-acp" || exit 1
+while IFS= read -r line; do
+    id=$(printf '%s' "$line" | sed -n 's/.*"id":\([^,}]*\).*/\1/p')
+    case "$line" in
+        *'"method":"initialize"'*) result='{"protocolVersion":1,"agentCapabilities":{"auth":{"logout":{}}},"authMethods":[{"id":"gemini-api-key","name":"API key"}]}' ;;
+        *'"method":"authenticate"'*'"methodId":"gemini-api-key"'* | *'"method":"logout"'*) result='{}' ;;
+        *) exit 2 ;;
+    esac
+    printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$id" "$result"
+done
+"#).expect("fixture");
+    std::fs::set_permissions(&agy, std::fs::Permissions::from_mode(0o700)).expect("executable");
+    for method in [Some("gemini-api-key"), None] {
+        super::auth::request(std::process::Command::new(&agy), method, &false.into())
+            .expect("account action");
+    }
+    assert!(
+        super::auth::request(
+            std::process::Command::new(agy),
+            Some("unavailable"),
+            &false.into()
+        )
+        .is_err()
+    );
+}

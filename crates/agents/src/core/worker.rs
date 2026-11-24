@@ -94,6 +94,7 @@ pub struct WorkerUsage {
     pub turn: TokenUsage,
     pub session: TokenUsage,
     pub context_window: u64,
+    pub context_used: Option<u64>,
     pub cost: Option<f64>,
 }
 

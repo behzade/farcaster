@@ -86,10 +86,11 @@ pub(super) fn result_files(content: &serde_json::Value) -> Vec<FileAttachment> {
         .into_iter()
         .flatten()
         .filter_map(|block| {
-            if block.get("type")?.as_str()? != "resource_link" {
-                return None;
-            }
-            let uri = block.get("uri")?.as_str()?;
+            let uri = match block.get("type")?.as_str()? {
+                "resource_link" => block.get("uri")?.as_str()?,
+                "resource" => block.pointer("/resource/uri")?.as_str()?,
+                _ => return None,
+            };
             let path = match url::Url::parse(uri) {
                 Ok(url) if url.scheme() == "file" => url.to_file_path().ok()?,
                 Ok(url) if matches!(url.scheme(), "http" | "https") => {

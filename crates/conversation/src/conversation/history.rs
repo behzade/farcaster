@@ -320,13 +320,16 @@ pub(super) fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
     } else {
         None
     };
-    let (user_text, files) = projected_user
+    let (user_text, mut files) = projected_user
         .as_deref()
         .map(|text| {
             let (body, files) = super::split_pasted_files(text);
             ((body.len() != text.len()).then(|| body.to_owned()), files)
         })
         .unwrap_or_default();
+    if kind == TranscriptKind::User {
+        files.extend(super::attachments::result_files(message));
+    }
     vec![TranscriptItem {
         kind: if is_error && kind != TranscriptKind::Tool {
             TranscriptKind::Error

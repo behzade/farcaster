@@ -99,20 +99,27 @@ pub(super) fn update_context_from_event(stats: &mut Value, event: &Value) -> boo
     let usage = event
         .get("usage")
         .or_else(|| event.pointer("/message/usage"));
-    let Some(usage) = usage else { return false };
-    let tokens = usage
-        .get("totalTokens")
+    let tokens = event
+        .get("contextUsed")
         .and_then(Value::as_u64)
-        .filter(|tokens| *tokens > 0)
         .or_else(|| {
-            ["input", "output", "cacheRead", "cacheWrite"]
-                .iter()
-                .try_fold(0_u64, |total, key| {
-                    total.checked_add(usage.get(*key)?.as_u64()?)
-                })
+            let usage = usage?;
+            usage
+                .get("totalTokens")
+                .and_then(Value::as_u64)
                 .filter(|tokens| *tokens > 0)
+                .or_else(|| {
+                    ["input", "output", "cacheRead", "cacheWrite"]
+                        .iter()
+                        .try_fold(0_u64, |total, key| {
+                            total.checked_add(usage.get(*key)?.as_u64()?)
+                        })
+                        .filter(|tokens| *tokens > 0)
+                })
         });
-    let Some(tokens) = tokens else { return false };
+    let Some(tokens) = tokens else {
+        return false;
+    };
     let current_window = stats
         .pointer("/contextUsage/contextWindow")
         .and_then(Value::as_u64)

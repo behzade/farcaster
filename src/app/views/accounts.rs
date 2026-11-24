@@ -518,6 +518,20 @@ pub(super) fn settings(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> 
                             true,
                             &app.settings.harness_profiles,
                         ));
+                    if let Some(url) = connection
+                        .account_id
+                        .as_deref()
+                        .and_then(|id| app.accounts.account(id))
+                        .and_then(|a| a.identity.upgrade_url.clone())
+                    {
+                        row = row.child(button(
+                            format!("account-plan-{}", connection.id),
+                            "Upgrade plan",
+                            ButtonTone::Quiet,
+                            true,
+                            move |_, cx| cx.open_url(&url),
+                        ));
+                    }
                     if connection.capabilities.logout
                         && connection.source.incarnation.is_none()
                         && connection.auth == AccountAuthState::SignedIn
@@ -534,6 +548,7 @@ pub(super) fn settings(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> 
                             "Sign out of shared CLI",
                             ButtonTone::Quiet,
                             app.settings.sign_in.active.is_none()
+                                && app.settings.sign_in.terminal.is_none()
                                 && !app.settings.sign_in.signing_out,
                             move |_, cx| {
                                 let _ = logout.update(cx, |app, cx| {

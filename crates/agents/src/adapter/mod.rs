@@ -56,7 +56,10 @@ pub fn model_display_name(harness: Backend, model: &crate::extensions::Model) ->
         _ => name.to_owned(),
     }
 }
-pub use sign_in::{SignIn, SignInEvent, sign_in, sign_in_required, supports_sign_in};
+pub use sign_in::{
+    SignIn, SignInEvent, refresh_login, sign_in, sign_in_methods, sign_in_required,
+    sign_in_with_method, supports_sign_in, terminal_sign_in,
+};
 pub fn profile_data_environment_key(backend: Backend) -> Option<&'static str> {
     for_backend(backend).profile_data_environment_key()
 }
@@ -286,7 +289,7 @@ pub fn spawn_session(
     launch: crate::SessionLaunch,
 ) -> Result<Box<dyn crate::SessionTransport>, String> {
     use queued_session::SteeringBoundary;
-    let policy = for_backend(launch.harness).steering_boundary();
+    let policy = for_backend(launch.harness).steering_boundary(config);
     let hook = matches!(
         policy,
         SteeringBoundary::Held | SteeringBoundary::StopAfterBatch
