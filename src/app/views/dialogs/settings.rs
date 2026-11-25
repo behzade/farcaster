@@ -37,6 +37,7 @@ pub(in crate::app::views) fn render(
 ) -> AnyElement {
     let dismiss = entity.clone();
     let tab = app.settings.tab;
+    let terminal_sign_in = tab == SettingsTab::Accounts && app.settings.sign_in.terminal.is_some();
     let content = match tab {
         SettingsTab::General => general(app, entity.clone(), cx),
         SettingsTab::Workers => worker_tasks::render(app, entity.clone(), cx),
@@ -105,6 +106,9 @@ pub(in crate::app::views) fn render(
                                         move |window, cx| {
                                             let _ = select.update(cx, |this, cx| {
                                                 this.workspace.voice.capturing_shortcut = false;
+                                                if page != SettingsTab::Accounts {
+                                                    this.close_sign_in_terminal(None, cx);
+                                                }
                                                 this.settings.tab = page;
                                                 this.settings.tab_focus[page as usize]
                                                     .focus(window, cx);
@@ -131,9 +135,10 @@ pub(in crate::app::views) fn render(
                 .child(
                     div()
                         .id(format!(
-                            "settings-scroll-{}-{}",
+                            "settings-scroll-{}-{}-{}",
                             tab.label(),
-                            app.settings.themes.editing
+                            app.settings.themes.editing,
+                            terminal_sign_in
                         ))
                         .role(gpui::Role::Group)
                         .aria_label(format!("{} settings", tab.label()))
@@ -141,7 +146,10 @@ pub(in crate::app::views) fn render(
                         .min_h_0()
                         .h(theme().size(520.0))
                         .max_h(theme().size(520.0))
-                        .overflow_y_scroll()
+                        .when(terminal_sign_in, |body| {
+                            body.flex().flex_col().overflow_hidden()
+                        })
+                        .when(!terminal_sign_in, |body| body.overflow_y_scroll())
                         .p(crate::app::ui::grid::form_inset())
                         .child(content),
                 )

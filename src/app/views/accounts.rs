@@ -333,75 +333,44 @@ fn connection_row(
         .chain(identity.and_then(|id| id.workspace.clone()))
         .collect::<Vec<_>>()
         .join(" · ");
-    let mut row = div()
-        .min_w_0()
-        .flex()
-        .flex_col()
-        .gap(theme().space.xs)
-        .child(
+    let mut details: Vec<AnyElement> = Vec::new();
+    if let Some(label) = identity
+        .and_then(|id| id.email.as_ref().or(id.label.as_ref()))
+        .filter(|label| {
+            label.as_str() != connection.source.provider
+                && label.as_str() != provider_name(connection)
+        })
+    {
+        details.push(
             div()
                 .min_w_0()
-                .flex()
-                .items_center()
-                .gap(theme().space.sm)
-                .text_size(theme().type_scale.body)
-                .child(app_icon(provider_icon(connection), AppIconSize::Control))
-                .child(
-                    div()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(provider_name(connection).to_owned()),
-                )
-                .when_some(identity.and_then(|id| id.plan.as_deref()), |row, plan| {
-                    row.child(
-                        div()
-                            .text_size(theme().type_scale.caption)
-                            .text_color(theme().colors.muted)
-                            .child(plan_name(plan).to_owned()),
-                    )
+                .text_size(if detail {
+                    theme().type_scale.body_small
+                } else {
+                    theme().type_scale.caption
                 })
-                .child(div().flex_1())
-                .child(
-                    div()
-                        .flex_none()
-                        .text_size(theme().type_scale.caption)
-                        .text_color(theme().colors.muted)
-                        .child(crate::agents::backend_display_name(
-                            connection.source.backend,
-                        )),
-                ),
-        )
-        .when_some(
-            identity
-                .and_then(|id| id.email.as_ref().or(id.label.as_ref()))
-                .filter(|label| {
-                    label.as_str() != connection.source.provider
-                        && label.as_str() != provider_name(connection)
-                }),
-            |row, label| {
-                row.child(
-                    div()
-                        .min_w_0()
-                        .text_size(theme().type_scale.caption)
-                        .text_color(theme().colors.muted)
-                        .text_ellipsis()
-                        .overflow_hidden()
-                        .child(label.clone()),
-                )
-            },
-        )
-        .when(!metadata.is_empty(), |row| {
-            row.child(
-                div()
-                    .text_size(theme().type_scale.caption)
-                    .text_color(theme().colors.muted)
-                    .child(metadata),
-            )
-        });
+                .text_color(theme().colors.muted)
+                .text_ellipsis()
+                .overflow_hidden()
+                .child(label.clone())
+                .into_any_element(),
+        );
+    }
+    if !metadata.is_empty() {
+        details.push(
+            div()
+                .text_size(theme().type_scale.caption)
+                .text_color(theme().colors.muted)
+                .child(metadata)
+                .into_any_element(),
+        );
+    }
     let limits = if detail {
         connection.limits.iter().collect()
     } else {
         weekly(connection).into_iter().collect::<Vec<_>>()
     };
+    let stale = connection.refresh_failed || connection.auth == AccountAuthState::Unknown;
     for limit in limits {
         let mut label = if limit.duration_seconds == Some(604800) {
             if detail {
@@ -431,22 +400,86 @@ fn connection_row(
                 limit.remaining_percent.unwrap_or_default()
             )
         };
-        let stale = connection.refresh_failed || connection.auth == AccountAuthState::Unknown;
         if stale {
             label.push_str(&format!(
                 " · {}",
                 observed_age(limit.observed_at, account_now())
             ));
         }
-        if let Some(time) = limit.resets_at.and_then(reset_time) {
-            label.push_str(&format!(" · resets {time}"));
+        let reset = limit.resets_at.and_then(reset_time);
+        if detail {
+            let bar = limit
+                .value
+                .is_none()
+                .then_some(limit.remaining_percent)
+                .flatten();
+            details.push(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .gap(theme().space.xs)
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap(theme().space.sm)
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .text_size(theme().type_scale.caption)
+                                    .text_color(theme().colors.muted)
+                                    .child(label),
+                            )
+                            .when_some(reset, |row, time| {
+                                row.child(
+                                    div()
+                                        .flex_none()
+                                        .text_size(theme().type_scale.caption)
+                                        .text_color(theme().colors.subtle)
+                                        .whitespace_nowrap()
+                                        .child(format!("Resets {time}")),
+                                )
+                            }),
+                    )
+                    .when_some(bar, |block, remaining| {
+                        let ratio = (remaining / 100.0).clamp(0.0, 1.0) as f32;
+                        block.child(
+                            div()
+                                .w_full()
+                                .h(theme().size(4.0))
+                                .rounded(theme().size(2.0))
+                                .bg(theme().colors.highlight)
+                                .overflow_hidden()
+                                .child(
+                                    div()
+                                        .h_full()
+                                        .w(gpui::relative(ratio))
+                                        .rounded(theme().size(2.0))
+                                        .bg(if remaining <= 15.0 {
+                                            theme().colors.warning
+                                        } else {
+                                            theme().colors.indicator
+                                        }),
+                                ),
+                        )
+                    })
+                    .into_any_element(),
+            );
+        } else {
+            if let Some(time) = reset {
+                label.push_str(&format!(" · resets {time}"));
+            }
+            details.push(
+                div()
+                    .text_size(theme().type_scale.caption)
+                    .text_color(theme().colors.muted)
+                    .child(label)
+                    .into_any_element(),
+            );
         }
-        row = row.child(
-            div()
-                .text_size(theme().type_scale.caption)
-                .text_color(theme().colors.muted)
-                .child(label),
-        );
     }
     if detail {
         let status = match connection.auth {
@@ -456,14 +489,79 @@ fn connection_row(
             AccountAuthState::NeedsAuth => Some("Sign in required"),
             AccountAuthState::SignedIn => None,
         };
-        row = row.children(status.map(|s| {
-            div()
-                .text_size(theme().type_scale.caption)
-                .text_color(theme().colors.muted)
-                .child(s)
-        }));
+        if let Some(status) = status {
+            details.push(
+                div()
+                    .text_size(theme().type_scale.caption)
+                    .text_color(theme().colors.muted)
+                    .child(status)
+                    .into_any_element(),
+            );
+        }
     }
-    row.into_any_element()
+    div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .gap(theme().space.xs)
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap(theme().space.sm)
+                .text_size(theme().type_scale.body)
+                .child(
+                    crate::app::ui::grid::icon_slot()
+                        .child(app_icon(provider_icon(connection), AppIconSize::Control)),
+                )
+                .child(
+                    div()
+                        .font_weight(if detail {
+                            FontWeight::SEMIBOLD
+                        } else {
+                            FontWeight::MEDIUM
+                        })
+                        .child(provider_name(connection).to_owned()),
+                )
+                .when_some(identity.and_then(|id| id.plan.as_deref()), |row, plan| {
+                    row.child(
+                        div()
+                            .px(theme().size(6.0))
+                            .py(theme().size(1.0))
+                            .rounded(theme().size(4.0))
+                            .bg(theme().colors.highlight)
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.muted)
+                            .child(plan_name(plan).to_owned()),
+                    )
+                })
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(theme().type_scale.caption)
+                        .text_color(theme().colors.muted)
+                        .child(crate::agents::backend_display_name(
+                            connection.source.backend,
+                        )),
+                ),
+        )
+        .when(!details.is_empty(), |row| {
+            row.child(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .pl(theme().icons.control + theme().space.sm)
+                    .flex()
+                    .flex_col()
+                    .gap(theme().space.xs)
+                    .children(details),
+            )
+        })
+        .into_any_element()
 }
 
 fn observed_age(at: i64, now: i64) -> String {
@@ -489,48 +587,81 @@ fn reset_time(at: i64) -> Option<String> {
 }
 
 pub(super) fn settings(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
+    if app.settings.sign_in.terminal.is_some() {
+        return super::dialogs::settings::harness_sign_in::render_terminal(app, entity);
+    }
     let refresh = entity.clone();
+    let connections = visible_connections(&app.accounts);
     div()
+        .debug_selector(|| "settings-accounts".into())
+        .w_full()
         .flex()
         .flex_col()
-        .gap(theme().space.md)
-        .child(button(
-            "accounts-refresh",
-            "Refresh",
-            ButtonTone::Quiet,
-            true,
-            move |_, cx| {
-                let _ = refresh.update(cx, |app, cx| app.send(RuntimeCommand::RefreshAccounts, cx));
-            },
-        ))
-        .children(
-            visible_connections(&app.accounts)
-                .into_iter()
-                .map(|connection| {
-                    let mut row = div()
+        .gap(theme().size(24.0))
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(theme().space.sm)
+                .child(
+                    div()
+                        .w_full()
                         .flex()
-                        .flex_col()
-                        .items_start()
+                        .items_center()
+                        .justify_between()
                         .gap(theme().space.sm)
-                        .child(connection_row(
-                            &app.accounts,
-                            connection,
-                            true,
-                            &app.settings.harness_profiles,
-                        ));
+                        .child(
+                            div()
+                                .debug_selector(|| "accounts-section-heading".into())
+                                .text_size(theme().type_scale.reading)
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child("Connected accounts"),
+                        )
+                        .child(
+                            button(
+                                "accounts-refresh",
+                                "Refresh",
+                                ButtonTone::Neutral,
+                                true,
+                                move |_, cx| {
+                                    let _ = refresh.update(cx, |app, cx| {
+                                        app.send(RuntimeCommand::RefreshAccounts, cx)
+                                    });
+                                },
+                            )
+                            .icon(AppIcon::ArrowsClockwise)
+                            .flex_none()
+                            .debug_selector(|| "accounts-refresh".into()),
+                        ),
+                )
+                .when(connections.is_empty(), |section| {
+                    section.child(
+                        div()
+                            .text_size(theme().type_scale.body_small)
+                            .text_color(theme().colors.muted)
+                            .child("No connected accounts yet. Sign in below or refresh to check local CLI credentials."),
+                    )
+                })
+                .children(connections.into_iter().enumerate().map(|(index, connection)| {
+                    let mut actions: Vec<AnyElement> = Vec::new();
                     if let Some(url) = connection
                         .account_id
                         .as_deref()
                         .and_then(|id| app.accounts.account(id))
                         .and_then(|a| a.identity.upgrade_url.clone())
                     {
-                        row = row.child(button(
-                            format!("account-plan-{}", connection.id),
-                            "Upgrade plan",
-                            ButtonTone::Quiet,
-                            true,
-                            move |_, cx| cx.open_url(&url),
-                        ));
+                        actions.push(
+                            button(
+                                format!("account-plan-{}", connection.id),
+                                "Upgrade plan",
+                                ButtonTone::Neutral,
+                                true,
+                                move |_, cx| cx.open_url(&url),
+                            )
+                            .icon(AppIcon::ArrowSquareOut)
+                            .into_any_element(),
+                        );
                     }
                     if connection.capabilities.logout
                         && connection.source.incarnation.is_none()
@@ -543,22 +674,53 @@ pub(super) fn settings(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> 
                     {
                         let source = connection.source.clone();
                         let logout = entity.clone();
-                        row = row.child(button(
-                            format!("account-logout-{}", connection.id),
-                            "Sign out of shared CLI",
-                            ButtonTone::Quiet,
-                            app.settings.sign_in.active.is_none()
-                                && app.settings.sign_in.terminal.is_none()
-                                && !app.settings.sign_in.signing_out,
-                            move |_, cx| {
-                                let _ = logout.update(cx, |app, cx| {
-                                    app.sign_out_account(source.clone(), identity.clone(), cx)
-                                });
-                            },
-                        ));
+                        actions.push(
+                            button(
+                                format!("account-logout-{}", connection.id),
+                                "Sign out of shared CLI",
+                                ButtonTone::Neutral,
+                                app.settings.sign_in.active.is_none()
+                                    && app.settings.sign_in.terminal.is_none()
+                                    && !app.settings.sign_in.signing_out,
+                                move |_, cx| {
+                                    let _ = logout.update(cx, |app, cx| {
+                                        app.sign_out_account(source.clone(), identity.clone(), cx)
+                                    });
+                                },
+                            )
+                            .icon(AppIcon::SignOut)
+                            .into_any_element(),
+                        );
                     }
-                    row
-                }),
+                    div()
+                        .debug_selector(move || format!("account-card-{index}"))
+                        .w_full()
+                        .flex()
+                        .flex_col()
+                        .gap(theme().space.sm)
+                        .p(theme().size(12.0))
+                        .rounded(theme().size(6.0))
+                        .bg(theme().colors.surface)
+                        .child(connection_row(
+                            &app.accounts,
+                            connection,
+                            true,
+                            &app.settings.harness_profiles,
+                        ))
+                        .when(!actions.is_empty(), |card| {
+                            card.child(
+                                div()
+                                    .w_full()
+                                    .pl(theme().icons.control + theme().space.sm)
+                                    .pt(theme().space.xs)
+                                    .flex()
+                                    .flex_wrap()
+                                    .items_center()
+                                    .gap(theme().space.sm)
+                                    .children(actions),
+                            )
+                        })
+                })),
         )
         .child(super::dialogs::settings::harness_sign_in::render(
             app, entity,

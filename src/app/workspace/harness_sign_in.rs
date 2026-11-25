@@ -65,8 +65,11 @@ impl FarcasterApp {
                     &command,
                     &self.project.path,
                 )?;
-                let options =
+                let mut options =
                     gpui_libghostty::TerminalOptions::new(command, self.project.path.clone());
+                options.configuration = gpui_libghostty::TerminalConfiguration::Custom(
+                    crate::app::ui::theme::terminal_theme(),
+                );
                 let terminal = super::Terminal::spawn(options, window, cx)?;
                 let monitored = terminal.downgrade();
                 self.settings.sign_in.terminal = Some(terminal);
@@ -82,8 +85,7 @@ impl FarcasterApp {
                     if terminal.read(cx).is_alive() {
                         return true;
                     }
-                    this.settings.sign_in.terminal = None;
-                    this.settings.sign_in.message = Some("Terminal login finished.".into());
+                    this.close_sign_in_terminal(Some("Terminal login finished."), cx);
                     crate::agents::refresh_login(&config, backend);
                     this.send(RuntimeCommand::RefreshAccounts, cx);
                     if this.active_profile_id() == terminal_profile
@@ -237,11 +239,25 @@ impl FarcasterApp {
         cx.notify();
     }
 
-    pub(in crate::app) fn cancel_harness_sign_in(&mut self, cx: &mut Context<Self>) {
-        if self.settings.sign_in.terminal.take().is_some() {
-            self.settings.sign_in.message = Some("Terminal login closed.".into());
-            cx.notify();
+    pub(in crate::app) fn close_sign_in_terminal(
+        &mut self,
+        message: Option<&'static str>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(terminal) = self.settings.sign_in.terminal.take() else {
+            return false;
+        };
+        terminal.update(cx, |terminal, _| terminal.set_visible(false));
+        if let Some(message) = message {
+            self.settings.sign_in.message = Some(message.into());
+            self.settings.sign_in.failed = false;
         }
+        cx.notify();
+        true
+    }
+
+    pub(in crate::app) fn cancel_harness_sign_in(&mut self, cx: &mut Context<Self>) {
+        self.close_sign_in_terminal(Some("Terminal login closed."), cx);
         if let Some(sign_in) = &self.settings.sign_in.active {
             sign_in.cancel();
             self.settings.sign_in.url = None;
