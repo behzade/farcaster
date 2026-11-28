@@ -1,5 +1,5 @@
 # Dependency hashes from Ghostty 83fb95624b0439ee660c2679b43b38c8b63769cd
-# build.zig.zon.nix (MIT), matching gpui-libghostty 0.4.1-rc.1's upstream source.
+# build.zig.zon.nix (MIT), matching gpui-libghostty 0.4.1's upstream source.
 {
   lib,
   fetchurl,
