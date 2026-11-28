@@ -117,6 +117,7 @@ fn completed_cold_prompt_and_follow_up_release_close_guard() {
                     target: target.clone(),
                     mode,
                     message: "Inspect this archive".into(),
+                    provisional_title: None,
                     display_message: None,
                     invocation: None,
                     images: Vec::new(),

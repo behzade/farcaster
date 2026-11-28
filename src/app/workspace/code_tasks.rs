@@ -95,6 +95,14 @@ impl FarcasterApp {
                 });
             return None;
         }
+        let buffer = destination
+            .session
+            .as_ref()
+            .filter(|_| crate::sessions::session_path(&target).is_some())
+            .map_or_else(
+                || target.clone(),
+                |session| crate::sessions::session_buffer(session.harness, &session.path),
+            );
         let chat = TaskChat {
             submission_id: uuid::Uuid::new_v4().to_string(),
             target: target.clone(),
@@ -115,16 +123,16 @@ impl FarcasterApp {
             self.send_to_chat_error(error, cx);
             return None;
         }
-        self.capture_composer_session(cx);
-        if let Some(path) = crate::app::composer::submissions::inactive_session_for_target(
-            &target,
+        self.capture_composer_text(cx);
+        if let Some(key) = crate::app::composer::submissions::inactive_session_for_target(
+            &buffer,
             chat.session.as_deref(),
             &self.sessions.all,
         ) {
-            self.set_session_active(path, cx);
+            self.request_rail_archive(key, false, window, cx);
         }
         let submission_id = chat.submission_id.clone();
-        self.track_code_submission(chat, message, cx);
+        self.track_code_submission(chat, buffer, message, cx);
         self.close_send_to_chat(window, cx);
         self.notify_session_rail(cx);
         Some(submission_id)
@@ -145,18 +153,11 @@ impl FarcasterApp {
             );
             return;
         }
-        let mut draft = super::super::session::draft_store::new(
+        let draft = super::super::session::draft_store::new(
             settings.project.clone(),
             settings.harness,
             None,
         );
-        match super::super::session::draft_store::save(&draft) {
-            Ok(id) => draft.app_session_id = id,
-            Err(error) => {
-                self.send_to_chat_error(error, cx);
-                return;
-            }
-        }
         self.sessions.drafts.insert(0, draft.clone());
         let target = draft_target(&draft.id);
         self.sessions
@@ -171,12 +172,13 @@ impl FarcasterApp {
         };
         match self.runtime.send(RuntimeCommand::StartTask {
             submission_id: chat.submission_id.clone(),
-            id: draft.id,
+            id: draft.id.clone(),
             settings,
             message: message.clone(),
         }) {
-            Ok(()) => self.track_code_submission(chat, message, cx),
+            Ok(()) => self.track_code_submission(chat, target, message, cx),
             Err(_) => {
+                self.save_session_draft(&draft.id);
                 self.composer
                     .sessions
                     .restore_submitted_text(&target, message);
@@ -187,17 +189,22 @@ impl FarcasterApp {
         self.notify_session_rail(cx);
     }
 
-    fn track_code_submission(&mut self, chat: TaskChat, message: String, cx: &mut Context<Self>) {
-        let target = &chat.target;
-        self.begin_draft_submission(target, &message);
-        self.composer.sessions.record_submission(target, &message);
+    fn track_code_submission(
+        &mut self,
+        chat: TaskChat,
+        buffer: String,
+        message: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.begin_draft_submission(&chat.target);
+        self.composer.sessions.record_submission(&buffer, &message);
         let submission_id = chat.submission_id.clone();
         self.composer.pending_submissions.insert(
             submission_id.clone(),
             PendingSubmission {
                 id: submission_id,
                 submitted_at: std::time::Instant::now(),
-                submitted_target: target.clone(),
+                submitted_target: buffer,
                 mode: crate::protocol::PromptMode::Normal,
                 text: message,
                 images: Vec::new(),

@@ -2,6 +2,21 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn environment_account_sources_keep_project_overrides_distinct() {
+    let config = AgentLaunchConfig::default();
+    let mut command = Command::new("unused");
+    command
+        .env_clear()
+        .env("CURSOR_API_KEY", "fixture-credential-a");
+    let first = account_source(&config, Path::new("/first-project"), &command).unwrap();
+    command.env("CURSOR_API_KEY", "fixture-credential-b");
+    let second = account_source(&config, Path::new("/second-project"), &command).unwrap();
+    assert_ne!(first.key(), second.key());
+    assert!(!first.same_store(&second));
+    assert!(!first.credential_source.contains("fixture-credential"));
+}
+
+#[test]
 fn saved_login_requires_matching_backend_and_unexpired_key() {
     let directory = tempfile::tempdir().expect("directory");
     let path = directory.path().join("auth.json");

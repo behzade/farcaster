@@ -1,3 +1,4 @@
+use crate::app::ui::primitives::SelectionStyle as _;
 mod detail;
 
 use gpui::{
@@ -33,10 +34,11 @@ impl CatalogState {
 fn status_label(status: WorkStatus) -> Div {
     div()
         .text_size(theme().type_scale.caption)
+        .font_weight(FontWeight::MEDIUM)
         .text_color(match status {
             WorkStatus::Done => theme().colors.success,
-            WorkStatus::Active => theme().colors.accent,
-            WorkStatus::Blocked => theme().colors.warning,
+            WorkStatus::Active => theme().colors.warning,
+            WorkStatus::Blocked => theme().colors.error,
             WorkStatus::Ready => theme().colors.muted,
         })
         .child(if status == WorkStatus::Done {
@@ -153,14 +155,14 @@ impl WorkGraphBoardView {
             || self.project.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
         );
-        let toolbar = div()
-            .flex_none()
-            .px(theme().space.md)
-            .py(theme().space.sm)
+        let filters = div()
             .flex()
             .flex_wrap()
             .items_center()
-            .gap(theme().space.xs)
+            .gap(theme().size(2.0))
+            .p(theme().size(2.0))
+            .rounded(theme().size(6.0))
+            .bg(theme().colors.canvas)
             .children(
                 [
                     (None, "All"),
@@ -176,10 +178,11 @@ impl WorkGraphBoardView {
                         .filter(|row| filter.is_none_or(|filter| filter == row.status))
                         .count();
                     let entity = entity.clone();
+                    let selected = self.catalog.filter == filter;
                     button(
                         format!("plan-filter-{label}"),
                         format!("{label} {count}"),
-                        if self.catalog.filter == filter {
+                        if selected {
                             ButtonTone::Neutral
                         } else {
                             ButtonTone::Quiet
@@ -194,9 +197,44 @@ impl WorkGraphBoardView {
                             })
                         },
                     )
+                    .when(!selected, |btn| btn.text_color(theme().colors.muted))
                 }),
-            )
+            );
+        let toolbar = div()
+            .flex_none()
+            .px(theme().space.md)
+            .py(theme().space.sm)
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(theme().space.sm)
+            .child(filters)
             .child(div().flex_1())
+            .when(
+                self.catalog.filter.is_none()
+                    && summaries.iter().any(|row| row.status == WorkStatus::Done),
+                |toolbar| {
+                    toolbar.child(button(
+                        "plans-toggle-done",
+                        if self.catalog.hide_done {
+                            "Show completed"
+                        } else {
+                            "Hide completed"
+                        },
+                        ButtonTone::Neutral,
+                        true,
+                        move |_, cx| {
+                            collapse.update(cx, |this, cx| {
+                                this.catalog.hide_done = !this.catalog.hide_done;
+                                if this.catalog.hide_done {
+                                    this.catalog.selected = None;
+                                }
+                                cx.notify();
+                            })
+                        },
+                    ))
+                },
+            )
             .child(button(
                 "plans-sort",
                 if self.catalog.recent {
@@ -204,7 +242,7 @@ impl WorkGraphBoardView {
                 } else {
                     "Sort: Status"
                 },
-                ButtonTone::Quiet,
+                ButtonTone::Neutral,
                 true,
                 move |_, cx| {
                     sort.update(cx, |this, cx| {
@@ -222,50 +260,21 @@ impl WorkGraphBoardView {
             .flex()
             .flex_col()
             .px(theme().space.md)
+            .pb(theme().space.md)
+            .gap(theme().space.xs)
             .child(
                 div()
                     .flex()
                     .flex_none()
                     .gap(theme().space.sm)
+                    .px(theme().space.sm)
                     .py(theme().space.xs)
                     .child(caption("Plan / dependencies").flex_1())
                     .child(caption("Status / progress").w(theme().size(120.0))),
             )
-            .when(rows.is_empty(), |list| {
-                list.child(
-                    caption(if data.plans.is_empty() {
-                        "No plans yet. Create a plan to get started."
-                    } else {
-                        "No plans match this filter and search."
-                    })
-                    .py(theme().space.md),
-                )
+            .when(rows.is_empty() && !data.plans.is_empty(), |list| {
+                list.child(caption("No matching plans").py(theme().space.md))
             })
-            .when(
-                self.catalog.filter.is_none()
-                    && summaries.iter().any(|row| row.status == WorkStatus::Done),
-                |list| {
-                    list.child(button(
-                        "plans-toggle-done",
-                        if self.catalog.hide_done {
-                            "Show completed plans"
-                        } else {
-                            "Hide completed plans"
-                        },
-                        ButtonTone::Quiet,
-                        true,
-                        move |_, cx| {
-                            collapse.update(cx, |this, cx| {
-                                this.catalog.hide_done = !this.catalog.hide_done;
-                                if this.catalog.hide_done {
-                                    this.catalog.selected = None;
-                                }
-                                cx.notify();
-                            })
-                        },
-                    ))
-                },
-            )
             .children(
                 rows.iter()
                     .filter(|row| self.catalog.shows(row))
@@ -278,6 +287,7 @@ impl WorkGraphBoardView {
             .flex_col()
             .child(render_board_header(
                 "All plans",
+                None,
                 false,
                 true,
                 &self.search,
@@ -335,14 +345,12 @@ impl WorkGraphBoardView {
             })
             .map(|node| format!("#{} {}", node.number, node.title))
             .collect::<std::collections::BTreeSet<_>>();
-        let dependency = if blockers.is_empty() {
-            "No pending dependencies".into()
-        } else {
+        let dependency = (!blockers.is_empty()).then(|| {
             format!(
                 "Waiting on {}",
                 blockers.into_iter().collect::<Vec<_>>().join(", ")
             )
-        };
+        });
         div()
             .id(format!("workgraph-plan-{number}"))
             .role(gpui::Role::Button)
@@ -360,13 +368,10 @@ impl WorkGraphBoardView {
                     cx.notify();
                 })
             })
-            .border_b(theme().border)
-            .border_color(theme().colors.border)
-            .bg(if self.catalog.selected == Some(number) {
-                theme().colors.highlight
-            } else {
-                theme().colors.panel
-            })
+            .aria_selected(self.catalog.selected == Some(number))
+            .rounded(theme().size(6.0))
+            .bg(theme().colors.panel)
+            .selection_style(self.catalog.selected == Some(number))
             .hover(|style| style.bg(theme().colors.highlight))
             .px(theme().space.sm)
             .py(theme().space.sm)
@@ -386,7 +391,9 @@ impl WorkGraphBoardView {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(plan.title.clone()),
                     )
-                    .child(caption(dependency).line_clamp(2))
+                    .when_some(dependency, |row, text| {
+                        row.child(caption(text).line_clamp(2))
+                    })
                     .child(caption(format!(
                         "#{} · Updated {}",
                         number,

@@ -74,7 +74,6 @@ pub(in crate::app) fn release_passive_focus(window: &Window, cx: &mut App) {
     }
     if !popups.is_empty() {
         refresh_owner(window.window_handle(), cx);
-        // The owner click does not blur a passive popup itself.
         cx.defer(move |cx| {
             for popup in popups {
                 let _ = popup.update(cx, |_, window, cx| window.blur(cx));
@@ -117,8 +116,6 @@ fn target(window: &Window, cx: &App) -> Option<(AnyWindowHandle, Point<Pixels>)>
         .map(|relay| (relay.popup, relay.offset))
 }
 
-// Run before the owner's shortcuts or native terminal see the keystroke.
-// Preserve key_char from XKB rather than synthesizing text from the key name.
 pub(in crate::app) fn relay_keystroke(key: &Keystroke, window: &Window, cx: &mut App) -> bool {
     let Some((popup, _)) = target(window, cx) else {
         return false;
@@ -140,7 +137,6 @@ pub(in crate::app) fn relay_keystroke(key: &Keystroke, window: &Window, cx: &mut
                 && key.modifiers.is_subset_of(&Modifiers::shift())
                 && let Some(text) = key.key_char.as_deref()
             {
-                // Match Wayland's normal post-key-dispatch text insertion.
                 if let Some(mut input) = focused_input(window, cx) {
                     input.replace_text_in_range(None, text, window, cx);
                 }
@@ -163,8 +159,6 @@ pub(in crate::app) fn input_proxy(window: &Window, fallback: &FocusHandle, cx: &
             }
         },
         move |_, _, window, cx| {
-            // Replace the native terminal's input handler while a modal owns input.
-            // The compositor keeps keyboard focus on this owner, including IME.
             if let Some(focus) = window.focused(cx) {
                 window.handle_input(&focus, OwnerInput { popup, offset }, cx);
             }
@@ -209,8 +203,6 @@ impl OwnerInput {
     }
 }
 
-// Forward text operations so composition, selection, paste and
-// UTF-16 ranges use the popup's actual focused input and window.
 macro_rules! forward {
     ($name:ident($($arg:ident: $ty:ty),*) -> $result:ty, $empty:expr) => {
         fn $name(&mut self, $($arg: $ty,)* _window: &mut Window, cx: &mut App) -> $result {
@@ -220,8 +212,6 @@ macro_rules! forward {
 }
 
 impl InputHandler for OwnerInput {
-    // App inputs use the default text configuration. Querying popup state in
-    // this per-frame hook would make owner and popup redraw each other.
     forward!(selected_text_range(ignore_disabled_input: bool) -> Option<UTF16Selection>, None);
     forward!(marked_text_range() -> Option<Range<usize>>, None);
     forward!(text_for_range(range: Range<usize>, adjusted: &mut Option<Range<usize>>) -> Option<String>, None);
@@ -234,8 +224,6 @@ impl InputHandler for OwnerInput {
     forward!(text_input_editable_range() -> Option<Range<usize>>, None);
 
     fn accepts_text_input(&mut self, window: &mut Window, cx: &mut App) -> bool {
-        // Enable the owner's IME session for the modal's lifetime. Its focused
-        // input can change by a popup click without repainting the owner.
         target(window, cx).is_some_and(|(popup, _)| popup == self.popup)
     }
 

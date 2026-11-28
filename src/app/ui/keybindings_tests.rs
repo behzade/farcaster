@@ -14,6 +14,7 @@ fn nested_overlays_do_not_start_escape_session_controls(cx: &mut gpui::TestAppCo
             PICKER_KEY_CONTEXT,
             "PopupMenu",
             "Popover",
+            "CompletionPopup",
         ] {
             let contexts = [CHAT_INPUT_CONTEXT, "FarcasterChat", overlay, "Input"]
                 .map(|name| gpui::KeyContext::parse(name).unwrap());
@@ -253,7 +254,8 @@ fn composer_completion_keys_require_visible_suggestions(cx: &mut gpui::TestAppCo
     cx.update(|cx| {
         use super::registry_for_platform;
         use crate::app::{
-            ComposerCompletionNext, ComposerCompletionPrevious, NewSession, SubmitFollowUp,
+            ComposerCompletionAccept, ComposerCompletionNext, ComposerCompletionPrevious,
+            NewSession, SubmitFollowUp,
         };
         use gpui::Action as _;
 
@@ -278,7 +280,7 @@ fn composer_completion_keys_require_visible_suggestions(cx: &mut gpui::TestAppCo
             for (key, completion) in [
                 ("ctrl-n", ComposerCompletionNext.name()),
                 ("ctrl-p", ComposerCompletionPrevious.name()),
-                ("tab", ComposerCompletionNext.name()),
+                ("tab", ComposerCompletionAccept.name()),
                 ("shift-tab", ComposerCompletionPrevious.name()),
             ] {
                 let (bindings, _) = keymap.bindings_for_input(

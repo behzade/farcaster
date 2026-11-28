@@ -19,7 +19,15 @@ pub(super) fn load(bridge: &Bridge, id: &str, project: &Path) -> Result<Discover
             if !seen.insert(id.to_owned()) {
                 return Err("Cursor SDK repeated a history page".into());
             }
-            messages.extend(expand_message(message, id)?);
+            let mut expanded = expand_message(message, id)?;
+            for item in &mut expanded {
+                if item["id"] == id {
+                    item["nativeMessageId"] = id.into();
+                } else {
+                    item["nativeTurnId"] = id.into();
+                }
+            }
+            messages.extend(expanded);
         }
         if items.len() < 200 {
             return Ok(DiscoveredHistory {
@@ -35,8 +43,6 @@ pub(super) fn load(bridge: &Bridge, id: &str, project: &Path) -> Result<Discover
 
 fn expand_message(message: &Value, id: &str) -> Result<Vec<Value>, String> {
     let payload = &message["message"];
-    // Local SDK history stores a whole conversation turn in each entry, even
-    // though the entry's outer type is "user".
     if let Some(("agentConversationTurn", turn)) =
         variant(payload, "turn", &["agentConversationTurn"])
     {
@@ -88,7 +94,6 @@ fn expand_message(message: &Value, id: &str) -> Result<Vec<Value>, String> {
                         "arguments":value["args"],"toolMetadata":{"native":native}}));
                     flush_assistant(&mut messages, &mut content, id);
                     if let Some(result) = value.get("result") {
-                        // Stored protobuf results use a oneof; live SDK deltas use status/value.
                         let result = stored_result(result);
                         messages.push(
                             json!({"id":format!("{id}:result:{index}"),"role":"toolResult",

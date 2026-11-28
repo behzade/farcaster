@@ -27,12 +27,13 @@ fn native_session_profile_comes_from_storage_and_clears_previous_selection() -> 
     };
     state.with(|store| store.update_session_metadata(&metadata))?;
     let base = AgentLaunchConfig::default();
-    let selected = configuration_for_target(&base, Some(&state), LaunchTarget::Session(&path))?;
+    let selected =
+        configuration_for_target(&base, Some(&state), LaunchTarget::Session(&path, None))?;
     assert_eq!(selected.profile_id.as_deref(), Some(profile.as_str()));
     let builtin = configuration_for_target(
         &selected,
         Some(&state),
-        LaunchTarget::Session(Path::new("/different-native-session.jsonl")),
+        LaunchTarget::Session(Path::new("/different-native-session.jsonl"), None),
     )?;
     assert_eq!(builtin.profile_id, None);
     Ok(())

@@ -19,7 +19,7 @@ use crate::{
     },
     protocol::{PromptImage, PromptMode},
     runtime::{RunStatus, RuntimeCommand},
-    sessions::{SessionSummary, normalize_session_path},
+    sessions::{SessionCatalog, SessionKey, normalize_session_path},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -61,8 +61,9 @@ impl FarcasterApp {
         if !self.ensure_backend_trust(backend, &project, window, cx) {
             return;
         }
-        self.capture_composer_session(cx);
-        let target = self.composer.sessions.current_target().to_owned();
+        let target = self.composer.sessions.current_buffer().to_owned();
+        let command_target = crate::sessions::composer_command_target(&target);
+        self.capture_composer_text(cx);
         let editor_text = self.composer.input.read(cx).value().to_string();
         let (mode, allow_while_running) =
             submission_delivery(&value, mode, &self.snapshot.commands);
@@ -100,26 +101,28 @@ impl FarcasterApp {
         let inactive_session = inactive_session_for_target(
             &target,
             self.snapshot.selected_session.as_deref(),
-            &self.sessions.visible,
+            &self.sessions.all,
         );
         let submission_id = next_submission_id();
         match self.runtime.send(RuntimeCommand::Prompt {
             submission_id: submission_id.clone(),
-            target: target.clone(),
+            target: command_target.to_owned(),
             mode,
             message: message.clone(),
+            provisional_title: crate::sessions::draft_id(command_target)
+                .and_then(|_| crate::sessions::provisional_session_title(&value)),
             display_message: display_message.clone(),
             invocation: invocation.clone(),
             images,
             allow_while_running,
         }) {
             Ok(()) => {
-                if let Some(path) = inactive_session {
-                    self.set_session_active(path, cx);
+                if let Some(key) = inactive_session {
+                    self.request_rail_archive(key, false, window, cx);
                 }
-                self.begin_draft_submission(&target, &value);
+                self.begin_draft_submission(&target);
                 if show_in_transcript {
-                    self.record_run_status(target.clone(), RunStatus::Working, false);
+                    self.record_run_status(command_target.to_owned(), RunStatus::Working, false);
                 }
                 self.notify_session_rail(cx);
                 self.composer.sessions.record_submission(&target, &value);
@@ -153,7 +156,7 @@ impl FarcasterApp {
                     .composer
                     .sessions
                     .clear_submitted_text(&target, &editor_text)
-                    && self.composer.sessions.current_target() == target
+                    && self.composer.sessions.current_buffer() == target
                 {
                     self.apply_composer_snapshot(ComposerSnapshot::default(), window, cx);
                 }
@@ -179,8 +182,8 @@ impl FarcasterApp {
                             );
                         }
                     }
+                    conversation.begin_run();
                 }
-                conversation.running = true;
                 snapshot.status = "Working".into();
                 if show_in_transcript {
                     self.mark_transcript_changed(index, index == 0, cx);
@@ -199,7 +202,13 @@ impl FarcasterApp {
     }
 
     pub(crate) fn can_submit(&self) -> bool {
-        true
+        self.project.navigation_trust.is_none()
+            && !self.awaiting_selection_snapshot()
+            && self
+                .sessions
+                .selected_draft
+                .as_ref()
+                .is_none_or(|id| !self.sessions.pending_folder_drafts.contains_key(id))
     }
 
     pub(crate) fn enter_mode(&self) -> PromptMode {
@@ -240,19 +249,31 @@ impl FarcasterApp {
                 .extend(pending.pastes.iter().cloned());
             self.save_composer_attachments(&target);
             if let Some(snapshot) = restored
-                && self.composer.sessions.current_target() == target
+                && self.composer.sessions.current_buffer() == target
             {
                 self.apply_composer_snapshot(snapshot, window, cx);
             }
-            if let Some(session_key) = rejected_attachment_target(
+            if let Some(id) = crate::sessions::draft_id(&target)
+                && self
+                    .sessions
+                    .drafts
+                    .iter()
+                    .any(|draft| draft.id == id && draft.app_session_id <= 0 && !draft.submitted)
+                && !has_pending_submission(&self.composer.pending_submissions, &target)
+            {
+                self.save_session_draft(id);
+            }
+            if let Some(address) = rejected_attachment_target(
                 &pending.text,
                 !pending.images.is_empty() || !pending.pastes.is_empty(),
                 &target,
-                self.composer.sessions.current_target(),
+                self.composer.sessions.current_buffer(),
                 session.as_deref(),
-            ) {
+            ) && let Some(session_key) = crate::sessions::draft_id(&target).and_then(|id| {
+                self.bound_draft_buffer(id, crate::sessions::session_path(&address)?)
+            }) {
                 self.composer.sessions.promote(&target, session_key.clone());
-                self.promote_center_surface(&target, &session_key);
+                self.promote_center_surface(&target, &address);
                 self.promote_composer_images(&target, &session_key);
                 self.promote_composer_pastes(&target, &session_key);
             }
@@ -313,7 +334,10 @@ pub(in crate::app) fn take_resolved_pending_submissions(
         .collect()
 }
 
-fn submission_order(left: &PendingSubmission, right: &PendingSubmission) -> std::cmp::Ordering {
+pub(in crate::app) fn submission_order(
+    left: &PendingSubmission,
+    right: &PendingSubmission,
+) -> std::cmp::Ordering {
     left.submitted_at
         .cmp(&right.submitted_at)
         .then_with(|| left.id.cmp(&right.id))
@@ -405,19 +429,18 @@ pub(in crate::app) fn visible_prompt_queue(
 }
 
 pub(in crate::app) fn inactive_session_for_target(
-    target: &str,
+    buffer: &str,
     selected_session: Option<&Path>,
-    sessions: &[SessionSummary],
-) -> Option<std::path::PathBuf> {
-    let selected = selected_session?;
-    (target == session_target(selected))
-        .then(|| {
-            sessions
-                .iter()
-                .find(|session| session.path == selected && session.archived)
-                .map(|session| session.path.clone())
-        })
-        .flatten()
+    catalog: &SessionCatalog,
+) -> Option<SessionKey> {
+    let path = selected_session?;
+    let address = crate::sessions::composer_command_target(buffer);
+    if crate::sessions::session_path(address) != Some(path) {
+        return None;
+    }
+    super::sessions::catalog_row_for_buffer(buffer, catalog)
+        .filter(|row| row.archived)
+        .map(|row| row.catalog_key())
 }
 
 fn rejected_attachment_target(
@@ -427,7 +450,10 @@ fn rejected_attachment_target(
     current_target: &str,
     session: Option<&Path>,
 ) -> Option<String> {
-    (text.trim().is_empty() && has_images && current_target != pending_target)
+    (crate::sessions::draft_id(pending_target).is_some()
+        && text.trim().is_empty()
+        && has_images
+        && current_target != pending_target)
         .then(|| session.map(normalize_session_path))
         .flatten()
         .map(|path| session_target(&path))

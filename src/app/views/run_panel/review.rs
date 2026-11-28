@@ -1,8 +1,9 @@
+use crate::app::ui::primitives::SelectionStyle as _;
 use std::{collections::BTreeSet, path::Path};
 
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _, ScrollHandle,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
 
 use crate::app::{
@@ -41,12 +42,14 @@ pub(in crate::app::views) fn render(
     );
     let selected = active.navigation.as_ref().and_then(|nav| nav.selected);
     let inspecting = active.inspecting;
+    let columns = crate::app::ui::primitives::DiffColumns::for_counts([]);
     let selected_path = inspecting.map(|index| &active.review.items[index].path);
     div()
         .size_full()
         .flex()
         .flex_col()
-        .p(theme().space.md)
+        .px(crate::app::ui::grid::inspector_inset())
+        .py(theme().space.md)
         .gap(theme().space.sm)
         .child(
             div()
@@ -84,10 +87,10 @@ pub(in crate::app::views) fn render(
                     TreeRow::Folder {
                         path,
                         label,
-                        count,
                         counts,
                         depth,
                         open,
+                        ..
                     } => {
                         let project = active.project.clone();
                         let accessible = format!(
@@ -112,7 +115,7 @@ pub(in crate::app::views) fn render(
                         .aria_label(accessible)
                         .when(!open, |row| {
                             row.child(crate::app::ui::primitives::folder_change_summary(
-                                count, counts,
+                                counts, columns,
                             ))
                         })
                         .into_any_element()
@@ -124,7 +127,7 @@ pub(in crate::app::views) fn render(
                             .unwrap_or(index);
                         let path = Path::new(&location.path);
                         div()
-                            .pl(px(depth as f32 * 12.0))
+                            .pl(crate::app::ui::grid::tree_indent(depth))
                             .child(
                                 location_button(
                                     "review-file",
@@ -136,16 +139,14 @@ pub(in crate::app::views) fn render(
                                 .w_full()
                                 .min_w_0()
                                 .h(theme().size(24.0))
-                                .px(theme().space.xs)
+                                .px_0()
                                 .flex()
                                 .items_center()
                                 .gap(theme().space.xs)
                                 .rounded(theme().radius)
                                 .text_size(theme().type_scale.caption)
-                                .when(selected_path == Some(&location.path), |row| {
-                                    row.bg(theme().colors.highlight)
-                                })
-                                .child(file_icon(path))
+                                .selection_style(selected_path == Some(&location.path))
+                                .child(crate::app::ui::grid::icon_slot().child(file_icon(path)))
                                 .child(
                                     div().min_w_0().flex_1().text_ellipsis().child(
                                         path.file_name()
@@ -196,9 +197,7 @@ pub(in crate::app::views) fn render(
                                 )
                                 .p(theme().space.xs)
                                 .rounded(theme().radius)
-                                .when(inspecting == Some(index), |row| {
-                                    row.bg(theme().colors.highlight)
-                                })
+                                .selection_style(inspecting == Some(index))
                                 .child(div().text_color(theme().colors.muted).child(
                                     if selected == Some(index) {
                                         format!("{range} · Last opened here")
@@ -245,15 +244,15 @@ fn location_button(
         .role(gpui::Role::Button)
         .aria_label(label)
         .tab_index(0)
-        .border_l(theme().border)
-        .border_color(gpui::rgba(0x00000000))
         .when(available, |row| {
             row.cursor_pointer()
                 .hover(|row| row.bg(theme().colors.highlight))
         })
         .focus_visible(|row| {
             row.bg(theme().colors.highlight)
-                .border_color(theme().colors.focus_border)
+                .shadow(crate::app::ui::primitives::focus_outline(
+                    theme().colors.focus_border,
+                ))
         })
         .on_mouse_down(gpui::MouseButton::Left, preserve_pointer_focus)
         .on_click(move |_, window, cx| {

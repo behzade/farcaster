@@ -118,6 +118,47 @@ fn empty_session() -> crate::protocol::SessionState {
 }
 
 #[test]
+fn send_to_current_chat_persists_the_first_editor_message_title() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let (mut owner, events, _) = held_acks_runtime(temp.path())?;
+    owner.active_session = None;
+    owner.snapshot.selected_session = None;
+    owner.startup_state_loaded = false;
+    conversation_mut(&mut owner.snapshot).running = false;
+    owner.apply_command(RuntimeCommand::SendToSession {
+        submission_id: "editor-submit".into(),
+        target: "draft:editor".into(),
+        session: None,
+        project: temp.path().into(),
+        message: "Inspect selection\n\nCode context: src/main.rs".into(),
+    });
+    let id = events
+        .try_iter()
+        .find_map(|event| match event {
+            RuntimeEvent::DraftPromptCommitted {
+                draft,
+                app_session_id,
+                provisional_title,
+            } if draft == "editor" => {
+                assert_eq!(provisional_title.as_deref(), Some("Inspect selection"));
+                Some(app_session_id)
+            }
+            _ => None,
+        })
+        .expect("editor prompt committed");
+    let drafts = owner
+        .state
+        .as_ref()
+        .unwrap()
+        .with(|store| store.load_drafts())?;
+    let draft = drafts.iter().find(|draft| draft.id == "editor").unwrap();
+    assert_eq!(draft.app_session_id, id.get());
+    assert!(draft.submitted);
+    assert_eq!(draft.title.as_deref(), Some("Inspect selection"));
+    Ok(())
+}
+
+#[test]
 fn normal_receipt_after_steering_settles_releases_the_next_send() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let (mut owner, events, commands) = held_acks_runtime(temp.path())?;
@@ -128,6 +169,7 @@ fn normal_receipt_after_steering_settles_releases_the_next_send() -> Result<(), 
         target: "session:held".into(),
         mode,
         message: message.into(),
+        provisional_title: None,
         display_message: None,
         invocation: None,
         images: Vec::new(),
@@ -326,6 +368,7 @@ fn command_entry_sends_all_unacknowledged_inputs_before_first_escape() -> Result
             target: "session:held".into(),
             mode,
             message: message.into(),
+            provisional_title: None,
             display_message: None,
             invocation: None,
             images: Vec::new(),
@@ -512,6 +555,7 @@ fn transport_failure_after_delivery_keeps_the_accepted_outcome_and_recoverable_r
         target: "session:failure".into(),
         mode: PromptMode::Steer,
         message: "delivered before failure".into(),
+        provisional_title: None,
         display_message: None,
         invocation: None,
         images: Vec::new(),
@@ -908,7 +952,8 @@ fn resumed_prompt_survives_startup_history_without_starting_title_generation() {
                 images: Vec::new(),
             })
         });
-        owner.dispatch_prompt();
+        conversation_mut(&mut owner.snapshot).begin_run();
+        owner.dispatch_prompt(None);
 
         assert!(owner.deferred_prompt().is_some());
         assert!(commands.borrow().is_empty());
@@ -936,6 +981,15 @@ fn resumed_prompt_survives_startup_history_without_starting_title_generation() {
         };
         for (index, response) in responses.into_iter().enumerate() {
             owner.apply_response(response);
+            assert!(
+                owner.snapshot.conversation.awaiting_first_activity(),
+                "{harness} history_first={history_first} preserve={preserve} response={index}"
+            );
+            assert_eq!(
+                owner.snapshot.conversation.items.last().unwrap().text,
+                "Continue the task",
+                "the waiting prompt must stay visible during startup"
+            );
             if index == 0 {
                 assert!(
                     commands.borrow().is_empty(),
@@ -963,6 +1017,37 @@ fn resumed_prompt_survives_startup_history_without_starting_title_generation() {
         assert_eq!(owner.snapshot.conversation.items.len(), 1);
         assert_eq!(owner.snapshot.conversation.items[0].text, "Earlier task");
     }
+}
+
+#[test]
+fn quota_command_hint_defers_to_native_commands_and_ordinary_prompt_text() -> Result<(), String> {
+    for (backend, advertised, message) in [
+        (Backend::Antigravity, true, "/usage"),
+        (Backend::Antigravity, false, "/usage is what I typed"),
+        (Backend::Claude, false, "/usage"),
+    ] {
+        let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let (mut owner, _, commands) = held_acks_runtime(temp.path())?;
+        owner.harness = Some(backend);
+        if advertised {
+            owner.snapshot.commands.push(
+                serde_json::from_value(json!({"name":"usage","source":"extension"}))
+                    .expect("command fixture"),
+            );
+        }
+        let path = owner.active_session.as_ref().expect("fixture session");
+        owner.send_prompt(
+            format!("session:{}", path.display()),
+            PromptMode::FollowUp,
+            message.into(),
+            Vec::new(),
+            true,
+        );
+        assert!(commands.borrow().iter().any(
+            |cmd| matches!(cmd, SessionCommand::Prompt { message: sent, .. } if sent == message)
+        ));
+    }
+    Ok(())
 }
 
 #[test]
@@ -995,7 +1080,6 @@ fn escape_signals_require_steering_and_tolerate_transport_rejection() -> Result<
     use crate::runtime::RuntimeSignal;
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let (mut owner, _, commands) = held_acks_runtime(temp.path())?;
-    // A running turn or follow-up alone must not make Escape interrupt it.
     conversation_mut(&mut owner.snapshot)
         .queue
         .follow_up

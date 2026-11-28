@@ -1,5 +1,134 @@
 use super::*;
 
+fn merge_agent_activity(
+    activities: &mut HashMap<crate::agent_activity::WorkerActivityKey, AgentActivity>,
+    incoming: AgentActivity,
+) -> bool {
+    let key = crate::agent_activity::WorkerActivityKey {
+        path: incoming.session_path.clone(),
+        native: crate::sessions::NativeSessionIdentity {
+            project: "/project".into(),
+            harness: crate::agents::Backend::Codex,
+            profile_id: None,
+            id: incoming.session_id.clone(),
+        },
+    };
+    merge_keyed_activity(activities, key, incoming)
+}
+
+#[gpui::test]
+fn transcript_keeps_working_visible_through_delivery(cx: &mut gpui::TestAppContext) {
+    use crate::conversation::ConversationState;
+    use serde_json::json;
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::transcript_keeps_working_visible_through_delivery"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let mut state = ConversationState::default();
+            let prompt = state.push_local_user("hello".into(), 0, false);
+            state.bind_submitted_prompt("prompt", &prompt);
+            let mut pending_top = None;
+            for (event, working) in [
+                (json!({"type":"agent_start"}), true),
+                (
+                    json!({"type":"prompt_delivery","submissionId":"prompt","status":"delivered",
+                    "message":{"role":"user","content":"hello"}}),
+                    true,
+                ),
+                (
+                    json!({"type":"tool_execution_start","toolCallId":"read-1","toolName":"read",
+                    "args":{"path":"main.rs"}}),
+                    false,
+                ),
+                (json!({"type":"agent_settled"}), false),
+                (json!({"type":"agent_start"}), true),
+                (json!({"type":"agent_settled"}), false),
+            ] {
+                let changed = state.reduce(&event);
+                runtime.send_event(RuntimeEvent::Snapshot {
+                    generation: 1,
+                    snapshot: Arc::new(RuntimeSnapshot {
+                        project: project.into(),
+                        selected_session: Some(project.join("working-status")),
+                        conversation: Arc::new(state.clone()),
+                        transcript_changed_from: changed,
+                        document_ready: true,
+                        ..Default::default()
+                    }),
+                });
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                    window.draw(cx).clear(cx);
+                });
+                let status = cx.debug_bounds("transcript-working");
+                assert_eq!(status.is_some(), working, "{event}");
+                if event["type"] == "prompt_delivery" {
+                    pending_top = Some(status.unwrap().top());
+                }
+                if event["type"] == "tool_execution_start" {
+                    let activity = cx.debug_bounds("transcript-row-1").expect("first tool row");
+                    assert_eq!(pending_top, Some(activity.top()));
+                }
+            }
+        },
+    );
+}
+
+#[gpui::test]
+fn snapshots_from_a_superseded_switch_leave_views_clean(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::snapshots_from_a_superseded_switch_leave_views_clean"
+        ),
+        cx,
+        |cx, app, _, project| {
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    let snapshot = Arc::new(RuntimeSnapshot {
+                        project: project.into(),
+                        selected_session: Some(project.join("superseded")),
+                        ..Default::default()
+                    });
+                    app.lifecycle.awaiting_switch_route = Some(2);
+                    let mut dirty = DirtyRegions::default();
+                    for awaiting in [true, false] {
+                        if !awaiting {
+                            app.project_runtime_event(
+                                RuntimeEvent::SelectionRouted(2),
+                                &mut dirty,
+                                cx,
+                            );
+                        }
+                        let event = RuntimeEvent::Snapshot {
+                            generation: app.runtime_generation,
+                            snapshot: snapshot.clone(),
+                        };
+                        dirty.observe(app, &event);
+                        app.project_runtime_event(event, &mut dirty, cx);
+                        if awaiting {
+                            assert!(
+                                !dirty.rail
+                                    && !dirty.archived_rail
+                                    && !dirty.run
+                                    && !dirty.root
+                                    && !dirty.composer
+                                    && !dirty.transcript
+                            );
+                        } else {
+                            assert!(dirty.run);
+                        }
+                    }
+                })
+            });
+        },
+    );
+}
+
 #[gpui::test]
 fn review_button_survives_switching_back_to_a_resident_history_snapshot(
     cx: &mut gpui::TestAppContext,
@@ -96,7 +225,7 @@ fn review_button_survives_switching_back_to_a_resident_history_snapshot(
 }
 
 #[test]
-fn metadata_refresh_does_not_erase_an_explicit_native_outcome() {
+fn inferred_native_outcome_does_not_erase_an_explicit_native_outcome() {
     let child = |running: bool, outcome: Option<&str>| {
         serde_json::json!({
             "harness": "codex-cli", "id": "child", "path": "/sessions/child",
@@ -116,16 +245,8 @@ fn metadata_refresh_does_not_erase_an_explicit_native_outcome() {
         crate::app::runtime::catalog::native_child_activity(&idle_event, &idle_metadata);
 
     let mut activities = HashMap::new();
-    assert!(merge_agent_activity(
-        &mut activities,
-        completed.clone(),
-        ActivityUpdateSource::Native,
-    ));
-    assert!(!merge_agent_activity(
-        &mut activities,
-        metadata_only.clone(),
-        ActivityUpdateSource::Native,
-    ));
+    assert!(merge_agent_activity(&mut activities, completed.clone(),));
+    assert!(!merge_agent_activity(&mut activities, metadata_only,));
     assert_eq!(
         activities
             .values()
@@ -142,14 +263,6 @@ fn metadata_refresh_does_not_erase_an_explicit_native_outcome() {
         ),
         crate::app::views::run_panel::agents::AgentSection::Completed
     );
-
-    let mut running_metadata = metadata_only;
-    running_metadata.lifecycle = crate::agent_activity::AgentLifecycle::Working;
-    assert!(!merge_agent_activity(
-        &mut activities,
-        running_metadata,
-        ActivityUpdateSource::Metadata,
-    ));
 }
 
 #[test]
@@ -164,16 +277,11 @@ fn explicit_native_outcome_can_replace_an_earlier_explicit_outcome() {
         )
     };
     let mut activities = HashMap::new();
-    assert!(merge_agent_activity(
-        &mut activities,
-        activity("complete"),
-        ActivityUpdateSource::Native,
-    ));
+    assert!(merge_agent_activity(&mut activities, activity("complete"),));
 
     assert!(merge_agent_activity(
         &mut activities,
         activity("incomplete"),
-        ActivityUpdateSource::Native,
     ));
     assert_eq!(
         activities
@@ -202,24 +310,22 @@ fn scoped_paths_keep_same_native_id_in_separate_rows_and_focus_targets() {
     assert!(merge_agent_activity(
         &mut activities,
         activity("/one/child"),
-        ActivityUpdateSource::Native,
     ));
     assert!(merge_agent_activity(
         &mut activities,
         activity("/two/child"),
-        ActivityUpdateSource::Native,
     ));
 
     assert_eq!(activities.len(), 2);
     assert!(
-        activities.contains_key(&crate::agent_activity::agent_activity_key(Path::new(
-            "/one/child"
-        )))
+        activities
+            .keys()
+            .any(|key| key.path == Path::new("/one/child"))
     );
     assert!(
-        activities.contains_key(&crate::agent_activity::agent_activity_key(Path::new(
-            "/two/child"
-        )))
+        activities
+            .keys()
+            .any(|key| key.path == Path::new("/two/child"))
     );
 }
 
@@ -245,13 +351,9 @@ fn catalog_lifecycle_updates_preserve_richer_activity_details() {
     pool.activity.clear();
     pool.current_tool = None;
     let mut activities = HashMap::new();
-    merge_agent_activity(&mut activities, rich, ActivityUpdateSource::Native);
+    merge_agent_activity(&mut activities, rich);
 
-    assert!(merge_agent_activity(
-        &mut activities,
-        pool,
-        ActivityUpdateSource::Catalog,
-    ));
+    assert!(merge_agent_activity(&mut activities, pool,));
     let merged = activities.values().next().expect("merged activity");
     assert_eq!(
         merged.lifecycle,
@@ -536,10 +638,11 @@ fn promoted_draft_completion_clears_status_and_saved_attachments(cx: &mut gpui::
             let target = "draft:completion";
             let submission_id = "submission-completion";
             let path = crate::sessions::normalize_session_path(&project.join("completed-session"));
-            let session_key = session_target(&path);
+            let session_key = crate::sessions::session_buffer(Backend::Pi, &path);
             cx.update(|_, cx| {
                 app.update(cx, |app, _| {
-                    app.begin_draft_submission(target, "hi");
+                    Arc::make_mut(&mut app.snapshot).harness = Some(Backend::Pi);
+                    app.begin_draft_submission(target);
                     app.composer.pending_submissions.insert(
                         submission_id.into(),
                         PendingSubmission {
@@ -579,6 +682,7 @@ fn promoted_draft_completion_clears_status_and_saved_attachments(cx: &mut gpui::
                 String::new(),
             );
             runtime.send_event(RuntimeEvent::SessionStatus {
+                record: None,
                 target: target.into(),
                 session: Some(path.clone()),
                 status: RunStatus::Working,
@@ -605,7 +709,14 @@ fn promoted_draft_completion_clears_status_and_saved_attachments(cx: &mut gpui::
                 outcome: crate::agents::PromptOutcome::Accepted,
                 session: Some(path.clone()),
             });
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    app.drain_runtime(cx);
+                    assert!(!app.sessions.submitted_drafts.contains_key("completion"));
+                });
+            });
             runtime.send_event(RuntimeEvent::SessionStatus {
+                record: None,
                 target: target.into(),
                 session: Some(path.clone()),
                 status: RunStatus::Done,
@@ -614,7 +725,7 @@ fn promoted_draft_completion_clears_status_and_saved_attachments(cx: &mut gpui::
                 app.update(cx, |app, cx| {
                     app.drain_runtime(cx);
                     assert_eq!(
-                        app.activity.run_statuses.get(&session_key),
+                        app.activity.run_statuses.get(&session_target(&path)),
                         Some(&RunStatus::Done)
                     );
                 });
@@ -778,7 +889,7 @@ fn child_activity_event_invalidates_and_renders_the_real_run_sidebar(
                 true,
                 None,
             );
-            let activity_key = crate::agent_activity::agent_activity_key(&child_path);
+            let activity_key = child.activity_key();
             let card_selector = "agent-card-/offline-child.jsonl";
 
             runtime.send_event(RuntimeEvent::Snapshot {
@@ -797,6 +908,7 @@ fn child_activity_event_invalidates_and_renders_the_real_run_sidebar(
             });
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
+                    app.sessions.selected_draft = None;
                     app.open_run_sheet(window, cx);
                     app.drain_runtime(cx);
                 });
@@ -810,7 +922,10 @@ fn child_activity_event_invalidates_and_renders_the_real_run_sidebar(
                 all_sessions: vec![root.clone(), child.clone()],
                 activities: None,
             });
-            runtime.send_event(RuntimeEvent::AgentActivityUpdated(activity.clone()));
+            runtime.send_event(RuntimeEvent::AgentActivityUpdated {
+                key: activity_key.clone(),
+                activity: activity.clone(),
+            });
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| app.drain_runtime(cx));
                 window.draw(cx).clear(cx);
@@ -838,7 +953,10 @@ fn child_activity_event_invalidates_and_renders_the_real_run_sidebar(
                 false,
                 Some("complete"),
             );
-            runtime.send_event(RuntimeEvent::AgentActivityUpdated(completed));
+            runtime.send_event(RuntimeEvent::AgentActivityUpdated {
+                key: activity_key.clone(),
+                activity: completed,
+            });
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| app.drain_runtime(cx));
                 window.draw(cx).clear(cx);
@@ -857,7 +975,10 @@ fn child_activity_event_invalidates_and_renders_the_real_run_sidebar(
             });
             let inferred_incomplete =
                 AgentActivity::from_native_child("child".into(), child_path, "worker", false, None);
-            runtime.send_event(RuntimeEvent::AgentActivityUpdated(inferred_incomplete));
+            runtime.send_event(RuntimeEvent::AgentActivityUpdated {
+                key: activity_key.clone(),
+                activity: inferred_incomplete,
+            });
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| app.drain_runtime(cx));
                 window.draw(cx).clear(cx);
@@ -1033,10 +1154,104 @@ fn legacy_prompt_result_without_id_resolves_one_unambiguous_target() {
     );
 }
 
+#[gpui::test]
+fn unrelated_session_updates_preserve_warm_catalog_relationships(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::unrelated_session_updates_preserve_warm_catalog_relationships"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let time = |seconds| {
+                std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(seconds)
+            };
+            let row = |name: &str, id, parent, seconds| {
+                let mut row = SessionSummary::from_cached(
+                    name.to_owned(),
+                    project.join(name),
+                    project.into(),
+                    name.into(),
+                    String::new(),
+                    String::new(),
+                    None,
+                    time(seconds),
+                    0,
+                    crate::sessions::UsageSummary::default(),
+                    false,
+                    false,
+                    String::new(),
+                )
+                .with_app_session_id(id);
+                row.parent_app_session_id = parent;
+                row
+            };
+            let selected = row("selected", 1, None, 50);
+            let root = row("other root", 2, None, 40);
+            let mut sibling = row("sibling", 3, Some(2), 30);
+            let mut child = row("worker", 4, Some(2), 20);
+            sibling.path = child.path.clone();
+            sibling.harness = Backend::Codex;
+            sibling.is_running = true;
+            let rows = vec![
+                selected.clone(),
+                root.clone(),
+                sibling.clone(),
+                child.clone(),
+            ];
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    app.drain_runtime(cx);
+                    app.sessions.all = rows.clone().into();
+                    app.sessions.visible = rows.into();
+                    app.sessions.selected_draft = None;
+                    Arc::make_mut(&mut app.snapshot).selected_session = Some(selected.path.clone());
+                    for catalog in [&app.sessions.all, &app.sessions.visible] {
+                        assert_eq!(catalog.child_count(&root), 2);
+                        assert_eq!(catalog.relationship_build_count(), 1);
+                    }
+                    for (seconds, working, child_ids) in [(60, true, [4, 3]), (10, false, [3, 4])] {
+                        child.title = format!("updated at {seconds}");
+                        child.modified = time(seconds);
+                        child.is_running = working;
+                        runtime.send_event(RuntimeEvent::SessionUpdated(child.clone()));
+                        app.drain_runtime(cx);
+                        for catalog in [&app.sessions.all, &app.sessions.visible] {
+                            assert_eq!(catalog.by_app_id(4), Some(&child));
+                            let last_at_path = if working { &sibling } else { &child };
+                            assert_eq!(catalog.by_path(&child.path), Some(last_at_path));
+                            assert_eq!(catalog.root_for_row(&child), Some(&root));
+                            assert_eq!(
+                                catalog
+                                    .descendants(&root)
+                                    .iter()
+                                    .map(|(row, _)| row.app_session_id)
+                                    .collect::<Vec<_>>(),
+                                child_ids
+                            );
+                            assert_eq!(catalog.running().count(), 1 + usize::from(working));
+                            assert_eq!(catalog[if working { 0 } else { 3 }], child);
+                            assert_eq!(catalog.relationship_build_count(), 1);
+                        }
+                    }
+                    child.parent_app_session_id = Some(1);
+                    runtime.send_event(RuntimeEvent::SessionUpdated(child.clone()));
+                    app.drain_runtime(cx);
+                    for catalog in [&app.sessions.all, &app.sessions.visible] {
+                        assert_eq!(catalog.root_for_row(&child), Some(&selected));
+                        assert_eq!(catalog.child_count(&root), 1);
+                        assert_eq!(catalog.relationship_build_count(), 2);
+                    }
+                })
+            });
+        },
+    );
+}
+
 #[test]
 fn one_live_update_keeps_archived_rows_and_does_not_duplicate_the_session() {
     let now = std::time::SystemTime::now();
-    let mut sessions = (0..3)
+    let rows = (0..3)
         .map(|index| {
             SessionSummary::from_cached(
                 index.to_string(),
@@ -1055,12 +1270,13 @@ fn one_live_update_keeps_archived_rows_and_does_not_duplicate_the_session() {
             )
         })
         .collect::<Vec<_>>();
+    let mut sessions = crate::sessions::SessionCatalog::from(rows);
     let mut updated = sessions[1].clone();
     updated.title = "New title".into();
     updated.modified = now + std::time::Duration::from_secs(1);
     updated.is_running = true;
-    update_session_row(&mut sessions, updated.clone());
-    update_session_row(&mut sessions, updated);
+    sessions.upsert_by_recency(updated.clone());
+    sessions.upsert_by_recency(updated);
     assert_eq!(sessions.len(), 3);
     assert!(sessions.iter().all(|session| session.archived));
     assert_eq!(sessions[0].title, "New title");

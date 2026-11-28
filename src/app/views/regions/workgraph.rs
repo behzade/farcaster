@@ -41,8 +41,6 @@ impl Render for WorkGraphDetailView {
                     .flex_none()
                     .px(theme().space.sm)
                     .py(theme().space.xs)
-                    .border_b(theme().border)
-                    .border_color(theme().colors.border)
                     .child(button(
                         "close-workgraph-inspector",
                         "Back to session details",

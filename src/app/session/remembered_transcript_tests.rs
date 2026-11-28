@@ -117,6 +117,38 @@ fn a_loading_snapshot_does_not_replace_the_remembered_read() {
 }
 
 #[test]
+fn a_fresh_tail_keeps_only_a_matching_complete_stand_in() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = stamped_session(directory.path(), "{}");
+    let mut warm = snapshot(&path, Some("first"));
+    let mut document = ConversationState::default();
+    document.replace_history(&[
+        json!({"role":"user", "content":"first"}),
+        json!({"role":"user", "content":"last"}),
+    ]);
+    Arc::make_mut(&mut warm).conversation = Arc::new(document);
+    remember(&warm);
+    use crate::agents::HistoryCoverage::{Complete, Suffix};
+    for (last, coverage, matches) in [
+        ("last", Suffix, true),
+        ("new", Suffix, false),
+        ("last", Complete, false),
+    ] {
+        let mut loading = snapshot(&path, None);
+        Arc::make_mut(&mut loading).history_tail = Some(Arc::new(crate::agents::HistoryPage {
+            content: (*snapshot(&path, Some(last)).conversation).clone(),
+            coverage,
+        }));
+        let shown = stand_in(loading);
+        assert_eq!(
+            Arc::ptr_eq(&shown.conversation, &warm.conversation),
+            matches
+        );
+        assert_eq!(shown.conversation.items.is_empty(), !matches);
+    }
+}
+
+#[test]
 fn a_different_project_backend_or_profile_cannot_reuse_the_transcript() {
     let directory = tempfile::tempdir().expect("session directory");
     let path = stamped_session(directory.path(), "{}");

@@ -11,6 +11,16 @@ use std::{path::Path, sync::Arc};
 pub(in crate::adapter) struct ClaudeAdapter;
 
 impl BackendAdapter for ClaudeAdapter {
+    fn account_capabilities(&self) -> crate::accounts::AccountCapabilities {
+        super::accounts::capabilities()
+    }
+    fn read_accounts(
+        &self,
+        config: &AgentLaunchConfig,
+        project: &Path,
+    ) -> Result<crate::accounts::AccountDiscovery, String> {
+        super::accounts::read(config, project)
+    }
     fn descriptor(&self) -> AgentBackendDescriptor {
         super::descriptor()
     }
@@ -33,7 +43,7 @@ impl BackendAdapter for ClaudeAdapter {
         let command = super::super::configuration_launch(config, Backend::Claude)?;
         super::load_configuration(&command, project).and_then(super::super::configuration_catalog)
     }
-    fn steering_boundary(&self) -> SteeringBoundary {
+    fn steering_boundary(&self, _config: &crate::AgentLaunchConfig) -> SteeringBoundary {
         SteeringBoundary::StopAfterBatch
     }
     fn spawn(
@@ -80,6 +90,14 @@ impl BackendAdapter for ClaudeAdapter {
         true
     }
 
+    fn local_history_revision(
+        &self,
+        config: &AgentLaunchConfig,
+        path: &Path,
+        _project: &Path,
+    ) -> Option<serde_json::Value> {
+        super::catalog::local_history_revision(config, path)
+    }
     fn load_history_for_profile(
         &self,
         config: &AgentLaunchConfig,

@@ -17,24 +17,21 @@ pub(super) enum StoredImage {
 }
 
 impl StateStore {
-    pub fn store_prompt_images(&self, images: &[PromptImage]) -> Result<Vec<PromptImage>, String> {
-        images
-            .iter()
-            .map(|image| {
-                Ok(PromptImage::from_file(
-                    self.image_directory.join(self.store_image(image)?),
-                    image.mime_type.clone(),
-                ))
-            })
-            .collect()
-    }
-
-    pub(super) fn encode_prompt_images(&self, images: &[PromptImage]) -> Result<String, String> {
+    pub(super) fn encode_prompt_images(
+        &self,
+        images: &[PromptImage],
+    ) -> Result<(String, Vec<PromptImage>), String> {
         let stored = images
             .iter()
             .map(|image| self.encode_prompt_image(image))
             .collect::<Result<Vec<_>, String>>()?;
-        serde_json::to_string(&stored).map_err(|error| format!("encode prompt images: {error}"))
+        let json = serde_json::to_string(&stored)
+            .map_err(|error| format!("encode prompt images: {error}"))?;
+        let files = stored
+            .into_iter()
+            .map(|image| self.decode_prompt_image(image))
+            .collect::<Result<_, _>>()?;
+        Ok((json, files))
     }
 
     pub(super) fn encode_prompt_image(&self, image: &PromptImage) -> Result<StoredImage, String> {

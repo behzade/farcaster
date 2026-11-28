@@ -11,16 +11,23 @@ fn mcp_confirmation_frame() -> Value {
     json!({"type":"control_request","request_id":"mcp-confirmation","request":{
         "subtype":"elicitation","mcp_server_name":"desktop-tools",
         "message":"Allow Computer Use to use Farcaster?", "mode":"form",
-        "requested_schema":{"type":"object","properties":{}}
+        "requested_schema":{"type":"object","properties":{}},
+        "_meta":{"persist":["session","always"]}
     }})
 }
 
 #[test]
 fn mcp_confirmation_round_trip_requires_the_user_and_keeps_each_outcome() {
-    for (value, cancel, action) in [
-        (Some("Allow"), false, "accept"),
-        (Some("Decline"), false, "decline"),
-        (Some("Allow"), true, "cancel"),
+    for (value, cancel, action, persistence) in [
+        (
+            Some("Allow for this session"),
+            false,
+            "accept",
+            Some("session"),
+        ),
+        (Some("Always allow"), false, "accept", Some("always")),
+        (Some("Decline"), false, "decline", None),
+        (Some("Always allow"), true, "cancel", None),
     ] {
         let (directory, command) = setup();
         let mut session = session(&command, directory.path());
@@ -39,6 +46,10 @@ fn mcp_confirmation_round_trip_requires_the_user_and_keeps_each_outcome() {
                 .contains("Allow Computer Use to use Farcaster?")
         );
         assert!(input.prompt.contains("desktop-tools"));
+        assert_eq!(
+            input.options,
+            ["Decline", "Allow for this session", "Always allow"]
+        );
         let path = directory.path().join("claude-fixture.requests");
         assert!(
             !std::fs::read_to_string(&path)
@@ -58,12 +69,13 @@ fn mcp_confirmation_round_trip_requires_the_user_and_keeps_each_outcome() {
             .filter_map(|line| serde_json::from_str::<Value>(line).ok())
             .find(|frame| frame["response"]["request_id"] == "mcp-confirmation")
             .expect("native response");
-        assert_eq!(
-            reply["response"]["response"],
-            json!({
-                "action":action,"content":if action == "accept" { json!({}) } else { Value::Null }
-            })
-        );
+        let mut expected = json!({
+            "action":action,"content":if action == "accept" { json!({}) } else { Value::Null }
+        });
+        if let Some(persistence) = persistence {
+            expected["_meta"] = json!({"persist":persistence});
+        }
+        assert_eq!(reply["response"]["response"], expected);
         assert!(session.permissions.is_empty());
         session.close().expect("close fixture");
     }
@@ -273,7 +285,7 @@ fn session(command: &AgentLaunchConfig, project: &Path) -> ClaudeSession {
     let id = TEST_SESSION_ID;
     let process = Process::spawn(command, project, id, false, None, None, true, None)
         .expect("test operation should succeed");
-    attach(process, caller, id, command.access_mode, None)
+    attach(process, caller, id, command.access_mode, None, None)
         .expect("test operation should succeed")
         .0
 }
@@ -294,7 +306,7 @@ exit 1
             harness: BACKEND,
             session_id: Some(TEST_SESSION_ID.into()),
             project: directory.path().to_owned(),
-            start: SessionStart::New,
+            start: SessionStart::New(None),
             wake: None,
             service_tier: None,
         };
@@ -697,7 +709,7 @@ fn main_new_session_applies_selected_service_tier_at_launch() {
         harness: BACKEND,
         session_id: None,
         project: directory.path().into(),
-        start: SessionStart::New,
+        start: SessionStart::New(None),
         wake: None,
         service_tier: Some("fast".into()),
     };
@@ -870,12 +882,8 @@ fn claude_ack_uses_the_echoed_uuid_and_survives_queued_delivery() {
 }
 
 #[test]
-fn process_handoff_batches_equal_text_and_images_with_original_receipts() {
+fn handoff_and_completion_batch_equal_text_and_images_with_original_receipts() {
     queued_batch_round_trip(true);
-}
-
-#[test]
-fn natural_completion_batches_equal_text_and_images_with_original_receipts() {
     queued_batch_round_trip(false);
 }
 
@@ -951,6 +959,7 @@ fn queued_batch_round_trip(interrupt: bool) {
                 mode,
                 message,
                 images,
+                ..
             }) => Some((
                 submission_id.clone(),
                 *mode,

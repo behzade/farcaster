@@ -753,8 +753,178 @@ fn history_follows_the_current_branch_and_projects_display_entries() {
 
     assert_eq!(history.len(), 3);
     assert_eq!(history[0]["content"], "root");
+    assert_eq!(history[1]["nativeMessageId"], "two");
     assert_eq!(history[1]["content"][0]["text"], "current");
     assert_eq!(history[2]["role"], "custom");
+}
+
+#[test]
+fn active_branch_handles_duplicate_ids_cycles_and_missing_ids() {
+    use serde_json::json;
+
+    let mut entries = vec![
+        json!({"id":"a"}),
+        json!({"id":"b","parentId":"a"}),
+        json!({"id":"a","parentId":"b"}),
+        json!({"id":"leaf","parentId":"b"}),
+    ];
+    assert_eq!(active_branch_indices(&entries), [2, 1, 3]);
+
+    entries.push(json!({"id":"orphan","parentId":"missing"}));
+    assert_eq!(active_branch_indices(&entries), [4]);
+
+    entries.push(json!({}));
+    assert_eq!(active_branch_indices(&entries), [0, 1, 2, 3, 4, 5]);
+}
+
+#[test]
+fn cold_preview_uses_the_active_branch_and_keeps_owned_payloads_in_full_history() -> TestResult {
+    use crate::adapter::backend::BackendAdapter as _;
+    use serde_json::json;
+
+    let directory = tempdir()?;
+    let path = directory.path().join("preview.jsonl");
+    let mut file = fs::File::create(&path)?;
+    let user = json!({"role":"user","piUserInvocation":"/read","content":[
+        {"type":"text","text":"resolved invocation"}, {"type":"image","mimeType":"image/png","data":"AQID"}
+    ]});
+    for entry in [
+        json!({"type":"session","id":"preview"}),
+        json!({"type":"message","id":"root","message":{"role":"user","content":"x".repeat(MAX_PREVIEW_BYTES * 2)}}),
+        json!({"type":"message","id":"recent","parentId":"root","message":user}),
+        json!({"type":"message","id":"old","parentId":"recent","message":{"role":"user","content":"other branch"}}),
+        json!({"type":"message","id":"call","parentId":"recent","message":{"role":"assistant","content":[{"type":"toolCall","id":"read-1","name":"read","arguments":{"path":"src"}}]}}),
+        json!({"type":"message","id":"result","parentId":"call","message":{"role":"toolResult","toolCallId":"read-1","content":"file"}}),
+        json!({"type":"compaction","id":"leaf","parentId":"result","summary":"done"}),
+    ] {
+        writeln!(file, "{entry}")?;
+    }
+    drop(file);
+
+    let adapter = super::super::PiAdapter;
+    let config = crate::AgentLaunchConfig::default();
+    let mut previews = Vec::new();
+    let history =
+        adapter.load_history_with_preview(&config, &path, directory.path(), &mut |tail| {
+            assert_eq!(tail.coverage, crate::HistoryCoverage::Suffix);
+            previews.push(tail.content);
+        })?;
+    assert_eq!(history.messages, load_history(&path)?.messages);
+    assert_eq!(history.messages.len(), 5);
+    assert_eq!(previews.as_slice(), &[history.messages[1..].to_vec()]);
+    let mut expected = user;
+    expected["nativeMessageId"] = "recent".into();
+    assert_eq!(previews[0][0], expected);
+    assert_eq!(
+        previews[0][1]["content"][0]["toolMetadata"]["category"],
+        "read"
+    );
+    let cached =
+        adapter.load_history_with_preview(&config, &path, directory.path(), &mut |_| {
+            panic!("cache hit read the tail again");
+        })?;
+    assert!(std::sync::Arc::ptr_eq(&cached.messages, &history.messages));
+    Ok(())
+}
+
+#[test]
+fn legacy_preview_starts_at_a_user_after_any_unresolved_row_dependency() {
+    use serde_json::json;
+
+    let entries = [
+        json!({"type":"message","id":"first","message":{"role":"assistant","content":[{"type":"toolCall","id":"earlier"}]}}),
+        json!({"type":"message","message":{"role":"user","content":"first user"}}),
+        json!({"type":"message","message":{"role":"toolResult","toolCallId":"earlier"}}),
+        json!({"type":"message","message":{"role":"user","content":"second user"}}),
+        json!({"type":"message","message":{"role":"user","submissionId":"prior","content":"receipt"}}),
+        json!({"type":"message","message":{"role":"user","content":"final user"}}),
+        json!({"type":"custom_message","content":"tail"}),
+    ];
+    let frames = entries
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\r\n");
+    let full = project_display_history(&entries);
+    let orphan_tail = entries[..3]
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(recent_messages(orphan_tail.as_bytes(), false).is_none());
+    assert_eq!(
+        recent_messages(frames.as_bytes(), false)
+            .expect("tail")
+            .content,
+        full[5..]
+    );
+    assert!(recent_messages(format!("{frames}\n{{").as_bytes(), false).is_none());
+}
+
+#[test]
+fn complete_pi_page_keeps_every_active_message_through_the_exact_cap() {
+    let entries = (0..MAX_PREVIEW_MESSAGES)
+        .map(|index| serde_json::json!({
+            "type": "message",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": index.to_string()}]}
+        }))
+        .collect::<Vec<_>>();
+    let frames = entries
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let page = recent_messages(frames.as_bytes(), true).unwrap();
+    assert_eq!(page.coverage, crate::HistoryCoverage::Complete);
+    assert_eq!(page.content, project_display_history(&entries));
+    assert!(recent_messages(frames.as_bytes(), false).is_none());
+}
+
+#[test]
+fn cold_preview_caps_messages_and_uses_one_leaf_for_the_full_read() -> TestResult {
+    use serde_json::json;
+
+    let directory = tempdir()?;
+    let path = directory.path().join("growing.jsonl");
+    let mut file = fs::File::create(&path)?;
+    writeln!(file, "{}", json!({"type":"session","id":"growing"}))?;
+    for index in 0..MAX_PREVIEW_MESSAGES + 2 {
+        writeln!(
+            file,
+            "{}",
+            json!({"type":"message","message":{"role":"user","content":index.to_string()}})
+        )?;
+    }
+    let mut preview = Vec::new();
+    let full = load_history_with_preview(&path, &mut |messages| {
+        assert_eq!(messages.coverage, crate::HistoryCoverage::Suffix);
+        preview = messages.content;
+        writeln!(
+            file,
+            "{}",
+            json!({"type":"message","message":{"role":"user","content":"appended"}})
+        )
+        .expect("append");
+    })?;
+    assert_eq!(full.messages.len(), MAX_PREVIEW_MESSAGES + 2);
+    assert_eq!(preview, full.messages[2..]);
+    assert_eq!(load_history(&path)?.messages.len(), full.messages.len() + 1);
+    Ok(())
+}
+
+#[test]
+fn preview_skips_an_oversized_final_frame_and_keeps_it_in_full_history() -> TestResult {
+    use serde_json::json;
+    let directory = tempdir()?;
+    let path = directory.path().join("huge.jsonl");
+    let entry = json!({"type":"message","message":{"role":"user","content":"x".repeat(MAX_PREVIEW_BYTES * 2)}});
+    fs::write(
+        &path,
+        format!("{{\"type\":\"session\",\"id\":\"huge\"}}\n{entry}"),
+    )?;
+    let full = load_history_with_preview(&path, &mut |_| panic!("partial frame was displayed"))?;
+    assert_eq!(full.messages.as_slice(), &[entry["message"].clone()]);
+    Ok(())
 }
 
 #[test]
@@ -812,10 +982,11 @@ fn loaded_history_is_not_truncated_at_the_catalog_scan_limit() -> TestResult {
 }
 
 #[test]
-fn unanswered_request_user_input_is_restored_from_history() {
+fn unanswered_request_user_input_is_restored_from_history() -> TestResult {
     let entries = vec![
+        serde_json::json!({"type":"message","id":"user","message":{"role":"user","content":"hello"}}),
         serde_json::json!({
-            "type":"message","id":"one","parentId":null,
+            "type":"message","id":"one","parentId":"user",
             "message":{"role":"assistant","stopReason":"toolUse","content":[{
                 "type":"toolCall","id":"question-1","name":"request_user_input",
                 "arguments":{"question":"Run this command?","options":["Run", "Cancel"]}
@@ -826,10 +997,16 @@ fn unanswered_request_user_input_is_restored_from_history() {
             "customType":"farcaster-application-exit","content":"interrupted","display":true
         }),
     ];
-    let branch = active_branch_entries(&entries);
+    let directory = tempdir()?;
+    let path = directory.path().join("question.jsonl");
+    let mut file = fs::File::create(&path)?;
+    for entry in entries {
+        writeln!(file, "{entry}")?;
+    }
 
     assert_eq!(
-        pending_question_from_branch(&branch),
+        load_history_with_preview(&path, &mut |_| panic!("question changes the viewport"))?
+            .pending_question,
         Some(RestoredQuestion {
             id: "restored-question:question-1".into(),
             title: "Run this command?".into(),
@@ -837,15 +1014,19 @@ fn unanswered_request_user_input_is_restored_from_history() {
         })
     );
 
-    let mut answered = entries;
-    answered.push(serde_json::json!({
+    let answer = serde_json::json!({
         "type":"message","id":"three","parentId":"two",
         "message":{"role":"toolResult","toolCallId":"question-1","toolName":"request_user_input"}
-    }));
-    assert_eq!(
-        pending_question_from_branch(&active_branch_entries(&answered)),
-        None
-    );
+    });
+    writeln!(file, "{answer}")?;
+    let mut previews = Vec::new();
+    let full = load_history_with_preview(&path, &mut |page| {
+        assert_eq!(page.coverage, crate::HistoryCoverage::Complete);
+        previews.push(page.content);
+    })?;
+    assert_eq!(full.pending_question, None);
+    assert_eq!(previews, [full.messages.to_vec()]);
+    Ok(())
 }
 
 #[test]

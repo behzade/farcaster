@@ -5,6 +5,46 @@ use crate::agents::Backend;
 #[path = "settings_tests.rs"]
 mod tests;
 
+pub(super) fn read_harness_profiles(
+    connection: &Connection,
+) -> Result<Vec<agents::HarnessProfile>, String> {
+    let saved: Option<String> = connection
+        .query_row(
+            "SELECT value FROM meta WHERE key='harness_profiles'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("load harness profiles: {error}"))?;
+    Ok(saved
+        .map(|saved| serde_json::from_str(&saved))
+        .transpose()
+        .map_err(|error| format!("decode harness profiles: {error}"))?
+        .unwrap_or_default())
+}
+
+pub(super) fn read_profile_history<T>(
+    profiles: &[agents::HarnessProfile],
+    backend: Backend,
+    path: &Path,
+    stored_profile: Option<String>,
+    read: impl FnOnce(Backend, &Path, Option<&agents::HarnessProfile>) -> Option<T>,
+) -> Option<T> {
+    let locator_profile = agents::profile_id_from_locator(path);
+    if matches!((&stored_profile, &locator_profile), (Some(a), Some(b)) if a != b) {
+        return None;
+    }
+    let profile = match stored_profile.or(locator_profile) {
+        Some(id) => Some(
+            profiles
+                .iter()
+                .find(|p| p.id == id && p.backend == backend)?,
+        ),
+        None => None,
+    };
+    read(backend, path, profile)
+}
+
 fn family_session_id(
     transaction: &rusqlite::Transaction<'_>,
     key: Option<&crate::sessions::SessionKey>,
@@ -215,20 +255,7 @@ impl StateStore {
     }
 
     pub fn load_harness_profiles(&self) -> Result<Vec<crate::agents::HarnessProfile>, String> {
-        let saved: Option<String> = self
-            .connection
-            .query_row(
-                "SELECT value FROM meta WHERE key='harness_profiles'",
-                [],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|error| format!("load harness profiles: {error}"))?;
-        let profiles: Vec<crate::agents::HarnessProfile> = saved
-            .map(|saved| serde_json::from_str(&saved))
-            .transpose()
-            .map_err(|error| format!("decode harness profiles: {error}"))?
-            .unwrap_or_default();
+        let profiles = read_harness_profiles(&self.connection)?;
         validate_harness_profiles(&profiles)?;
         Ok(profiles)
     }

@@ -1,6 +1,6 @@
 use crate::Backend;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::BufReader,
     path::{Path, PathBuf},
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
@@ -20,6 +20,8 @@ use super::super::{
 
 #[path = "history_cache.rs"]
 mod history_cache;
+#[path = "history_images.rs"]
+mod history_images;
 
 const INTERACTIVE_SOURCE_KINDS: &[&str] = &["cli", "vscode", "exec", "appServer", "unknown"];
 const AGENT_SOURCE_KINDS: &[&str] = &[
@@ -221,35 +223,94 @@ fn delete_session_using(
 }
 
 pub fn load_history(path: &Path) -> Result<DiscoveredHistory, String> {
-    load_history_using(None, path, None)
+    load_history_using(None, path, None, None, false).map(|(history, _)| history)
 }
 
 pub(super) fn load_history_with_config(
     config: &crate::AgentLaunchConfig,
     path: &Path,
     project: &Path,
+    preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
 ) -> Result<DiscoveredHistory, String> {
-    load_history_using(Some(config), path, Some(project))
+    load_history_using(Some(config), path, Some(project), preview, false)
+        .map(|(history, _)| history)
+}
+
+pub(super) fn load_history_for_import(
+    config: &crate::AgentLaunchConfig,
+    path: &Path,
+    project: &Path,
+    preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
+) -> Result<(DiscoveredHistory, Option<Value>), String> {
+    load_history_using(Some(config), path, Some(project), preview, true)
+}
+
+pub(super) fn local_history_revision(
+    config: &crate::AgentLaunchConfig,
+    path: &Path,
+    project: &Path,
+) -> Option<Value> {
+    let thread = external_session_locator(Backend::Codex, path)?;
+    let mut command = if config.profile_id.is_some() {
+        config.cached_command(project)?
+    } else {
+        default_catalog_command()
+    };
+    command.args(["app-server", "--stdio"]);
+    history_cache::Scope::new(&command, Some(config), Some(project)).local_revision(&thread, None)
 }
 
 fn load_history_using(
     config: Option<&crate::AgentLaunchConfig>,
     path: &Path,
     project: Option<&Path>,
-) -> Result<DiscoveredHistory, String> {
+    preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
+    capture_revision: bool,
+) -> Result<(DiscoveredHistory, Option<Value>), String> {
     let locator = external_session_locator(Backend::Codex, path)
         .ok_or_else(|| format!("invalid Codex session locator: {}", path.display()))?;
     with_connection_and_home_and_scope_using(config, project, |connection, codex_home, scope| {
-        if scope.has_sqlite_home_override()
-            || !history_cache::has_revision(codex_home, &locator)
-            || !can_cache_persisted_history(connection, codex_home)
-        {
-            return read_history(connection, codex_home, &locator);
-        }
-        history_cache::load(codex_home, &locator, scope, || {
-            read_history(connection, codex_home, &locator)
-        })
+        load_history_with_client(
+            connection,
+            codex_home,
+            &locator,
+            scope,
+            preview,
+            capture_revision,
+        )
     })
+}
+
+fn load_history_with_client<R: std::io::BufRead, W: std::io::Write>(
+    connection: &mut CodexConnection<R, W>,
+    home: &Path,
+    locator: &str,
+    scope: history_cache::Scope,
+    preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
+    capture_revision: bool,
+) -> Result<(DiscoveredHistory, Option<Value>), String> {
+    if scope.has_sqlite_home_override() {
+        return read_history(connection, home, locator, None).map(|history| (history, None));
+    }
+    if !history_cache::has_revision(home, locator) || !can_cache_persisted_history(connection, home)
+    {
+        return read_history(connection, home, locator, None).map(|history| (history, None));
+    }
+    let before = capture_revision
+        .then(|| scope.local_revision(locator, Some(home)))
+        .flatten();
+    let after_scope = before.as_ref().map(|_| scope.clone());
+    let history = history_cache::load(home, locator, scope, || {
+        read_history(connection, home, locator, preview)
+    })?;
+    let revision = before.filter(|before| {
+        after_scope
+            .as_ref()
+            .and_then(|scope| scope.local_revision(locator, Some(home)))
+            .as_ref()
+            == Some(before)
+    });
+    Ok((history, revision))
 }
 
 fn can_cache_persisted_history<R: std::io::BufRead, W: std::io::Write>(
@@ -263,6 +324,7 @@ fn can_cache_persisted_history<R: std::io::BufRead, W: std::io::Write>(
             .get("data")
             .and_then(Value::as_array)
             .is_some_and(Vec::is_empty)
+            || !loaded["nextCursor"].is_null()
         {
             return Ok(false);
         }
@@ -273,10 +335,12 @@ fn can_cache_persisted_history<R: std::io::BufRead, W: std::io::Write>(
         };
         Ok(match config.get("sqlite_home") {
             None | Some(Value::Null) => true,
-            Some(Value::String(path)) => std::fs::canonicalize(path)
-                .ok()
-                .zip(std::fs::canonicalize(home).ok())
-                .is_some_and(|(left, right)| left == right),
+            Some(Value::String(path)) if Path::new(path).is_absolute() => {
+                std::fs::canonicalize(path)
+                    .ok()
+                    .zip(std::fs::canonicalize(home).ok())
+                    .is_some_and(|(left, right)| left == right)
+            }
             _ => false,
         })
     };
@@ -288,12 +352,19 @@ fn read_history<R: std::io::BufRead, W: std::io::Write>(
     connection: &mut CodexConnection<R, W>,
     codex_home: &Path,
     locator: &str,
+    preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
 ) -> Result<DiscoveredHistory, String> {
+    if let Some(preview) = preview
+        && let Some(page) = recent_turn_messages(connection, codex_home, locator)
+        && !page.content.is_empty()
+    {
+        preview(page);
+    }
     let id = connection.send_request(
         "thread/read",
         json!({"threadId": locator, "includeTurns": true}),
     )?;
-    let response: Value = connection.wait_response(&id)?;
+    let response = connection.wait_response_value(&id)?;
     let thread = response.get("thread").unwrap_or(&response);
     let mut messages = Vec::new();
     let mut delivered = Vec::new();
@@ -312,9 +383,10 @@ fn read_history<R: std::io::BufRead, W: std::io::Write>(
             if let Some(id) = delivered_submission_id(item) {
                 delivered.push(id.to_owned());
             }
-            messages.extend(history_messages(item));
+            messages.extend(turn_item_messages(turn, item));
         }
     }
+    history_images::restore(&mut messages, thread, codex_home, locator);
     let identity = stored_identities(codex_home, &[locator])?.remove(locator);
     let (model, thinking_level) = identity.map_or((None, None), |identity| {
         (Some((identity.provider, identity.model)), identity.effort)
@@ -329,6 +401,92 @@ fn read_history<R: std::io::BufRead, W: std::io::Write>(
             absence_is_not_delivered: false,
         }),
     })
+}
+
+const RECENT_TURN_LIMIT: usize = 8;
+
+fn recent_turn_messages<R: std::io::BufRead, W: std::io::Write>(
+    connection: &mut CodexConnection<R, W>,
+    home: &Path,
+    locator: &str,
+) -> Option<crate::HistoryPage> {
+    let before = history_cache::paginated_revision(home, locator)?;
+    let id = connection.send_request(
+        "thread/turns/list",
+        json!({"threadId": locator, "limit": RECENT_TURN_LIMIT, "sortDirection": "desc", "itemsView": "full"}),
+    ).ok()?;
+    let page = connection.wait_response_value(&id).ok()?;
+    let messages = recent_page_messages(&page)?;
+    (history_cache::paginated_revision(home, locator)? == before).then_some(messages)
+}
+
+fn recent_page_messages(page: &Value) -> Option<crate::HistoryPage> {
+    let turns = page.get("data")?.as_array()?;
+    if turns.len() > RECENT_TURN_LIMIT {
+        return None;
+    }
+    let mut turn_ids = HashSet::new();
+    for turn in turns {
+        let id = turn.get("id")?.as_str()?;
+        if id.is_empty() || !turn_ids.insert(id) {
+            return None;
+        }
+    }
+
+    let mut recent = Vec::new();
+    for turn in turns {
+        if turn["itemsView"] != "full"
+            || !matches!(
+                turn["status"].as_str(),
+                Some("completed" | "interrupted" | "failed")
+            )
+        {
+            break;
+        }
+        let Some(items) = turn["items"].as_array() else {
+            break;
+        };
+        let mut item_ids = HashSet::new();
+        if !items.iter().all(|item| {
+            item["id"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty() && item_ids.insert(id))
+                && preview_item_is_complete(item)
+        }) {
+            break;
+        }
+        let messages: Vec<_> = items
+            .iter()
+            .flat_map(|item| turn_item_messages(turn, item))
+            .collect();
+        if history_images::needs_restore(&messages) {
+            break;
+        }
+        recent.push(messages);
+    }
+    let coverage = if page.get("nextCursor") == Some(&Value::Null) && recent.len() == turns.len() {
+        crate::HistoryCoverage::Complete
+    } else {
+        crate::HistoryCoverage::Suffix
+    };
+    Some(crate::HistoryPage {
+        content: recent.into_iter().rev().flatten().collect(),
+        coverage,
+    })
+}
+
+fn preview_item_is_complete(item: &Value) -> bool {
+    if item["outputDeferred"].as_bool() == Some(true) {
+        return false;
+    }
+    match item["type"].as_str() {
+        Some("agentMessage") => item["text"].is_string(),
+        Some("userMessage") => item["content"].is_array(),
+        // Reading a mutable saved file twice could produce two different images.
+        Some("imageGeneration") => item["savedPath"].is_null(),
+        Some(_) => true,
+        None => false,
+    }
 }
 
 fn delivered_submission_id(item: &Value) -> Option<&str> {
@@ -366,6 +524,14 @@ fn with_connection_and_home_using<T>(
     })
 }
 
+fn default_catalog_command() -> Command {
+    Command::new(
+        std::env::var_os("FARCASTER_CODEX_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| "codex".into()),
+    )
+}
+
 fn with_connection_and_home_and_scope_using<T>(
     config: Option<&crate::AgentLaunchConfig>,
     project: Option<&Path>,
@@ -379,11 +545,7 @@ fn with_connection_and_home_and_scope_using<T>(
         };
         config.command(&project)?
     } else {
-        Command::new(
-            std::env::var_os("FARCASTER_CODEX_PATH")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| "codex".into()),
-        )
+        default_catalog_command()
     };
     command.args(["app-server", "--stdio"]);
     let scope = history_cache::Scope::new(&command, config, project);
@@ -594,6 +756,23 @@ fn codex_usage(thread: &Value) -> DiscoveredUsage {
     }
 }
 
+fn turn_item_messages(turn: &Value, item: &Value) -> Vec<Value> {
+    let mut messages = history_messages(item);
+    for message in &mut messages {
+        if let Some(id) = item["id"].as_str() {
+            message["nativeMessageId"] = Value::from(id);
+        }
+        if let Some(id) = turn["id"].as_str() {
+            message["nativeTurnId"] = Value::from(id);
+        }
+        if let Some(id) = delivered_submission_id(item) {
+            message["submissionId"] = Value::from(id);
+            message["deliveryStatus"] = Value::from("delivered");
+        }
+    }
+    messages
+}
+
 fn history_messages(item: &Value) -> Vec<Value> {
     match item.get("type").and_then(Value::as_str) {
         Some("userMessage") => vec![json!({
@@ -618,10 +797,15 @@ fn history_tool_messages(item: &Value, kind: &str) -> Vec<Value> {
         return Vec::new();
     };
     let projection = tool::project(item, kind);
-    let is_error = item
-        .get("status")
-        .and_then(Value::as_str)
-        .is_some_and(|status| matches!(status, "failed" | "declined"));
+    let (result, is_error) = tool::completion(item, kind);
+    let mut result = match result {
+        Value::Object(fields) => Value::Object(fields),
+        content => json!({"content":content}),
+    };
+    result["role"] = "toolResult".into();
+    result["toolCallId"] = id.into();
+    result["toolName"] = Value::from(projection.name.as_str());
+    result["isError"] = is_error.into();
     vec![
         json!({
             "role": "assistant",
@@ -633,50 +817,8 @@ fn history_tool_messages(item: &Value, kind: &str) -> Vec<Value> {
                 "toolMetadata": projection.metadata,
             }],
         }),
-        json!({
-            "role": "toolResult",
-            "toolCallId": id,
-            "toolName": projection.name,
-            "content": history_tool_output(item, kind, is_error),
-            "isError": is_error,
-        }),
+        result,
     ]
-}
-
-fn history_tool_output(item: &Value, kind: &str, is_error: bool) -> Vec<Value> {
-    if kind == "subAgentActivity" {
-        return vec![json!({"type": "text", "text": tool::subagent_summary(item)})];
-    }
-    if kind == "mcpToolCall" {
-        if is_error {
-            return item
-                .pointer("/error/message")
-                .and_then(Value::as_str)
-                .map(|text| vec![json!({"type": "text", "text": text})])
-                .unwrap_or_default();
-        }
-        return item
-            .pointer("/result/content")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-    }
-    let output = item
-        .get("aggregatedOutput")
-        .and_then(Value::as_str)
-        .or_else(|| {
-            (kind == "webSearch")
-                .then(|| tool::web_search_query(item))
-                .flatten()
-        })
-        .unwrap_or_else(|| {
-            if kind == "fileChange" && !is_error {
-                "Applied patch"
-            } else {
-                ""
-            }
-        });
-    vec![json!({"type": "text", "text": output})]
 }
 
 pub(super) fn user_content(content: Option<&Value>) -> Vec<Value> {
@@ -703,7 +845,7 @@ pub(super) fn user_content(content: Option<&Value>) -> Vec<Value> {
         .collect()
 }
 
-fn reasoning_text(item: &Value) -> String {
+pub(super) fn reasoning_text(item: &Value) -> String {
     string(item, &["text"])
         .map(str::to_owned)
         .or_else(|| {

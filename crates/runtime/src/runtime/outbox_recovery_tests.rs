@@ -430,6 +430,7 @@ fn native_history_acks_recovered_prompt_before_it_can_replay() -> Result<(), Str
     store.record_prompt_dispatch(outbox_id, "codex-cli-prior-request")?;
     let prompt = store.queued_prompts()?.remove(0);
     let (mut owner, sent) = ready_owner(temp.path(), &database)?;
+    owner.harness = Some(prompt.harness);
     owner.state = Some(store.into());
     owner.startup_history_loaded = false;
     owner.deliver_queued(prompt);
@@ -613,6 +614,7 @@ fn delivery_receipt_acks_prompt_and_persists_its_presentation() -> Result<(), St
     assert_eq!(
         store.with(|store| store.prompt_presentations(&session))?,
         [crate::agents::PromptPresentation {
+            submission_id: Some(id.clone()),
             resolved_message: "resolved prompt".into(),
             display_message: "$review".into(),
             invocation: "review".into(),
@@ -1038,6 +1040,7 @@ fn exact_history_delivery_removes_only_the_matching_saved_card() -> Result<(), S
         if cold_history {
             let path = owner.active_session.take().expect("active session");
             owner.apply_history(HistoryResult {
+                transcript_stamp: None,
                 generation: owner.history_generation,
                 path,
                 project: temp.path().into(),
@@ -1163,6 +1166,7 @@ fn secondary_recovery_keeps_payload_when_outbox_reads_fail() -> Result<(), Strin
             "session:one".into(),
             PromptMode::Normal,
             "expanded input".into(),
+            None,
             Some("display input".into()),
             Some("invocation".into()),
             vec![image.clone()],
@@ -1433,6 +1437,7 @@ fn deferred_cancellation_failure_keeps_one_recovery_payload() -> Result<(), Stri
                 "draft:fault".into(),
                 PromptMode::Normal,
                 "expanded input".into(),
+                None,
                 Some("display input".into()),
                 Some("invocation".into()),
                 vec![image.clone()],

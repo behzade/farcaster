@@ -215,6 +215,7 @@ impl Harness {
     fn select(&self, backend: Backend, id: &str) {
         self.runtime
             .send(RuntimeCommand::ResumeDraft {
+                request: None,
                 id: id.into(),
                 harness: backend.into(),
                 project: self.project.clone(),

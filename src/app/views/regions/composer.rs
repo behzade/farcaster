@@ -5,6 +5,8 @@ use super::super::FarcasterApp;
 pub(crate) struct ComposerView {
     app: WeakEntity<FarcasterApp>,
     suggestion_selection: usize,
+    completions_dismissed: bool,
+    suggestion_scroll: ScrollHandle,
     footer_scroll: ScrollHandle,
     status_scroll: ScrollHandle,
 }
@@ -14,6 +16,8 @@ impl ComposerView {
         Self {
             app,
             suggestion_selection: 0,
+            completions_dismissed: false,
+            suggestion_scroll: ScrollHandle::new(),
             footer_scroll: ScrollHandle::new(),
             status_scroll: ScrollHandle::new(),
         }
@@ -25,6 +29,17 @@ impl ComposerView {
 
     pub(crate) fn reset_suggestion_selection(&mut self) {
         self.suggestion_selection = 0;
+        self.completions_dismissed = false;
+        self.suggestion_scroll.scroll_to_item(0);
+    }
+
+    pub(crate) fn completions_dismissed(&self) -> bool {
+        self.completions_dismissed
+    }
+
+    pub(crate) fn dismiss_completions(&mut self, cx: &mut Context<Self>) {
+        self.completions_dismissed = true;
+        cx.notify();
     }
 
     pub(crate) fn select_previous_suggestion(
@@ -39,6 +54,8 @@ impl ComposerView {
             .suggestion_selection
             .checked_sub(1)
             .unwrap_or(count - 1);
+        self.suggestion_scroll
+            .scroll_to_item(self.suggestion_selection);
         cx.notify();
         true
     }
@@ -48,6 +65,8 @@ impl ComposerView {
             return false;
         }
         self.suggestion_selection = (self.suggestion_selection + 1) % count;
+        self.suggestion_scroll
+            .scroll_to_item(self.suggestion_selection);
         cx.notify();
         true
     }
@@ -67,6 +86,8 @@ impl Render for ComposerView {
         app.render_composer(
             self.app.clone(),
             self.suggestion_selection,
+            self.completions_dismissed,
+            &self.suggestion_scroll,
             &self.footer_scroll,
             &self.status_scroll,
             app.navigation.chat.activation.hint(),

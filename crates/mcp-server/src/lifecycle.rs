@@ -5,6 +5,7 @@ use std::{
     thread::JoinHandle,
 };
 
+use crate::storage::SessionRepository;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpService, session::local::LocalSessionManager,
 };
@@ -61,7 +62,7 @@ struct RunningServer {
 }
 
 pub fn start(
-    store: Arc<Mutex<crate::storage::StateStore>>,
+    store: crate::storage::SharedStateStore,
     workers: crate::agents::WorkerPool,
     updates: async_channel::Sender<()>,
     notices: crate::notice_board::NoticeBoard,
@@ -72,7 +73,7 @@ pub fn start(
     if current.is_some() {
         return Err("MCP server is already initialized".into());
     }
-    super::with_store(&store, |store| {
+    store.with(|store| {
         store.with_connection(|connection| {
             workgraph::SqliteAdapter::initialize_connection(connection)
                 .map_err(|error| error.to_string())
@@ -86,27 +87,23 @@ pub fn start(
         .transpose()
         .map_err(|error| format!("clone MCP listener: {error}"))?;
     let server = ServerState::with_listener(
-        FarcasterMcp::new(store.clone(), workers, updates, notices),
+        FarcasterMcp::new(store.arc(), workers, updates, notices),
         crate::builtin_mcp::enabled(),
         BIND_ADDRESS,
         reserved,
     )?;
     let family_store = store.clone();
     crate::agents::CallerRegistry::shared().set_family_sink(Some(Arc::new(move |link| {
-        super::with_store(&family_store, |store| store.save_worker_family(link))
+        family_store.with(|store| store.save_worker_family(link))
     })));
     let binding_store = store.clone();
     let execution_store = store;
     crate::agents::CallerRegistry::shared().set_execution_sinks(
         Some(Arc::new(move |caller, family| {
-            super::with_store(&binding_store, |store| {
-                store.register_caller_session(caller, family)
-            })
+            binding_store.register_caller_session(caller, family)
         })),
         Some(Arc::new(move |caller, execution, family| {
-            super::with_store(&execution_store, |store| {
-                store.register_execution_for_caller(caller, execution, family)
-            })
+            execution_store.register_execution_for_caller(caller, execution, family)
         })),
     );
     *current = Some(server);
@@ -219,6 +216,16 @@ pub fn with_test_worker_pool<T>(workers: crate::agents::WorkerPool, test: impl F
     }
     let _clear = Clear;
     test()
+}
+
+pub fn worker_status_snapshot(id: &str) -> Result<Option<crate::agents::WorkerSnapshot>, String> {
+    let current = SERVER
+        .lock()
+        .map_err(|_| "MCP server state is unavailable")?;
+    let Some(server) = current.as_ref() else {
+        return Ok(None);
+    };
+    server.service.workers.status_snapshot(id)
 }
 
 pub fn worker_snapshots() -> Result<Vec<crate::agents::WorkerSnapshot>, String> {

@@ -32,6 +32,31 @@ fn assert_contrast(fg: Rgba, bg: Rgba, minimum: f64) {
 }
 
 #[test]
+fn text_selection_is_visible_and_keeps_text_readable_in_every_bundled_theme() {
+    for definition in builtin::BUILT_IN_THEMES.iter() {
+        let colors = definition.colors;
+        let selected = colors.selection_background();
+        assert_contrast(colors.text, selected, 4.5);
+        assert_contrast(selected, colors.canvas, 1.4);
+        assert_ne!(selected, colors.highlight);
+        assert_ne!(colors.indicator, colors.focus_border);
+        assert_contrast(colors.indicator, colors.canvas, 3.0);
+    }
+}
+
+#[test]
+fn muted_choice_selection_stays_readable_in_every_bundled_theme() {
+    for definition in builtin::BUILT_IN_THEMES.iter() {
+        let colors = definition.colors;
+        assert_contrast(colors.selected_text(), colors.selected_fill(), 4.5);
+        assert_contrast(colors.selected_border(), colors.selected_fill(), 3.0);
+        assert_contrast(colors.selected_text(), colors.surface, 3.0);
+        assert_ne!(colors.selected_fill(), colors.accent);
+        assert_ne!(colors.selected_fill(), colors.canvas);
+    }
+}
+
+#[test]
 fn bundled_text_syntax_icons_and_focus_keep_contrast_on_selected_rows() {
     for definition in builtin::BUILT_IN_THEMES.iter() {
         let colors = definition.colors;
@@ -144,6 +169,11 @@ fn installed_button_tokens_use_the_palette_in_every_state(cx: &mut gpui::TestApp
         let colors = theme().colors;
         let component = ComponentTheme::global(cx);
         assert_eq!(component.input, Hsla::from(colors.focus_border));
+        assert_eq!(component.ring, Hsla::from(colors.indicator));
+        assert_eq!(
+            component.selection,
+            Hsla::from(colors.selection_background())
+        );
         for background in [colors.canvas, colors.panel, colors.composer] {
             assert_contrast(component.input.into(), background, 3.0);
             assert_contrast(component.ring.into(), background, 3.0);
@@ -214,16 +244,32 @@ fn installed_controls_and_base_theme_keep_palette_colors(cx: &mut gpui::TestAppC
         install_component_theme(cx);
         let colors = theme().colors;
         let component = ComponentTheme::global(cx);
-        assert_eq!(component.primary, Hsla::from(colors.accent));
-        assert_eq!(component.primary_foreground, Hsla::from(colors.canvas));
+        assert_eq!(component.primary, Hsla::from(colors.selected_fill()));
+        assert_eq!(
+            component.primary_foreground,
+            Hsla::from(colors.selected_text())
+        );
+        for fill in [
+            component.primary,
+            component.primary_hover,
+            component.primary_active,
+            component.list_active,
+            component.sidebar_accent,
+            component.sidebar_primary,
+            component.tab_active,
+            component.table_active,
+            component.secondary_active,
+        ] {
+            assert_eq!(fill, Hsla::from(colors.selected_fill()));
+            assert_contrast(colors.selected_text(), fill.into(), 4.5);
+        }
+        assert_ne!(component.button_primary, component.primary);
         assert_eq!(component.tokens, ThemeTokens::from(component.colors));
         assert_eq!(
             gpui_base::Theme::global(cx).tokens,
             component.semantic_tokens()
         );
 
-        // Checked controls, switch thumbs, sliders and scrollbars need contrast
-        // against their actual fills, not just the application background.
         for (foreground, background, minimum) in [
             (component.primary_foreground, component.primary, 4.5),
             (component.switch_thumb, component.switch, 3.0),

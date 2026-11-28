@@ -33,9 +33,11 @@ pub(super) fn file_row(
     } else {
         label
     };
+    let tooltip = label.clone();
     activation_row(id, label, move |alt, window, cx| {
         on_press(diff_enabled && alt, window, cx)
     })
+    .app_tooltip(tooltip)
 }
 
 pub(super) fn activation_row(
@@ -45,23 +47,18 @@ pub(super) fn activation_row(
 ) -> Stateful<Div> {
     let press = Rc::new(on_press);
     let click = press.clone();
-    let tooltip = label.clone();
-    div()
+    crate::app::ui::grid::row()
         .id(id)
-        .w_full()
-        .flex()
-        .items_center()
-        .gap(theme().space.xs)
         .rounded(theme().radius)
         .role(Role::Button)
         .aria_label(label)
-        .app_tooltip(tooltip.clone())
         .tab_index(0)
         .cursor_pointer()
         .hover(|row| row.bg(theme().colors.highlight))
         .focus_visible(|row| {
-            row.border(theme().border)
-                .border_color(theme().colors.indicator)
+            row.shadow(crate::app::ui::primitives::focus_outline(
+                theme().colors.indicator,
+            ))
         })
         .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
             window.prevent_default();
@@ -105,6 +102,7 @@ pub(super) fn file_path(path: &str, project: Option<&std::path::Path>) -> std::p
 pub(super) fn file_summary(presentation: &ToolPresentation, label: String) -> Div {
     div()
         .min_w_0()
+        .flex_1()
         .flex()
         .items_center()
         .gap(theme().space.xs)
@@ -113,28 +111,24 @@ pub(super) fn file_summary(presentation: &ToolPresentation, label: String) -> Di
         .child(
             div()
                 .min_w_0()
+                .flex_1()
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
                 .text_color(theme().colors.text)
                 .child(label),
         )
-        .children(change_counts(presentation.counts()))
+        .children(change_counts(
+            presentation.counts(),
+            crate::app::ui::primitives::DiffColumns::for_counts([presentation.counts()]),
+        ))
 }
 
-pub(super) fn change_counts((added, removed): (usize, usize)) -> impl Iterator<Item = Div> {
-    [
-        (added, "+", theme().colors.success),
-        (removed, "−", theme().colors.error),
-    ]
-    .into_iter()
-    .filter(|(count, _, _)| *count > 0)
-    .map(|(count, sign, color)| {
-        div()
-            .flex_none()
-            .text_color(color)
-            .child(format!("{sign}{count}"))
-    })
+pub(super) fn change_counts(
+    counts: (usize, usize),
+    columns: crate::app::ui::primitives::DiffColumns,
+) -> impl Iterator<Item = Div> {
+    crate::app::ui::primitives::diff_count_columns(Some(counts), false, columns)
 }
 
 #[cfg(test)]

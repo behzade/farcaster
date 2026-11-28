@@ -267,7 +267,10 @@ impl ListDelegate for PickerDelegate {
                         .flex()
                         .items_center()
                         .gap(theme().space.sm)
-                        .child(app_icon(row.icon, AppIconSize::Control))
+                        .child(
+                            crate::app::ui::grid::icon_slot()
+                                .child(app_icon(row.icon, AppIconSize::Control)),
+                        )
                         .child(
                             div()
                                 .min_w_0()

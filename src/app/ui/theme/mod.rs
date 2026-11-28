@@ -81,6 +81,48 @@ pub(crate) struct Colors {
     pub terminal_green: Rgba,
 }
 
+impl Colors {
+    pub(crate) fn selected_fill(self) -> Rgba {
+        self.highlight
+    }
+
+    pub(crate) fn selected_text(self) -> Rgba {
+        self.text
+    }
+
+    pub(crate) fn selected_border(self) -> Rgba {
+        self.focus_border
+    }
+
+    pub(crate) fn selection_background(self) -> Rgba {
+        let text = relative_luminance(self.text);
+        for step in (0..=45).rev() {
+            let fill = self.canvas.blend(self.link.alpha(step as f32 / 100.0));
+            let background = relative_luminance(fill);
+            if (text.max(background) + 0.05) / (text.min(background) + 0.05) >= 4.5 {
+                return fill;
+            }
+        }
+        self.canvas
+    }
+}
+
+fn relative_luminance(color: Rgba) -> f64 {
+    [color.r, color.g, color.b]
+        .into_iter()
+        .zip([0.2126, 0.7152, 0.0722])
+        .map(|(channel, weight)| {
+            let channel = f64::from(channel);
+            weight
+                * if channel <= 0.04045 {
+                    channel / 12.92
+                } else {
+                    ((channel + 0.055) / 1.055).powf(2.4)
+                }
+        })
+        .sum()
+}
+
 macro_rules! color_keys {
     ($($required:ident),* $(,)? ; $($optional:ident),* $(,)?) => {
         #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -214,6 +256,7 @@ pub(crate) struct TypeScale {
     pub reading: Pixels,
     pub display: Pixels,
     pub line_body: Pixels,
+    pub line_code: Pixels,
     pub line_reading: Pixels,
     pub line_composer: Pixels,
 }
@@ -255,9 +298,6 @@ pub(crate) struct Layout {
     pub session_age_slot: Pixels,
     pub counter_slot: Pixels,
     pub folders_min: Pixels,
-    pub notice_panel: Pixels,
-    pub notice_panel_min: Pixels,
-    pub notice_panel_max: Pixels,
 }
 
 #[derive(Clone, Copy)]
@@ -315,7 +355,8 @@ const STRUCTURE: Structure = Structure {
         reading: px(15.0),
         display: px(18.0),
         line_body: px(19.0),
-        line_reading: px(23.0),
+        line_code: px(22.0),
+        line_reading: px(24.0),
         line_composer: px(22.0),
     },
     icons: IconScale {
@@ -342,26 +383,23 @@ const STRUCTURE: Structure = Structure {
         compact_min_width: px(960.0),
         window_width: px(1240.0),
         window_height: px(820.0),
-        session_rail: px(286.0),
+        session_rail: px(330.0),
         session_rail_min: px(220.0),
         session_rail_max: px(430.0),
-        run_panel: px(332.0),
+        run_panel: px(330.0),
         run_panel_min: px(220.0),
         run_panel_max: px(430.0),
         transcript_overdraw: px(160.0),
         composer_min: px(184.0),
-        conversation_width: px(1040.0),
+        conversation_width: px(760.0),
         dialog_width: px(560.0),
         dialog_max_height: px(680.0),
         tool_max_height: px(220.0),
-        session_row_height: px(32.0),
+        session_row_height: px(44.0),
         status_row_height: px(24.0),
         session_age_slot: px(30.0),
         counter_slot: px(18.0),
-        folders_min: px(128.0),
-        notice_panel: px(160.0),
-        notice_panel_min: px(76.0),
-        notice_panel_max: px(2000.0),
+        folders_min: px(176.0),
     },
     sizes: default_sizes(),
 };
@@ -421,6 +459,7 @@ metric_keys!(
     type_scale.reading => "font-reading",
     type_scale.display => "font-display",
     type_scale.line_body => "line-body",
+    type_scale.line_code => "line-code",
     type_scale.line_reading => "line-reading",
     type_scale.line_composer => "line-composer",
     icons.inline => "icon-inline",
@@ -455,9 +494,6 @@ metric_keys!(
     layout.session_age_slot => "layout-session-age-slot",
     layout.counter_slot => "layout-counter-slot",
     layout.folders_min => "layout-folders-min",
-    layout.notice_panel => "layout-notice-panel",
-    layout.notice_panel_min => "layout-notice-panel-min",
-    layout.notice_panel_max => "layout-notice-panel-max",
 );
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -674,11 +710,9 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     component.mono_font_family = MONO_FONT_FAMILY.into();
     component.mono_font_size = theme.type_scale.body_small;
     component.highlight_theme = highlight_theme();
-    component.radius = theme.radius;
-    component.radius_lg = theme.radius;
+    component.radius = theme.radius.max(theme.size(4.0));
+    component.radius_lg = theme.radius.max(theme.size(10.0));
     component.shadow = true;
-    // Resolve every component color here so no state inherits the library preset.
-    // Buttons own their fills; primary also colors checked controls.
     component.colors = ThemeColor {
         accent: colors.highlight.into(),
         accent_foreground: colors.text.into(),
@@ -702,7 +736,7 @@ pub(crate) fn install_component_theme(cx: &mut App) {
         button_primary_foreground: colors.canvas.into(),
         button_primary_hover: colors.accent_hover.into(),
         button_secondary: colors.surface.into(),
-        button_secondary_active: colors.highlight.into(),
+        button_secondary_active: colors.selected_fill().into(),
         button_secondary_foreground: colors.text.into(),
         button_secondary_hover: colors.highlight.into(),
         button_success: colors.success.into(),
@@ -742,8 +776,8 @@ pub(crate) fn install_component_theme(cx: &mut App) {
         link_active: colors.link.into(),
         link_hover: colors.link.into(),
         list: colors.panel.into(),
-        list_active: colors.highlight.into(),
-        list_active_border: colors.focus_border.into(),
+        list_active: colors.selected_fill().into(),
+        list_active_border: colors.selected_border().into(),
         list_even: colors.surface.into(),
         list_head: colors.panel.into(),
         list_hover: colors.highlight.into(),
@@ -751,27 +785,27 @@ pub(crate) fn install_component_theme(cx: &mut App) {
         muted_foreground: colors.muted.into(),
         popover: colors.panel.into(),
         popover_foreground: colors.text.into(),
-        primary: colors.accent.into(),
-        primary_active: colors.accent_active.into(),
-        primary_foreground: colors.canvas.into(),
-        primary_hover: colors.accent_hover.into(),
+        primary: colors.selected_fill().into(),
+        primary_active: colors.selected_fill().into(),
+        primary_foreground: colors.selected_text().into(),
+        primary_hover: colors.selected_fill().into(),
         progress_bar: colors.indicator.into(),
-        ring: colors.focus_border.into(),
+        ring: colors.indicator.into(),
         scrollbar: component.transparent,
         scrollbar_thumb: colors.focus_border.into(),
         scrollbar_thumb_hover: colors.muted.into(),
         secondary: colors.surface.into(),
-        secondary_active: colors.highlight.into(),
+        secondary_active: colors.selected_fill().into(),
         secondary_foreground: colors.text.into(),
         secondary_hover: colors.highlight.into(),
-        selection: colors.highlight.into(),
+        selection: colors.selection_background().into(),
         sidebar: colors.panel.into(),
-        sidebar_accent: colors.highlight.into(),
-        sidebar_accent_foreground: colors.text.into(),
+        sidebar_accent: colors.selected_fill().into(),
+        sidebar_accent_foreground: colors.selected_text().into(),
         sidebar_border: colors.border.into(),
         sidebar_foreground: colors.text.into(),
-        sidebar_primary: colors.highlight.into(),
-        sidebar_primary_foreground: colors.text.into(),
+        sidebar_primary: colors.selected_fill().into(),
+        sidebar_primary_foreground: colors.selected_text().into(),
         skeleton: colors.surface.into(),
         slider_bar: colors.indicator.into(),
         slider_thumb: colors.canvas.into(),
@@ -779,17 +813,17 @@ pub(crate) fn install_component_theme(cx: &mut App) {
         success_foreground: colors.canvas.into(),
         success_hover: colors.success.into(),
         success_active: colors.success.into(),
-        switch: colors.focus_border.into(),
-        switch_thumb: colors.canvas.into(),
+        switch: colors.surface.into(),
+        switch_thumb: colors.selected_text().into(),
         tab: colors.surface.into(),
-        tab_active: colors.highlight.into(),
-        tab_active_foreground: colors.text.into(),
+        tab_active: colors.selected_fill().into(),
+        tab_active_foreground: colors.selected_text().into(),
         tab_bar: colors.panel.into(),
         tab_bar_segmented: colors.panel.into(),
         tab_foreground: colors.text.into(),
         table: colors.panel.into(),
-        table_active: colors.highlight.into(),
-        table_active_border: colors.focus_border.into(),
+        table_active: colors.selected_fill().into(),
+        table_active_border: colors.selected_border().into(),
         table_even: colors.surface.into(),
         table_head: colors.panel.into(),
         table_head_foreground: colors.text.into(),

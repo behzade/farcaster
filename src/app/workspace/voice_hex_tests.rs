@@ -1,6 +1,5 @@
 use super::*;
 
-// A mock transport failure instead of an HTTP response.
 const RESET_CONNECTION: u16 = 0;
 
 #[test]
@@ -203,7 +202,6 @@ fn release_before_hex_starts_still_finishes_and_returns_raw_text() {
     assert!(
         matches!(receiver.try_recv().unwrap(), Event::Transcript(text) if text == "  Explain this\n")
     );
-    // Keep the server open after finish so a redundant cancel fails the test.
     mock.endpoint
         .request("GET", "/capabilities", None, Value::Null)
         .unwrap();
@@ -466,8 +464,6 @@ fn start_and_finish_connection_resets_are_not_retried() {
             .request("POST", path, Some("recording-token"), body)
             .unwrap_err();
         assert!(error.contains(method_path), "{error}");
-        // A retry would connect to the now-closed listener and replace the reset
-        // with a connect failure.
         assert!(error.contains("Read response"), "{error}");
         mock.server.join().unwrap();
         assert_eq!(mock.requests.try_iter().count(), 1);

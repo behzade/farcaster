@@ -20,7 +20,7 @@ use crate::{
     agents::ConfigurationCatalog,
     projects::{self, Registry},
     protocol::{Model, PromptImage, PromptMode},
-    sessions::{DraftSession, SessionImport, SessionSummary, UsageSummary},
+    sessions::{self, DraftSession, SessionImport, SessionSummary, UsageSummary},
 };
 
 #[test]
@@ -442,8 +442,6 @@ fn panel_layout_survives_reopen() -> Result<(), Box<dyn std::error::Error>> {
     let layout = PanelLayout {
         session_rail_hidden: true,
         run_panel_hidden: true,
-        notifications_collapsed: true,
-        notifications_height: Some(240.0),
         archived_expanded: true,
         archived_height: Some(160.0),
     };
@@ -756,6 +754,41 @@ fn legacy_pi_gpui_v7_state_import_restores_archives_once() -> Result<(), Box<dyn
 }
 
 #[test]
+fn legacy_pi_gpui_recent_schema_import_preserves_drafts() -> Result<(), Box<dyn std::error::Error>>
+{
+    for version in 22..=crate::SCHEMA_VERSION {
+        let temp = tempdir()?;
+        let legacy_path = temp.path().join("gui-state.sqlite3");
+        let legacy = Connection::open(&legacy_path)?;
+        legacy.execute_batch(include_str!("schema.sql"))?;
+        legacy.execute(
+            "INSERT INTO meta(key, value) VALUES('schema_version', ?1)",
+            [version.to_string()],
+        )?;
+        if version == 22 {
+            legacy.execute_batch("DROP TABLE account_state;")?;
+        }
+        legacy.execute_batch(
+            "INSERT INTO projects(id, path, added_ms) VALUES(1, '/project', 1);
+             INSERT INTO sessions(id, project_id, harness, locator, modified_ms, archived_at, created_ms)
+               VALUES(1, 1, 'pi', '/session.jsonl', 1, 1, 1);
+             INSERT INTO composer_sessions(session_id, text, cursor, selection_start, selection_end, history_json, updated_ms)
+               VALUES(1, 'legacy draft', 12, 12, 12, '[]', 1);",
+        )?;
+        drop(legacy);
+
+        let mut destination = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+        destination.import_legacy_pi_gpui_state(&legacy_path)?;
+        assert!(destination.cached_sessions("")?[0].archived);
+        assert_eq!(
+            destination.load_composer_sessions()?[0].text,
+            "legacy draft"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -892,6 +925,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
     assert_eq!(
         store.prompt_presentations(&session_path.canonicalize()?)?,
         vec![crate::agents::PromptPresentation {
+            submission_id: Some("presentation-delivered".into()),
             resolved_message: "expanded prompt".into(),
             display_message: "$commit hello".into(),
             invocation: "expanded prompt".into(),
@@ -1055,6 +1089,49 @@ fn composer_session_targets_resolve_file_aliases() -> Result<(), Box<dyn std::er
 
     store.delete_composer_session(&target)?;
     assert!(store.load_composer_sessions()?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn shared_locator_composers_survive_reopen_and_delete_independently()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let path = temp.path().canonicalize()?.join("shared.jsonl");
+    let address = sessions::session_target(&path);
+    let store = StateStore::open_at(&database)?;
+    for harness in [Backend::Pi, Backend::Codex] {
+        store.enqueue_prompt(
+            &address,
+            harness,
+            temp.path(),
+            None,
+            PromptMode::Normal,
+            "setup",
+            &[],
+        )?;
+        let record = ComposerRecord {
+            target: sessions::session_buffer(harness, &path),
+            text: harness.to_string(),
+            history: vec![format!("sent to {harness}")].into(),
+            ..Default::default()
+        };
+        store.save_composer_session(&record)?;
+    }
+    drop(store);
+    let store = StateStore::open_at(&database)?;
+    let records = store.load_composer_sessions()?;
+    assert_eq!(records.len(), 2);
+    for harness in [Backend::Pi, Backend::Codex] {
+        let key = sessions::session_buffer(harness, &path);
+        let record = records.iter().find(|record| record.target == key).unwrap();
+        assert_eq!(record.text, harness.to_string());
+        assert_eq!(record.history.as_slice(), &[format!("sent to {harness}")]);
+    }
+    store.delete_composer_session(&sessions::session_buffer(Backend::Pi, &path))?;
+    let remaining = store.load_composer_sessions()?;
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].text, Backend::Codex.as_str());
     Ok(())
 }
 
@@ -2341,6 +2418,7 @@ fn cross_harness_worker_families_survive_reopen() -> Result<(), String> {
         cached[0].model,
         Some(("opencode-go".into(), "glm-5.3-flash".into()))
     );
+    assert_eq!(cached[0].worker_profile.as_deref(), Some("fast"));
     assert_eq!(cached[0].thinking_level, None);
 
     let mut legacy = serde_json::to_value(&link).map_err(|error| error.to_string())?;
@@ -2493,4 +2571,20 @@ fn theme_save_rolls_back_library_when_selection_write_fails()
     assert_eq!(reopened.load_theme_css()?.as_deref(), Some("original"));
     assert_eq!(reopened.load_active_theme()?.as_deref(), Some("Original"));
     Ok(())
+}
+
+#[test]
+fn panel_layout_ignores_retired_notifications_fields() {
+    let layout: PanelLayout = serde_json::from_value(serde_json::json!({
+        "session_rail_hidden": true,
+        "run_panel_hidden": false,
+        "notifications_collapsed": false,
+        "notifications_height": 240.0,
+        "archived_expanded": true,
+        "archived_height": 160.0
+    }))
+    .expect("existing saved panel layout");
+    assert!(layout.session_rail_hidden);
+    assert!(layout.archived_expanded);
+    assert_eq!(layout.archived_height, Some(160.0));
 }

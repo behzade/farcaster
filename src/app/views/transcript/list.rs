@@ -10,8 +10,11 @@ use gpui::{
 #[path = "list/height_index.rs"]
 mod height_index;
 use self::height_index::HeightIndex;
-use crate::app::infrastructure::performance::{OperationKind, OperationTiming};
+use crate::app::infrastructure::performance::{
+    OperationKind, OperationTiming, SwitchPaintStage, SwitchPaintTrace,
+};
 use crate::app::ui::theme::theme;
+use std::{sync::Arc, time::Instant};
 
 type RenderRow = dyn FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static;
 type ScrollHandler = dyn FnMut(bool, &mut Window, &mut App) + 'static;
@@ -21,6 +24,11 @@ pub(crate) const TRANSCRIPT_SELECTION_KEY_CONTEXT: &str = "PiTranscriptSelection
 
 #[derive(Default)]
 struct StateInner {
+    preview: bool,
+    preview_scrolled: bool,
+    loading_boundary: Option<usize>,
+    painted_history_top: Option<ListOffset>,
+    bottom_align: bool,
     heights: HeightIndex,
     scroll_y: Pixels,
     viewport_height: Pixels,
@@ -44,15 +52,34 @@ struct StateInner {
 
 impl StateInner {
     fn maximum_scroll(&self) -> Pixels {
-        (self.heights.total() - self.viewport_height).max(px(0.0))
+        let end = self.heights.total() - self.viewport_height;
+        if self.bottom_align {
+            end
+        } else {
+            end.max(px(0.0))
+        }
+    }
+
+    fn constrained_scroll(&self, y: Pixels) -> Pixels {
+        let end = self.maximum_scroll();
+        let start = if let Some(first_safe) = self.loading_boundary {
+            self.heights.prefix(first_safe) - self.viewport_height
+        } else {
+            px(0.0)
+        };
+        y.max(start).min(end)
     }
 
     fn clamp_scroll(&mut self) {
-        self.scroll_y = self.scroll_y.max(px(0.0)).min(self.maximum_scroll());
+        self.scroll_y = self.constrained_scroll(self.scroll_y);
     }
 
     fn logical_scroll_top(&self) -> ListOffset {
-        let item_ix = self.heights.row_at(self.scroll_y);
+        let item_ix = self
+            .heights
+            .row_at(self.scroll_y)
+            .max(self.loading_boundary.unwrap_or(0))
+            .min(self.heights.len());
         ListOffset {
             item_ix,
             offset_in_item: self.scroll_y - self.heights.prefix(item_ix),
@@ -62,16 +89,32 @@ impl StateInner {
     fn restore_anchor(&mut self, anchor: ListOffset) {
         let item_ix = anchor.item_ix.min(self.heights.len());
         let offset = self.heights.height(item_ix).map_or(px(0.0), |height| {
-            anchor.offset_in_item.max(px(0.0)).min(height)
+            // A negative offset places a known row below the viewport top.
+            anchor.offset_in_item.min(height)
         });
         self.scroll_y = self.heights.prefix(item_ix) + offset;
         self.clamp_scroll();
     }
 
     fn layout_range(&self, overdraw: Pixels) -> Range<usize> {
+        if self.following_tail {
+            // Use only distances from the bottom. Subtracting the height of a
+            // long prefix can round a subpixel offset differently at handoff.
+            let mut remaining = self.viewport_height + overdraw;
+            let end = self.heights.len();
+            let mut start = end;
+            while start > self.loading_boundary.unwrap_or(0) && remaining > px(0.0) {
+                start -= 1;
+                remaining -= self.heights.height(start).expect("row exists");
+            }
+            return start..end;
+        }
         let start_y = (self.scroll_y - overdraw).max(px(0.0));
         let end_y = self.scroll_y + self.viewport_height + overdraw;
-        let start = self.heights.row_at(start_y);
+        let start = self
+            .heights
+            .row_at(start_y)
+            .max(self.loading_boundary.unwrap_or(0));
         let end = if end_y >= self.heights.total() {
             self.heights.len()
         } else {
@@ -91,20 +134,25 @@ impl StateInner {
             self.heights.invalidate_all();
         }
 
-        let pending = std::mem::replace(&mut self.pending_scroll, px(0.0));
-        self.scheduled_frame = None;
-        let scrolled = pending != px(0.0);
-        if scrolled {
-            self.scroll_y -= pending;
-            if pending > px(0.0) {
-                self.following_tail = false;
-            }
-            self.clamp_scroll();
-        }
+        let scrolled = self.apply_pending_scroll();
         if self.following_tail {
             self.scroll_y = self.maximum_scroll();
         }
         (self.logical_scroll_top(), scrolled)
+    }
+
+    fn apply_pending_scroll(&mut self) -> bool {
+        let pending = std::mem::replace(&mut self.pending_scroll, px(0.0));
+        self.scheduled_frame = None;
+        if pending == px(0.0) {
+            return false;
+        }
+        self.preview_scrolled |= self.preview;
+        self.scroll_y = self.constrained_scroll(self.scroll_y - pending);
+        if pending > px(0.0) {
+            self.following_tail = false;
+        }
+        true
     }
 
     fn resume_tail_at_end(&mut self) {
@@ -121,9 +169,7 @@ impl StateInner {
         self.pending_restore = None;
         self.pending_scroll += delta;
         let maximum = self.maximum_scroll();
-        let projected = (self.scroll_y - self.pending_scroll)
-            .max(px(0.0))
-            .min(maximum);
+        let projected = self.constrained_scroll(self.scroll_y - self.pending_scroll);
         let resumes_tail = !self.following_tail
             && self.pending_scroll < px(0.0)
             && self.scroll_y >= maximum - theme().size(1.0);
@@ -210,9 +256,78 @@ impl TranscriptListState {
         Self(Rc::new(RefCell::new(StateInner::default())))
     }
 
+    pub(crate) fn new_history_tail(loading_boundary: Option<usize>) -> Self {
+        Self(Rc::new(RefCell::new(StateInner {
+            preview: true,
+            loading_boundary,
+            bottom_align: loading_boundary.is_some(),
+            following_tail: true,
+            ..Default::default()
+        })))
+    }
+
+    pub(crate) fn is_history_tail(&self) -> bool {
+        self.0.borrow().preview
+    }
+
+    pub(crate) fn preview_scrolled(&self) -> bool {
+        self.0.borrow().preview_scrolled
+    }
+
+    pub(crate) fn set_loading_boundary(&self, boundary: Option<usize>) {
+        let mut state = self.0.borrow_mut();
+        state.loading_boundary = boundary;
+        state.bottom_align |= boundary.is_some();
+    }
+
+    pub(crate) fn inherit_alignment(&self, source: &Self) {
+        self.0.borrow_mut().bottom_align = source.0.borrow().bottom_align
+    }
+
+    pub(crate) fn painted_history_top(&self) -> Option<ListOffset> {
+        self.0.borrow().painted_history_top
+    }
+
+    pub(crate) fn take_history_handoff_position(&self) -> Option<(ListOffset, bool)> {
+        let mut state = self.0.borrow_mut();
+        let mut top = state.painted_history_top?;
+        if state.apply_pending_scroll() {
+            state.resume_tail_at_end();
+            top = state.logical_scroll_top();
+            state.painted_history_top = Some(top);
+        }
+        Some((top, state.following_tail))
+    }
+
+    pub(crate) fn inherit_painted_top(&self, offset: ListOffset) {
+        self.0.borrow_mut().painted_history_top = Some(offset);
+    }
+
+    pub(crate) fn move_layout_to(&self, other: &Self) {
+        let mut source = self.0.borrow_mut();
+        let mut dest = other.0.borrow_mut();
+        dest.heights = std::mem::take(&mut source.heights);
+        dest.scroll_y = source.scroll_y;
+        dest.viewport_height = source.viewport_height;
+        dest.width = source.width;
+        dest.bottom_align = source.bottom_align;
+        dest.loading_boundary = source.loading_boundary;
+        dest.following_tail = source.following_tail;
+        dest.pending_restore = source.pending_restore.take();
+        dest.pending_scroll = px(0.0);
+        dest.scheduled_frame = None;
+        dest.painted_history_top = None;
+        dest.clear_selection();
+        source.pending_scroll = px(0.0);
+        source.scheduled_frame = None;
+    }
+
     pub(crate) fn reset(&self) {
         let mut state = self.0.borrow_mut();
         state.heights = HeightIndex::default();
+        state.bottom_align = false;
+        state.loading_boundary = None;
+        state.painted_history_top = None;
         state.scroll_y = px(0.0);
         state.pending_scroll = px(0.0);
         state.following_tail = false;
@@ -226,6 +341,7 @@ impl TranscriptListState {
         size_hints: impl IntoIterator<Item = Pixels>,
     ) {
         let mut state = self.0.borrow_mut();
+        state.painted_history_top = None;
         let was_empty = state.heights.is_empty();
         let anchor = state.logical_scroll_top();
         let old_len = old_range.len();
@@ -288,8 +404,6 @@ impl TranscriptListState {
     }
 
     pub(crate) fn restore_scroll(&self, offset: ListOffset) {
-        // Measure the anchor row before applying its saved offset. Its initial
-        // height hint may describe a collapsed tool or a different window width.
         self.scroll_to(ListOffset {
             item_ix: offset.item_ix,
             offset_in_item: px(0.0),
@@ -301,7 +415,6 @@ impl TranscriptListState {
         let mut state = self.0.borrow_mut();
         let index = offset.item_ix.min(state.heights.len());
         if state.pending_restore.is_some() {
-            // A row update may remap the anchor before its first paint.
             state.pending_restore = Some(offset);
             state.scroll_y = state.heights.prefix(index);
         } else {
@@ -375,14 +488,61 @@ pub(crate) fn transcript_list_grouped(
         selection_key: Rc::new(selection_key),
         selection_text: Rc::new(selection_text),
         render_row: Box::new(render_row),
+        switch_trace: None,
     }
 }
 
+struct FrameTiming {
+    trace: Arc<SwitchPaintTrace>,
+    before_ack: bool,
+    layout: Instant,
+    prepaint: Instant,
+}
+
 pub(crate) struct TranscriptList {
+    switch_trace: Option<FrameTiming>,
     state: TranscriptListState,
     selection_key: Rc<dyn Fn(usize) -> usize>,
     selection_text: Rc<SelectionText>,
     render_row: Box<RenderRow>,
+}
+
+impl TranscriptList {
+    fn layout_row(
+        &mut self,
+        index: usize,
+        available: Size<AvailableSpace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> FrameRow {
+        let mut element = (self.render_row)(index, window, cx);
+        let _timing = OperationTiming::new(OperationKind::TranscriptLayout, 1);
+        let height = element
+            .layout_as_root(available, window, cx)
+            .height
+            .max(theme().size(1.0));
+        FrameRow {
+            index,
+            element,
+            height,
+        }
+    }
+
+    pub(super) fn with_switch_trace(
+        mut self,
+        trace: Option<(Arc<SwitchPaintTrace>, bool)>,
+    ) -> Self {
+        self.switch_trace = trace.map(|(trace, before_ack)| {
+            let now = Instant::now();
+            FrameTiming {
+                trace,
+                before_ack,
+                layout: now,
+                prepaint: now,
+            }
+        });
+        self
+    }
 }
 
 impl IntoElement for TranscriptList {
@@ -400,8 +560,49 @@ struct FrameRow {
 }
 
 pub(crate) struct TranscriptPrepaintState {
+    #[cfg(test)]
+    geometry: Option<Vec<(Pixels, Pixels)>>,
     hitbox: Hitbox,
     rows: Vec<AnyElement>,
+    older_loading: Option<AnyElement>,
+    history_top: Option<ListOffset>,
+}
+
+impl TranscriptPrepaintState {
+    fn paint_rows(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+        timing: Option<&FrameTiming>,
+    ) {
+        let timing = timing.filter(|_| self.history_top.is_some());
+        if let Some(timing) = timing {
+            timing
+                .trace
+                .mark_at(SwitchPaintStage::ListLayout, timing.layout);
+            timing
+                .trace
+                .mark_at(SwitchPaintStage::Prepaint, timing.prepaint);
+            timing.trace.mark(SwitchPaintStage::Paint);
+        }
+        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+            let _timing = OperationTiming::new(OperationKind::TranscriptPaint, self.rows.len());
+            if let Some(loading) = &mut self.older_loading {
+                loading.paint(window, cx);
+            }
+            for row in &mut self.rows {
+                row.paint(window, cx);
+            }
+        });
+        if let Some(timing) = timing {
+            timing.trace.painted(timing.before_ack, self.rows.len());
+            #[cfg(test)]
+            if let Some(bounds) = self.geometry.take() {
+                timing.trace.record_frame(bounds);
+            }
+        }
+    }
 }
 
 impl Element for TranscriptList {
@@ -423,6 +624,9 @@ impl Element for TranscriptList {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        if let Some(timing) = &mut self.switch_trace {
+            timing.layout = Instant::now();
+        }
         let mut style = Style::default();
         style.size.width = relative(1.0).into();
         style.size.height = relative(1.0).into();
@@ -438,6 +642,9 @@ impl Element for TranscriptList {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
+        if let Some(timing) = &mut self.switch_trace {
+            timing.prepaint = Instant::now();
+        }
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         let (_, viewport_scrolled) = self.state.0.borrow_mut().begin_frame(bounds.size);
         let (anchor, handler, following_before_layout) = {
@@ -460,7 +667,29 @@ impl Element for TranscriptList {
         let overdraw = crate::app::ui::theme::theme().layout.transcript_overdraw;
         let mut frame_rows = BTreeMap::new();
 
+        let loading_boundary = self.state.0.borrow().loading_boundary;
+        let boundary = loading_boundary.unwrap_or(0);
         let (scroll_y, following_tail, visible_range) = loop {
+            if self.state.is_following_tail() {
+                let end = self.state.0.borrow().heights.len();
+                let mut start = end;
+                let mut remaining = bounds.size.height;
+                while start > boundary && remaining > px(0.) {
+                    start -= 1;
+                    let row = frame_rows
+                        .entry(start)
+                        .or_insert_with(|| self.layout_row(start, available, window, cx));
+                    self.state
+                        .0
+                        .borrow_mut()
+                        .heights
+                        .set_height(start, row.height);
+                    remaining -= row.height;
+                }
+                let mut state = self.state.0.borrow_mut();
+                state.scroll_y = state.maximum_scroll();
+                break (state.scroll_y, true, start..end);
+            }
             let needed = {
                 let state = self.state.0.borrow();
                 let visible = state.layout_range(px(0.0));
@@ -476,20 +705,7 @@ impl Element for TranscriptList {
             if !needed.is_empty() {
                 let rows = needed
                     .into_iter()
-                    .map(|index| {
-                        let mut element = (self.render_row)(index, window, cx);
-                        let _layout_timing =
-                            OperationTiming::new(OperationKind::TranscriptLayout, 1);
-                        let height = element
-                            .layout_as_root(available, window, cx)
-                            .height
-                            .max(theme().size(1.0));
-                        FrameRow {
-                            index,
-                            element,
-                            height,
-                        }
-                    })
+                    .map(|index| self.layout_row(index, available, window, cx))
                     .collect::<Vec<_>>();
                 let mut state = self.state.0.borrow_mut();
                 for row in rows {
@@ -513,9 +729,50 @@ impl Element for TranscriptList {
             }
         };
 
+        #[cfg(test)]
+        let mut geometry = self
+            .switch_trace
+            .as_ref()
+            .filter(|timing| timing.trace.recording_geometry())
+            .map(|_| Vec::with_capacity(visible_range.len()));
         let mut rows = Vec::with_capacity(visible_range.len());
-        let mut row_y =
-            bounds.top() + self.state.0.borrow().heights.prefix(visible_range.start) - scroll_y;
+        let mut row_y = if following_tail {
+            let mut top = bounds.bottom();
+            for index in visible_range.clone().rev() {
+                top -= frame_rows[&index].height;
+            }
+            if self.state.0.borrow().bottom_align {
+                top
+            } else {
+                top.min(bounds.top())
+            }
+        } else {
+            bounds.top() + self.state.0.borrow().heights.prefix(visible_range.start) - scroll_y
+        };
+        let gap = if visible_range.is_empty() {
+            bounds.size.height
+        } else {
+            (row_y - bounds.top()).min(bounds.size.height)
+        };
+        let older_loading = (loading_boundary.is_some() && gap > px(0.)).then(|| {
+            let mut label = super::loading_earlier(gap);
+            label.prepaint_as_root(
+                bounds.origin,
+                gpui::size(bounds.size.width.into(), gap.into()),
+                window,
+                cx,
+            );
+            label
+        });
+        let history_top = if visible_range.is_empty() {
+            let state = self.state.0.borrow();
+            (boundary < state.heights.len()).then(|| state.logical_scroll_top())
+        } else {
+            Some(ListOffset {
+                item_ix: visible_range.start,
+                offset_in_item: bounds.top() - row_y,
+            })
+        };
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             let _timing =
                 OperationTiming::new(OperationKind::TranscriptPrepaint, visible_range.len());
@@ -523,21 +780,36 @@ impl Element for TranscriptList {
                 let mut row = frame_rows
                     .remove(&index)
                     .expect("visible transcript rows must be laid out");
+                #[cfg(test)]
+                if let Some(geometry) = &mut geometry {
+                    geometry.push((row_y, row.height));
+                }
                 let origin = point(bounds.left(), row_y);
                 row.element.prepaint_at(origin, window, cx);
                 row_y += row.height;
                 rows.push(row.element);
             }
         });
+        let hitbox = if self.state.is_history_tail() {
+            window.insert_hitbox(bounds, HitboxBehavior::BlockMouse)
+        } else {
+            hitbox
+        };
 
-        // Restoration or resizing can reach the tail without queued scrolling.
         if (viewport_scrolled || following_tail != following_before_layout)
             && let Some(handler) = handler
         {
             handler.borrow_mut()(following_tail, window, cx);
         }
 
-        TranscriptPrepaintState { hitbox, rows }
+        TranscriptPrepaintState {
+            #[cfg(test)]
+            geometry,
+            older_loading,
+            hitbox,
+            rows,
+            history_top,
+        }
     }
 
     fn paint(
@@ -550,6 +822,7 @@ impl Element for TranscriptList {
         window: &mut Window,
         cx: &mut App,
     ) {
+        self.state.0.borrow_mut().painted_history_top = prepaint.history_top;
         let current_view = window.current_view();
         let hitbox_id = prepaint.hitbox.id;
         let state = self.state.clone();
@@ -565,16 +838,23 @@ impl Element for TranscriptList {
             );
         });
 
-        // Rich-text selection may focus its own handle. Keep the keyboard owner
-        // that held focus when the user started selecting transcript text.
+        if self.state.is_history_tail() {
+            let shield = prepaint.hitbox.id;
+            window.on_mouse_event(move |_: &MouseDownEvent, phase, window, cx| {
+                if phase == DispatchPhase::Capture && shield.is_hovered(window) {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                }
+            });
+            prepaint.paint_rows(bounds, window, cx, self.switch_trace.as_ref());
+            return;
+        }
         let focus_state = self.state.clone();
         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
             if phase != DispatchPhase::Capture || !bounds.contains(&event.position) {
                 return;
             }
             if event.button != MouseButton::Left {
-                // Context menus own focus explicitly; rich text must not take it
-                // through GPUI's default mouse-down focus on any button.
                 window.prevent_default();
                 return;
             }
@@ -598,7 +878,6 @@ impl Element for TranscriptList {
                 let jitter = !state.selection_moved;
                 drop(state);
                 if jitter {
-                    // Keep pointer jitter from turning a link click into a selection.
                     cx.stop_propagation();
                 }
             }
@@ -703,12 +982,7 @@ impl Element for TranscriptList {
             }
         });
 
-        window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            let _timing = OperationTiming::new(OperationKind::TranscriptPaint, prepaint.rows.len());
-            for row in &mut prepaint.rows {
-                row.paint(window, cx);
-            }
-        });
+        prepaint.paint_rows(bounds, window, cx, self.switch_trace.as_ref());
 
         if let Some(token) = self.state.0.borrow_mut().continue_selection_scroll() {
             request_scroll_frame(window, current_view, self.state.clone(), token);
@@ -717,8 +991,6 @@ impl Element for TranscriptList {
 }
 
 fn restore_selection_focus(focus: Option<gpui::FocusHandle>, window: &mut Window, cx: &mut App) {
-    // Base queues participant focus during bubbling. Queue the restoration
-    // again so it runs after that callback, even for double and triple clicks.
     window.defer(cx, move |window, cx| {
         window.defer(cx, move |window, cx| {
             if let Some(focus) = focus {

@@ -117,7 +117,6 @@ impl RuntimeOwner {
         if rollback {
             self.rollback_pending_prompt();
         }
-        // A failed receipt write must keep its delivery proof after current work ends.
         if let Some(prompt) = self.pending_prompt.take()
             && prompt.delivered()
             && prompt.outbox_id.is_some()

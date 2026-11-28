@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, Context, FocusHandle, IntoElement as _, ParentElement as _, Styled as _,
-    WeakEntity, div, prelude::FluentBuilder as _,
+    AnyElement, Context, FocusHandle, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
 
 use super::{
@@ -8,6 +8,7 @@ use super::{
     keybindings,
 };
 use crate::app::ui::{
+    accessibility::cached_panel,
     assets::AppIcon,
     primitives::{ButtonTone, icon_button, modal},
     theme::theme,
@@ -20,12 +21,13 @@ impl FarcasterApp {
         entity: WeakEntity<Self>,
         picker: Option<AnyElement>,
         work_active: bool,
+        accessibility_active: bool,
         cx: &Context<Self>,
     ) -> gpui::Div {
         if self.modal_rendered_in_native_window() {
             return root;
         }
-        self.render_overlay_contents(root, entity, picker, work_active, cx)
+        self.render_overlay_contents(root, entity, picker, work_active, accessibility_active, cx)
     }
 
     pub(in crate::app::views) fn render_overlay_contents(
@@ -34,6 +36,7 @@ impl FarcasterApp {
         entity: WeakEntity<Self>,
         picker: Option<AnyElement>,
         work_active: bool,
+        accessibility_active: bool,
         cx: &Context<Self>,
     ) -> gpui::Div {
         let has_notices = self.has_floating_notices() && !self.notices_render_in_native_window();
@@ -44,11 +47,7 @@ impl FarcasterApp {
                 "Sessions",
                 &self.overlays.sheet_focus,
                 entity.clone(),
-                self.views
-                    .session_rail
-                    .clone()
-                    .cached(gpui::StyleRefinement::default().size_full())
-                    .into_any_element(),
+                cached_panel(self.views.session_rail.clone(), accessibility_active),
             )
         });
         let run_sheet = self.overlays.view.run.then(|| {
@@ -57,11 +56,7 @@ impl FarcasterApp {
             let content = if inspecting {
                 self.views.workgraph_detail.clone().into_any_element()
             } else {
-                self.views
-                    .run_panel
-                    .clone()
-                    .cached(gpui::StyleRefinement::default().size_full())
-                    .into_any_element()
+                cached_panel(self.views.run_panel.clone(), accessibility_active)
             };
             panel_sheet(
                 "run",
@@ -95,16 +90,17 @@ impl FarcasterApp {
                         let close = entity.clone();
                         surface
                             .relative()
+                            .debug_selector(|| "project-plan-dialog".into())
                             .w(gpui::px(crate::app::views::workgraph::BOARD_WIDTH))
                             .max_w_full()
-                            .h(theme().size(620.0))
+                            .h(theme().size(crate::app::views::workgraph::BOARD_HEIGHT))
                             .max_h(gpui::relative(1.0))
                             .overflow_hidden()
                             .child(self.views.workgraph.clone())
                             .child(
                                 div()
                                     .absolute()
-                                    .top(theme().size(12.0))
+                                    .top(theme().space.md)
                                     .right(theme().space.md)
                                     .child(icon_button(
                                         "close-project-work",
@@ -178,6 +174,10 @@ impl FarcasterApp {
                     entity.clone(),
                 ))
             })
+            .when_some(
+                dialogs::command_detail::render(self, entity.clone()),
+                |root, detail| root.child(detail),
+            )
             .when_some(
                 dialogs::image_preview::render(self, entity.clone()),
                 |root, preview| root.child(preview),

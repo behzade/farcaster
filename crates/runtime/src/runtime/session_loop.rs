@@ -25,6 +25,7 @@ pub(super) fn run(
         process_command,
         process: None,
         idle_retirement: Default::default(),
+        live_transcript: None,
         snapshot: RuntimeSnapshot {
             status: "Done".into(),
             project,
@@ -47,10 +48,12 @@ pub(super) fn run(
         document_refresh_generation: None,
         pending_document_refresh: None,
         active_session: None,
+        unbound_prompt_draft: None,
         forked_from: None,
         parked_snapshot: None,
         queued_prompts: VecDeque::new(),
         saved_prompts: VecDeque::new(),
+        backend_activity: Default::default(),
         normal_prompt_in_flight: false,
         pending_session_controls: PendingSessionControls::default(),
         access_mode_changes: AccessModeChangeState::default(),
@@ -79,7 +82,7 @@ pub(super) fn run(
             owner.publish();
         }
         while let Ok(result) = history_rx.try_recv() {
-            owner.apply_history(result);
+            owner.apply_history_update(result);
         }
         while let Ok(result) = owner.title_generation.receiver.try_recv() {
             owner.apply_generated_session_title(result);
@@ -113,10 +116,25 @@ pub(super) fn run(
             .then(|| owner.access_mode_changes.next_deadline())
             .flatten();
         owner.poll_idle_retirement(now, false);
-        let next_deadline = [stream_publish_due, access_mode_change_due]
-            .into_iter()
-            .flatten()
-            .min();
+        if owner
+            .live_transcript
+            .as_ref()
+            .and_then(live_transcript::LiveTranscript::deadline)
+            .is_some_and(|when| now >= when)
+        {
+            owner.flush_live_transcript();
+        }
+        let next_deadline = [
+            stream_publish_due,
+            access_mode_change_due,
+            owner
+                .live_transcript
+                .as_ref()
+                .and_then(live_transcript::LiveTranscript::deadline),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
         match super::command_queue::receive_command(&command_rx, &mut pending_command) {
             Ok(RuntimeCommand::Shutdown) => running = false,
             Ok(command) => owner.apply_command(command),
@@ -132,6 +150,7 @@ pub(super) fn run(
             Err(mpsc::TryRecvError::Disconnected) => running = false,
         }
     }
+    owner.flush_live_transcript();
     let close_result = close_process(
         owner
             .process

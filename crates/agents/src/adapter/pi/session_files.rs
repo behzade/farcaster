@@ -3,7 +3,7 @@ use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap, HashSet, VecDeque},
     fs::{self, File},
-    io::{BufRead as _, BufReader, Read as _},
+    io::{BufRead as _, BufReader, Read, Seek as _, SeekFrom},
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
     time::SystemTime,
@@ -41,6 +41,8 @@ const MAX_DEPTH: usize = 6;
 const MAX_LINES_PER_FILE: usize = 10_000;
 const MAX_SEARCH_BYTES: usize = 64 * 1024;
 const MAX_HEADER_BYTES: usize = 64 * 1024;
+const MAX_PREVIEW_BYTES: usize = 128 * 1024;
+const MAX_PREVIEW_MESSAGES: usize = 64;
 
 pub fn configured_session_root() -> Result<PathBuf, String> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
@@ -119,7 +121,125 @@ pub fn discover(query: &str) -> Result<SessionDiscovery, String> {
 
 pub fn load_history(path: &Path) -> Result<LoadedHistory, String> {
     let file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
-    let mut reader = BufReader::new(file);
+    read_history(path, file)
+}
+
+pub(super) fn load_history_with_preview(
+    path: &Path,
+    preview: &mut dyn FnMut(crate::HistoryPage),
+) -> Result<LoadedHistory, String> {
+    let mut file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
+    let Ok(metadata) = file.metadata() else {
+        return read_history(path, file);
+    };
+    let len = metadata.len();
+    if !metadata.is_file() || len == 0 {
+        return read_history(path, file);
+    }
+    let start = len.saturating_sub(MAX_PREVIEW_BYTES as u64);
+    let mut bytes = vec![0; (len - start) as usize];
+    if file.seek(SeekFrom::Start(start)).is_err()
+        || file.read_exact(&mut bytes).is_err()
+        || file.rewind().is_err()
+    {
+        return load_history(path);
+    }
+    let frames = if start == 0 {
+        bytes.as_slice()
+    } else {
+        bytes
+            .iter()
+            .position(|&byte| byte == b'\n')
+            .map_or(&[][..], |end| &bytes[end + 1..])
+    };
+    if let Some(page) = recent_messages(frames, start == 0) {
+        preview(page);
+    }
+    read_history(path, file.take(start).chain(bytes.as_slice()))
+}
+
+fn recent_messages(frames: &[u8], whole_file: bool) -> Option<crate::HistoryPage> {
+    let mut entries = Vec::new();
+    for line in frames.split(|byte| *byte == b'\n') {
+        if line.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        if let Some(entry) = parse_history_entry(line).ok()? {
+            entries.push(entry);
+        }
+    }
+    // For an ID-linked leaf, the last occurrence of each ID in this window also
+    // wins in the full file. An ancestor outside the window ends the known suffix.
+    let branch = active_branch_indices(&entries);
+    if pending_question_from_branch(branch.iter().map(|&index| &entries[index])).is_some() {
+        return None;
+    }
+    let mut messages = branch
+        .into_iter()
+        .rev()
+        .filter_map(|index| take_entry_message(&mut entries[index]))
+        .take(MAX_PREVIEW_MESSAGES + 1)
+        .collect::<Vec<_>>();
+    if messages.is_empty() {
+        return None;
+    }
+    if whole_file && messages.len() <= MAX_PREVIEW_MESSAGES {
+        messages.reverse();
+        return Some(crate::HistoryPage {
+            content: messages,
+            coverage: crate::HistoryCoverage::Complete,
+        });
+    }
+    messages.truncate(MAX_PREVIEW_MESSAGES);
+    messages.reverse();
+
+    let mut calls = HashSet::new();
+    let mut start = None;
+    for (index, message) in messages.iter().enumerate() {
+        if start.is_none() {
+            if message["role"] == "user" && !message["submissionId"].is_string() {
+                start = Some(index);
+            }
+            continue;
+        }
+        match message.get("role").and_then(Value::as_str) {
+            Some("assistant") => {
+                for block in message["content"].as_array().into_iter().flatten() {
+                    if block["type"] == "toolCall"
+                        && let Some(id) = block["id"].as_str()
+                    {
+                        calls.insert(id);
+                    }
+                }
+            }
+            Some("toolResult")
+                if message["toolCallId"]
+                    .as_str()
+                    .is_some_and(|id| !calls.contains(id)) =>
+            {
+                start = None;
+                calls.clear();
+            }
+            Some("user") if message["submissionId"].is_string() => {
+                start = None;
+                calls.clear();
+            }
+            _ => {}
+        }
+    }
+    Some(crate::HistoryPage {
+        content: messages.split_off(start?),
+        coverage: crate::HistoryCoverage::Suffix,
+    })
+}
+
+fn parse_history_entry(line: &[u8]) -> serde_json::Result<Option<Value>> {
+    let entry: Value = serde_json::from_slice(line)?;
+    Ok((entry.get("type").and_then(Value::as_str) != Some("session")).then_some(entry))
+}
+
+fn read_history(path: &Path, input: impl Read) -> Result<LoadedHistory, String> {
+    let mut reader = BufReader::new(input);
     let mut line = Vec::new();
     let mut entries = Vec::new();
     loop {
@@ -132,24 +252,30 @@ pub fn load_history(path: &Path) -> Result<LoadedHistory, String> {
             break;
         }
         trim_frame(&mut line);
-        if let Ok(entry) = serde_json::from_slice::<Value>(&line)
-            && entry.get("type").and_then(Value::as_str) != Some("session")
-        {
+        if let Ok(Some(entry)) = parse_history_entry(&line) {
             entries.push(entry);
         }
     }
-    let branch = active_branch_entries(&entries);
-    let (model, thinking_level) = session_settings(&branch);
+    let branch = active_branch_indices(&entries);
+    let branch_entries = branch.iter().map(|&index| &entries[index]);
+    let (model, thinking_level) = session_settings(branch_entries.clone());
+    let pending_question = pending_question_from_branch(branch_entries);
+    let messages = branch
+        .into_iter()
+        .filter_map(|index| take_entry_message(&mut entries[index]))
+        .collect::<Vec<_>>();
     Ok(LoadedHistory {
-        messages: project_display_history_from_branch(&branch).into(),
+        messages: messages.into(),
         model,
         thinking_level: Some(thinking_level),
-        pending_question: pending_question_from_branch(&branch),
+        pending_question,
         prompt_deliveries: None,
     })
 }
 
-fn session_settings(branch: &[&Value]) -> (Option<(String, String)>, String) {
+fn session_settings<'a>(
+    branch: impl Iterator<Item = &'a Value>,
+) -> (Option<(String, String)>, String) {
     let mut model = None;
     let mut thinking_level = "off".to_owned();
     for entry in branch {
@@ -194,10 +320,12 @@ fn is_application_exit(entry: &Value) -> bool {
     )
 }
 
-fn pending_question_from_branch(branch: &[&Value]) -> Option<RestoredQuestion> {
+fn pending_question_from_branch<'a>(
+    branch: impl DoubleEndedIterator<Item = &'a Value>,
+) -> Option<RestoredQuestion> {
     let mut answered = HashSet::new();
     let mut application_exited = false;
-    for entry in branch.iter().rev() {
+    for entry in branch.rev() {
         if entry.get("type").and_then(Value::as_str) == Some("custom_message")
             && is_application_exit(entry)
         {
@@ -277,89 +405,85 @@ fn pending_question_from_branch(branch: &[&Value]) -> Option<RestoredQuestion> {
 }
 
 pub fn project_display_history(entries: &[Value]) -> Vec<Value> {
-    project_display_history_from_branch(&active_branch_entries(entries))
-}
-
-fn project_display_history_from_branch(branch: &[&Value]) -> Vec<Value> {
-    branch
-        .iter()
-        .filter_map(|entry| entry_message(entry))
+    active_branch_indices(entries)
+        .into_iter()
+        .filter_map(|index| {
+            let entry = &entries[index];
+            entry_message(entry.get("type")?.as_str()?, |key| entry.get(key).cloned())
+        })
         .collect()
 }
 
-fn active_branch_entries(entries: &[Value]) -> Vec<&Value> {
+fn active_branch_indices(entries: &[Value]) -> Vec<usize> {
+    let Some(mut current) = entries.len().checked_sub(1) else {
+        return Vec::new();
+    };
+    if entries[current].get("id").and_then(Value::as_str).is_none() {
+        return (0..entries.len()).collect();
+    }
     let by_id = entries
         .iter()
-        .filter_map(|entry| {
+        .enumerate()
+        .filter_map(|(index, entry)| {
             entry
                 .get("id")
                 .and_then(Value::as_str)
-                .map(|id| (id, entry))
+                .map(|id| (id, index))
         })
         .collect::<HashMap<_, _>>();
-    let Some(mut current) = entries.last() else {
-        return Vec::new();
-    };
-    if current.get("id").and_then(Value::as_str).is_none() {
-        return entries.iter().collect();
-    }
     let mut branch = Vec::new();
     let mut seen = HashSet::new();
-    while let Some(id) = current.get("id").and_then(Value::as_str) {
+    while let Some(id) = entries[current].get("id").and_then(Value::as_str) {
         if !seen.insert(id) {
             break;
         }
         branch.push(current);
-        let Some(parent) = current.get("parentId").and_then(Value::as_str) else {
+        let Some(parent) = entries[current].get("parentId").and_then(Value::as_str) else {
             break;
         };
-        let Some(entry) = by_id.get(parent) else {
+        let Some(&index) = by_id.get(parent) else {
             break;
         };
-        current = entry;
+        current = index;
     }
     branch.reverse();
     branch
 }
 
-fn entry_message(entry: &Value) -> Option<Value> {
-    match entry.get("type").and_then(Value::as_str)? {
+fn take_entry_message(entry: &mut Value) -> Option<Value> {
+    let kind = entry.get_mut("type")?.take();
+    entry_message(kind.as_str()?, |key| entry.get_mut(key).map(Value::take))
+}
+
+fn entry_message(kind: &str, mut field: impl FnMut(&str) -> Option<Value>) -> Option<Value> {
+    let mut message = match kind {
         "message" => {
-            let mut message = entry.get("message").cloned()?;
+            let mut message = field("message")?;
             crate::annotate_history_message(Backend::Pi, &mut message);
             Some(message)
         }
         "custom_message" => Some(json_object([
             ("role", Value::String("custom".into())),
-            (
-                "customType",
-                entry.get("customType").cloned().unwrap_or(Value::Null),
-            ),
-            (
-                "content",
-                entry.get("content").cloned().unwrap_or(Value::Null),
-            ),
-            (
-                "display",
-                entry.get("display").cloned().unwrap_or(Value::Bool(true)),
-            ),
+            ("customType", field("customType").unwrap_or(Value::Null)),
+            ("content", field("content").unwrap_or(Value::Null)),
+            ("display", field("display").unwrap_or(Value::Bool(true))),
         ])),
         "branch_summary" => Some(json_object([
             ("role", Value::String("branchSummary".into())),
-            (
-                "summary",
-                entry.get("summary").cloned().unwrap_or(Value::Null),
-            ),
+            ("summary", field("summary").unwrap_or(Value::Null)),
         ])),
         "compaction" => Some(json_object([
             ("role", Value::String("compactionSummary".into())),
-            (
-                "summary",
-                entry.get("summary").cloned().unwrap_or(Value::Null),
-            ),
+            ("summary", field("summary").unwrap_or(Value::Null)),
         ])),
         _ => None,
+    }?;
+    if let Some(id @ Value::String(_)) = field("id")
+        && message.is_object()
+    {
+        message["nativeMessageId"] = id;
     }
+    Some(message)
 }
 
 fn json_object<const N: usize>(fields: [(&str, Value); N]) -> Value {
@@ -545,6 +669,20 @@ fn discover_in_cached(
     })
 }
 
+pub(super) fn worker_status(path: &Path) -> Option<crate::WorkerStatus> {
+    use farcaster_sessions::activity::{AgentLifecycle, AgentOutcome};
+    let (_, activity) = parse_candidate(path).ok()??;
+    if activity.limited || !activity.explicit_outcome {
+        return None;
+    }
+    match activity.lifecycle {
+        AgentLifecycle::Completed(AgentOutcome::Complete) => Some(crate::WorkerStatus::Idle),
+        AgentLifecycle::Completed(AgentOutcome::Failed) => Some(crate::WorkerStatus::Failed),
+        AgentLifecycle::Completed(AgentOutcome::Incomplete) => Some(crate::WorkerStatus::Stopped),
+        _ => None,
+    }
+}
+
 fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)>, String> {
     farcaster_sessions::count_parse();
     let file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
@@ -686,9 +824,10 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
     append_bounded(&mut search, &title);
     append_bounded(&mut search, &project.to_string_lossy());
     let session_path = normalize_session_path(path);
-    let branch_entries = active_branch_entries(&activity_entries);
-    let (model, thinking_level) = session_settings(&branch_entries);
-    for entry in &branch_entries {
+    let branch = active_branch_indices(&activity_entries);
+    let branch_entries = branch.iter().map(|&index| &activity_entries[index]);
+    let (model, thinking_level) = session_settings(branch_entries.clone());
+    for entry in branch_entries {
         activity.observe_entry(entry);
     }
     let mut activity = activity.finish(
@@ -712,8 +851,11 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
     }
     Ok(Some((
         SessionSummary {
+            has_local_transcript: false,
             id,
+            draft_id: None,
             app_session_id: 0,
+            worker_profile: None,
             harness: Backend::Pi,
             profile_id: None,
             path: session_path,

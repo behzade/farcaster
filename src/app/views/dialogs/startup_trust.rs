@@ -27,7 +27,7 @@ pub(crate) struct ProjectTrustView {
     app: Option<Entity<FarcasterApp>>,
     notification_app: Rc<RefCell<Option<WeakEntity<FarcasterApp>>>>,
     workgraph_updates: async_channel::Receiver<()>,
-    worker_updates: async_channel::Receiver<()>,
+    worker_updates: async_channel::Receiver<crate::agents::WorkerPoolUpdate>,
     notice_board: crate::app::mcp_server::NoticeBoard,
     focus: FocusHandle,
     error: Option<String>,
@@ -41,7 +41,7 @@ impl ProjectTrustView {
         startup_trust: StartupTrust,
         notification_app: Rc<RefCell<Option<WeakEntity<FarcasterApp>>>>,
         workgraph_updates: async_channel::Receiver<()>,
-        worker_updates: async_channel::Receiver<()>,
+        worker_updates: async_channel::Receiver<crate::agents::WorkerPoolUpdate>,
         notice_board: crate::app::mcp_server::NoticeBoard,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -185,9 +185,8 @@ impl Render for ProjectTrustView {
                     .flex()
                     .flex_col()
                     .gap(theme().space.md)
-                    .rounded(theme().radius)
-                    .border(theme().border)
-                    .border_color(theme().colors.border)
+                    .rounded(crate::app::ui::primitives::surface_radius())
+                    .shadow(crate::app::ui::primitives::surface_shadow())
                     .bg(theme().colors.panel)
                     .p(theme().space.md)
                     .child(

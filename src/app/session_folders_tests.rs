@@ -162,7 +162,13 @@ fn folder_deletion_takes_its_chats_drafts_and_subagent_families() {
         draft("other-draft", 21, "/other"),
     ];
 
-    let deletion = folder_deletion(&sessions, &drafts, &folders, work_folder);
+    let deletion = folder_deletion(
+        &sessions,
+        &drafts,
+        &folders,
+        &Default::default(),
+        work_folder,
+    );
 
     assert_eq!(
         deletion.roots,
@@ -190,4 +196,47 @@ fn move_menu_marks_archive_as_current_without_losing_saved_folder() {
     assert_eq!(folders.folder_for(10), Some(1));
     folders.assign(10, None);
     assert_eq!(folders.destination(10, false), FolderDestination::Active);
+}
+
+#[gpui::test]
+fn confirmed_folder_delete_removes_a_draft_before_its_save_receipt(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::confirmed_folder_delete_removes_a_draft_before_its_save_receipt"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let id = cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions.folders.create("New folder".into(), None);
+                    let folder = app.sessions.folders.folders.last().unwrap().id;
+                    app.new_session_with_folder(project.to_owned(), Some(folder), window, cx);
+                    let id = app.sessions.selected_draft.clone().unwrap();
+                    assert_eq!(app.sessions.pending_folder_drafts.get(&id), Some(&folder));
+                    app.request_folder_delete(folder, window, cx);
+                    app.stop_and_delete_pending_session(window, cx);
+                    assert!(!app.sessions.pending_folder_drafts.contains_key(&id));
+                    assert!(!app.sessions.drafts.iter().any(|draft| draft.id == id));
+                    assert!(
+                        !app.sessions
+                            .folders
+                            .folders
+                            .iter()
+                            .any(|item| item.id == folder)
+                    );
+                    futures::executor::block_on(app.sessions.writer.flush()).unwrap();
+                    id
+                })
+            });
+            cx.run_until_parked();
+            let persisted = crate::app::persistence::open()
+                .unwrap()
+                .load_drafts()
+                .unwrap();
+            assert!(!persisted.iter().any(|draft| draft.id == id));
+            assert!(!std::iter::from_fn(|| runtime.try_recv_command()).any(|command|
+                matches!(command, crate::runtime::RuntimeCommand::NewSession { id: started, .. } if started == id)));
+        },
+    );
 }

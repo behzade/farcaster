@@ -31,6 +31,8 @@ impl FarcasterApp {
         &self,
         entity: WeakEntity<Self>,
         suggestion_selection: usize,
+        completions_dismissed: bool,
+        suggestion_scroll: &gpui::ScrollHandle,
         footer_scroll: &gpui::ScrollHandle,
         status_scroll: &gpui::ScrollHandle,
         mode: Option<&str>,
@@ -60,22 +62,23 @@ impl FarcasterApp {
         let composer = self.composer.input.read(cx);
         let composer_text = composer.value().to_string();
         let composer_cursor = composer.cursor().min(composer_text.len());
-        let composer_value = composer_text.trim().to_owned();
+        let composer_value = composer_text.trim();
+        let composer_prefix = &composer_text[..composer_cursor];
         let command_suggestions = slash_commands::suggestions_for_harness(
-            composer_text.trim_start(),
+            composer_prefix.trim_start(),
             &self.snapshot.commands,
             self.active_harness(),
         )
         .into_iter()
         .chain(user_invocations::suggestions(
-            &composer_text[..composer_cursor],
+            composer_prefix,
             &self.snapshot.commands,
         ))
         .take(8)
         .collect::<Vec<_>>();
         let command_suggestion_count = command_suggestions.len();
         let exact_command = slash_commands::is_exact_for_harness(
-            &composer_value,
+            composer_value,
             &self.snapshot.commands,
             self.active_harness(),
         );
@@ -85,10 +88,7 @@ impl FarcasterApp {
             exact_command,
             self.snapshot.conversation.running,
         );
-        let mention_query = file_mentions::query_at_cursor(
-            &self.composer.input.read(cx).value(),
-            self.composer.input.read(cx).cursor(),
-        );
+        let mention_query = file_mentions::query_at_cursor(&composer_text, composer_cursor);
         let file_suggestions = mention_query
             .as_ref()
             .map(|query| file_mentions::matches(&self.composer.project_files, &query.text))
@@ -103,12 +103,64 @@ impl FarcasterApp {
         } else {
             file_suggestions.len()
         };
+        let invocation_query = user_invocations::invocation_query(composer_prefix);
+        let slash_query = composer_prefix
+            .trim_start()
+            .strip_prefix('/')
+            .filter(|query| !query.chars().any(char::is_whitespace));
+        let completion_open = focused
+            && !completions_dismissed
+            && (mention_query.is_some() || invocation_query.is_some() || slash_query.is_some());
+        let suggestion_count = if completion_open { suggestion_count } else { 0 };
+        let popup = completion_open.then(|| {
+            let is_file = mention_query.is_some();
+            let (title, query, empty) = if let Some(query) = &mention_query {
+                (
+                    "Files",
+                    query.text.clone(),
+                    self.composer
+                        .project_files_error
+                        .clone()
+                        .unwrap_or_else(|| "No matching files".into()),
+                )
+            } else if let Some(query) = invocation_query {
+                (
+                    "Skills & prompts",
+                    query.to_owned(),
+                    "No matching skills or prompts".into(),
+                )
+            } else {
+                (
+                    "Commands",
+                    slash_query.unwrap_or_default().to_owned(),
+                    if self.snapshot.commands.is_empty() {
+                        "Commands aren't available for this session".into()
+                    } else {
+                        "No matching commands".into()
+                    },
+                )
+            };
+            suggestions::CompletionMenu {
+                files: mention_query.map(|query| (query, file_suggestions)),
+                commands: command_suggestions,
+                query,
+                title,
+                empty,
+                selected: if is_file {
+                    mention_selection
+                } else {
+                    command_selection
+                },
+                scroll: suggestion_scroll.clone(),
+                app: entity.clone(),
+            }
+        });
         let actions = self.render_composer_actions(entity.clone(), primary_action);
         let input = editor::ComposerInput::new(
             self.composer.input.clone(),
             entity.clone(),
             suggestion_count,
-            actions,
+            popup,
         );
 
         let composer_focus = self.composer.focus.clone();
@@ -120,10 +172,12 @@ impl FarcasterApp {
             .flex_none()
             .flex()
             .flex_col()
-            .rounded(theme().radius)
+            .p(theme().space.sm)
+            .rounded(crate::app::ui::primitives::surface_radius())
             .border(theme().border)
-            .border_color(composer_border_color(focused))
+            .border_color(gpui::rgba(0x00000000))
             .bg(theme().colors.composer)
+            .shadow(crate::app::ui::primitives::surface_shadow())
             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                 if !window.default_prevented() {
                     composer_focus.focus(window, cx);
@@ -137,45 +191,24 @@ impl FarcasterApp {
                     .min_h_0()
                     .flex()
                     .flex_col()
-                    .p(theme().space.sm)
+                    .pb(theme().space.sm)
                     .when_some(widgets_above, |composer, widgets| composer.child(widgets))
                     .when_some(
                         attachments::render(self, entity.clone()),
                         |composer, attachments| composer.child(attachments),
-                    )
-                    .when(!command_suggestions.is_empty(), |composer| {
-                        composer.child(suggestions::CommandMenu::new(
-                            command_suggestions,
-                            command_selection,
-                            entity.clone(),
-                        ))
-                    })
-                    .when_some(
-                        mention_query.filter(|_| !file_suggestions.is_empty()),
-                        |composer, query| {
-                            composer.child(suggestions::FileMentionMenu::new(
-                                file_suggestions,
-                                mention_selection,
-                                query,
-                                entity.clone(),
-                            ))
-                        },
                     )
                     .child(input)
                     .when_some(widgets_below, |composer, widgets| composer.child(widgets)),
             )
             .child(
                 div()
-                    .h(theme().size(36.0))
+                    .h(theme().controls.icon_button)
                     .flex_none()
                     .flex()
                     .items_center()
-                    .px(theme().space.md)
-                    .border_t(theme().border)
-                    .border_color(theme().colors.surface)
-                    .bg(theme().colors.panel)
-                    .rounded_b(theme().radius)
-                    .child(self.render_composer_controls(entity.clone(), footer_scroll)),
+                    .gap(theme().space.sm)
+                    .child(self.render_composer_controls(entity.clone(), footer_scroll))
+                    .child(actions),
             );
 
         div()
@@ -185,10 +218,8 @@ impl FarcasterApp {
             .flex()
             .flex_col()
             .when_some(
-                queue::render(
-                    self.composer_queue(),
-                    crate::app::composer::queue::action_handler(entity.clone()),
-                ),
+                self.composer_queue(entity.clone())
+                    .and_then(|(queue, on_action)| queue::render(queue, on_action)),
                 |composer, queue| composer.child(queue),
             )
             .when(
@@ -221,28 +252,41 @@ impl FarcasterApp {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ComposerAction {
+    Send,
+    Steer,
+    Stop,
+    Run,
+}
+
 pub(super) fn composer_primary_action(
     has_content: bool,
     can_submit: bool,
     exact_command: bool,
     running: bool,
-) -> Option<&'static str> {
-    if !has_content || !can_submit {
+) -> Option<ComposerAction> {
+    if !can_submit {
         return None;
     }
-    Some(if exact_command {
-        "Run"
-    } else if running {
-        "Steer"
+    if !has_content {
+        return running.then_some(ComposerAction::Stop);
+    }
+    Some(if running {
+        ComposerAction::Steer
+    } else if exact_command {
+        ComposerAction::Run
     } else {
-        "Send"
+        ComposerAction::Send
     })
 }
 
 fn composer_border_color(focused: bool) -> gpui::Rgba {
     if focused {
-        theme().colors.focus_border
+        let mut color = theme().colors.focus_border;
+        color.a *= 0.6;
+        color
     } else {
-        theme().colors.border
+        gpui::rgba(0x00000000)
     }
 }

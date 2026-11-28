@@ -1,8 +1,9 @@
+use crate::app::ui::primitives::Input;
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _, Styled as _,
     WeakEntity, div,
 };
-use gpui_component::input::{Enter, Input, InputState};
+use gpui_component::input::{Enter, InputState};
 
 use super::selectable_dialog_text;
 use crate::{

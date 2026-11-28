@@ -35,7 +35,6 @@ pub(super) fn configure_input(
             .map_err(|error| error.to_string())?;
     }
     if modal {
-        // Override-redirect windows bypass the WM's normal focus policy.
         connection
             .set_input_focus(InputFocus::PARENT, window, x11rb::CURRENT_TIME)
             .map_err(|error| error.to_string())?

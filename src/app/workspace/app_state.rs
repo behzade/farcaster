@@ -46,14 +46,16 @@ pub(in crate::app) enum SettingsTab {
     Workers,
     Appearance,
     Connections,
+    Accounts,
 }
 
 impl SettingsTab {
-    pub(in crate::app) const ALL: [Self; 4] = [
+    pub(in crate::app) const ALL: [Self; 5] = [
         Self::General,
         Self::Workers,
         Self::Appearance,
         Self::Connections,
+        Self::Accounts,
     ];
 
     pub(in crate::app) fn label(self) -> &'static str {
@@ -62,13 +64,14 @@ impl SettingsTab {
             Self::Workers => "Workers",
             Self::Appearance => "Appearance",
             Self::Connections => "Connections",
+            Self::Accounts => "Accounts",
         }
     }
 }
 
 pub(in crate::app) struct SettingsState {
     pub(in crate::app) tab: SettingsTab,
-    pub(in crate::app) tab_focus: [FocusHandle; 4],
+    pub(in crate::app) tab_focus: [FocusHandle; 5],
     pub(in crate::app) adding_harness_profile: bool,
     pub(in crate::app) harness_form_focus: FocusHandle,
     pub(in crate::app) theme_editor_focus: FocusHandle,

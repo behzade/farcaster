@@ -1,10 +1,18 @@
 use super::*;
 
 #[test]
-fn native_aliases_map_to_canonical_methods() {
+fn native_methods_and_aliases_map_to_canonical_methods() {
     for (native, expected) in [
         ("execCommandApproval", CodexMethod::CommandApproval),
         ("applyPatchApproval", CodexMethod::FileChangeApproval),
+        (
+            "turn/moderationMetadata",
+            CodexMethod::TurnModerationMetadata,
+        ),
+        (
+            "thread/readState/changed",
+            CodexMethod::ThreadReadStateChanged,
+        ),
         (
             "item/reasoning/summaryTextDelta",
             CodexMethod::ReasoningTextDelta,
@@ -26,6 +34,8 @@ fn methods_expose_dispatch_tier_and_request_kind() {
         ("account/rateLimits/updated", Telemetry),
         ("warning", Global),
         ("configWarning", Global),
+        ("account/updated", Global),
+        ("deprecationNotice", Global),
         ("remoteControl/status/changed", Global),
         ("thread/started", Thread),
         ("turn/started", Thread),

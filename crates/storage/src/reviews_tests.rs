@@ -2,6 +2,81 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn first_caller_registration_and_resume_keep_the_submitted_draft_id() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let project = sessions::normalize_session_path(temp.path());
+    let database = project.join("state.sqlite3");
+    let mut reader = StateStore::open_at(&database)?;
+    let store = SharedStateStore::open_at(&database)?;
+    let mut draft = DraftSession::fresh(Some(Backend::Codex), project.clone());
+    draft.submitted = true;
+    let app_id = reader.save_draft_with_identity(draft.clone())?;
+    let sibling = DraftSession::fresh(Some(Backend::Codex), project.clone());
+    reader.save_draft_with_identity(sibling.clone())?;
+    let registry = agents::CallerRegistry::default();
+    registry.set_execution_sinks(
+        Some(Arc::new(move |caller, family| {
+            Ok(store
+                .with(|s| s.register_caller_session(caller, family))
+                .expect("register the main session caller"))
+        })),
+        None,
+    );
+    let issue = |start| {
+        registry.issue_main_session(
+            &agents::AgentLaunchConfig::default(),
+            &agents::SessionLaunch {
+                harness: Backend::Codex,
+                project: project.clone(),
+                start,
+                session_id: None,
+                wake: None,
+                service_tier: None,
+            },
+        )
+    };
+    let root = issue(agents::SessionStart::New(Some(draft.id.clone())));
+    let locators = project
+        .join("session-locators")
+        .join(Backend::Codex.as_str());
+    let path = locators.join("first");
+    root.bind_with_locator("first", Some(path.clone()));
+    let rows = reader.cached_sessions("")?;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].app_session_id, app_id.get());
+    assert_eq!(rows[0].id, "first");
+    assert_eq!(reader.draft_session_target(&sibling.id)?, None);
+    let bound = registry.resolve(root.token())?;
+    assert_eq!(bound.app_session_id, Some(app_id));
+    assert!(bound.prompt_draft.is_none());
+
+    drop(root);
+    let saved = reader
+        .draft_session_target(&draft.id)?
+        .expect("registered during launch");
+    assert_eq!(saved.path, path);
+    assert_eq!(saved.id, "first");
+    let resumed = issue(agents::SessionStart::Resume(saved.path.clone()));
+    resumed.bind_with_locator(saved.id, Some(saved.path));
+    assert_eq!(
+        registry.resolve(resumed.token())?.app_session_id,
+        Some(app_id)
+    );
+
+    let mut collision = bound;
+    collision.app_session_id = None;
+    collision.prompt_draft = Some(sibling.id.clone());
+    assert!(reader.register_caller_session(&collision, None).is_err());
+    assert!(reader.draft_session_target(&sibling.id)?.is_none());
+    collision.prompt_draft = Some(draft.id.clone());
+    collision.session = "other".into();
+    collision.session_locator = Some(locators.join("other"));
+    assert!(reader.register_caller_session(&collision, None).is_err());
+    assert_eq!(reader.cached_sessions("")?, rows);
+    Ok(())
+}
+
+#[test]
 fn caller_binding_publishes_child_and_family_together() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let project = crate::sessions::normalize_session_path(temp.path());
@@ -17,8 +92,6 @@ fn caller_binding_publishes_child_and_family_together() -> Result<(), String> {
         Some(Arc::new(move |caller, family| {
             let id = registrations.with(|store| store.register_caller_session(caller, family))?;
             if caller.parent_worker_id.is_some() {
-                // Read as soon as registration returns, before any later family
-                // callback could hide an incorrectly published root.
                 let rows = catalog.with(|store| store.cached_sessions(""))?;
                 during_registration.lock().expect("capture").push(rows);
             }
@@ -90,7 +163,6 @@ fn caller_binding_publishes_child_and_family_together() -> Result<(), String> {
     );
     assert!(linked.title.is_empty());
 
-    // Rebinding a row whose family is already stored does not expose it again.
     child.bind("child");
     let snapshots = captured.lock().expect("capture");
     assert_eq!(snapshots.len(), 2);
@@ -123,8 +195,6 @@ fn caller_binding_publishes_child_and_family_together() -> Result<(), String> {
     assert_eq!(execution.model, "selected");
     assert_eq!(execution.effort.as_deref(), Some("high"));
 
-    // Switching back to a saved child must move the live route and selection
-    // to that row, rather than leaving restart pointed at the previous session.
     child.bind("other-child");
     child.select_model("openai", "updated");
     child.select_effort("low");
@@ -361,8 +431,6 @@ fn linked_child_registers_turns_after_parent_merge_without_rewriting_family() ->
         crate::sessions::AppSessionId::new(canonical_id).map(crate::sessions::SessionKey::App)
     );
 
-    // The child's registry snapshot still has the old parent ID. Neither a
-    // parent refresh nor a live parent caller is required to register a turn.
     child.begin_execution(Some("after-merge"));
     let (_, turn) = registry.resolve_execution(child.token())?;
     assert_eq!(turn.prompt_id.as_deref(), Some("after-merge"));
@@ -384,6 +452,7 @@ fn caller(project: &Path, session: &str) -> crate::agents::CallerContext {
         session_locator: None,
         harness_profile_id: None,
         app_session_id: None,
+        prompt_draft: None,
         backend: Backend::Cursor,
         provider: None,
         model: None,

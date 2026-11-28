@@ -78,7 +78,6 @@ fn settings_voice_shortcuts(name: &'static str, wayland: bool, cx: &mut gpui::Te
                     keystroke: gpui::Keystroke::parse("ctrl-alt-v").unwrap(),
                 });
             }
-            // Commit on the first release, then lift the remaining modifier.
             input_cx.simulate_event(gpui::ModifiersChangedEvent {
                 modifiers: gpui::Modifiers {
                     control: key == default_shortcut,
@@ -230,7 +229,6 @@ fn native_modal_accepts_text_and_restores_owner_focus(cx: &mut gpui::TestAppCont
                     cx.notify();
                 });
             });
-            // A click outside the dialog hits its backdrop, not the editor below.
             popup_cx.simulate_click(point(px(1.0), px(1.0)), Default::default());
             cx.run_until_parked();
             popup_cx.update(|window, cx| {

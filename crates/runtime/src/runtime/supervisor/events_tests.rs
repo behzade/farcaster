@@ -15,6 +15,7 @@ impl SupervisorFixture {
         let (_, configuration_rx) = mpsc::channel();
         let fixture = Self {
             supervisor: Supervisor {
+                accounts: super::super::accounts::AccountService::new(None, false),
                 host: crate::test_support::host(),
                 process_command: AgentLaunchConfig::default(),
                 command_rx,
@@ -38,11 +39,11 @@ impl SupervisorFixture {
                         ..RuntimeSnapshot::default()
                     }),
                 )]),
-                account_usage: HashMap::new(),
-                catalog_sessions: Vec::new(),
+                catalog_sessions: Default::default(),
                 catalog_generation: 0,
-                actor_paths: HashMap::new(),
+                actor_paths: Default::default(),
                 failed_actor_shutdowns: HashMap::new(),
+                failed_draft_shutdowns: HashMap::new(),
                 interacted: HashSet::new(),
                 document_revisions: HashMap::new(),
                 pending_extensions: HashMap::new(),
@@ -160,10 +161,13 @@ fn selecting_a_retired_session_publishes_the_retained_document_without_actor_com
     fixture
         .commands
         .send(RuntimeCommand::SelectSession {
+            display_stamp: None,
             path,
             harness: Backend::Pi,
             session_id: "retired".into(),
             project,
+            key: None,
+            request: None,
         })
         .expect("fixture value");
     assert!(fixture.supervisor.process_next_command());
@@ -211,6 +215,7 @@ fn retirement_refreshes_history_only_when_the_document_revision_changes() {
         let supervisor = &mut fixture.supervisor;
         reconcile_live_session_documents(
             std::slice::from_ref(session),
+            &supervisor.catalog_sessions,
             &supervisor.interacted,
             &supervisor.selected,
             &mut supervisor.actors,
@@ -242,111 +247,6 @@ fn retirement_refreshes_history_only_when_the_document_revision_changes() {
     reconcile(&mut fixture, &session);
     assert!(matches!(actor.recv_timeout(Duration::from_secs(1)),
         Ok(RuntimeCommand::RefreshSessionDocument { path: refreshed, .. }) if refreshed == path));
-}
-
-#[test]
-fn account_usage_follows_the_profile_and_newest_observation_across_sessions() {
-    let mut fixture = SupervisorFixture::new("selected", PathBuf::from("/project"), None);
-    let selected = Arc::make_mut(
-        fixture
-            .supervisor
-            .latest
-            .get_mut("selected")
-            .expect("fixture value"),
-    );
-    selected.harness = Some(Backend::Codex);
-    selected.profile_id = Some("one".into());
-    let initial = Instant::now();
-    let snapshot = |harness, profile: &str, observed_at, remaining: Option<f64>| {
-        Arc::new(RuntimeSnapshot {
-            harness: Some(harness),
-            profile_id: Some(profile.into()),
-            account_usage_observed_at: observed_at,
-            account_usage: agents::AccountUsage {
-                weekly: remaining.map(|remaining_percent| agents::AccountUsageWindow {
-                    remaining_percent,
-                    resets_at: Some(1234),
-                }),
-            },
-            ..RuntimeSnapshot::default()
-        })
-    };
-    let send = |fixture: &mut SupervisorFixture, key: &str, snapshot| {
-        fixture.supervisor.handle_actor_event(
-            key.into(),
-            RuntimeEvent::Snapshot {
-                generation: 0,
-                snapshot,
-            },
-        )
-    };
-    send(
-        &mut fixture,
-        "older",
-        snapshot(Backend::Codex, "one", Some(initial), Some(68.0)),
-    );
-    assert!(fixture.drain().iter().any(|event| matches!(event,
-        RuntimeEvent::Snapshot { snapshot, .. } if snapshot.account_usage.weekly.is_some_and(|window| window.remaining_percent == 68.0)
-    )));
-    send(
-        &mut fixture,
-        "newer",
-        snapshot(
-            Backend::Codex,
-            "one",
-            Some(initial + Duration::from_secs(1)),
-            Some(60.0),
-        ),
-    );
-    send(
-        &mut fixture,
-        "older",
-        snapshot(Backend::Codex, "one", Some(initial), Some(68.0)),
-    );
-    send(
-        &mut fixture,
-        "unknown",
-        snapshot(Backend::Codex, "one", None, None),
-    );
-    for key in ["selected", "older", "unknown"] {
-        assert_eq!(
-            fixture.supervisor.latest[key]
-                .account_usage
-                .weekly
-                .map(|window| window.remaining_percent),
-            Some(60.0),
-            "{key} must use the newest account report"
-        );
-    }
-    for (harness, profile) in [(Backend::Codex, "two"), (Backend::Claude, "one")] {
-        send(
-            &mut fixture,
-            "other",
-            snapshot(harness, profile, None, None),
-        );
-        assert!(
-            fixture.supervisor.latest["other"]
-                .account_usage
-                .weekly
-                .is_none()
-        );
-    }
-    send(
-        &mut fixture,
-        "newer",
-        snapshot(
-            Backend::Codex,
-            "one",
-            Some(initial + Duration::from_secs(2)),
-            None,
-        ),
-    );
-    assert!(
-        fixture.supervisor.latest["selected"]
-            .account_usage
-            .weekly
-            .is_none()
-    );
 }
 
 #[test]
@@ -390,7 +290,7 @@ fn settled_snapshot_clears_stale_catalog_running_for_selected_and_background_ses
         conversation.reduce(&serde_json::json!({"type":"agent_start"}));
         conversation.reduce(&serde_json::json!({"type":"agent_settled"}));
         let settled = Arc::new(RuntimeSnapshot {
-            harness: Some(Backend::Codex),
+            harness: Some(Backend::Pi),
             project,
             live_session: Some(path.clone()),
             selected_session: Some(path.clone()),
@@ -445,7 +345,7 @@ fn settled_snapshot_clears_stale_catalog_running_for_selected_and_background_ses
             RuntimeEvent::Snapshot {
                 generation: 0,
                 snapshot: Arc::new(RuntimeSnapshot {
-                    harness: Some(Backend::Codex),
+                    harness: Some(Backend::Pi),
                     project: PathBuf::from("/project"),
                     live_session: Some(path),
                     conversation: Arc::new(conversation),
@@ -472,7 +372,7 @@ fn first_catalog_load_uses_live_running_snapshot() {
             RuntimeEvent::Snapshot {
                 generation: 0,
                 snapshot: Arc::new(RuntimeSnapshot {
-                    harness: Some(Backend::Codex),
+                    harness: Some(Backend::Pi),
                     project: project.clone(),
                     live_session: Some(path.clone()),
                     connected: true,
@@ -516,7 +416,7 @@ fn terminal_snapshot_without_settlement_clears_optimistic_running() {
             RuntimeEvent::Snapshot {
                 generation: 0,
                 snapshot: Arc::new(RuntimeSnapshot {
-                    harness: Some(Backend::Codex),
+                    harness: Some(Backend::Pi),
                     project,
                     live_session: Some(path.clone()),
                     status: status.into(),
@@ -587,7 +487,7 @@ fn history_preview_reconciles_the_parked_live_status() {
         .push(catalog_session(&path, &project, true));
     let preview = |live_status: RunStatus| {
         Arc::new(RuntimeSnapshot {
-            harness: Some(Backend::Codex),
+            harness: Some(Backend::Pi),
             project: project.clone(),
             live_session: Some(path.clone()),
             selected_session: Some(path.clone()),
@@ -623,6 +523,176 @@ fn history_preview_reconciles_the_parked_live_status() {
     assert!(fixture.drain().iter().any(|event| {
         matches!(event, RuntimeEvent::SessionStatus { status, .. } if *status == RunStatus::Working)
     }));
+}
+
+#[test]
+fn draft_snapshot_cannot_publish_working_for_a_sibling_that_arrives_first() {
+    let project = PathBuf::from("/project");
+    let path = project.join("profiles/11111111-1111-4111-8111-111111111111/codex-cli/shared");
+    let actor = "draft:owner";
+    let mut fixture = SupervisorFixture::new(actor, project.clone(), None);
+    let sibling = catalog_session(&path, &project, false).with_app_session_id(41);
+    fixture.supervisor.catalog_sessions.push(sibling.clone());
+    let mut conversation = ConversationState::default();
+    conversation.reduce(&json!({"type": "agent_start"}));
+    let snapshot = Arc::new(RuntimeSnapshot {
+        project: project.clone(),
+        harness: Some(Backend::Codex),
+        profile_id: sessions::profile_id_from_locator(&path),
+        selected_session: Some(path.clone()),
+        live_session: Some(path.clone()),
+        live_status: RunStatus::Working,
+        conversation: Arc::new(conversation),
+        ..Default::default()
+    });
+    fixture.supervisor.handle_actor_event(
+        actor.into(),
+        RuntimeEvent::Snapshot {
+            generation: 0,
+            snapshot: snapshot.clone(),
+        },
+    );
+    let events = fixture.drain();
+    assert!(events.iter().any(|event| matches!(event,
+        RuntimeEvent::SessionStatus { target, session: Some(saved), record: None, status: RunStatus::Working }
+            if target == actor && saved == &path
+    )));
+    assert!(events.iter().any(|event| matches!(event,
+        RuntimeEvent::Snapshot { snapshot, .. }
+            if !snapshot.matches_catalog_row(&fixture.supervisor.catalog_sessions, &sibling)
+    )));
+    assert!(!fixture.supervisor.catalog_sessions[0].is_running);
+    fixture.supervisor.handle_actor_event(
+        "catalog".into(),
+        RuntimeEvent::SessionUpdated(sibling.clone()),
+    );
+    assert!(!fixture.supervisor.catalog_sessions[0].is_running);
+
+    let mut owner = sibling.with_app_session_id(42);
+    owner.harness = Backend::Codex;
+    owner.profile_id = None;
+    fixture.supervisor.catalog_sessions = vec![owner.clone()].into();
+    fixture.supervisor.handle_actor_event(
+        actor.into(),
+        RuntimeEvent::Snapshot {
+            generation: 0,
+            snapshot,
+        },
+    );
+    assert!(fixture.supervisor.catalog_sessions[0].is_running);
+    assert!(fixture.drain().iter().any(|event| matches!(event,
+        RuntimeEvent::SessionStatus { target, record: Some(record), status: RunStatus::Working, .. }
+            if target == actor && record == &SessionStatusRecord::for_row(&owner)
+    )));
+}
+
+#[test]
+fn resident_status_keeps_its_record_when_another_session_shares_the_path() {
+    let project = PathBuf::from("/project");
+    let path = project.join("shared.jsonl");
+    let actor = sessions::session_target(&path);
+    for (id, same_scope) in [(0, false), (41, false), (41, true)] {
+        let a = catalog_session(&path, &project, false).with_app_session_id(id);
+        let mut b = a.clone().with_app_session_id(42);
+        b.profile_id = (!same_scope).then(|| "other".into());
+        let owner = SessionStatusRecord::for_row(&a);
+        let mut fixture = SupervisorFixture::new("foreground", project.clone(), None);
+        fixture.supervisor.catalog_sessions = vec![a.clone()].into();
+        let snapshot = |status| RuntimeEvent::Snapshot {
+            generation: 0,
+            snapshot: Arc::new(RuntimeSnapshot {
+                project: project.clone(),
+                harness: Some(a.harness),
+                live_session: Some(path.clone()),
+                selected_session: Some(path.clone()),
+                history_preview: true,
+                live_status: status,
+                ..RuntimeSnapshot::default()
+            }),
+        };
+        let expect_status = |fixture: &SupervisorFixture, expected| {
+            assert!(fixture.drain().iter().any(|e| matches!(e,
+                RuntimeEvent::SessionStatus {target, record: Some(record), status, ..}
+                    if target == &actor && record == &owner && *status == expected
+            )));
+        };
+        fixture
+            .supervisor
+            .handle_actor_event(actor.clone(), snapshot(RunStatus::Working));
+        expect_status(&fixture, RunStatus::Working);
+        fixture
+            .supervisor
+            .handle_actor_event("catalog".into(), RuntimeEvent::SessionUpdated(b.clone()));
+        assert!(
+            !fixture
+                .supervisor
+                .catalog_sessions
+                .by_app_id(42)
+                .unwrap()
+                .is_running
+        );
+        fixture.supervisor.handle_actor_event(
+            actor.clone(),
+            RuntimeEvent::ExtensionUi {
+                generation: 0,
+                request: dialog("question"),
+                system_notification_target: None,
+            },
+        );
+        expect_status(&fixture, RunStatus::NeedsInput);
+        fixture.supervisor.handle_actor_event(
+            actor.clone(),
+            RuntimeEvent::ExtensionUiDismissed {
+                generation: 0,
+                id: "question".into(),
+            },
+        );
+        expect_status(&fixture, RunStatus::Working);
+        fixture
+            .supervisor
+            .handle_actor_event(actor.clone(), snapshot(RunStatus::Done));
+        expect_status(&fixture, RunStatus::Done);
+        assert!(
+            fixture
+                .supervisor
+                .catalog_sessions
+                .running()
+                .next()
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn an_unknown_resident_cannot_stop_either_row_at_an_ambiguous_locator() {
+    let project = PathBuf::from("/project");
+    let path = project.join("shared.jsonl");
+    let a = catalog_session(&path, &project, true).with_app_session_id(41);
+    let b = a.clone().with_app_session_id(42);
+    let mut fixture = SupervisorFixture::new("foreground", project.clone(), None);
+    fixture.supervisor.catalog_sessions = vec![a.clone(), b].into();
+    fixture.supervisor.handle_actor_event(
+        sessions::session_target(&path),
+        RuntimeEvent::Snapshot {
+            generation: 0,
+            snapshot: Arc::new(RuntimeSnapshot {
+                project,
+                harness: Some(a.harness),
+                live_session: Some(path.clone()),
+                selected_session: Some(path),
+                history_preview: true,
+                live_status: RunStatus::Stopped,
+                ..RuntimeSnapshot::default()
+            }),
+        },
+    );
+    assert_eq!(fixture.supervisor.catalog_sessions.running().count(), 2);
+    assert!(
+        !fixture
+            .drain()
+            .iter()
+            .any(|event| matches!(event, RuntimeEvent::SessionStatus { .. }))
+    );
 }
 
 #[test]
@@ -756,6 +826,124 @@ fn access_mode_command_precedes_catalog_load_when_actor_snapshot_is_delayed() {
 }
 
 #[test]
+fn reconfiguring_a_resident_draft_waits_for_its_actors_profile_snapshot() {
+    let project = PathBuf::from("/project");
+    let key = "draft:profile-switch";
+    let mut fixture = SupervisorFixture::new("catalog", project.clone(), None);
+    for (sequence, profile) in [(1, "first"), (2, "second")] {
+        fixture
+            .commands
+            .send(RuntimeCommand::NewSession {
+                request: Some(sequence),
+                id: "profile-switch".into(),
+                harness: Some(Backend::Codex),
+                profile_id: Some(profile.into()),
+                project: project.clone(),
+            })
+            .unwrap();
+        assert!(fixture.supervisor.process_next_command());
+        let events = fixture.drain();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, RuntimeEvent::SelectionRouted(id) if *id == sequence))
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, RuntimeEvent::Snapshot { .. }))
+        );
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let event = fixture.supervisor.actors[key]
+                .events
+                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                .expect("actor publishes its requested profile");
+            fixture.supervisor.handle_actor_event(key.into(), event);
+            if fixture.drain().iter().any(|event| {
+                matches!(event, RuntimeEvent::Snapshot { snapshot, .. }
+                if snapshot.profile_id.as_deref() == Some(profile))
+            }) {
+                break;
+            }
+        }
+        assert_eq!(
+            fixture.supervisor.latest[key].profile_id.as_deref(),
+            Some(profile)
+        );
+    }
+}
+
+#[test]
+fn acknowledged_draft_navigation_delivers_the_next_prompt_to_that_actor() {
+    let project = PathBuf::from("/project");
+    let mut fixture = SupervisorFixture::new("draft:prior", project.clone(), None);
+    for (request, id, command) in [
+        (
+            1,
+            "new",
+            RuntimeCommand::NewSession {
+                request: Some(1),
+                id: "new".into(),
+                harness: Some(Backend::Codex),
+                profile_id: None,
+                project: project.clone(),
+            },
+        ),
+        (
+            2,
+            "resumed",
+            RuntimeCommand::ResumeDraft {
+                request: Some(2),
+                id: "resumed".into(),
+                harness: Some(Backend::Codex),
+                project,
+            },
+        ),
+    ] {
+        let target = sessions::draft_target(id);
+        let actor = fixture.add_recording_actor(&target);
+        fixture.commands.send(command).unwrap();
+        assert!(fixture.supervisor.process_next_command());
+        assert!(
+            fixture.drain().iter().any(
+                |event| matches!(event, RuntimeEvent::SelectionRouted(seq) if *seq == request)
+            )
+        );
+        fixture
+            .commands
+            .send(RuntimeCommand::Prompt {
+                submission_id: format!("input-{id}"),
+                target: target.clone(),
+                mode: PromptMode::Normal,
+                message: id.to_owned(),
+                provisional_title: None,
+                display_message: None,
+                invocation: None,
+                images: Vec::new(),
+                allow_while_running: false,
+            })
+            .unwrap();
+        assert!(fixture.supervisor.process_next_command());
+        loop {
+            if let RuntimeCommand::Prompt {
+                target: received,
+                message,
+                ..
+            } = actor
+                .recv_timeout(Duration::from_secs(1))
+                .expect("draft actor receives the prompt")
+            {
+                assert_eq!(received, target);
+                assert_eq!(message, id);
+                break;
+            }
+        }
+    }
+}
+
+#[test]
 fn new_session_restores_the_harness_access_mode_before_staging_the_draft() {
     use crate::agents::HarnessAccessMode::Full;
 
@@ -771,6 +959,7 @@ fn new_session_restores_the_harness_access_mode_before_staging_the_draft() {
     fixture
         .commands
         .send(RuntimeCommand::NewSession {
+            request: None,
             id: "new".into(),
             harness: Some(Backend::Codex),
             profile_id: None,
@@ -834,6 +1023,8 @@ fn restart_injects_the_sessions_saved_access_mode_before_launch()
         harness: Backend::Codex,
         session_id: "session-1".into(),
         project,
+        key: None,
+        request: None,
     })?;
 
     assert!(fixture.supervisor.process_next_command());
@@ -1057,10 +1248,13 @@ fn background_dismissal_removes_cached_dialog_before_selection() -> Result<(), S
     fixture
         .commands
         .send(RuntimeCommand::SelectSession {
+            display_stamp: None,
             path,
             harness: Backend::Codex,
             session_id: "background".into(),
             project,
+            key: None,
+            request: None,
         })
         .map_err(|error| error.to_string())?;
     assert!(fixture.supervisor.process_next_command());
@@ -1093,7 +1287,7 @@ fn signals_keep_their_target_across_selection_changes_and_use_the_signal_channel
     fixture
         .supervisor
         .actor_paths
-        .insert("/sessions/old".into(), "draft:old".into());
+        .insert("/sessions/old".into(), Backend::Pi, "draft:old".into());
     let (signals, receiver) = mpsc::channel();
     fixture.supervisor.signal_rx = receiver;
     signals
@@ -1113,4 +1307,303 @@ fn signals_keep_their_target_across_selection_changes_and_use_the_signal_channel
     );
     assert!(new_rx.try_recv().is_err());
     assert!(!fixture.supervisor.actors.contains_key("draft:missing"));
+}
+
+#[test]
+fn composer_stop_keeps_its_actor_when_residents_share_a_path() {
+    let path = PathBuf::from("/sessions/shared");
+    let mut fixture = SupervisorFixture::new("draft:pi", "/project".into(), None);
+    let mut receivers = Vec::new();
+    for (key, harness) in [("draft:pi", Backend::Pi), ("draft:codex", Backend::Codex)] {
+        fixture.add_actor(key);
+        let (sender, receiver) = mpsc::channel();
+        fixture.supervisor.actors.get_mut(key).unwrap().signals = sender;
+        receivers.push(receiver);
+        fixture.supervisor.handle_actor_event(
+            key.into(),
+            RuntimeEvent::Snapshot {
+                generation: 0,
+                snapshot: Arc::new(RuntimeSnapshot {
+                    harness: Some(harness),
+                    selected_session: Some(path.clone()),
+                    ..Default::default()
+                }),
+            },
+        );
+    }
+    assert_eq!(
+        fixture
+            .supervisor
+            .actor_paths
+            .last_at(&path)
+            .map(String::as_str),
+        Some("draft:codex")
+    );
+    let (signals, receiver) = mpsc::channel();
+    fixture.supervisor.signal_rx = receiver;
+    let pi = sessions::session_buffer(Backend::Pi, &path);
+    for selected in ["draft:pi", "draft:codex"] {
+        signals.send((pi.clone(), RuntimeSignal::Abort)).unwrap();
+        fixture.supervisor.selected = selected.into();
+        thread::current().unpark();
+        assert!(fixture.supervisor.process_next_command());
+        assert_eq!(receivers[0].try_recv(), Ok(RuntimeSignal::Abort));
+        assert!(receivers[1].try_recv().is_err());
+    }
+}
+
+#[test]
+fn same_path_selection_routes_the_requested_backend_and_profile() -> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let path = project.path().join("shared.jsonl");
+    let project = sessions::normalize_session_path(project.path());
+    let path = sessions::normalize_session_path(&path);
+    let mut pi = catalog_session(&path, &project, false);
+    pi.profile_id = Some("pi-profile".into());
+    let mut codex = pi.clone();
+    codex.harness = Backend::Codex;
+    codex.profile_id = Some("codex-profile".into());
+    let mut state = StateStore::open_at(&project.join("state.sqlite3"))?;
+    state.replace_sessions(&[pi, codex])?;
+    let rows = state.cached_sessions("")?;
+    assert_eq!(rows.len(), 2);
+    let mut fixture = SupervisorFixture::new("catalog", project.clone(), Some(state));
+    for row in &rows {
+        let key = sessions::AppSessionId::new(row.app_session_id)
+            .unwrap()
+            .to_key();
+        fixture.add_actor(&key);
+        fixture.supervisor.latest.insert(
+            key.clone(),
+            Arc::new(RuntimeSnapshot {
+                harness: Some(row.harness),
+                project: project.clone(),
+                profile_id: row.profile_id.clone(),
+                selected_session: Some(path.clone()),
+                document_ready: true,
+                ..Default::default()
+            }),
+        );
+        fixture
+            .supervisor
+            .actor_paths
+            .insert(path.clone(), row.harness, key);
+    }
+    let mut sequence = 0;
+    for visible in [&rows[..0], &rows[..1], &rows[1..], &rows[..]] {
+        fixture.supervisor.catalog_sessions = visible.to_vec().into();
+        for row in &rows {
+            sequence += 1;
+            fixture
+                .commands
+                .send(RuntimeCommand::SelectSession {
+                    display_stamp: None,
+                    path: path.clone(),
+                    project: project.clone(),
+                    harness: row.harness,
+                    session_id: row.id.clone(),
+                    key: Some(row.catalog_key()),
+                    request: Some(sequence),
+                })
+                .unwrap();
+            assert!(fixture.supervisor.process_next_command());
+            let events = fixture.drain();
+            let ack = events
+                .iter()
+                .position(|e| matches!(e,RuntimeEvent::SelectionRouted(s) if *s==sequence))
+                .unwrap();
+            let snapshot = events[ack + 1..]
+                .iter()
+                .find_map(|e| match e {
+                    RuntimeEvent::Snapshot { snapshot, .. } => Some(snapshot),
+                    _ => None,
+                })
+                .unwrap();
+            assert!(snapshot.matches_session_row(row));
+            assert_eq!(
+                fixture.supervisor.selected,
+                sessions::AppSessionId::new(row.app_session_id)
+                    .unwrap()
+                    .to_key()
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn cold_selection_reserves_each_backend_actor_before_its_first_snapshot() {
+    let project = PathBuf::from("/project");
+    let path = project.join("shared.jsonl");
+    let pi = catalog_session(&path, &project, false);
+    let mut codex = pi.clone();
+    codex.harness = Backend::Codex;
+    let expect_selection = |commands: &mpsc::Receiver<RuntimeCommand>, expected| {
+        assert!(matches!(
+            commands.recv_timeout(Duration::from_secs(1)),
+            Ok(RuntimeCommand::SelectSession { harness, .. }) if harness == expected
+        ));
+    };
+    for rows in [vec![], vec![pi.clone()], vec![codex.clone()]] {
+        let mut fixture = SupervisorFixture::new("catalog", project.clone(), None);
+        fixture.supervisor.catalog_sessions = rows.into();
+        let select = |fixture: &mut SupervisorFixture, row: &SessionSummary, sequence| {
+            fixture
+                .commands
+                .send(RuntimeCommand::SelectSession {
+                    display_stamp: None,
+                    path: path.clone(),
+                    project: project.clone(),
+                    harness: row.harness,
+                    session_id: row.id.clone(),
+                    key: None,
+                    request: Some(sequence),
+                })
+                .unwrap();
+            assert!(fixture.supervisor.process_next_command());
+            fixture.drain()
+        };
+        let pi_key = sessions::session_target(&path);
+        let pi_commands = fixture.add_recording_actor(&pi_key);
+        select(&mut fixture, &pi, 1);
+        expect_selection(&pi_commands, Backend::Pi);
+        let codex_key = fixture.supervisor.actor_paths.session_key(
+            &path,
+            codex.harness,
+            &fixture.supervisor.latest,
+        );
+        assert_ne!(pi_key, codex_key);
+        let codex_commands = fixture.add_recording_actor(&codex_key);
+        select(&mut fixture, &codex, 2);
+        assert_eq!(fixture.supervisor.selected, codex_key);
+        expect_selection(&codex_commands, Backend::Codex);
+        select(&mut fixture, &pi, 3);
+        assert_eq!(fixture.supervisor.selected, pi_key);
+        expect_selection(&pi_commands, Backend::Pi);
+
+        fixture.supervisor.handle_actor_event(
+            pi_key.clone(),
+            RuntimeEvent::Snapshot {
+                generation: 0,
+                snapshot: Arc::new(RuntimeSnapshot {
+                    selected_session: Some(path.clone()),
+                    project: project.clone(),
+                    harness: Some(Backend::Pi),
+                    document_ready: true,
+                    ..Default::default()
+                }),
+            },
+        );
+        fixture.drain();
+        let events = select(&mut fixture, &codex, 4);
+        assert_eq!(fixture.supervisor.selected, codex_key);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, RuntimeEvent::SelectionRouted(4)))
+        );
+        assert!(!events.iter().any(|e| matches!(e, RuntimeEvent::Snapshot { snapshot, .. } if snapshot.harness == Some(Backend::Pi))));
+        expect_selection(&codex_commands, Backend::Codex);
+    }
+}
+
+#[test]
+fn archive_acknowledgment_keeps_warm_indexes_and_reconciles_only_the_requested_document() {
+    let project = PathBuf::from("/project");
+    let path = project.join("shared.jsonl");
+    let row = catalog_session(&path, &project, false).with_app_session_id(41);
+    let mut other = row.clone().with_app_session_id(42);
+    other.harness = Backend::Codex;
+    let mut fixture = SupervisorFixture::new("selected", project, None);
+    let actor = documents::record_actor_key(&row.catalog_key());
+    let other_actor = documents::record_actor_key(&other.catalog_key());
+    fixture.add_actor(&actor);
+    fixture.add_actor(&other_actor);
+    fixture.supervisor.catalog_sessions = vec![row.clone(), other.clone()].into();
+    assert!(fixture.supervisor.catalog_sessions.has_shared_path(&path));
+    let builds = fixture
+        .supervisor
+        .catalog_sessions
+        .relationship_build_count();
+    for archived in [true, true, false] {
+        let mut stored = row.clone();
+        stored.archived = archived;
+        stored.title = "stale storage title".into();
+        fixture.supervisor.handle_actor_event(
+            "catalog".into(),
+            RuntimeEvent::SessionArchiveResult {
+                request: ArchiveRequest {
+                    target: ArchiveTarget::App(sessions::AppSessionId::new(41).unwrap()),
+                    archived,
+                    sequence: Some(1),
+                },
+                rows: Ok(vec![stored]),
+            },
+        );
+        assert_eq!(
+            fixture
+                .supervisor
+                .catalog_sessions
+                .relationship_build_count(),
+            builds
+        );
+        let target = fixture.supervisor.catalog_sessions.by_app_id(41).unwrap();
+        assert_eq!(target.archived, archived);
+        assert_eq!(target.title, row.title);
+        assert_eq!(
+            fixture.supervisor.catalog_sessions.by_app_id(42),
+            Some(&other)
+        );
+        assert!(!fixture.supervisor.actors.contains_key(&actor));
+        assert!(fixture.supervisor.actors.contains_key(&other_actor));
+        assert!(matches!(
+            fixture.drain().as_slice(),
+            [RuntimeEvent::SessionArchiveResult { .. }]
+        ));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn archive_acknowledgment_resolves_the_requested_legacy_locator_and_adopts_its_id() {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().canonicalize().unwrap();
+    let alias = project.join("alias");
+    std::os::unix::fs::symlink(&project, &alias).unwrap();
+    let legacy = catalog_session(&alias.join("session.jsonl"), &alias, false);
+    let mut other = legacy.clone();
+    other.harness = Backend::Codex;
+    let mut stored = legacy.clone().with_app_session_id(92);
+    stored.project = project.clone();
+    stored.path = project.join("session.jsonl");
+    let mut fixture = SupervisorFixture::new("selected", project, None);
+    fixture.supervisor.catalog_sessions = vec![legacy.clone(), other.clone()].into();
+    for archived in [true, false] {
+        stored.archived = archived;
+        let target = if archived {
+            ArchiveTarget::Native(legacy.target())
+        } else {
+            ArchiveTarget::App(sessions::AppSessionId::new(92).unwrap())
+        };
+        fixture.supervisor.handle_actor_event(
+            "catalog".into(),
+            RuntimeEvent::SessionArchiveResult {
+                request: ArchiveRequest {
+                    target,
+                    archived,
+                    sequence: None,
+                },
+                rows: Ok(vec![stored.clone()]),
+            },
+        );
+        assert_eq!(fixture.supervisor.catalog_sessions.len(), 2);
+        let updated = fixture.supervisor.catalog_sessions.by_app_id(92).unwrap();
+        assert_eq!(updated.path, legacy.path);
+        assert_eq!(updated.archived, archived);
+        assert_eq!(fixture.supervisor.catalog_sessions[1], other);
+        assert!(matches!(
+            fixture.drain().as_slice(),
+            [RuntimeEvent::SessionArchiveResult { .. }]
+        ));
+    }
 }

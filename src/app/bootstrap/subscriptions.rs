@@ -18,7 +18,8 @@ pub(super) fn create(
         this.flush_theme_save();
         this.capture_composer_session(cx);
         let target = this.composer.sessions.current_target().to_owned();
-        this.sync_current_draft(&target);
+        this.sync_drafts_before_quit(&target);
+        this.remember_session_selection();
         let flush = this.sessions.writer.flush();
         let composer_flush = this.composer.sessions.flush();
         async move {
@@ -121,27 +122,8 @@ fn subscribe_composer(
                     .capture_current(input_snapshot(state.read(cx)));
             }
             InputEvent::PressEnter { shift: false, .. } => {
-                let input = state.read(cx);
-                let value = input.value();
-                if let Some(completion) = composer_completion::resolve_for_harness(
-                    &value,
-                    input.cursor(),
-                    &this.composer.project_files,
-                    this.views.composer.read(cx).suggestion_selection(),
-                    &this.snapshot.commands,
-                    this.active_harness(),
-                ) {
-                    let submitted_value = completion
-                        .submit
-                        .then(|| completion.snapshot.text.trim().to_owned());
-                    this.apply_composer_snapshot(completion.snapshot, window, cx);
-                    if let Some(value) = submitted_value {
-                        this.submit(value, this.enter_mode(), window, cx);
-                    } else {
-                        this.composer.focus.focus(window, cx);
-                    }
-                } else {
-                    let value = value.trim().to_owned();
+                if !this.accept_composer_completion(window, cx) {
+                    let value = state.read(cx).value().trim().to_owned();
                     if !value.is_empty() || this.has_composer_attachments() {
                         this.submit(value, this.enter_mode(), window, cx);
                     }

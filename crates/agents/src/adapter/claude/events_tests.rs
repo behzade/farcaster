@@ -1,6 +1,37 @@
 use super::*;
 
 #[test]
+fn tool_screenshots_reach_live_and_restored_conversations() {
+    let result = json!({"type":"tool_result","tool_use_id":"shot","content":[
+        {"type":"text","text":"App screenshot"},
+        {"type":"image","source":{"type":"base64","media_type":"image/png","data":"AQID"}},
+        {"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"BAUG"}}
+    ]});
+    let mut events = Events::default();
+    events.message(&json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":"shot","name":"mcp__computer__capture","input":{}}]}}));
+    events.message(&json!({"type":"user","message":{"content":[result.clone()]}}));
+    let live_result = events
+        .pending
+        .iter()
+        .find_map(|event| match event {
+            WorkerEvent::Activity(WorkerActivity::ToolFinished { result, .. }) => {
+                Some(result.clone())
+            }
+            _ => None,
+        })
+        .unwrap();
+    let history = history_messages(&json!({"message":{"role":"user","content":[result]}}));
+    assert_eq!(live_result["content"], history[0]["content"]);
+    for result in [live_result, history[0].clone()] {
+        let mut state = farcaster_conversation::ConversationState::default();
+        state.reduce(&json!({"type":"tool_execution_start","toolCallId":"shot","toolName":"mcp__computer__capture","args":{}}));
+        state.reduce(&json!({"type":"tool_execution_end","toolCallId":"shot","result":result,"isError":false}));
+        assert_eq!(state.items[0].images.len(), 2);
+        assert_eq!(state.items[0].tool_output, "App screenshot");
+    }
+}
+
+#[test]
 fn blocks_borrows_array_content_and_normalizes_strings() {
     let message = json!({"content":[{"type":"text","text":"answer"}]});
     let content = blocks(&message);
@@ -12,31 +43,11 @@ fn blocks_borrows_array_content_and_normalizes_strings() {
             .as_ptr()
     );
     assert_eq!(
-        history_messages(&json!({"role":"assistant","content":"answer"})),
-        history_messages(&json!({"role":"assistant","content":[{"type":"text","text":"answer"}]}))
+        history_messages(&json!({"message":{"role":"assistant","content":"answer"}})),
+        history_messages(
+            &json!({"message":{"role":"assistant","content":[{"type":"text","text":"answer"}]}})
+        )
     );
-}
-
-#[test]
-fn seven_day_rate_limit_maps_to_neutral_weekly_usage() {
-    let mut events = Events::default();
-    events.message(&json!({
-        "type": "rate_limit_event",
-        "rate_limit_info": {
-            "rateLimitType": "seven_day",
-            "utilization": 0.32,
-            "resetsAt": 1_788_766_092_i64
-        }
-    }));
-
-    assert!(events.pending.iter().any(|event| matches!(
-        event,
-        WorkerEvent::Activity(WorkerActivity::AccountUsageChanged(usage))
-            if usage.weekly == Some(crate::AccountUsageWindow {
-                remaining_percent: 68.0,
-                resets_at: Some(1_788_766_092),
-            })
-    )));
 }
 
 #[test]
@@ -157,4 +168,22 @@ fn native_agent_tasks_publish_sidebar_lifecycle_without_child_text() {
         ]
     );
     assert!(events.output.is_empty());
+}
+
+#[test]
+fn persisted_and_live_claude_shell_results_keep_separate_output_streams() {
+    let result = json!({"type":"tool_result","tool_use_id":"cmd","content":"all output"});
+    let native = json!({"stdout":"out","stderr":"err","interrupted":false});
+    let mut events = Events::default();
+    events.tools.insert("cmd".into());
+    let message = json!({"role":"user","content":[result]});
+    events.message(&json!({"type":"user","message":message,"tool_use_result":native}));
+    let Some(WorkerEvent::Activity(WorkerActivity::ToolFinished { result, .. })) =
+        events.pending.pop_front()
+    else {
+        panic!("missing live shell result")
+    };
+    let saved = history_messages(&json!({"message":message,"toolUseResult":native}));
+    assert_eq!(result["details"]["native"], native);
+    assert_eq!(saved[0]["details"], result["details"]);
 }

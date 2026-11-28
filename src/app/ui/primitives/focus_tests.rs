@@ -1,3 +1,4 @@
+use crate::app::ui::primitives::Input;
 use gpui::{
     Context, FocusHandle, InteractiveElement as _, IntoElement, ParentElement as _, Render,
     StatefulInteractiveElement as _, Styled as _, Window, div, point, px,
@@ -108,7 +109,7 @@ impl KeyboardHarness {
 
 impl Render for KeyboardHarness {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        use gpui_component::input::{Input, Textarea};
+        use gpui_component::input::Textarea;
         let entity = cx.entity().downgrade();
         let mut root = div()
             .size_full()

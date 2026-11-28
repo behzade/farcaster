@@ -35,7 +35,7 @@ pub(super) fn prepare_diff(
             {
                 return;
             }
-            let result = if app.project.repository.execution_allowed {
+            let result = if app.project.repository.allows_execution_in(&project) {
                 prepared.and_then(|base| open(app, base, window, cx))
             } else {
                 Err("Project trust changed while preparing the diff.".into())

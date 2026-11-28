@@ -17,6 +17,7 @@ fn history_follows_latest_branch_and_preserves_tool_results() {
         history.messages[1]["content"][0]["arguments"]["file_path"],
         905
     );
+    assert_eq!(history.messages[0]["nativeMessageId"], rows[0]["uuid"]);
     assert_eq!(history.messages[2]["role"], "toolResult");
     assert_eq!(history.model, Some((BACKEND.into(), "fixture".into())));
 }

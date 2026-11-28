@@ -4,7 +4,7 @@
 
 Farcaster is a native, keyboard-first workspace for running and coordinating coding agents across harnesses, with an embedded terminal and editor support.
 
-![Farcaster showing concurrent agent sessions, a conversation, and changed files](https://github.com/user-attachments/assets/87e034bd-d091-4820-8dc3-f81c76fcabca)
+![Farcaster showing concurrent agent sessions, a conversation, and changed files](https://github.com/user-attachments/assets/a8adf3c9-5512-4485-9455-dfff8c2eb4f9)
 
 ## Why
 
@@ -27,7 +27,7 @@ Use your preferred terminal editor inside Farcaster, or open files in an externa
 
 ### Neovim
 
-![Reviewing Rust code in Farcaster's embedded Neovim editor](https://github.com/user-attachments/assets/37192030-73b5-4b31-a8f8-72e3c1b8b4e9)
+![Reviewing Rust code in Farcaster's embedded Neovim editor](https://github.com/user-attachments/assets/4c4c6bef-0f41-4059-8cf2-84d4ad8eb945)
 
 Each chat session has its own Neovim and terminal tab, using libghostty: `agent | editor | terminal`.
 
@@ -41,7 +41,7 @@ Farcaster comes with an optional MCP server (can be turned off in settings) that
 - **Workgraph:** A set of tools (`workgraph_*`) for creating tasks and dependencies that persist beyond any one agent session.
 - **Worker Tools:** Tools for creating and communicating with agent sessions across harnesses, providers, and models.
 
-  ![A main agent coordinating workers across harnesses and models in Farcaster](https://github.com/behzade/farcaster/releases/download/v0.3.5/farcaster-workers.png)
+  ![A main agent coordinating workers across harnesses and models in Farcaster](https://github.com/user-attachments/assets/6fe3519d-b46a-41c9-a499-67474aeb3500)
 
 - <a name="review"></a>**Review:** Agents present files, line ranges, and notes through `submit_review`. Open files in your chosen editor; Neovim also provides quickfix navigation.
 

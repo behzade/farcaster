@@ -1,4 +1,5 @@
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE account_state (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL);
 CREATE TABLE projects (
   id INTEGER PRIMARY KEY,
   path TEXT NOT NULL UNIQUE,
@@ -56,7 +57,8 @@ CREATE TABLE session_events (
 CREATE TABLE worker_families (
   child_id INTEGER PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
   execution_json TEXT,
-  routing_json TEXT
+  routing_json TEXT,
+  last_status TEXT CHECK(last_status IN ('done','failed','stopped','active'))
 );
 CREATE TABLE outbox (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

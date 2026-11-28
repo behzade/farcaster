@@ -37,6 +37,16 @@
           overlays = [ rust-overlay.overlays.default ];
         };
       rustToolchainFor = pkgs: pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+      zigFor =
+        system:
+        zig-overlay.packages.${system}."0.17.0".overrideAttrs (
+          previous:
+          nixpkgs.lib.optionalAttrs (nixpkgs.lib.hasSuffix "-linux" system) {
+            installPhase = previous.installPhase + ''
+              patch -d "$out" -p1 < ${./packaging/zig-native-target.patch}
+            '';
+          }
+        );
     in
     {
       packages = forLinuxSystems (
@@ -45,6 +55,7 @@
           pkgs = pkgsFor system;
           rustToolchain = rustToolchainFor pkgs;
           farcaster = pkgs.callPackage ./packaging/nix.nix {
+            zig = zigFor system;
             rustPlatform = pkgs.makeRustPlatform {
               cargo = rustToolchain;
               rustc = rustToolchain;
@@ -97,7 +108,7 @@
               libdrm
               libgbm
               libGL
-              libcxx
+              llvmPackages_22.libcxx
               libxml2
               libx11
               libxcb
@@ -129,7 +140,7 @@
               neovim
               pkg-config
               rustPlatform.bindgenHook
-              zig-overlay.packages.${system}."0.17.0"
+              (zigFor system)
             ];
             shellHook = pkgs.lib.optionalString pkgs.stdenv.isLinux ''
               export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath nativeRuntimeLibraries}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

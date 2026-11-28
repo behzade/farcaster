@@ -1,6 +1,5 @@
 use gpui::{App, SystemNotification};
 
-// Headless tests use GPUI's notification recorder.
 #[cfg(any(not(target_os = "macos"), test))]
 pub(in crate::app) fn show(notification: SystemNotification, cx: &mut App) {
     cx.show_system_notification(notification);
@@ -16,7 +15,6 @@ struct NotificationAuthorization {
 #[cfg(any(target_os = "macos", test))]
 impl NotificationAuthorization {
     fn enqueue(&mut self, notification: SystemNotification) -> bool {
-        // Match GPUI's replacement-by-tag behavior while permission is pending.
         self.pending.retain(|queued| queued.tag != notification.tag);
         self.pending.push(notification);
         !std::mem::replace(&mut self.requesting, true)
@@ -62,7 +60,6 @@ pub(in crate::app) fn show(notification: SystemNotification, cx: &mut App) {
         }
         let _ = sender.try_send(error.is_null() && granted.as_bool());
     });
-    // Requesting permission does not replace GPUI's notification-response delegate.
     UNUserNotificationCenter::currentNotificationCenter()
         .requestAuthorizationWithOptions_completionHandler(
             UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound,

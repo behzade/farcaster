@@ -3,9 +3,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 use serde_json::Value;
 
-use super::super::{
-    AccountUsage, PeerMessage, SessionGoal, WorkerContext, WorkerInput, WorkerInputResponse,
-};
+use super::super::{PeerMessage, SessionGoal, WorkerContext, WorkerInput, WorkerInputResponse};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -96,6 +94,7 @@ pub struct WorkerUsage {
     pub turn: TokenUsage,
     pub session: TokenUsage,
     pub context_window: u64,
+    pub context_used: Option<u64>,
     pub cost: Option<f64>,
 }
 
@@ -123,13 +122,28 @@ impl ChildSessionOutcome {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageSource {
+    pub id: String,
+    pub turn_id: Option<String>,
+}
+
+impl MessageSource {
+    pub(crate) fn insert_into(&self, fields: &mut serde_json::Map<String, Value>) {
+        fields.insert("nativeMessageId".into(), Value::from(self.id.as_str()));
+        if let Some(turn) = &self.turn_id {
+            fields.insert("nativeTurnId".into(), Value::from(turn.as_str()));
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorkerActivity {
-    /// A local command completed without a model user-message echo.
     CommandCompleted {
         submission_id: String,
     },
     InputDelivered {
+        source: Option<MessageSource>,
         submission_id: Option<String>,
         mode: WorkerSendMode,
         message: String,
@@ -139,6 +153,10 @@ pub enum WorkerActivity {
         message: PeerMessage,
     },
     TurnStarted,
+    AssistantItem {
+        source: MessageSource,
+        final_content: Option<Value>,
+    },
     TextDelta {
         content_index: usize,
         delta: String,
@@ -202,7 +220,6 @@ pub enum WorkerActivity {
         error: Option<Value>,
         failure_reason: Option<Value>,
     },
-    AccountUsageChanged(AccountUsage),
     SessionGoalChanged(Option<SessionGoal>),
     ChildSessionsChanged {
         id: String,
@@ -220,6 +237,17 @@ pub enum WorkerActivity {
         aborted: bool,
         error: Option<String>,
     },
+}
+
+impl WorkerActivity {
+    pub(crate) fn link_delivered_input(&mut self, id: &str, turn_id: Option<&str>) {
+        if let Self::InputDelivered { source, .. } = self {
+            *source = Some(MessageSource {
+                id: id.to_owned(),
+                turn_id: turn_id.map(str::to_owned),
+            });
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

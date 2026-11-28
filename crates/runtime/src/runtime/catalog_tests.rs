@@ -76,6 +76,79 @@ fn fork_metadata_records_provenance_and_reset_clears_it() {
 }
 
 #[test]
+fn draft_binding_failure_does_not_publish_a_second_chat() -> Result<(), Box<dyn std::error::Error>>
+{
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().to_path_buf();
+    let script = project.join("fake-pi.sh");
+    std::fs::write(
+        &script,
+        include_str!("../../../../tests/fixtures/fake-pi.sh"),
+    )?;
+    let mut draft = crate::sessions::DraftSession::fresh(Some(Backend::Pi), project.clone());
+    draft.submitted = true;
+    let state = SharedStateStore::open_at(&project.join("state.sqlite3"))?;
+    let id = state.with(|store| store.save_draft_with_identity(draft.clone()))?;
+    state.with(|store| {
+        store.with_connection(|conn| {
+            conn.execute_batch(
+                "CREATE TRIGGER fail_bind BEFORE UPDATE OF locator ON sessions
+                 BEGIN SELECT RAISE(ABORT, 'draft bind failed'); END",
+            )
+            .map_err(|error| error.to_string())
+        })
+    })?;
+    let (mut owner, events) = crate::runtime::tests::owner_without_process(project);
+    owner.state = Some(state.clone());
+    owner.process_command = AgentLaunchConfig::test_script(&script, vec!["fixed-session".into()]);
+    let send = |owner: &mut RuntimeOwner| {
+        owner.send_prompt(
+            crate::sessions::draft_target(&draft.id),
+            PromptMode::Normal,
+            "first".into(),
+            vec![],
+            false,
+        )
+    };
+    send(&mut owner);
+    crate::runtime::tests::drive_process_until(&mut owner, |owner| {
+        owner.snapshot.status == "Failed"
+    });
+    assert_eq!(owner.snapshot.status, "Failed");
+    assert!(owner.active_session.is_none());
+    assert!(
+        !events
+            .try_iter()
+            .any(|event| matches!(event, RuntimeEvent::SessionMetadata(_)))
+    );
+    state.with(|store| {
+        assert!(store.cached_sessions("")?.is_empty());
+        assert!(store.load_drafts()?[0].session_path.is_none());
+        store.with_connection(|conn| {
+            conn.execute_batch("DROP TRIGGER fail_bind")
+                .map_err(|error| error.to_string())
+        })
+    })?;
+    send(&mut owner);
+    crate::runtime::tests::drive_process_until(&mut owner, |owner| owner.active_session.is_some());
+    assert!(
+        events
+            .try_iter()
+            .any(|event| matches!(event, RuntimeEvent::SessionMetadata(_)))
+    );
+    state.with(|store| {
+        let rows = store.cached_sessions("")?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].app_session_id, id.get());
+        Ok(())
+    })?;
+    if let Some(mut process) = owner.process.take() {
+        process.close()?;
+    }
+    Ok(())
+}
+
+#[test]
 fn pool_snapshot_maps_to_persisted_child_and_projects_needs_input() {
     let mut parent = summary(Path::new("/sessions/parent.jsonl"));
     parent.id = "parent".into();
@@ -366,7 +439,7 @@ fn pool_run_status_projects_through_catalog_matching_into_child_activity() {
     let activities = worker_activities(&sessions, vec![snapshot.clone()]);
     let matched = session_for_worker_snapshot(&sessions, &snapshot).expect("catalog child");
     let activity = activities
-        .get(&crate::agent_activity::agent_activity_key(&matched.path))
+        .get(&matched.activity_key())
         .expect("production catalog activity");
     assert_eq!(
         activity.lifecycle,
@@ -383,7 +456,7 @@ fn pool_run_status_projects_through_catalog_matching_into_child_activity() {
     let activities = worker_activities(&sessions, vec![snapshot.clone()]);
     assert_eq!(
         activities
-            .get(&crate::agent_activity::agent_activity_key(&matched.path))
+            .get(&matched.activity_key())
             .expect("settled catalog activity")
             .lifecycle,
         crate::agent_activity::AgentLifecycle::Completed(
@@ -465,4 +538,54 @@ fn locator_activity_keeps_profile_scope_when_native_id_and_path_match() {
             Some("named")
         );
     }
+}
+
+#[test]
+fn archive_failure_and_retry_publish_only_the_requested_row() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let path = temp.path().join("one.jsonl");
+    let other_path = temp.path().join("two.jsonl");
+    let mut other = summary(&other_path);
+    other.id = "two".into();
+    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    store.replace_sessions(&[summary(&path), other])?;
+    let (mut owner, events) = crate::runtime::tests::owner_without_process(temp.path().into());
+    owner.state = Some(store.into());
+    let request = ArchiveRequest {
+        target: ArchiveTarget::Path(path.clone()),
+        archived: true,
+        sequence: Some(3),
+    };
+    let (writer, receipt) = async_channel::bounded(1);
+    writer
+        .send_blocking(Err("failed draft save".into()))
+        .unwrap();
+    owner.apply_command(RuntimeCommand::SetSessionArchived {
+        request: request.clone(),
+        draft_saved: Some(receipt),
+    });
+    assert!(
+        matches!(events.try_recv(), Ok(RuntimeEvent::SessionArchiveResult { rows: Err(message), .. }) if message == "failed draft save")
+    );
+    let saved = owner
+        .state
+        .as_ref()
+        .unwrap()
+        .with(|store| store.cached_sessions(""))?;
+    assert!(saved.iter().all(|row| !row.archived));
+    owner.apply_command(RuntimeCommand::SetSessionArchived {
+        request,
+        draft_saved: None,
+    });
+    assert!(
+        matches!(events.try_recv(), Ok(RuntimeEvent::SessionArchiveResult { rows: Ok(rows), .. }) if rows.len() == 1 && rows[0].archived && rows[0].path == crate::sessions::normalize_session_path(&path))
+    );
+    assert!(events.try_recv().is_err());
+    let saved = owner
+        .state
+        .as_ref()
+        .unwrap()
+        .with(|store| store.cached_sessions(""))?;
+    assert_eq!(saved.iter().filter(|row| row.archived).count(), 1);
+    Ok(())
 }

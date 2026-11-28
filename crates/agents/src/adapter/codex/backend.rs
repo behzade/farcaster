@@ -15,8 +15,63 @@ use std::{
 pub(in crate::adapter) struct CodexAdapter;
 
 impl BackendAdapter for CodexAdapter {
+    fn account_capabilities(&self) -> crate::accounts::AccountCapabilities {
+        super::accounts::capabilities()
+    }
+    fn read_accounts(
+        &self,
+        config: &AgentLaunchConfig,
+        project: &Path,
+    ) -> Result<crate::accounts::AccountDiscovery, String> {
+        super::accounts::read(config, project)
+    }
+    fn logout_account(
+        &self,
+        config: &AgentLaunchConfig,
+        source: &crate::accounts::AccountSource,
+        identity: &crate::accounts::AccountIdentity,
+        project: &Path,
+    ) -> Result<(), String> {
+        super::accounts::logout(config, source, identity, project)
+    }
+    fn historical_worker_status(
+        &self,
+        path: &Path,
+        profile: Option<&crate::HarnessProfile>,
+    ) -> Option<crate::WorkerStatus> {
+        let id = super::super::main_session::external_session_locator(Backend::Codex, path)?;
+        let home = match profile {
+            Some(profile) => profile.data_directory.clone()?,
+            None => std::env::var_os("CODEX_HOME")
+                .map(PathBuf::from)
+                .or_else(|| {
+                    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex"))
+                })?,
+        };
+        let db = std::env::var_os("CODEX_SQLITE_HOME")
+            .map(PathBuf::from)
+            .unwrap_or(home);
+        let db = rusqlite::Connection::open_with_flags(
+            db.join("thread_history_1.sqlite"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .ok()?;
+        let status: String = db
+            .query_row(
+                "SELECT status FROM thread_turns WHERE thread_id=?1
+                 ORDER BY rollout_ordinal DESC LIMIT 1",
+                [id],
+                |row| row.get(0),
+            )
+            .ok()?;
+        match status.as_str() {
+            "completed" => Some(crate::WorkerStatus::Idle),
+            "failed" => Some(crate::WorkerStatus::Failed),
+            "interrupted" => Some(crate::WorkerStatus::Stopped),
+            _ => None,
+        }
+    }
     fn fork_source(&self, path: &Path, profile: Option<&crate::HarnessProfile>) -> Option<String> {
-        // A custom executable without a saved data directory may use an unknown home.
         let directory = match profile {
             Some(profile) => Some(profile.data_directory.as_deref()?),
             None => None,
@@ -45,7 +100,7 @@ impl BackendAdapter for CodexAdapter {
         let command = super::super::configuration_launch(config, Backend::Codex)?;
         super::load_configuration(&command, project).and_then(super::super::configuration_catalog)
     }
-    fn steering_boundary(&self) -> SteeringBoundary {
+    fn steering_boundary(&self, _config: &crate::AgentLaunchConfig) -> SteeringBoundary {
         SteeringBoundary::Native
     }
     fn supports_auto_title_generation(&self) -> bool {
@@ -87,7 +142,7 @@ impl BackendAdapter for CodexAdapter {
         launch: SessionLaunch,
     ) -> Result<Box<dyn SessionTransport>, String> {
         let history = launch_history(&launch, |path| {
-            super::catalog::load_history_with_config(config, path, &launch.project)
+            super::catalog::load_history_with_config(config, path, &launch.project, None)
         })?;
         let command = self.launch_configuration(config);
         let (worker, locator, metadata) = super::spawn_main(&command, &launch, history.as_ref())?;
@@ -123,20 +178,42 @@ impl BackendAdapter for CodexAdapter {
     fn external_history(&self, path: &Path, _project: &Path) -> Result<DiscoveredHistory, String> {
         super::load_history(path)
     }
+    fn local_history_revision(
+        &self,
+        config: &AgentLaunchConfig,
+        path: &Path,
+        project: &Path,
+    ) -> Option<serde_json::Value> {
+        super::catalog::local_history_revision(config, path, project)
+    }
+    fn load_history_for_import(
+        &self,
+        config: &AgentLaunchConfig,
+        path: &Path,
+        project: &Path,
+        preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
+    ) -> Result<(farcaster_sessions::LoadedHistory, Option<serde_json::Value>), String> {
+        let (history, revision) =
+            super::catalog::load_history_for_import(config, path, project, preview)?;
+        Ok((loaded_history(history), revision))
+    }
     fn load_history_for_profile(
         &self,
         config: &AgentLaunchConfig,
         path: &Path,
         project: &Path,
     ) -> Result<farcaster_sessions::LoadedHistory, String> {
-        let history = super::catalog::load_history_with_config(config, path, project)?;
-        Ok(farcaster_sessions::LoadedHistory {
-            messages: history.messages,
-            model: history.model,
-            thinking_level: history.thinking_level,
-            pending_question: None,
-            prompt_deliveries: history.prompt_deliveries,
-        })
+        super::catalog::load_history_with_config(config, path, project, None).map(loaded_history)
+    }
+    fn load_history_with_preview(
+        &self,
+        config: &AgentLaunchConfig,
+        path: &Path,
+        project: &Path,
+        preview: &mut dyn FnMut(crate::HistoryPage),
+    ) -> Result<farcaster_sessions::LoadedHistory, String> {
+        super::catalog::load_history_with_config(config, path, project, Some(preview))
+            .map(loaded_history)
     }
     fn move_family(
         &self,
@@ -163,6 +240,16 @@ impl BackendAdapter for CodexAdapter {
         _path: &Path,
     ) -> Result<Option<PathBuf>, String> {
         super::catalog::delete_session_with_config(config, id).map(|_| None)
+    }
+}
+
+fn loaded_history(history: DiscoveredHistory) -> farcaster_sessions::LoadedHistory {
+    farcaster_sessions::LoadedHistory {
+        messages: history.messages,
+        model: history.model,
+        thinking_level: history.thinking_level,
+        pending_question: None,
+        prompt_deliveries: history.prompt_deliveries,
     }
 }
 

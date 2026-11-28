@@ -401,6 +401,7 @@ fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() -> Result
             mode: WorkerSendMode::Prompt,
             message,
             images,
+            ..
         })) if images.is_empty() && submission_id == unknown_id && message == "after restart"
     ));
     worker.send("still alive".into(), WorkerSendMode::Prompt)?;
@@ -727,6 +728,110 @@ fn permission_requests_keep_child_session_identity() {
         opencode_permission_request(&event, OpenCodeEventKind::PermissionAsked),
         Some(("child-1", "permission-1"))
     );
+}
+
+#[test]
+fn permission_replies_resolve_only_the_matching_pending_permission() -> Result<(), String> {
+    let child = std::process::Command::new("sh")
+        .args(["-c", "printf '{\"url\":\"http://127.0.0.1:4096\"}\\n'; cat"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let server = OpenCodeServerProcess::attach(child, "opencode", "test-password")?;
+    let (sender, incoming) = mpsc::channel();
+    let caller_identity = crate::CallerRegistry::shared().issue(
+        std::path::Path::new("/project"),
+        crate::core::CallerProfile {
+            backend: Backend::OpenCode,
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    let mut worker = OpenCodeWorkerSession {
+        catalog_directory: None,
+        caller_identity,
+        server,
+        session_id: "session-1".into(),
+        provider: None,
+        model: None,
+        effort: None,
+        effort_catalog: HashMap::new(),
+        commands: HashSet::new(),
+        access_mode: crate::HarnessAccessMode::Sandboxed,
+        incoming,
+        reasoning_started: false,
+        text_streams: HashMap::new(),
+        reasoning_streams: HashMap::new(),
+        usage: OpenCodeUsageTracker::default(),
+        context_window: 0,
+        pending_inputs: HashMap::from([("form-1".into(), PendingOpenCodeInput::Confirmation)]),
+        context_windows: HashMap::new(),
+        pending_deliveries: HashMap::new(),
+        delivered_awaiting_execution: HashSet::new(),
+        active_tools: HashMap::new(),
+        generation: 0,
+        completions: None,
+        turn_active: true,
+        steering_interrupts: 0,
+        ignore_execution_events: false,
+        abort_waiting_for_start: false,
+        wake: None,
+        pending: VecDeque::new(),
+    };
+    let send = |kind: &str, data: Value| {
+        sender
+            .send(Ok(super::super::contract::OpenCodeEvent {
+                id: None,
+                event: Some(kind.into()),
+                data,
+            }))
+            .expect("fixture event");
+    };
+    for session in ["session-1", "child-1"] {
+        send(
+            "permission.asked",
+            json!({"sessionID":session, "id":"permission-1"}),
+        );
+        assert!(matches!(
+            worker.poll_native_event(),
+            Some(WorkerEvent::NeedsInput(_))
+        ));
+        for data in [
+            json!({"sessionID":"other-session", "requestID":"permission-1", "reply":"once"}),
+            json!({"sessionID":session, "requestID":"form-1", "reply":"once"}),
+            json!({"sessionID":session, "requestID":"unknown", "reply":"once"}),
+            json!({"requestID":"permission-1", "reply":"once"}),
+            json!({"sessionID":session, "reply":"once"}),
+        ] {
+            send("permission.replied", data);
+            assert_eq!(worker.poll_native_event(), None);
+            assert_eq!(worker.pending_inputs.len(), 2);
+        }
+        let data = json!({"sessionID":session, "requestID":"permission-1", "reply":"once"});
+        send("permission.replied", data.clone());
+        assert_eq!(
+            worker.poll_native_event(),
+            Some(WorkerEvent::InputResolved {
+                id: "permission-1".into()
+            })
+        );
+        assert!(!worker.pending_inputs.contains_key("permission-1"));
+        worker.respond(WorkerInputResponse {
+            id: "permission-1".into(),
+            value: Some("Allow once".into()),
+            cancel: false,
+        })?;
+        send("permission.replied", data);
+        assert_eq!(worker.poll_native_event(), None);
+        assert!(worker.pending_inputs.contains_key("form-1"));
+        assert!(worker.turn_active);
+    }
+    worker.close()?;
+    Ok(())
 }
 
 #[test]
@@ -1060,7 +1165,7 @@ fn model_override_only_decides_new_sessions() -> Result<(), String> {
     });
     let selected = resolve_session_model(
         &mut client,
-        &launch(crate::SessionStart::New),
+        &launch(crate::SessionStart::New(None)),
         &session(Value::Null),
         Some(override_model.clone()),
     )?;
@@ -1127,7 +1232,7 @@ fn model_override_only_decides_new_sessions() -> Result<(), String> {
     });
     let selected = resolve_session_model(
         &mut client,
-        &launch(crate::SessionStart::New),
+        &launch(crate::SessionStart::New(None)),
         &session(Value::Null),
         None,
     )?;

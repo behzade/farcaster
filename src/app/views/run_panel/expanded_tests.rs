@@ -41,7 +41,6 @@ fn expanded_workers_keep_the_main_row_and_restore_sections_on_navigation(
                     .success()
             );
             let root = project.join("root.jsonl");
-            let other = project.join("other.jsonl");
             let sessions = [
                 ("root", None),
                 ("other", None),
@@ -71,19 +70,27 @@ fn expanded_workers_keep_the_main_row_and_restore_sections_on_navigation(
                 app.update(cx, |app, cx| {
                     for session in &sessions {
                         std::fs::write(&session.path, "{}").unwrap();
-                        app.activity.row_focus.insert(
-                            crate::agent_activity::agent_activity_key(&session.path),
-                            cx.focus_handle(),
-                        );
+                        app.activity
+                            .row_focus
+                            .insert(session.activity_key(), cx.focus_handle());
                     }
                     app.project.path = project.into();
                     app.project.repository.project = project.into();
                     Arc::make_mut(&mut app.snapshot).project = project.into();
                     app.sessions.all = sessions.to_vec().into();
                     app.sessions.visible = sessions.to_vec().into();
-                    app.lifecycle.pending_session_switch = None;
+                    app.cancel_pending_session_switch();
                     app.sessions.selected_draft = None;
                     Arc::make_mut(&mut app.snapshot).selected_session = Some(root.clone());
+                    app.activity.background_jobs = vec![
+                        crate::protocol::BackgroundJob {
+                            name: "Background job".into(),
+                            command: "test".into(),
+                            state: crate::protocol::BackgroundJobState::Running,
+                            exit_code: None,
+                        };
+                        12
+                    ];
                     app.project.repository.backend =
                         crate::repository::RepositoryBackend::discover(
                             project,
@@ -94,6 +101,19 @@ fn expanded_workers_keep_the_main_row_and_restore_sections_on_navigation(
                     cx.notify();
                 })
             });
+            cx.simulate_resize(gpui::size(gpui::px(1600.0), gpui::px(900.0)));
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+            });
+            let header = crate::app::ui::grid::header_height();
+            let search = cx.debug_bounds("session-search-header").unwrap();
+            let main = cx.debug_bounds("run-panel-main-heading").unwrap();
+            let workspace = cx.debug_bounds("workspace-bar").unwrap();
+            assert_eq!(workspace.top(), gpui::px(0.0));
+            assert_eq!(workspace.size.height, header);
+            assert_eq!(search.top(), workspace.bottom());
+            assert_eq!(main.top(), search.top());
+            assert_eq!(main.size.height, search.size.height);
             cx.update(|window, cx| {
                 let panel = app.read(cx).views.run_panel.clone();
                 window.replace_root(cx, |_, _| PanelHarness(panel, gpui::px(332.0)));
@@ -110,6 +130,52 @@ fn expanded_workers_keep_the_main_row_and_restore_sections_on_navigation(
                 assert!(app.sessions.all.root_for_path(Some(&root)).is_some());
             });
             let main_before = cx.debug_bounds("run-panel-main-agent").unwrap();
+            let heading_before = cx.debug_bounds("run-panel-main-heading").unwrap();
+            assert_eq!(heading_before.top(), crate::app::ui::grid::header_height());
+            assert_eq!(
+                heading_before.size.height,
+                crate::app::ui::grid::header_height()
+            );
+            assert_eq!(main_before.center().y, heading_before.center().y);
+            assert!(main_before.size.width < heading_before.size.width / 2.0);
+            let recent_selectors: Vec<_> = ["b", "c", "d"]
+                .map(|id| {
+                    Box::leak(
+                        format!(
+                            "agent-card-{}",
+                            crate::agent_activity::agent_activity_key(
+                                &project.join(format!("{id}.jsonl"))
+                            )
+                        )
+                        .into_boxed_str(),
+                    ) as &'static str
+                })
+                .into();
+            let recent_before: Vec<_> = recent_selectors
+                .iter()
+                .map(|selector| cx.debug_bounds(selector).unwrap())
+                .collect();
+            cx.simulate_click(recent_before[0].center(), Default::default());
+            draw(cx);
+            cx.update(|window, cx| {
+                assert_eq!(
+                    app.read(cx)
+                        .lifecycle
+                        .pending_session_switch
+                        .as_ref()
+                        .map(|(path, _)| path.as_path()),
+                    Some(project.join("b.jsonl").as_path())
+                );
+                window.simulate_next_frame(cx);
+                let panel = app.read(cx).views.run_panel.clone();
+                panel.update(cx, |_, cx| cx.notify());
+            });
+            draw(cx);
+            assert_eq!(
+                cx.debug_bounds(recent_selectors[0]).unwrap(),
+                recent_before[0],
+                "clicking a worker in the collapsed list must keep the row in place"
+            );
             assert!(cx.debug_bounds("run-panel-repository").is_some());
             let show = cx.debug_bounds("show-more-workers").unwrap();
             cx.simulate_click(show.center(), Default::default());
@@ -117,6 +183,14 @@ fn expanded_workers_keep_the_main_row_and_restore_sections_on_navigation(
             assert_eq!(
                 cx.debug_bounds("run-panel-main-agent").unwrap(),
                 main_before
+            );
+            assert_eq!(
+                recent_selectors
+                    .iter()
+                    .map(|selector| cx.debug_bounds(selector).unwrap())
+                    .collect::<Vec<_>>(),
+                recent_before,
+                "expansion must keep recent worker rows in place"
             );
             assert!(cx.debug_bounds("show-more-workers").is_none());
             assert!(cx.debug_bounds("run-panel-plan").is_none());
@@ -133,7 +207,7 @@ fn expanded_workers_keep_the_main_row_and_restore_sections_on_navigation(
                         .views
                         .run_panel
                         .read(cx)
-                        .workers_expanded_for(&root)
+                        .workers_expanded_for(&sessions[0].catalog_key())
                 )
             });
             let child_selector = Box::leak(
@@ -158,7 +232,7 @@ fn expanded_workers_keep_the_main_row_and_restore_sections_on_navigation(
                         .views
                         .run_panel
                         .read(cx)
-                        .workers_expanded_for(&root)
+                        .workers_expanded_for(&sessions[0].catalog_key())
                 )
             });
             let main = cx.debug_bounds("run-panel-main-agent").unwrap();
@@ -178,7 +252,7 @@ fn expanded_workers_keep_the_main_row_and_restore_sections_on_navigation(
                         .views
                         .run_panel
                         .read(cx)
-                        .workers_expanded_for(&root)
+                        .workers_expanded_for(&sessions[0].catalog_key())
                 )
             });
             assert!(cx.debug_bounds("run-panel-repository").is_some());
@@ -187,7 +261,7 @@ fn expanded_workers_keep_the_main_row_and_restore_sections_on_navigation(
             for draft in [false, true] {
                 cx.update(|_, cx| {
                     app.update(cx, |app: &mut FarcasterApp, cx| {
-                        app.lifecycle.pending_session_switch = None;
+                        app.cancel_pending_session_switch();
                         app.sessions.selected_draft = None;
                         Arc::make_mut(&mut app.snapshot).selected_session = Some(root.clone());
                         app.views.run_panel.update(cx, |_, cx| cx.notify());
@@ -197,17 +271,18 @@ fn expanded_workers_keep_the_main_row_and_restore_sections_on_navigation(
                 let show = cx.debug_bounds("show-more-workers").unwrap();
                 cx.simulate_click(show.center(), Default::default());
                 draw(cx);
-                cx.update(|_, cx| {
+                cx.update(|window, cx| {
                     app.update(cx, |app, cx| {
                         if draft {
                             app.sessions.selected_draft = Some("new-draft".into());
+                            app.views.run_panel.update(cx, |_, cx| cx.notify());
                         } else {
-                            app.lifecycle.pending_session_switch = Some((
-                                other.clone(),
-                                crate::app::infrastructure::performance::Timing::new("test.switch"),
-                            ));
+                            app.select_rail_session(sessions[1].catalog_key(), window, cx);
+                            assert_eq!(
+                                app.sidebar_worker_root().unwrap().catalog_key(),
+                                sessions[1].catalog_key()
+                            );
                         }
-                        app.views.run_panel.update(cx, |_, cx| cx.notify());
                     })
                 });
                 draw(cx);
@@ -217,10 +292,13 @@ fn expanded_workers_keep_the_main_row_and_restore_sections_on_navigation(
                             .views
                             .run_panel
                             .read(cx)
-                            .workers_expanded_for(&root)
+                            .workers_expanded_for(&sessions[0].catalog_key())
                     )
                 });
                 assert!(cx.debug_bounds("run-panel-repository").is_some());
+                if draft {
+                    assert!(cx.debug_bounds("show-more-workers").is_none());
+                }
             }
         },
     );
@@ -234,13 +312,14 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
             "::expanded_workers_build_only_visible_cards_and_reveal_selection"
         ),
         cx,
-        |cx, app, _, project| {
+        |cx, app, runtime, project| {
             let project_path = project.canonicalize().unwrap();
             let project = project_path.as_path();
             crate::app::project::trust::apply(project, crate::projects::TrustChoice::TrustProject)
                 .unwrap();
             let root = project.join("root.jsonl");
             let oldest = project.join("worker-0000.jsonl");
+            let clicked = project.join("worker-0487.jsonl");
             let sessions: Vec<_> = std::iter::once(("root".to_owned(), None, 0))
                 .chain((0..500).map(|i| (format!("worker-{i:04}"), Some("root".to_owned()), i)))
                 .map(|(id, parent, age)| {
@@ -264,15 +343,15 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
                     for session in &sessions {
-                        app.activity.row_focus.insert(
-                            crate::agent_activity::agent_activity_key(&session.path),
-                            cx.focus_handle(),
-                        );
+                        app.activity
+                            .row_focus
+                            .insert(session.activity_key(), cx.focus_handle());
                     }
                     std::fs::write(&oldest, "{}").unwrap();
+                    std::fs::write(&clicked, "{}").unwrap();
                     app.sessions.visible = sessions.clone().into();
                     app.sessions.all = sessions.into();
-                    app.lifecycle.pending_session_switch = None;
+                    app.cancel_pending_session_switch();
                     app.sessions.selected_draft = None;
                     Arc::make_mut(&mut app.snapshot).selected_session = Some(root.clone());
                     app.views.run_panel.update(cx, |_, cx| cx.notify());
@@ -314,15 +393,14 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
             let distance_selector = Box::leak(
                 format!(
                     "agent-card-{}",
-                    crate::agent_activity::agent_activity_key(&project.join("worker-0480.jsonl"))
+                    crate::agent_activity::agent_activity_key(&clicked)
                 )
                 .into_boxed_str(),
             );
             let before_scroll = cx.debug_bounds(distance_selector).unwrap();
             super::worker_list::PREPARATIONS.with(|count| count.set(0));
-            // Exercise the actual wheel path, not just programmatic selection.
             super::agents::CARD_BUILDS.with(|count| count.set(0));
-            let pointer = cx.debug_bounds("run-panel-main-agent").unwrap().center();
+            let pointer = gpui::point(gpui::px(150.0), gpui::px(200.0));
             cx.simulate_event(gpui::ScrollEvent {
                 position: pointer,
                 delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(-600.0))),
@@ -340,16 +418,48 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
                 0,
                 "wheel input must reuse preparation without filesystem work for all workers"
             );
-            assert!(cx.debug_bounds("run-panel-main-agent").is_none());
+            assert!(cx.debug_bounds("run-panel-main-agent").is_some());
             let after_scroll = cx.debug_bounds(distance_selector).unwrap();
             assert!(
                 (before_scroll.top() - after_scroll.top() - gpui::px(600.0)).abs() < gpui::px(1.0),
                 "wheel distance must include offscreen rows"
             );
 
-            // Keyboard navigation can select a worker far outside the current viewport.
+            let list_top = cx.debug_bounds("run-panel-main-heading").unwrap().bottom()
+                + crate::app::ui::theme::theme().space.xs;
+            cx.simulate_event(gpui::ScrollEvent {
+                position: pointer,
+                delta: gpui::ScrollDelta::Pixels(gpui::point(
+                    gpui::px(0.0),
+                    list_top + gpui::px(2.0) - after_scroll.center().y,
+                )),
+                ..Default::default()
+            });
+            draw(cx);
+            let clipped_row = cx.debug_bounds(distance_selector).unwrap();
+            assert!(clipped_row.top() < list_top && clipped_row.center().y > list_top);
+            cx.simulate_click(clipped_row.center(), Default::default());
+            draw(cx);
+            cx.update(|_, cx| {
+                assert_eq!(
+                    app.read(cx)
+                        .lifecycle
+                        .pending_session_switch
+                        .as_ref()
+                        .map(|(path, _)| path),
+                    Some(&clicked)
+                );
+            });
+            assert_eq!(
+                cx.debug_bounds(distance_selector).unwrap(),
+                clipped_row,
+                "clicking a partially visible worker must keep the row in place"
+            );
+            super::worker_list::PREPARATIONS.with(|count| count.set(0));
+
             cx.update(|_, cx| {
                 app.update(cx, |app, cx| {
+                    app.cancel_pending_session_switch();
                     Arc::make_mut(&mut app.snapshot).selected_session = Some(oldest.clone());
                     app.views.run_panel.update(cx, |_, cx| cx.notify());
                 });
@@ -359,7 +469,7 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
                 cx.debug_bounds(oldest_selector).is_some(),
                 "selected worker must scroll into view"
             );
-            assert!(cx.debug_bounds("run-panel-main-agent").is_none());
+            assert!(cx.debug_bounds("run-panel-main-agent").is_some());
 
             assert_eq!(
                 super::worker_list::PREPARATIONS.with(|count| count.get()),
@@ -372,11 +482,33 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
             draw(cx);
             assert_eq!(
                 super::worker_list::PREPARATIONS.with(|count| count.get()),
-                1,
-                "application updates must invalidate the worker snapshot"
+                0,
+                "a panel redraw must reuse workers until their data changes"
             );
 
-            // An unrelated panel redraw must retain the scroll position.
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    let row = app
+                        .sessions
+                        .all
+                        .iter()
+                        .find(|row| row.path == oldest)
+                        .unwrap();
+                    let activity = crate::agent_activity::AgentActivity::limited_fallback(row);
+                    runtime.send_event(crate::runtime::RuntimeEvent::AgentActivityUpdated {
+                        key: row.activity_key(),
+                        activity: activity,
+                    });
+                    app.drain_runtime(cx);
+                });
+            });
+            draw(cx);
+            assert_eq!(
+                super::worker_list::PREPARATIONS.with(|count| count.get()),
+                1,
+                "a changed worker must update its visible family"
+            );
+
             cx.update(|_, cx| {
                 let panel = app.read(cx).views.run_panel.clone();
                 panel.update(cx, |_, cx| cx.notify());
@@ -400,7 +532,6 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
                 cx.debug_bounds("run-panel-main-agent").is_some(),
                 "wheel must return to the top before selecting across the gap"
             );
-            // A measured tail must not make wheel scrolling skip the unseen middle.
             cx.simulate_event(gpui::ScrollEvent {
                 position: gpui::point(gpui::px(150.0), gpui::px(200.0)),
                 delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(-1500.0))),
@@ -410,7 +541,7 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
             let middle_selector = Box::leak(
                 format!(
                     "agent-card-{}",
-                    crate::agent_activity::agent_activity_key(&project.join("worker-0455.jsonl"))
+                    crate::agent_activity::agent_activity_key(&project.join("worker-0468.jsonl"))
                 )
                 .into_boxed_str(),
             );
@@ -421,7 +552,6 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
             assert!(cx.debug_bounds(oldest_selector).is_none());
             scroll_to_top(cx);
 
-            // Resizing must preserve full-list wheel geometry too.
             cx.update(|window, cx| {
                 let panel = app.read(cx).views.run_panel.clone();
                 window.replace_root(cx, |_, _| PanelHarness(panel, gpui::px(420.0)));
@@ -461,16 +591,26 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
             );
 
             cx.update(|window, cx| {
-                let focus = app.read(cx).activity.row_focus
-                    [&crate::agent_activity::agent_activity_key(&oldest)]
+                let focus = app.read(cx).activity.row_focus[&app
+                    .read(cx)
+                    .sessions
+                    .all
+                    .by_path(&oldest)
+                    .unwrap()
+                    .activity_key()]
                     .clone();
                 focus.focus(window, cx);
             });
             scroll_to_top(cx);
             cx.update(|window, cx| {
                 assert!(
-                    app.read(cx).activity.row_focus
-                        [&crate::agent_activity::agent_activity_key(&oldest)]
+                    app.read(cx).activity.row_focus[&app
+                        .read(cx)
+                        .sessions
+                        .all
+                        .by_path(&oldest)
+                        .unwrap()
+                        .activity_key()]
                         .is_focused(window)
                 );
             });
@@ -485,6 +625,139 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
                     Some(&oldest),
                     "offscreen focused worker must retain its Enter handler"
                 );
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn shared_locators_keep_panel_family_activity_focus_and_click_target(
+    cx: &mut gpui::TestAppContext,
+) {
+    use crate::{
+        agent_activity::{AgentActivity, AgentLifecycle},
+        agents::{Backend, WorkerStatus},
+        runtime::{RuntimeCommand, RuntimeEvent, RuntimeSnapshot},
+    };
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::shared_locators_keep_panel_family_activity_focus_and_click_target"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let project = project.canonicalize().unwrap();
+            crate::app::project::trust::apply(&project, crate::projects::TrustChoice::TrustProject)
+                .unwrap();
+            let make = |id, name, parent, profile: &str| {
+                let mut row = super::tests::worker_session(&project, id, name, parent);
+                row.is_running = parent.is_some();
+                row.harness = Backend::Codex;
+                row.profile_id = Some(profile.to_owned());
+                row
+            };
+            let a = make(11, "root", None, "a");
+            let b = make(22, "root", None, "b");
+            let wa = make(33, "worker", Some(11), "a");
+            let wb = make(44, "worker", Some(22), "b");
+            let rows = vec![a.clone(), b.clone(), wa.clone(), wb.clone()];
+            let activity = |row, status| AgentActivity::from_worker_status(row, status, false);
+            let a_card: &str =
+                Box::leak(format!("agent-card-{:?}", wa.catalog_key()).into_boxed_str());
+            let b_card: &str =
+                Box::leak(format!("agent-card-{:?}", wb.catalog_key()).into_boxed_str());
+            let draw = |cx: &mut gpui::VisualTestContext| {
+                cx.update(|window, cx| {
+                    window.draw(cx).clear(cx);
+                })
+            };
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions.selected_draft = None;
+                    app.snapshot = Arc::new(RuntimeSnapshot {
+                        selected_session: Some(a.path.clone()),
+                        project: project.clone(),
+                        harness: Some(a.harness),
+                        profile_id: a.profile_id.clone(),
+                        ..Default::default()
+                    });
+                    runtime.send_event(RuntimeEvent::Sessions {
+                        generation: app.sessions.generation + 1,
+                        sessions: rows.clone(),
+                        all_sessions: rows,
+                        activities: Some((
+                            [
+                                (wa.activity_key(), activity(&wa, WorkerStatus::NeedsInput)),
+                                (wb.activity_key(), activity(&wb, WorkerStatus::Failed)),
+                            ]
+                            .into(),
+                            false,
+                        )),
+                    });
+                    app.drain_runtime(cx);
+                    assert_ne!(
+                        app.activity.row_focus[&wa.activity_key()],
+                        app.activity.row_focus[&wb.activity_key()]
+                    );
+                });
+                let panel = app.read(cx).views.run_panel.clone();
+                window.replace_root(cx, |_, _| PanelHarness(panel, gpui::px(332.0)));
+            });
+            draw(cx);
+            assert!(cx.debug_bounds(a_card).is_some());
+            assert!(cx.debug_bounds(b_card).is_none());
+            super::worker_list::PREPARATIONS.with(|count| count.set(0));
+            runtime.send_event(RuntimeEvent::AgentActivityUpdated {
+                key: wb.activity_key(),
+                activity: activity(&wb, WorkerStatus::Running),
+            });
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.drain_runtime(cx);
+                    assert_eq!(
+                        app.activity.agents[&wa.activity_key()].lifecycle,
+                        AgentLifecycle::NeedsInput
+                    );
+                    assert_eq!(
+                        app.activity.agents[&wb.activity_key()].lifecycle,
+                        AgentLifecycle::Working
+                    );
+                    assert!(
+                        app.views
+                            .run_panel
+                            .read(cx)
+                            .has_prepared_workers_for(&a.catalog_key())
+                    );
+                    app.select_rail_session(b.catalog_key(), window, cx);
+                });
+            });
+            draw(cx);
+            assert!(cx.debug_bounds(a_card).is_none());
+            let bounds = cx.debug_bounds(b_card).expect("second family's worker");
+            assert_eq!(
+                super::worker_list::PREPARATIONS.with(|count| count.get()),
+                1
+            );
+            cx.simulate_click(bounds.center(), Default::default());
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                let app = app.read(cx);
+                assert_eq!(app.lifecycle.requested_session_key, Some(wb.catalog_key()));
+                assert_eq!(
+                    app.sidebar_worker_root().unwrap().catalog_key(),
+                    b.catalog_key()
+                );
+            });
+            assert!(std::iter::from_fn(|| runtime.try_recv_command()).any(|command|
+                matches!(command, RuntimeCommand::SelectSession { key: Some(key), .. } if key == wb.catalog_key())));
+            draw(cx);
+            let main = cx.debug_bounds("run-panel-main-agent").unwrap();
+            cx.simulate_click(main.center(), Default::default());
+            cx.update(|_, cx| {
+                assert_eq!(
+                    app.read(cx).lifecycle.requested_session_key,
+                    Some(b.catalog_key())
+                )
             });
         },
     );

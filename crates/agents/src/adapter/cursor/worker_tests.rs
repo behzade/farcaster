@@ -237,7 +237,6 @@ fn rename_discards_metadata_from_before_the_rename() {
             "Old title".into(),
         )));
     worker.rename("Chosen title").unwrap();
-    // A lookup that started before rename can complete after its acknowledgement.
     let _ = sender.send(Ok(json!({"agent":{"name":"Old title"}})));
     while let Some(event) = worker.poll() {
         assert!(!matches!(
@@ -355,7 +354,6 @@ fn buffered_status_frames_do_not_hide_a_terminal_failure() {
         sender.send(Ok(Some(frame))).expect("frame");
     }
     sender.send(Ok(None)).expect("end");
-    // One wake can cover the whole batch. The runtime stops draining on None.
     assert!(
         matches!(worker.poll(), Some(WorkerEvent::PromptDeliveryUnknown { submission_id, .. }) if submission_id == "hi")
     );

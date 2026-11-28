@@ -132,20 +132,9 @@ pub fn spawn_main(
     profile: &AcpProfile,
     launch: &crate::SessionLaunch,
 ) -> Result<super::MainSession, String> {
-    let caller_identity = crate::core::CallerRegistry::shared().issue_with_access(
-        &launch.project,
-        crate::core::CallerProfile {
-            backend: profile.backend,
-            provider: None,
-            model: None,
-            effort: None,
-        },
-        launch.wake.clone(),
-        command.access_mode,
-    );
-    caller_identity.set_harness_profile_id(command.profile_id.clone());
+    let caller_identity = crate::core::CallerRegistry::shared().issue_main_session(command, launch);
     let resume = match &launch.start {
-        crate::SessionStart::New => None,
+        crate::SessionStart::New(_) => None,
         crate::SessionStart::Resume(_) => Some(
             main_session::launch_session_locator(launch)
                 .ok_or_else(|| format!("{} resume requires a session id", profile.name))?,
@@ -190,7 +179,14 @@ fn spawn_session(
 > {
     let mut prepared = command.command(project)?;
     configure_command(&mut prepared, profile, command.access_mode)?;
-    let runtime_key = super::configuration::AcpRuntimeKey::from_command(&prepared);
+    let permission_mode = if profile.backend == Backend::Antigravity
+        && super::super::antigravity::integrated_cli(&prepared)
+    {
+        // agy takes the access policy at launch. Its session mode is a workflow setting.
+        None
+    } else {
+        profile.permission_mode(command.access_mode)
+    };
     let mut child = prepared
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -212,7 +208,7 @@ fn spawn_session(
         resume,
         caller_token,
         wake.clone(),
-        &runtime_key,
+        &prepared,
     ) {
         Ok(setup) => setup,
         Err(error) => {
@@ -224,7 +220,12 @@ fn spawn_session(
             ));
         }
     };
-    if let Some(mode) = profile.permission_mode(command.access_mode) {
+    if profile.backend == Backend::Antigravity
+        && let Some(identity) = metadata.account.take()
+    {
+        super::super::antigravity::observe_account(command, &prepared, project, identity);
+    }
+    if let Some(mode) = permission_mode {
         let (method, params) = if let Some(id) = &config_ids.mode {
             (
                 "session/set_config_option",
@@ -260,6 +261,9 @@ fn spawn_session(
             session_id,
             current_prompt: None,
             current_inputs: PromptBatch::default(),
+            next_steer: None,
+            waiting_steers: VecDeque::new(),
+            current_is_steer: false,
             prompt_acks: PromptAcknowledgements::default(),
             queued_prompts: PromptQueue::default(),
             handoff: None,
@@ -300,7 +304,7 @@ fn setup_connection(
     resume: Option<&str>,
     caller_token: Option<&str>,
     wake: Option<thread::Thread>,
-    runtime_key: &super::configuration::AcpRuntimeKey,
+    command: &std::process::Command,
 ) -> Result<AcpSetup, String> {
     let stdin = child
         .stdin
@@ -316,11 +320,17 @@ fn setup_connection(
         wake,
     )?;
     let initialized = connection.initialize(profile)?;
-    let features = AcpFeatures::from_initialize(&initialized);
-    let params = json!({
+    let mut features = AcpFeatures::from_initialize(&initialized);
+    features.native_steer = profile.backend == Backend::Antigravity
+        && super::super::antigravity::integrated_cli(command);
+    let mut params = json!({
         "cwd": project.to_string_lossy(),
         "mcpServers": acp_mcp_servers(caller_token),
     });
+    if features.native_steer {
+        super::super::antigravity::SessionOptions::from_environment()?
+            .apply(&mut params, &initialized)?;
+    }
     let response = if let Some(session_id) = resume {
         connection.request_blocking(
             profile.resume_method,
@@ -338,7 +348,8 @@ fn setup_connection(
     if resume.is_some_and(|expected| expected != session_id) {
         return Err(format!("{} resumed a different session", profile.name));
     }
-    let catalog = super::configuration::model_catalog(&connection, profile, runtime_key)?;
+    let runtime_key = super::configuration::AcpRuntimeKey::from_command(command);
+    let catalog = super::configuration::model_catalog(&connection, profile, &runtime_key)?;
     let (mut metadata, config_ids) = super::configuration::metadata(profile, &response, catalog);
     let queued = connection.drain_queued()?;
     if let Some(commands) = queued
@@ -378,10 +389,17 @@ fn merge(mut object: Value, key: &str, value: Value) -> Value {
     object
 }
 
-fn prompt_content(inputs: &[PendingPrompt]) -> Result<Vec<Value>, String> {
+fn prompt_content(inputs: &[PendingPrompt], embedded_context: bool) -> Result<Vec<Value>, String> {
     let mut prompt = Vec::new();
     for input in inputs {
-        prompt.push(json!({"type": "text", "text": input.message}));
+        if let Some(blocks) = embedded_context
+            .then(|| super::resources::pasted_resources(&input.message))
+            .flatten()
+        {
+            prompt.extend(blocks);
+        } else {
+            prompt.push(json!({"type": "text", "text": input.message}));
+        }
         for image in &input.images {
             let image = image.clone().into_inline()?;
             prompt.push(json!({"type": "image", "mimeType": image.mime_type, "data": image.data}));
@@ -396,7 +414,7 @@ pub fn configure_command(
     access_mode: HarnessAccessMode,
 ) -> Result<(), String> {
     if profile.backend == Backend::Antigravity {
-        super::super::antigravity::configure(command)?;
+        super::super::antigravity::configure(command, access_mode)?;
     }
     if profile.backend == Backend::Cursor {
         command.args([
@@ -437,15 +455,21 @@ fn acp_mcp_servers(caller_token: Option<&str>) -> Vec<Value> {
 
 struct AcpFeatures {
     close: bool,
+    embedded_context: bool,
+    native_steer: bool,
 }
 
 impl AcpFeatures {
     fn from_initialize(value: &Value) -> Self {
         Self {
+            embedded_context: value
+                .pointer("/agentCapabilities/promptCapabilities/embeddedContext")
+                .and_then(Value::as_bool)
+                == Some(true),
+            native_steer: false,
             close: value
                 .pointer("/agentCapabilities/sessionCapabilities/close")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
+                .is_some_and(|cap| cap.is_object() || cap.as_bool() == Some(true)),
         }
     }
 }
@@ -461,7 +485,8 @@ struct Handoff {
 }
 
 enum PendingInputKind {
-    McpConfirmation,
+    Form(super::elicitation::Form),
+    McpConfirmation(super::super::mcp_confirmation::Confirmation),
     Permission {
         option_ids: HashMap<String, String>,
         allow_option: Option<String>,
@@ -494,6 +519,9 @@ struct AcpWorkerSession {
     session_id: String,
     current_prompt: Option<AcpRequestId>,
     current_inputs: PromptBatch,
+    next_steer: Option<(AcpRequestId, PromptBatch)>,
+    waiting_steers: VecDeque<PendingPrompt>,
+    current_is_steer: bool,
     prompt_acks: PromptAcknowledgements,
     queued_prompts: PromptQueue<PendingPrompt>,
     handoff: Option<Handoff>,
@@ -533,8 +561,16 @@ impl AcpWorkerSession {
         self.connection.send_request(method, params)
     }
 
+    fn request_prompt(&mut self, inputs: &[PendingPrompt]) -> Result<AcpRequestId, String> {
+        let prompt = prompt_content(inputs, self.features.embedded_context)?;
+        self.request(
+            "session/prompt",
+            json!({"sessionId": self.session_id, "prompt": prompt}),
+        )
+    }
+
     fn start_prompt_request(&mut self, inputs: Vec<PendingPrompt>) -> Result<(), String> {
-        let prompt = prompt_content(&inputs)?;
+        let id = self.request_prompt(&inputs)?;
         self.output.clear();
         self.thought_started = false;
         self.tool_states.clear();
@@ -546,11 +582,11 @@ impl AcpWorkerSession {
                     .and_then(|input| input.submission_id.as_deref()),
             );
         }
-        let id = self.request(
-            "session/prompt",
-            json!({"sessionId": self.session_id, "prompt": prompt}),
-        )?;
         self.current_prompt = Some(id);
+        self.current_is_steer = self.features.native_steer
+            && inputs
+                .first()
+                .is_some_and(|input| input.mode == WorkerSendMode::Steer);
         self.current_inputs = inputs.into();
         if let Some(identity) = &self.caller_identity {
             identity.set_activity(WorkerActivityState::Working);
@@ -558,8 +594,44 @@ impl AcpWorkerSession {
         Ok(())
     }
 
+    // Concurrent agy handlers can consume prompts out of wire order.
+    fn dispatch_next_steer(&mut self) {
+        if self.next_steer.is_some()
+            || !self.current_inputs.is_delivered()
+            || self.pending_prompt_result.is_some()
+            || self.cancel_deadline.is_some()
+        {
+            return;
+        }
+        while let Some(input) = self.waiting_steers.pop_front() {
+            match self.request_prompt(std::slice::from_ref(&input)) {
+                Ok(id) => {
+                    self.next_steer = Some((id, vec![input].into()));
+                    return;
+                }
+                Err(error) => self.reject_unsent_steer(input, error),
+            }
+        }
+    }
+
+    fn reject_unsent_steer(&mut self, input: PendingPrompt, error: String) {
+        if input.submission_id.is_some() {
+            self.reject_inputs(vec![input], error.into());
+        } else {
+            self.events.push_back(WorkerEvent::RequestFailed {
+                operation: "ACP steer".into(),
+                error,
+            });
+        }
+    }
+
     fn admit(&mut self, input: PendingPrompt) -> Result<(), String> {
         if self.current_prompt.is_some() {
+            if input.mode == WorkerSendMode::Steer && self.features.native_steer {
+                self.waiting_steers.push_back(input);
+                self.dispatch_next_steer();
+                return Ok(());
+            }
             if matches!(input.mode, WorkerSendMode::Queue | WorkerSendMode::Steer) {
                 self.queued_prompts.push(input);
                 return Ok(());
@@ -736,7 +808,9 @@ impl AcpWorkerSession {
             }
             "user_message_chunk" => {
                 serde_json::from_value::<ContentBlock>(update.get("content")?.clone()).ok()?;
-                self.acknowledge_current_prompt_started();
+                if self.next_steer.is_none() {
+                    self.acknowledge_current_prompt_started();
+                }
                 self.events.pop_front()
             }
             "agent_message_chunk" => {
@@ -899,26 +973,33 @@ impl AcpWorkerSession {
         if params["sessionId"].as_str() != Some(&self.session_id) {
             return None;
         }
-        let prompt = super::super::mcp_confirmation::prompt(
-            self.profile.name,
-            params["message"].as_str()?,
-            params["mode"].as_str()?,
-            &params["requestedSchema"],
-            &params["_meta"],
-        )
-        .ok()?;
+        if let Some(form) = super::elicitation::Form::parse(id.to_string(), params) {
+            let request = form.request.clone();
+            self.pending_inputs.insert(
+                request.id.clone(),
+                PendingInput {
+                    request: id.clone(),
+                    kind: PendingInputKind::Form(form),
+                },
+            );
+            return Some(WorkerEvent::QuestionsRequested(request));
+        }
+        let confirmation =
+            super::super::mcp_confirmation::Confirmation::parse(self.profile.name, params).ok()?;
+        let options = confirmation.options();
+        let prompt = confirmation.prompt.clone();
         let input_id = id.to_string();
         self.pending_inputs.insert(
             input_id.clone(),
             PendingInput {
                 request: id.clone(),
-                kind: PendingInputKind::McpConfirmation,
+                kind: PendingInputKind::McpConfirmation(confirmation),
             },
         );
         Some(WorkerEvent::NeedsInput(WorkerInput {
             id: input_id,
             prompt,
-            options: vec!["Decline".into(), "Allow".into()],
+            options,
             secret: false,
         }))
     }
@@ -1006,10 +1087,14 @@ impl AcpWorkerSession {
     fn cancel_pending_inputs(&mut self) -> Result<(), String> {
         let mut first_error = None;
         for pending in self.pending_inputs.drain().map(|(_, pending)| pending) {
-            if let Err(error) = self.connection.respond(
-                &pending.request,
-                json!({"outcome": {"outcome": "cancelled"}}),
-            ) && first_error.is_none()
+            let result = match pending.kind {
+                PendingInputKind::Form(_) | PendingInputKind::McpConfirmation(_) => {
+                    json!({"action":"cancel"})
+                }
+                _ => json!({"outcome": {"outcome": "cancelled"}}),
+            };
+            if let Err(error) = self.connection.respond(&pending.request, result)
+                && first_error.is_none()
             {
                 first_error = Some(error);
             }
@@ -1040,6 +1125,15 @@ impl AcpWorkerSession {
     }
 
     fn start_next_queued_prompt(&mut self) {
+        while let Some(steer) = self.waiting_steers.pop_front() {
+            match self.start_prompt_request(vec![steer.clone()]) {
+                Ok(()) => {
+                    self.events.push_back(WorkerEvent::Started);
+                    return;
+                }
+                Err(error) => self.reject_unsent_steer(steer, error),
+            }
+        }
         if self.queued_prompts.is_empty() {
             if let Some(identity) = &self.caller_identity {
                 identity.set_activity(WorkerActivityState::Idle);
@@ -1066,7 +1160,6 @@ impl AcpWorkerSession {
                     | "tool_call"
                     | "tool_call_update"
                     | "plan"
-                    | "usage_update"
             )
         )
     }
@@ -1086,6 +1179,7 @@ impl AcpWorkerSession {
             .cancel_deadline
             .as_ref()
             .is_some_and(|(cancelled, _)| cancelled == &id)
+            && self.next_steer.is_none()
         {
             self.cancel_deadline = None;
         }
@@ -1096,7 +1190,7 @@ impl AcpWorkerSession {
             Some("cancelled") => self
                 .mark_current_prompt_unknown("ACP prompt stopped before delivery acknowledgement"),
             Some(stop_reason) if Self::prompt_stop_reason_is_receipt(stop_reason) => {
-                if self.current_inputs.is_delivered() {
+                if self.current_inputs.is_delivered() || self.current_is_steer {
                     self.acknowledge_current_prompt_started();
                 } else {
                     self.mark_current_prompt_unknown(
@@ -1116,7 +1210,23 @@ impl AcpWorkerSession {
                 });
             }
         }
-        self.pending_prompt_result = Some(id);
+        self.advance_after_prompt_reply(id);
+    }
+
+    fn advance_after_prompt_reply(&mut self, id: AcpRequestId) {
+        // agy ends the previous RPC when a steer takes over the stream.
+        if let Some((next_id, inputs)) = self.next_steer.take() {
+            if let Some((cancelled, _)) = &mut self.cancel_deadline {
+                *cancelled = next_id.clone();
+            }
+            self.current_prompt = Some(next_id);
+            self.current_inputs = inputs;
+            self.current_is_steer = true;
+            self.post_reply_frames = 0;
+            self.reply_deadline = None;
+        } else {
+            self.pending_prompt_result = Some(id);
+        }
     }
 
     fn finish_current_prompt(&mut self, id: &AcpRequestId) {
@@ -1140,11 +1250,15 @@ impl AcpWorkerSession {
     }
 
     fn settle_prompt_if_idle(&mut self) -> Option<WorkerEvent> {
+        self.pending_prompt_result.as_ref()?;
+        self.mark_current_prompt_unknown("ACP prompt stopped without model delivery evidence");
+        if let Some(event) = self.events.pop_front() {
+            return Some(event);
+        }
         let id = self.pending_prompt_result.take()?;
+        let output = self.output.clone();
         self.finish_current_prompt(&id);
-        Some(WorkerEvent::Settled {
-            output: self.output.clone(),
-        })
+        Some(WorkerEvent::Settled { output })
     }
 
     fn cancel_is_overdue(&self) -> bool {
@@ -1190,6 +1304,8 @@ impl WorkerSession for AcpWorkerSession {
 
     fn can_retire(&self) -> bool {
         self.current_prompt.is_none()
+            && self.next_steer.is_none()
+            && self.waiting_steers.is_empty()
             && self.current_inputs.is_empty()
             && self.queued_prompts.is_empty()
             && self.handoff.is_none()
@@ -1248,17 +1364,52 @@ impl WorkerSession for AcpWorkerSession {
         self.prompt_acks.pop()
     }
 
+    fn respond_questions(&mut self, response: crate::QuestionResponse) -> Result<(), String> {
+        let Some(PendingInput {
+            request,
+            kind: PendingInputKind::Form(form),
+        }) = self.pending_inputs.get(&response.id)
+        else {
+            return Err("Unknown ACP form".into());
+        };
+        let result = match form.reply(&response) {
+            Ok(result) => result,
+            Err(error) => {
+                self.events
+                    .push_back(WorkerEvent::QuestionsRequested(form.request.clone()));
+                return Err(error);
+            }
+        };
+        self.connection.respond(request, result)?;
+        self.pending_inputs.remove(&response.id);
+        Ok(())
+    }
+
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String> {
+        if let Some(PendingInput {
+            kind: PendingInputKind::Form(_),
+            ..
+        }) = self.pending_inputs.get(&response.id)
+        {
+            if response.cancel {
+                return self.respond_questions(crate::QuestionResponse {
+                    id: response.id,
+                    answers: Default::default(),
+                    cancelled: true,
+                });
+            }
+            return Err("ACP form requires structured answers".into());
+        }
         let pending = self
             .pending_inputs
             .remove(&response.id)
             .ok_or_else(|| format!("unknown ACP interaction: {}", response.id))?;
         let PendingInput { request, kind } = pending;
         let result = match kind {
-            PendingInputKind::McpConfirmation => super::super::mcp_confirmation::reply(
-                response.value.as_deref() == Some("Allow"),
-                response.cancel,
-            ),
+            PendingInputKind::Form(_) => unreachable!("handled above"),
+            PendingInputKind::McpConfirmation(confirmation) => {
+                confirmation.reply(response.value.as_deref(), response.cancel)
+            }
             PendingInputKind::Permission {
                 option_ids,
                 allow_option,
@@ -1382,7 +1533,9 @@ impl WorkerSession for AcpWorkerSession {
     }
 
     fn abort(&mut self) -> Result<(), String> {
-        PromptBatch::from(self.queued_prompts.take_all()).reject(
+        let mut unsent = self.queued_prompts.take_all();
+        unsent.extend(self.waiting_steers.drain(..));
+        PromptBatch::from(unsent).reject(
             "Prompt cancelled before delivery".into(),
             &mut self.prompt_acks,
         );
@@ -1423,6 +1576,11 @@ impl WorkerSession for AcpWorkerSession {
             self.events.push_back(WorkerEvent::Started);
             return Ok(());
         };
+        if self.features.native_steer && self.cancel_deadline.is_none() {
+            self.waiting_steers.extend(inputs);
+            self.dispatch_next_steer();
+            return Ok(());
+        }
         self.handoff = Some(Handoff {
             interrupted_prompt,
             inputs,
@@ -1568,6 +1726,10 @@ impl WorkerSession for AcpWorkerSession {
             });
         }
         loop {
+            if let Some(event) = self.events.pop_front() {
+                return Some(event);
+            }
+            self.dispatch_next_steer();
             if self.pending_prompt_result.is_some()
                 && self.post_reply_frames >= POST_REPLY_DRAIN_LIMIT
             {
@@ -1605,8 +1767,37 @@ impl WorkerSession for AcpWorkerSession {
                     self.record_prompt_result(id, result);
                     continue;
                 }
-                Ok(AcpInbound::Response { .. }) => {}
+                Ok(AcpInbound::Response { id, result }) => {
+                    if self
+                        .next_steer
+                        .as_ref()
+                        .is_some_and(|(next, _)| next == &id)
+                    {
+                        if result["stopReason"]
+                            .as_str()
+                            .is_some_and(Self::prompt_stop_reason_is_receipt)
+                        {
+                            self.advance_after_prompt_reply(id.clone());
+                            self.record_prompt_result(id, result);
+                        } else {
+                            let (_, mut batch) = self.next_steer.take().expect("matching steer");
+                            batch.mark_unknown(
+                                "ACP steering stopped without acknowledgement",
+                                &mut self.events,
+                            );
+                        }
+                    }
+                }
                 Ok(AcpInbound::Error { id, rejection }) => {
+                    if self
+                        .next_steer
+                        .as_ref()
+                        .is_some_and(|(next, _)| next == &id)
+                    {
+                        let (_, batch) = self.next_steer.take().expect("matching steer");
+                        batch.reject(rejection, &mut self.prompt_acks);
+                        continue;
+                    }
                     if self.pending_prompt_result.as_ref() == Some(&id) {
                         continue;
                     }
@@ -1614,10 +1805,11 @@ impl WorkerSession for AcpWorkerSession {
                     if rejected_current_prompt {
                         let inputs = std::mem::take(&mut self.current_inputs);
                         inputs.reject(rejection, &mut self.prompt_acks);
-                        self.finish_current_prompt(&id);
-                        return Some(WorkerEvent::Settled {
-                            output: self.output.clone(),
-                        });
+                        self.advance_after_prompt_reply(id);
+                        continue;
+                    }
+                    if self.features.native_steer {
+                        continue;
                     }
                     return Some(WorkerEvent::Failed(format!(
                         "{} ACP error: {rejection}",
@@ -1667,7 +1859,12 @@ impl WorkerSession for AcpWorkerSession {
                         "unsupported agent request"
                     };
                     log_bad_acp_message(self.profile.name, &method, &params, reason);
-                    if let Err(error) = self.reject_request(&id) {
+                    let reply = if method == "elicitation/create" {
+                        self.connection.respond(&id, json!({"action":"cancel"}))
+                    } else {
+                        self.reject_request(&id)
+                    };
+                    if let Err(error) = reply {
                         return Some(WorkerEvent::Failed(error));
                     }
                 }

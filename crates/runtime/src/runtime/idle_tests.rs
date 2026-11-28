@@ -62,10 +62,6 @@ fn retired_session_selection_reuses_transcript_and_metrics_without_loading_histo
         "tokens": {"input": 100, "output": 20, "cacheRead": 10, "cacheWrite": 0, "totalTokens": 130},
         "contextUsage": {"tokens": 130, "contextWindow": 1000, "percent": 13.0}
     });
-    owner.snapshot.account_usage.weekly = Some(agents::AccountUsageWindow {
-        remaining_percent: 68.0,
-        resets_at: Some(1234),
-    });
     conversation_mut(&mut owner.snapshot)
         .replace_history(&[json!({"role": "assistant", "content": "kept"})]);
     let previous = owner.snapshot.clone();
@@ -83,7 +79,6 @@ fn retired_session_selection_reuses_transcript_and_metrics_without_loading_histo
         &previous.conversation
     ));
     assert_eq!(owner.snapshot.stats, previous.stats);
-    assert_eq!(owner.snapshot.account_usage, previous.account_usage);
     assert!(owner.history_selection_generation.is_none());
     assert!(owner.process.is_none());
 }

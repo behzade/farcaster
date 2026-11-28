@@ -27,6 +27,9 @@ pub(super) fn metadata_from_session(
         .map(Vec::as_slice)
         .unwrap_or_default();
     let (mut metadata, mut ids) = metadata_from_options(profile, options);
+    if profile.backend == crate::Backend::Antigravity {
+        metadata.account = super::super::antigravity::account_identity(response);
+    }
     if metadata.models.is_empty()
         && let Some(models) = response
             .pointer("/models/availableModels")
@@ -162,6 +165,7 @@ pub(super) fn metadata_from_options(
                 .collect();
         } else if category == "thought_level"
             || category == "reasoning"
+            || id == "thought_level"
             || id.contains("effort")
             || id.contains("reasoning")
         {
@@ -597,7 +601,11 @@ pub(super) fn usage_update(update: &Value) -> Option<WorkerUsage> {
     let cache_read = number(usage, &["cachedInputTokens", "cacheRead"]);
     let cache_write = number(usage, &["cacheWriteInputTokens", "cacheWrite"]);
     let context_window = number(update, &["size", "contextWindow"]);
-    (input + output + cache_read + cache_write + context_window > 0).then_some(WorkerUsage {
+    ([input, output, cache_read, cache_write, context_window]
+        .iter()
+        .any(|value| *value > 0)
+        || update.get("used").is_some_and(Value::is_u64))
+    .then_some(WorkerUsage {
         turn: TokenUsage {
             input,
             output,
@@ -611,6 +619,7 @@ pub(super) fn usage_update(update: &Value) -> Option<WorkerUsage> {
             cache_write,
         },
         context_window,
+        context_used: update.get("used").and_then(Value::as_u64),
         cost: None,
     })
 }

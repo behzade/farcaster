@@ -189,18 +189,7 @@ pub fn spawn_main(
 > {
     let mut prepared = command.command(&launch.project)?;
     let queue_plugin = configure_queue_hook(&mut prepared, command.prompt_boundary_url.as_deref())?;
-    let caller_identity = crate::core::CallerRegistry::shared().issue_with_access(
-        &launch.project,
-        crate::core::CallerProfile {
-            backend: Backend::OpenCode,
-            provider: None,
-            model: None,
-            effort: None,
-        },
-        launch.wake.clone(),
-        command.access_mode,
-    );
-    caller_identity.set_harness_profile_id(command.profile_id.clone());
+    let caller_identity = crate::core::CallerRegistry::shared().issue_main_session(command, launch);
     if farcaster_mcp::enabled() {
         configure_farcaster_mcp(&mut prepared, caller_identity.token())?;
     }
@@ -218,7 +207,7 @@ pub fn spawn_main(
     server.keep_queue_plugin(queue_plugin);
     let mut client = server.client();
     let session = match &launch.start {
-        crate::SessionStart::New => {
+        crate::SessionStart::New(_) => {
             client.create_session(&launch.project.to_string_lossy(), None, None)?
         }
         crate::SessionStart::Resume(_) => {
@@ -307,7 +296,7 @@ fn resolve_session_model<T: super::contract::OpenCodeHttpTransport>(
     override_model: Option<super::contract::OpenCodeModelSelection>,
 ) -> Result<Option<super::contract::OpenCodeModelSelection>, String> {
     let override_model = match &launch.start {
-        crate::SessionStart::New => override_model,
+        crate::SessionStart::New(_) => override_model,
         crate::SessionStart::Resume(_) | crate::SessionStart::Fork(_) => None,
     };
     match override_model {
@@ -543,6 +532,7 @@ impl OpenCodeUsageTracker {
             turn,
             session: self.session,
             context_window,
+            context_used: None,
             cost: self.cost,
         }
     }
@@ -729,6 +719,7 @@ impl OpenCodeWorkerSession {
                 .run_command(&self.session_id, name, text, files)?;
             self.ignore_execution_events = false;
             let activity = WorkerActivity::InputDelivered {
+                source: None,
                 submission_id,
                 mode,
                 message,
@@ -887,7 +878,8 @@ impl OpenCodeWorkerSession {
         if delivery.clears_abort_barrier {
             self.ignore_execution_events = false;
         }
-        let activity = delivery.input.into_activity();
+        let mut activity = delivery.input.into_activity();
+        activity.link_delivered_input(native_id, None);
         Some(WorkerEvent::Activity(activity))
     }
 
@@ -930,6 +922,28 @@ impl OpenCodeWorkerSession {
                 continue;
             };
             let event_kind = OpenCodeEventKind::parse(reported_event_type);
+            if event_kind == OpenCodeEventKind::PermissionReplied {
+                let (Some(session_id), Some(request_id)) = (
+                    event.data.get("sessionID").and_then(Value::as_str),
+                    event.data.get("requestID").and_then(Value::as_str),
+                ) else {
+                    log_bad_opencode_event(
+                        &event,
+                        "permission reply is missing sessionID or requestID",
+                    );
+                    continue;
+                };
+                if matches!(
+                    self.pending_inputs.get(request_id),
+                    Some(PendingOpenCodeInput::Permission { session_id: pending }) if pending == session_id
+                ) {
+                    self.pending_inputs.remove(request_id);
+                    return Some(WorkerEvent::InputResolved {
+                        id: request_id.to_owned(),
+                    });
+                }
+                continue;
+            }
             if let Some((session_id, request_id)) = opencode_permission_request(&event, event_kind)
             {
                 if matches!(self.access_mode, crate::HarnessAccessMode::Full) {
@@ -1464,7 +1478,9 @@ impl OpenCodeWorkerSession {
                     }));
                 }
                 OpenCodeEventKind::KnownIgnored => {}
-                OpenCodeEventKind::CatalogUpdated | OpenCodeEventKind::PermissionAsked => {
+                OpenCodeEventKind::CatalogUpdated
+                | OpenCodeEventKind::PermissionAsked
+                | OpenCodeEventKind::PermissionReplied => {
                     log_bad_opencode_event(&event, "event reached same-session dispatch twice")
                 }
                 OpenCodeEventKind::Unknown(_) => {
@@ -1592,10 +1608,9 @@ impl WorkerSession for OpenCodeWorkerSession {
     }
 
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String> {
-        let pending = self
-            .pending_inputs
-            .remove(&response.id)
-            .ok_or_else(|| format!("unknown OpenCode interaction: {}", response.id))?;
+        let Some(pending) = self.pending_inputs.remove(&response.id) else {
+            return Ok(());
+        };
         let mut client = self.server.client();
         match pending {
             PendingOpenCodeInput::Confirmation => {

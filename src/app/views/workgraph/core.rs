@@ -27,6 +27,18 @@ pub(super) fn plan_rows(
                     .is_some_and(|state| state.completion.is_some());
             node_matches(node, search).then(|| PlanRow {
                 node: node.clone(),
+                root: number == snapshot.plan.root_node,
+                prerequisites: {
+                    let mut numbers = snapshot
+                        .edges
+                        .iter()
+                        .filter(|edge| edge.to == number)
+                        .map(|edge| edge.from)
+                        .collect::<Vec<_>>();
+                    numbers.sort_unstable();
+                    numbers.dedup();
+                    numbers
+                },
                 reached: done,
                 current: !done
                     && (current == Some(number)
@@ -56,7 +68,7 @@ pub(super) fn adjacent_node_number(
     rows.get(next).map(|row| row.node.number)
 }
 
-fn node_matches(node: &workgraph::Node, search: &str) -> bool {
+pub(super) fn node_matches(node: &workgraph::Node, search: &str) -> bool {
     let search = search.trim().to_lowercase();
     if search.is_empty() {
         return true;

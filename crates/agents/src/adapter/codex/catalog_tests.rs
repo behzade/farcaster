@@ -265,6 +265,68 @@ fn discovery_requests_native_agent_sources_explicitly() {
 }
 
 #[test]
+fn preview_stops_at_the_first_incomplete_turn_in_descending_order() {
+    let turn = |id: &str, text: &str| {
+        json!({
+            "id":id, "status":"completed", "itemsView":"full",
+            "items":[{"type":"agentMessage","id":id,"text":text}]
+        })
+    };
+    let older = turn("older", "old answer");
+    let newer = turn("newer", "new answer");
+    let mut abbreviated = turn("middle", "discard the entire turn");
+    abbreviated["items"].as_array_mut().unwrap().push(json!({
+        "id":"image","type":"mcpToolCall","server":"computer","tool":"capture","status":"completed",
+        "result":{"content":[{"type":"text","text":r#"{"content":[{"type":"image","mimeType":"image/png","data":"AQID\u20268 chars truncated\u2026CgsM"}]}"#}]}
+    }));
+    for incomplete in [
+        abbreviated,
+        json!({"id":"middle","itemsView":"summary","status":"completed","items":[]}),
+        json!({"id":"middle","itemsView":"notLoaded","status":"completed","items":[]}),
+        json!({"id":"middle","itemsView":"full","status":"inProgress","items":[]}),
+        json!({"id":"middle","itemsView":"full","status":"completed","items":null}),
+        json!({"id":"middle","itemsView":"full","status":"completed","items":[{"id":"x","type":"agentMessage"}]}),
+        json!({"id":"middle","itemsView":"full","status":"completed","items":[
+            {"id":"x","type":"agentMessage","text":"one"},{"id":"x","type":"agentMessage","text":"two"}
+        ]}),
+    ] {
+        let page = json!({"data":[newer, incomplete, older], "nextCursor":null});
+        let tail = recent_page_messages(&page).unwrap();
+        assert_eq!(tail.coverage, crate::HistoryCoverage::Suffix);
+        assert_eq!(tail.content, turn_item_messages(&newer, &newer["items"][0]));
+        let page = json!({"data":[incomplete, older]});
+        assert!(recent_page_messages(&page).unwrap().content.is_empty());
+    }
+    let mut native = turn("middle", "first…12 chars truncated…last");
+    native["items"].as_array_mut().unwrap().extend([
+        json!({"id":"command","type":"commandExecution","status":"inProgress","command":"pwd","aggregatedOutput":null}),
+        json!({"id":"user","type":"userMessage","content":[{"type":"localImage","path":"/image.png"}]}),
+    ]);
+    let expected: Vec<_> = native["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|item| turn_item_messages(&native, item))
+        .collect();
+    for (page, coverage) in [
+        (json!({"data":[native]}), crate::HistoryCoverage::Suffix),
+        (
+            json!({"data":[native], "nextCursor":"older"}),
+            crate::HistoryCoverage::Suffix,
+        ),
+        (
+            json!({"data":[native], "nextCursor":null}),
+            crate::HistoryCoverage::Complete,
+        ),
+    ] {
+        let page = recent_page_messages(&page).unwrap();
+        assert_eq!(page.content, expected);
+        assert_eq!(page.coverage, coverage);
+    }
+    assert!(recent_page_messages(&json!({"data":[older, newer, older]})).is_none());
+}
+
+#[test]
 fn translates_thread_messages() {
     assert_eq!(
         history_messages(&json!({
@@ -435,4 +497,92 @@ fn reload_preserves_image_only_user_messages() {
             {"type":"image", "mimeType":"image/png", "data":"aGVsbG8="}
         ]})]
     );
+}
+
+#[test]
+fn restored_nested_mcp_images_reach_the_conversation() {
+    let images = json!([
+        {"type":"text","text":"Inspect settings"},
+        {"type":"image","data":"iVBORw0KGgo=","mimeType":"image/png"},
+        {"type":"image","data":"iVBORw0KGgo=","mimeType":"image/png"}
+    ]);
+    let item = json!({
+        "type":"mcpToolCall", "id":"nested", "tool":"js", "status":"completed",
+        "arguments":{"title":"Inspect settings"},
+        "result":{"content":[{"type":"text","text":json!({"content":images,"isError":false}).to_string()}]}
+    });
+    let messages = history_messages(&item);
+    assert_eq!(messages[1]["content"], images);
+    let mut history = farcaster_conversation::ConversationState::default();
+    history.replace_history(&messages);
+    assert_eq!(history.items[0].images.len(), 2);
+    assert_eq!(history.items[0].tool_output, "Inspect settings");
+    assert_eq!(
+        history.items[0]
+            .tool_details
+            .as_ref()
+            .unwrap()
+            .metadata
+            .native
+            .as_ref(),
+        Some(&item)
+    );
+}
+
+#[test]
+fn completed_tool_details_survive_history_import() {
+    let turn = json!({"id":"turn"});
+    let command = json!({
+        "id":"command", "type":"commandExecution", "command":"false", "status":"failed",
+        "durationMs":37,"exitCode":1,"aggregatedOutput":"diagnostic","futureMetadata":{"test":true}
+    });
+    let messages = turn_item_messages(&turn, &command);
+    assert_eq!(
+        messages[0]["content"][0]["toolMetadata"]["native"]["futureMetadata"],
+        json!({"test":true})
+    );
+    assert_eq!(
+        messages[1]["details"],
+        json!({"durationMs":37,"exitCode":1})
+    );
+    assert_eq!(messages[1]["isError"], true);
+    assert_eq!(messages[1]["content"][0]["text"], "diagnostic");
+    let dynamic = json!({"type":"dynamicToolCall","id":"custom","tool":"lookup","arguments":{"term":"x"},"contentItems":[{"type":"inputText","text":"match"},{"type":"inputImage","imageUrl":"data:image/png;base64,YQ=="}],"success":true});
+    let messages = turn_item_messages(&turn, &dynamic);
+    assert_eq!(messages[0]["content"][0]["arguments"]["term"], "x");
+    assert_eq!(
+        messages[1]["content"],
+        json!([{"type":"text","text":"match"},{"type":"image","mimeType":"image/png","data":"YQ=="}])
+    );
+    assert_eq!(messages[1]["nativeTurnId"], "turn");
+}
+
+#[test]
+fn mcp_history_retains_structured_results_even_without_text() {
+    for content in [json!([]), json!([{"type":"text","text":"summary"}])] {
+        let item = json!({"id":"call","type":"mcpToolCall","server":"s","tool":"t",
+            "status":"completed","extension":{"future":true},"arguments":{"id":1},
+            "result":{"content":content,"structuredContent":{"id":123},"_meta":{"v":2}}});
+        let rows = history_messages(&item);
+        assert_eq!(
+            rows[0]["content"][0]["toolMetadata"]["native"]["extension"],
+            item["extension"]
+        );
+        assert_eq!(rows[1]["content"], content);
+        assert_eq!(
+            rows[1]["details"]["native"]["result"],
+            json!({"structuredContent":{"id":123},"_meta":{"v":2}})
+        );
+        assert!(
+            rows[0]["content"][0]["toolMetadata"]["native"]["result"]
+                .get("structuredContent")
+                .is_none()
+        );
+    }
+    let error = json!({"code":413,"message":"too large","data":{"limit":500}});
+    let failed = history_messages(
+        &json!({"id":"call","type":"mcpToolCall","status":"failed","error":error}),
+    );
+    assert_eq!(failed[1]["details"]["native"]["error"], error);
+    assert_eq!(failed[1]["content"][0]["text"], "too large");
 }

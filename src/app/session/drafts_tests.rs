@@ -93,13 +93,22 @@ fn draft_archive_sends_durable_intent_without_a_ui_locator(cx: &mut gpui::TestAp
                             app.request_draft_archive(draft.id.clone(), archived, window, cx);
                             assert_eq!(app.sessions.drafts[0].archived, archived);
                             let command = runtime.try_recv_command().expect("explicit intent");
-                            let RuntimeCommand::SetAppSessionArchived {
-                                app_session_id,
-                                archived: requested,
+                            let RuntimeCommand::SetSessionArchived {
+                                request,
+                                draft_saved: Some(saved),
                             } = command
                             else {
-                                panic!("archive must use durable identity");
+                                panic!("expected an archive with a draft save receipt");
                             };
+                            saved
+                                .recv_blocking()
+                                .expect("receipt")
+                                .expect("saved draft");
+                            let crate::runtime::ArchiveTarget::App(app_session_id) = request.target
+                            else {
+                                panic!("archive must use durable identity")
+                            };
+                            let requested = request.archived;
                             assert_eq!(app_session_id.get(), draft.app_session_id);
                             assert_eq!(requested, archived);
                             let saved = store
@@ -119,6 +128,8 @@ fn draft_archive_sends_durable_intent_without_a_ui_locator(cx: &mut gpui::TestAp
                                 .find(|saved| saved.id == draft.id)
                                 .expect("saved draft");
                             assert_eq!(saved.archived, archived);
+                            app.finish_archive(request, Ok(vec![]), cx);
+                            assert!(!app.sessions.archive_writes.has_pending());
                         }
                     }
                 });
@@ -169,7 +180,12 @@ fn startup_idle_preserves_only_the_unresolved_normal_submission() {
         assert!(!preserves(&target, status, &pending, &statuses));
     }
 
-    transfer_draft_status(&mut statuses, &mut HashMap::new(), "starting", &path);
+    transfer_draft_status(
+        &mut statuses,
+        &mut HashMap::new(),
+        "starting",
+        session_key.clone(),
+    );
     pending
         .get_mut("submission")
         .expect("pending submission")
@@ -552,7 +568,7 @@ fn promotion_transfers_working_status_to_one_canonical_session_key() {
     ]);
     let mut completions = HashMap::new();
 
-    transfer_draft_status(&mut statuses, &mut completions, "a", &path);
+    transfer_draft_status(&mut statuses, &mut completions, "a", session_key.clone());
 
     assert_eq!(statuses.get(&session_key), Some(&RunStatus::Working));
     assert!(!statuses.contains_key(&draft_key));
@@ -626,7 +642,9 @@ fn untouched_drafts_prune_on_switch_and_quit(cx: &mut gpui::TestAppContext) {
             "::untouched_drafts_prune_on_switch_and_quit"
         ),
         cx,
-        |cx, app, _, project| {
+        |cx, app, runtime, project| {
+            crate::app::project::trust::apply(project, crate::projects::TrustChoice::TrustProject)
+                .unwrap();
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
                     let untouched = app.sessions.selected_draft.clone().expect("initial draft");
@@ -640,6 +658,7 @@ fn untouched_drafts_prune_on_switch_and_quit(cx: &mut gpui::TestAppContext) {
                     let snapshot = std::sync::Arc::make_mut(&mut app.snapshot);
                     std::sync::Arc::make_mut(&mut snapshot.conversation)
                         .push_transport_error("old session".into());
+                    app.sessions.preferred_harness = Some(Backend::Codex);
                     app.new_session(project.into(), window, cx);
                     assert!(
                         !app.sessions
@@ -647,22 +666,44 @@ fn untouched_drafts_prune_on_switch_and_quit(cx: &mut gpui::TestAppContext) {
                             .iter()
                             .any(|draft| draft.id == untouched)
                     );
+                });
+            });
+            cx.run_until_parked();
+            let sequence = std::iter::from_fn(|| runtime.try_recv_command())
+                .find_map(|command| match command {
+                    RuntimeCommand::NewSession { request, .. } => request,
+                    _ => None,
+                })
+                .expect("second draft dispatched");
+            runtime.send_event(crate::runtime::RuntimeEvent::SelectionRouted(sequence));
+            runtime.send_event(crate::runtime::RuntimeEvent::Snapshot {
+                generation: 1,
+                snapshot: std::sync::Arc::new(crate::runtime::RuntimeSnapshot {
+                    project: project.into(),
+                    harness: Some(Backend::Codex),
+                    ..Default::default()
+                }),
+            });
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.drain_runtime(cx);
+                    assert!(app.can_submit());
                     let engaged = app.sessions.selected_draft.clone().expect("next draft");
                     app.set_thinking_level(Some("high".into()), cx);
                     app.set_thinking_level(None, cx);
-                    app.project.pending_trust_command = None;
-                    app.overlays.view.project_trust = false;
                     app.new_session(project.into(), window, cx);
                     assert!(app.sessions.drafts.iter().any(|draft| draft.id == engaged));
                     let last = app.sessions.selected_draft.clone().expect("last draft");
                     let target = draft_target(&last);
-                    assert!(app.sync_current_draft(&target));
+                    assert!(app.sync_drafts_before_quit(&target));
                     assert!(app.sessions.selected_draft.is_none());
                     assert!(!app.sessions.drafts.iter().any(|draft| draft.id == last));
                     assert!(
-                        app.sync_current_draft(&target),
+                        app.sync_drafts_before_quit(&target),
                         "quit callback must not recreate the draft"
                     );
+                    futures::executor::block_on(app.sessions.writer.flush())
+                        .expect("saved engagement");
                     let saved = crate::app::persistence::open()
                         .expect("store")
                         .load_drafts()
@@ -684,8 +725,6 @@ fn user_actions_save_empty_drafts(cx: &mut gpui::TestAppContext) {
         |cx, app, _, project| {
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
-                    // Trust remains off so terminal/editor entry points record the request
-                    // without launching a native process in this test.
                     app.project.repository.execution_allowed = false;
                     let model: crate::protocol::Model = serde_json::from_value(serde_json::json!({
                         "id": "test", "name": "Test", "provider": "test"
@@ -705,6 +744,7 @@ fn user_actions_save_empty_drafts(cx: &mut gpui::TestAppContext) {
                     ] {
                         app.new_session(project.into(), window, cx);
                         let id = app.sessions.selected_draft.clone().expect("draft");
+                        app.cancel_pending_session_switch();
                         match action {
                             "harness" => app.change_draft_harness(Backend::Pi, window, cx),
                             "model" => {
@@ -756,7 +796,7 @@ fn user_actions_save_empty_drafts(cx: &mut gpui::TestAppContext) {
                         }
                         app.project.pending_trust_command = None;
                         app.overlays.view.project_trust = false;
-                        assert!(app.sync_current_draft(&draft_target(&id)), "{action}");
+                        assert!(app.sync_drafts_before_quit(&draft_target(&id)), "{action}");
                         futures::executor::block_on(app.sessions.writer.flush())
                             .expect("engagement saved");
                         let saved = crate::app::persistence::open()
@@ -840,12 +880,12 @@ fn failed_first_engagement_save_keeps_the_draft_and_retries_before_quit(
                     )).expect("reject writes");
                     app.set_thinking_level(Some("high".into()), cx);
                     app.set_thinking_level(None, cx);
-                    assert!(!app.sync_current_draft(&draft_target(&id)));
+                    assert!(!app.sync_drafts_before_quit(&draft_target(&id)));
                     assert_eq!(app.sessions.selected_draft.as_deref(), Some(id.as_str()));
                     assert!(app.sessions.pending_draft_saves.contains(&id));
                     assert!(store.load_drafts().expect("drafts").is_empty());
                     store.with_connection(|connection| connection.execute_batch("DROP TRIGGER reject_draft;")).expect("allow writes");
-                    assert!(app.sync_current_draft(&draft_target(&id)));
+                    assert!(app.sync_drafts_before_quit(&draft_target(&id)));
                     assert!(!app.sessions.pending_draft_saves.contains(&id));
                     assert!(store.load_drafts().expect("drafts").iter().any(|draft| draft.id == id));
                 });
@@ -898,7 +938,432 @@ fn cursor_selection_requires_sign_in_for_the_selected_account(cx: &mut gpui::Tes
                     assert!(!FarcasterApp::harness_sign_in_required(Backend::Cursor, Some(id)));
                     app.change_draft_harness_profile(Backend::Cursor, id.into(), window, cx);
                     assert_eq!(app.sessions.preferred_profile_id.as_deref(), Some(id));
+                    assert!(matches!(&app.project.pending_trust_command,
+                        Some(RuntimeCommand::NewSession { profile_id: Some(profile), .. }) if profile == id));
                 });
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn binding_an_idless_draft_preserves_the_committed_archive_state(cx: &mut gpui::TestAppContext) {
+    use crate::app::persistence;
+    use crate::runtime::ArchiveTarget;
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::binding_an_idless_draft_preserves_the_committed_archive_state"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            cx.update(|window, cx| app.update(cx, |app, cx| {
+                let database = persistence::state_path().unwrap();
+                for commit_before_binding in [false, true] {
+                    let mut draft = DraftSession::fresh(Some(Backend::Pi), project.into());
+                    draft.submitted = true;
+                    let path = project.join(format!("{}.jsonl", draft.id));
+                    app.sessions.drafts.insert(0, draft.clone());
+                    while runtime.try_recv_command().is_some() {}
+                    app.request_draft_archive(draft.id.clone(), true, window, cx);
+                    assert!(app.sessions.drafts[0].archived);
+                    let Some(RuntimeCommand::SetSessionArchived { mut request, draft_saved: Some(receipt) }) = runtime.try_recv_command() else { panic!("expected archive intent"); };
+                    let id = if commit_before_binding {
+                        let id = receipt.recv_blocking().unwrap().unwrap();
+                        persistence::open().unwrap().archive_app_session(id,true).unwrap();
+                        app.record_draft_submission(&draft_target(&draft.id), true, Some(path.clone()));
+                        id
+                    } else {
+                        app.record_draft_submission(&draft_target(&draft.id), true, Some(path.clone()));
+                        receipt.recv_blocking().unwrap().unwrap()
+                    };
+                    runtime.send_event(crate::runtime::RuntimeEvent::DraftIdentitySaved {
+                        draft: draft.id.clone(),
+                        app_session_id: id,
+                    });
+                    app.drain_runtime(cx);
+                    futures::executor::block_on(app.sessions.writer.flush()).unwrap();
+                    let target = ArchiveTarget::App(id);
+                    assert_eq!(app.sessions.archive_writes.confirmed(&target), Some(false));
+                    assert_eq!(app.sessions.drafts[0].app_session_id, id.get());
+                    request.target = target;
+                    if commit_before_binding {
+                        app.finish_archive(request, Ok(vec![]), cx);
+                    } else {
+                        let mut store = persistence::open().unwrap();
+                        store.with_connection(|conn| conn.execute_batch("CREATE TRIGGER reject_archive BEFORE INSERT ON session_events
+                            WHEN json_extract(NEW.body,'$.type')='session_archive_intent'
+                            BEGIN SELECT RAISE(FAIL,'fixture archive failure'); END;")).unwrap();
+                        let error = store.archive_app_session(id, true).unwrap_err();
+                        assert!(error.contains("fixture archive failure"));
+                        app.finish_archive(request, Err(error), cx);
+                        store.with_connection(|conn| conn.execute_batch("DROP TRIGGER reject_archive")).unwrap();
+                    }
+                    assert_eq!(app.sessions.drafts[0].archived, commit_before_binding);
+                    let mut reopened = persistence::StateStore::open_at(&database).unwrap();
+                    let saved = reopened.load_drafts().unwrap().into_iter().find(|row| row.id == draft.id).unwrap();
+                    assert_eq!(saved.archived, commit_before_binding);
+                    assert_eq!(saved.session_path, Some(normalize_session_path(&path)));
+                    let count: i64 = reopened.with_connection(|conn| conn.query_row(
+                        "SELECT COUNT(*) FROM session_events WHERE session_id=?1 AND json_extract(body,'$.type')='session_archive_intent'",
+                        [id.get()], |row| row.get(0))).unwrap();
+                    assert_eq!(count, if commit_before_binding {1} else {0});
+                }
+            }));
+        },
+    );
+}
+
+#[gpui::test]
+fn working_draft_archive_requires_confirmation_and_targets_its_actor(
+    cx: &mut gpui::TestAppContext,
+) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::working_draft_archive_requires_confirmation_and_targets_its_actor"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let mut draft = DraftSession::fresh(Some(Backend::Pi), project.into());
+                    draft.submitted = true;
+                    app.activity
+                        .run_statuses
+                        .insert(draft_target(&draft.id), RunStatus::Working);
+                    app.sessions.drafts.insert(0, draft.clone());
+                    while runtime.try_recv_command().is_some() {}
+                    for confirm in [false, true] {
+                        app.request_draft_archive(draft.id.clone(), true, window, cx);
+                        assert!(app.sessions.pending_archive.is_some());
+                        assert!(!app.sessions.drafts[0].archived);
+                        assert!(runtime.try_recv_command().is_none());
+                        if confirm {
+                            app.stop_and_archive_pending_session(window, cx);
+                            let Some(RuntimeCommand::StopAndArchiveDraft {
+                                draft: key,
+                                identity: crate::runtime::DraftArchiveIdentity::Pending(saved),
+                            }) = runtime.try_recv_command()
+                            else {
+                                panic!("missing draft stop");
+                            };
+                            assert_eq!(key, draft.id);
+                            saved.recv_blocking().unwrap().unwrap();
+                        } else {
+                            app.close_archive_confirmation(window, cx);
+                        }
+                        assert!(runtime.try_recv_command().is_none());
+                    }
+                })
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn archive_during_first_send_targets_only_the_pending_draft(cx: &mut gpui::TestAppContext) {
+    use crate::{agents::PromptOutcome, protocol::PromptMode, runtime::RuntimeEvent};
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::archive_during_first_send_targets_only_the_pending_draft"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let id = app.sessions.selected_draft.clone().expect("selected draft");
+                    let sibling = DraftSession::fresh(Some(Backend::Codex), project.into());
+                    let sibling_id = sibling.id.clone();
+                    app.sessions.drafts.insert(0, sibling);
+                    std::sync::Arc::make_mut(&mut app.snapshot).harness = Some(Backend::Codex);
+
+                    for reject in [true, false] {
+                        app.submit("first send".into(), PromptMode::Normal, window, cx);
+                        let submission = std::iter::from_fn(|| runtime.try_recv_command())
+                            .find_map(|command| match command {
+                                RuntimeCommand::Prompt {
+                                    submission_id,
+                                    target,
+                                    ..
+                                } if target == draft_target(&id) => Some(submission_id),
+                                _ => None,
+                            })
+                            .expect("first send awaiting a receipt");
+                        if !reject {
+                            app.sessions.selected_draft = Some(sibling_id.clone());
+                        }
+                        app.request_draft_archive(sibling_id.clone(), true, window, cx);
+                        assert!(app.sessions.pending_archive.is_none());
+                        app.request_draft_archive(id.clone(), true, window, cx);
+                        assert!(app.sessions.pending_archive.is_some());
+                        if reject {
+                            runtime.send_event(RuntimeEvent::PromptResult {
+                                submission_id: Some(submission),
+                                target: draft_target(&id),
+                                outcome: PromptOutcome::RejectedBeforeAcceptance,
+                                session: None,
+                            });
+                            app.drain_runtime(cx);
+                            app.resolve_pending_submission(window, cx);
+                        }
+                        app.stop_and_archive_pending_session(window, cx);
+                        let stop =
+                            std::iter::from_fn(|| runtime.try_recv_command()).find_map(|command| {
+                                match command {
+                                    RuntimeCommand::StopAndArchiveDraft { draft, identity } => {
+                                        Some((draft, identity))
+                                    }
+                                    _ => None,
+                                }
+                            });
+                        if reject {
+                            assert!(stop.is_none());
+                            continue;
+                        }
+                        let (target, crate::runtime::DraftArchiveIdentity::Pending(saved)) =
+                            stop.expect("confirmed draft stop")
+                        else {
+                            panic!("expected a draft identity receipt");
+                        };
+                        assert_eq!(target, id);
+                        let identity = saved.recv_blocking().unwrap().unwrap();
+                        let row = crate::app::persistence::open()
+                            .unwrap()
+                            .load_drafts()
+                            .unwrap()
+                            .into_iter()
+                            .find(|draft| draft.app_session_id == identity.get())
+                            .expect("archive identity belongs to a saved draft");
+                        assert_eq!(row.id, id);
+                        assert!(!row.submitted);
+                        assert!(row.title.is_none());
+                    }
+                });
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn submitting_draft_waits_when_only_a_sibling_has_arrived(cx: &mut gpui::TestAppContext) {
+    use crate::{agent_activity::SessionStatusRecord, runtime::RuntimeEvent};
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::submitting_draft_waits_when_only_a_sibling_has_arrived"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let path = normalize_session_path(&project.join("shared"));
+            let sibling = crate::sessions::SessionSummary::from_cached(
+                "sibling".into(),
+                path.clone(),
+                project.into(),
+                "Sibling".into(),
+                String::new(),
+                String::new(),
+                None,
+                std::time::UNIX_EPOCH,
+                0,
+                Default::default(),
+                false,
+                false,
+                String::new(),
+            )
+            .with_app_session_id(51);
+            let mut owner = sibling.clone().with_app_session_id(52);
+            owner.harness = Backend::Codex;
+            owner.id = "owner".into();
+            let owner_buffer = crate::sessions::session_buffer(owner.harness, &path);
+            let sibling_buffer = crate::sessions::session_buffer(sibling.harness, &path);
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let draft = DraftSession::fresh(Some(owner.harness), project.into());
+                    let id = draft.id.clone();
+                    let key = draft_target(&id);
+                    app.switch_composer_target(key.clone(), window, cx);
+                    app.sessions.selected_draft = Some(id.clone());
+                    app.sessions.drafts.push(draft);
+                    assert!(app.sessions.all.by_path(&path).is_none());
+                    std::sync::Arc::make_mut(&mut app.snapshot).harness = Some(owner.harness);
+                    app.composer
+                        .input
+                        .update(cx, |input, cx| input.set_value("owner history", window, cx));
+                    app.submit(
+                        "owner history".into(),
+                        crate::protocol::PromptMode::Normal,
+                        window,
+                        cx,
+                    );
+                    let submission = std::iter::from_fn(|| runtime.try_recv_command())
+                        .find_map(|command| {
+                            if let RuntimeCommand::Prompt {
+                                target,
+                                submission_id,
+                                ..
+                            } = command
+                            {
+                                assert_eq!(target, key);
+                                Some(submission_id)
+                            } else {
+                                None
+                            }
+                        })
+                        .expect("draft submitted");
+                    use crate::storage::{PromptSubmission, SessionRepository as _};
+                    let queued = crate::app::persistence::shared()
+                        .unwrap()
+                        .submit_prompt(PromptSubmission {
+                            target: &key,
+                            harness: owner.harness,
+                            project,
+                            session: None,
+                            profile_id: None,
+                            provisional_title: Some("owner history"),
+                            mode: crate::protocol::PromptMode::Normal,
+                            message: "owner history",
+                            display_message: None,
+                            invocation: None,
+                            images: &[],
+                        })
+                        .unwrap();
+                    runtime.send_event(RuntimeEvent::DraftPromptCommitted {
+                        provisional_title: Some("owner history".into()),
+                        draft: id.clone(),
+                        app_session_id: queued.app_session_id,
+                    });
+                    app.composer
+                        .input
+                        .update(cx, |input, cx| input.set_value("owner input", window, cx));
+                    let native = SessionStatusRecord::Native(owner.activity_key());
+                    runtime.send_event(RuntimeEvent::SessionStatus {
+                        record: Some(native.clone()),
+                        target: key.clone(),
+                        session: Some(path.clone()),
+                        status: RunStatus::Working,
+                    });
+                    app.drain_runtime(cx);
+                    assert_eq!(
+                        app.activity.run_statuses.get(&native.status_key()),
+                        Some(&RunStatus::Working)
+                    );
+                    assert_eq!(
+                        app.activity.run_statuses.get(&key),
+                        Some(&RunStatus::Working)
+                    );
+                    assert!(
+                        !app.activity
+                            .run_statuses
+                            .contains_key(&session_target(&path))
+                    );
+
+                    runtime.send_event(RuntimeEvent::SessionUpdated(sibling.clone()));
+                    app.drain_runtime(cx);
+                    let visible = app.sessions.visible.by_path(&path).unwrap();
+                    assert!(visible.same_record(&sibling));
+                    assert_eq!(app.rail_row_status(visible, false), RunStatus::Done);
+
+                    runtime.send_event(RuntimeEvent::PromptResult {
+                        submission_id: Some(submission),
+                        target: key.clone(),
+                        outcome: crate::agents::PromptOutcome::Accepted,
+                        session: Some(path.clone()),
+                    });
+                    app.drain_runtime(cx);
+                    assert_eq!(app.sessions.submitted_drafts[&id].as_ref(), Some(&path));
+                    assert_eq!(
+                        app.activity.run_statuses.get(&key),
+                        Some(&RunStatus::Working)
+                    );
+                    assert!(
+                        !app.activity
+                            .run_statuses
+                            .contains_key(&session_target(&path))
+                    );
+                    assert_eq!(app.rail_row_status(&sibling, false), RunStatus::Done);
+                    runtime.send_event(RuntimeEvent::SessionStatus {
+                        record: None,
+                        target: key.clone(),
+                        session: Some(path.clone()),
+                        status: RunStatus::Working,
+                    });
+                    runtime.send_event(RuntimeEvent::Snapshot {
+                        generation: app.runtime_generation,
+                        snapshot: std::sync::Arc::new(crate::runtime::RuntimeSnapshot {
+                            harness: Some(owner.harness),
+                            project: project.into(),
+                            selected_session: Some(path.clone()),
+                            live_session: Some(path.clone()),
+                            live_status: RunStatus::Working,
+                            ..Default::default()
+                        }),
+                    });
+                    app.drain_runtime(cx);
+                    assert_eq!(app.snapshot.live_session.as_ref(), Some(&path));
+                    let draft = app
+                        .sessions
+                        .drafts
+                        .iter()
+                        .find(|draft| draft.id == id)
+                        .unwrap();
+                    assert_eq!(app.draft_rail_status(draft), RunStatus::Working);
+                    assert_eq!(
+                        app.activity.run_statuses.get(&key),
+                        Some(&RunStatus::Working)
+                    );
+                    assert_eq!(app.rail_row_status(&sibling, false), RunStatus::Done);
+                    assert!(app.bound_draft_buffer(&id, &path).is_none());
+                    assert!(!app.reconcile_submitted_drafts(cx));
+                    assert_eq!(app.composer.sessions.current_buffer(), key);
+                    assert_eq!(app.sessions.selected_draft.as_ref(), Some(&id));
+                    app.sessions.all = vec![sibling.clone(), owner.clone()].into();
+                    assert_eq!(
+                        app.bound_draft_buffer(&id, &path).as_deref(),
+                        Some(owner_buffer.as_str())
+                    );
+                    assert!(
+                        !app.reconcile_submitted_drafts(cx),
+                        "only the sibling is visible"
+                    );
+                    app.sessions.all = vec![sibling.clone()].into();
+                    let draft = app
+                        .sessions
+                        .drafts
+                        .iter_mut()
+                        .find(|row| row.id == id)
+                        .unwrap();
+                    draft.harness = None;
+                    assert!(draft.app_session_id > 0);
+                    owner.app_session_id = draft.app_session_id;
+                    assert!(app.bound_draft_buffer(&id, &path).is_none());
+                    runtime.send_event(RuntimeEvent::SessionUpdated(owner.clone()));
+                    app.drain_runtime(cx);
+                    assert_eq!(app.rail_row_status(&owner, false), RunStatus::Working);
+                    assert_eq!(app.rail_row_status(&sibling, false), RunStatus::Done);
+                    assert_eq!(app.composer.sessions.current_buffer(), owner_buffer);
+                    assert_eq!(app.composer.sessions.current().text, "owner input");
+                    assert!(
+                        app.composer
+                            .sessions
+                            .snapshot_for(&sibling_buffer)
+                            .text
+                            .is_empty()
+                    );
+                    assert_eq!(
+                        app.composer
+                            .sessions
+                            .previous_history(Default::default())
+                            .unwrap()
+                            .text,
+                        "owner history"
+                    );
+                    assert!(!app.sessions.submitted_drafts.contains_key(&id));
+                })
             });
         },
     );

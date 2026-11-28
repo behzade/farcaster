@@ -134,7 +134,16 @@ impl RuntimeOwner {
                     .as_ref()
                     .ok_or_else(|| "State unavailable".to_owned())
                     .and_then(|state| {
-                        state.with(|store| store.dismiss_prompt_receipt(&session, &id))
+                        farcaster_storage::SessionRepository::dismiss_transcript_receipt(
+                            state,
+                            farcaster_storage::TranscriptSession {
+                                harness: self.harness.ok_or("Session backend unavailable")?,
+                                path: &session,
+                                project: &self.snapshot.project,
+                                profile_id: self.snapshot.profile_id.as_deref(),
+                            },
+                            &id,
+                        )
                     });
                 match result {
                     Ok(()) => conversation_mut(&mut self.snapshot).dismiss_pending_receipt(&id),
@@ -173,30 +182,22 @@ impl RuntimeOwner {
                 target,
                 mode,
                 message,
+                provisional_title,
                 display_message,
                 invocation,
                 images,
                 allow_while_running,
-            } => match (display_message, invocation) {
-                (None, None) => self.send_prompt_for_submission(
-                    submission_id,
-                    target,
-                    mode,
-                    message,
-                    images,
-                    allow_while_running,
-                ),
-                (display_message, invocation) => self.send_prompt_with_presentation_for_submission(
-                    submission_id,
-                    target,
-                    mode,
-                    message,
-                    display_message,
-                    invocation,
-                    images,
-                    allow_while_running,
-                ),
-            },
+            } => self.send_prompt_with_presentation_for_submission(
+                submission_id,
+                target,
+                mode,
+                message,
+                provisional_title,
+                display_message,
+                invocation,
+                images,
+                allow_while_running,
+            ),
             RuntimeCommand::RecoverPending(prompt) => {
                 if !self.saved_prompts.iter().any(|saved| saved.id == prompt.id) {
                     self.saved_prompts.push_back(prompt);
@@ -271,7 +272,7 @@ impl RuntimeOwner {
                 let result = configuration_for_target(
                     &self.process_command,
                     self.state.as_ref(),
-                    LaunchTarget::Session(&path),
+                    LaunchTarget::Session(&path, Some(harness)),
                 )
                 .and_then(|config| {
                     crate::agents::rename_session(
@@ -282,12 +283,9 @@ impl RuntimeOwner {
                         &session_id,
                         &name,
                     )?;
-                    Ok(config.profile_id)
-                });
-                match result {
-                    Ok(profile_id) => self.update_session_metadata(agents::SessionMetadata {
+                    self.update_session_metadata(&agents::SessionMetadata {
                         harness,
-                        profile_id,
+                        profile_id: config.profile_id,
                         id: session_id,
                         path,
                         project,
@@ -302,18 +300,18 @@ impl RuntimeOwner {
                         access_mode: None,
                         usage: None,
                         is_running: false,
-                    }),
-                    Err(message) => {
-                        let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
-                            generation: self.session_generation,
-                            message,
-                        });
-                    }
+                    })
+                });
+                if let Err(message) = result {
+                    let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
+                        generation: self.session_generation,
+                        message,
+                    });
                 }
             }
             RuntimeCommand::MoveSession { .. }
-            | RuntimeCommand::SetAppSessionArchived { .. }
             | RuntimeCommand::StopSessionFamily { .. }
+            | RuntimeCommand::StopAndArchiveDraft { .. }
             | RuntimeCommand::StopAndDeleteSessionFamily { .. }
             | RuntimeCommand::StopAndMoveSession { .. }
             | RuntimeCommand::DeleteSessionFamily { .. } => {}
@@ -345,20 +343,47 @@ impl RuntimeOwner {
                 ..
             } => self.stage_draft(LaunchTarget::Draft(&id), harness, project),
             RuntimeCommand::SelectSession {
+                display_stamp,
                 path,
                 harness,
                 session_id,
                 project,
+                ..
             } => {
+                let session_id = if session_id == path.to_string_lossy() {
+                    agents::external_session_identity(&path)
+                        .filter(|(backend, _)| *backend == harness)
+                        .map_or(session_id, |(_, native_id)| native_id)
+                } else {
+                    session_id
+                };
+                if self.history_selection_generation == Some(self.history_generation)
+                    && (self.snapshot.status == "Loading history"
+                        || self.snapshot.saved_history == Some(SavedHistory::RefreshingPartial)
+                            && !self.snapshot.needs_saved_revision(display_stamp))
+                    && self.snapshot.selected_session.as_ref() == Some(&path)
+                    && self.snapshot.project == project
+                    && self.harness == Some(harness)
+                    && self.session_id.as_ref() == Some(&session_id)
+                    && configuration_for_target(
+                        &self.process_command,
+                        self.state.as_ref(),
+                        LaunchTarget::Session(&path, Some(harness)),
+                    )
+                    .is_ok_and(|config| config.profile_id == self.snapshot.profile_id)
+                {
+                    return;
+                }
                 self.harness = Some(harness);
                 self.session_id = Some(session_id);
-                self.select_history(path, project);
+                self.select_document(path, project, display_stamp);
             }
             RuntimeCommand::RestartSession {
                 path,
                 harness,
                 session_id,
                 project,
+                ..
             } => {
                 self.project = project;
                 self.harness = Some(harness);
@@ -401,22 +426,22 @@ impl RuntimeOwner {
                     self.fail(error);
                 }
             }
-            RuntimeCommand::SetSessionArchived { path, archived } => {
-                if let Some(state) = &self.state
-                    && let Err(error) =
-                        state.with(|store| sessions::set_archived(store, &path, archived))
-                {
-                    let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
-                        generation: self.session_generation,
-                        message: error,
-                    });
-                }
-                self.load_sessions(self.session_query.clone());
+            RuntimeCommand::SetSessionArchived {
+                request,
+                draft_saved,
+            } => {
+                self.set_catalog_archive(request, draft_saved);
             }
             RuntimeCommand::LoadSessions(query) => self.load_sessions(query),
             RuntimeCommand::RefreshSessions => self.refresh_sessions(),
+            RuntimeCommand::RefreshWorkerStatus(id) => self.refresh_worker_status(&id),
             RuntimeCommand::UpdateSessionMetadata(metadata) => {
-                self.update_session_metadata(metadata)
+                if let Err(error) = self.update_session_metadata(&metadata) {
+                    zlog::warn!(
+                        "Could not save background session metadata for {}: {error}",
+                        metadata.path.display()
+                    );
+                }
             }
             RuntimeCommand::PreviewImport {
                 harness,
@@ -426,6 +451,7 @@ impl RuntimeOwner {
             RuntimeCommand::CommitImport { sessions } => self.commit_import(sessions),
             RuntimeCommand::LoadConfiguration { .. }
             | RuntimeCommand::StartTask { .. }
+            | RuntimeCommand::RefreshAccounts
             | RuntimeCommand::Shutdown => {}
         }
     }

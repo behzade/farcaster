@@ -4,7 +4,7 @@ use crate::{
     app::composer::{sessions::session_target, submissions::PendingSubmission},
     protocol::{BackgroundJob, BackgroundJobState},
     runtime::{RunStatus, RuntimeSnapshot},
-    sessions::{SessionSummary, session_family_for_path},
+    sessions::{SessionCatalog, SessionSummary},
 };
 
 pub(in crate::app) fn status_has_active_work(status: &RunStatus) -> bool {
@@ -65,6 +65,7 @@ impl super::FarcasterApp {
             &self.sessions.all,
             path,
             &self.activity.run_statuses,
+            &self.activity.agents,
             &self.snapshot,
             &self.composer.pending_submissions,
         )
@@ -72,25 +73,87 @@ impl super::FarcasterApp {
 }
 
 pub(in crate::app) fn session_family_has_active_work(
-    sessions: &[SessionSummary],
+    sessions: &SessionCatalog,
     path: &Path,
     statuses: &HashMap<String, RunStatus>,
+    activities: &HashMap<
+        crate::agent_activity::WorkerActivityKey,
+        crate::agent_activity::AgentActivity,
+    >,
     snapshot: &RuntimeSnapshot,
     pending_submissions: &HashMap<String, PendingSubmission>,
 ) -> bool {
-    let has_live_work = |path: &Path| {
-        session_has_live_work(path, statuses, snapshot)
+    session_row_family_has_active_work(
+        sessions,
+        sessions.by_path(path),
+        path,
+        statuses,
+        activities,
+        snapshot,
+        pending_submissions,
+    )
+}
+
+pub(in crate::app) fn session_row_family_has_active_work(
+    sessions: &SessionCatalog,
+    row: Option<&SessionSummary>,
+    path: &Path,
+    statuses: &HashMap<String, RunStatus>,
+    activities: &HashMap<
+        crate::agent_activity::WorkerActivityKey,
+        crate::agent_activity::AgentActivity,
+    >,
+    snapshot: &RuntimeSnapshot,
+    pending_submissions: &HashMap<String, PendingSubmission>,
+) -> bool {
+    let row_has_work = |row: &SessionSummary| {
+        let path = &row.path;
+        let shared = sessions.has_shared_path(path);
+        let status = super::status::row_status(sessions, statuses, row);
+        let pending = crate::app::composer::submissions::has_pending_submission(
+            pending_submissions,
+            &crate::sessions::session_buffer(row.harness, path),
+        ) || crate::app::composer::submissions::has_pending_submission(
+            pending_submissions,
+            &super::status::record_status_key(row),
+        ) || (!shared
+            && crate::app::composer::submissions::has_pending_submission(
+                pending_submissions,
+                &session_target(path),
+            ));
+        let live = snapshot
+            .live_session
+            .as_ref()
+            .or(snapshot.selected_session.as_ref())
+            == Some(path)
+            && snapshot.matches_catalog_row(sessions, row)
+            && snapshot_has_active_work(snapshot);
+        row.is_running
+            || pending
+            || status.as_ref().is_some_and(status_has_active_work)
+            || live
+            || activities
+                .get(&row.activity_key())
+                .is_some_and(|activity| activity.lifecycle.has_active_work())
+    };
+    let Some(root) = row.and_then(|row| sessions.root_for_row(row)) else {
+        if sessions.has_shared_path(path) {
+            return row.is_some_and(row_has_work);
+        }
+        return session_has_live_work(path, statuses, snapshot)
+            || activities
+                .iter()
+                .any(|(key, activity)| key.path == path && activity.lifecycle.has_active_work())
             || crate::app::composer::submissions::has_pending_submission(
                 pending_submissions,
                 &session_target(path),
-            )
+            );
     };
-    has_live_work(path)
-        || session_family_for_path(sessions, path).is_some_and(|family| {
-            family
-                .into_iter()
-                .any(|session| session.is_running || has_live_work(&session.path))
-        })
+    row_has_work(root)
+        || sessions
+            .descendants(root)
+            .into_iter()
+            .any(|(session, _)| row_has_work(session))
 }
 
 #[cfg(test)]

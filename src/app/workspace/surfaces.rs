@@ -1,6 +1,8 @@
 use std::{path::PathBuf, sync::Arc};
 
-use gpui::{Context, FocusHandle, Focusable as _, Image, RenderImage, Window, actions};
+use gpui::{
+    AppContext as _, Context, FocusHandle, Focusable as _, Image, RenderImage, Window, actions,
+};
 
 use super::covered_refresh::{CoveredRefresh, RefreshStep};
 use super::{AppSurface, FarcasterApp, ImagePreview, PostRenderFocus};
@@ -71,8 +73,6 @@ impl FarcasterApp {
             )
             && self.modal_owner_window(window, cx).is_none()
         {
-            // A new panel sets its initial focus when it renders. An existing
-            // panel can receive the request without focusing its owner's window.
             if let Some(panel) = self.overlays.modal.window {
                 let focus = focus.clone();
                 let _ = panel.update(cx, |_, window, cx| focus.focus(window, cx));
@@ -112,6 +112,8 @@ impl FarcasterApp {
                 || dialog.input.read(cx).focus_handle(cx),
                 |picker| picker.list.read(cx).focus_handle(cx),
             ))
+        } else if let Some(detail) = &self.overlays.command_detail {
+            Some(detail.focus.clone())
         } else if self.overlays.image_preview.is_some() {
             Some(self.overlays.image_preview_focus.clone())
         } else if let Some(pending) = &self.project.repository.edits.pending {
@@ -384,19 +386,17 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn workspace_project(&self) -> PathBuf {
-        self.sessions
-            .all
-            .root_for_path(self.snapshot.selected_session.as_deref())
-            .map(|root| root.project.clone())
-            .or_else(|| {
-                let selected = self.sessions.selected_draft.as_deref()?;
-                self.sessions
-                    .drafts
-                    .iter()
-                    .find(|draft| draft.id == selected)
-                    .map(|draft| draft.project.clone())
-            })
-            .unwrap_or_else(|| self.project.path.clone())
+        if let Some(id) = &self.sessions.selected_draft {
+            return self
+                .sessions
+                .drafts
+                .iter()
+                .find(|draft| &draft.id == id)
+                .map_or_else(|| self.project.path.clone(), |draft| draft.project.clone());
+        }
+        self.sidebar_catalog_row(&self.sessions.all)
+            .and_then(|row| self.sessions.all.root_for_row(row))
+            .map_or_else(|| self.project.path.clone(), |root| root.project.clone())
     }
 
     pub(in crate::app) fn capture_center_surface(&mut self) {
@@ -420,7 +420,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         if self.overlays.view.sessions {
-            self.apply_sheet_flags(sheet_flags(None));
+            self.apply_sheet_flags(sheet_flags(None), cx);
             self.overlays.view.pending_setup = false;
             self.overlays.sheet_return_focus = None;
         }
@@ -434,6 +434,29 @@ impl FarcasterApp {
             .copied()
             .unwrap_or(AppSurface::Chat);
         self.activate_chat_center(cx);
+        if matches!(surface, AppSurface::Editor | AppSurface::Terminal)
+            && let Some(ready) = self.wait_for_repository_trust()
+        {
+            let target = self.composer.sessions.current_target().to_owned();
+            let generation = self.workspace.editor.request_generation;
+            cx.spawn_in(window, async move |weak, cx| {
+                if ready.await.is_err() {
+                    return;
+                }
+                let _ = weak.update_in(cx, |app, window, cx| {
+                    if app.project.path == project
+                        && app.composer.sessions.current_target() == target
+                        && app.workspace.surface == AppSurface::Chat
+                        && app.workspace.editor.request_generation == generation
+                        && !app.center_surface_switch_blocked()
+                    {
+                        app.restore_center_surface(project, window, cx);
+                    }
+                });
+            })
+            .detach();
+            return;
+        }
         match surface {
             AppSurface::Editor => self.activate_editor_for_project(project, window, cx),
             AppSurface::Terminal => self.activate_terminal_for_project(project, window, cx),
@@ -497,6 +520,11 @@ impl FarcasterApp {
             return;
         };
         match request {
+            PostRenderFocus::CommandDetail => {
+                if let Some(detail) = &self.overlays.command_detail {
+                    detail.focus.focus(window, cx);
+                }
+            }
             PostRenderFocus::ImagePreview => {
                 if self.overlays.image_preview.is_some() {
                     self.overlays.image_preview_focus.focus(window, cx);
@@ -553,6 +581,7 @@ impl FarcasterApp {
             || self.sessions.pending_move.is_some()
             || self.sessions.import.is_some()
             || self.navigation.pending_model_access.is_some()
+            || self.overlays.command_detail.is_some()
             || self.overlays.image_preview.is_some()
             || self.project.repository.pending_jj_init.is_some()
             || self.project.repository.edits.pending.is_some()
@@ -1009,9 +1038,10 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.settings
-            .network_proxy_input
-            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.settings.network_proxy_input.update(cx, |input, cx| {
+            input.set_value("", window, cx);
+            input.focus_handle(cx).focus(window, cx);
+        });
         self.save_settings_proxy(cx);
     }
 
@@ -1139,11 +1169,58 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let project = self.project.path.clone();
+        if self.project.navigation_trust.take().is_some()
+            || self
+                .sessions
+                .selected_draft
+                .as_ref()
+                .is_some_and(|id| self.sessions.pending_folder_drafts.contains_key(id))
+        {
+            self.restore_rejected_selection(window, cx);
+        }
+        self.open_project_trust_for(project, None, window, cx);
+    }
+
+    pub(in crate::app) fn open_project_trust_for(
+        &mut self,
+        project: PathBuf,
+        backend: Option<crate::agents::Backend>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.project.pending_trust_command.take().is_some() {
+            self.restore_rejected_selection(window, cx);
+        }
         self.project.trust_error = None;
-        self.project.trust_project = Some(self.project.path.clone());
-        self.project.trust_backend = None;
-        self.project.pending_trust_command = None;
+        self.project.trust_project = Some(project.clone());
+        self.project.trust_backend = backend;
         self.project.pending_trust_action = None;
+        self.project.trust_display = None;
+        self.project.trust_display_task = Some(cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_spawn(async move {
+                    match backend {
+                        Some(backend) => crate::agents::saved_project_trust(backend, &project),
+                        None => crate::app::project::trust::saved_decision(&project),
+                    }
+                })
+                .await;
+            let _ = weak.update(cx, |app, cx| {
+                app.project.trust_display = Some(match result {
+                    Ok(Some((path, trusted))) => format!(
+                        "Saved decision: {} ({})",
+                        if trusted { "trusted" } else { "untrusted" },
+                        path.display()
+                    ),
+                    Ok(None) => "Saved decision: none".into(),
+                    Err(error) => format!("Saved decision unavailable: {error}"),
+                });
+                if app.overlays.view.project_trust {
+                    cx.notify();
+                }
+            });
+        }));
         self.open_sheet(AppSheet::ProjectTrust, window, cx);
     }
 
@@ -1157,7 +1234,7 @@ impl FarcasterApp {
         if should_capture_return_focus(self.current_sheet_flags()) {
             self.overlays.sheet_return_focus = picker_return.unwrap_or_else(|| window.focused(cx));
         }
-        self.apply_sheet_flags(sheet_flags(Some(sheet)));
+        self.apply_sheet_flags(sheet_flags(Some(sheet)), cx);
         self.overlays.view.pending_setup = true;
         cx.notify();
     }
@@ -1173,7 +1250,10 @@ impl FarcasterApp {
         }
     }
 
-    fn apply_sheet_flags(&mut self, flags: SheetFlags) {
+    fn apply_sheet_flags(&mut self, flags: SheetFlags, cx: &mut Context<Self>) {
+        if self.overlays.view.settings && !flags.settings {
+            self.close_sign_in_terminal(None, cx);
+        }
         self.overlays.view.sessions = flags.sessions;
         self.overlays.view.run = flags.run;
         self.overlays.view.worker_notices = flags.worker_notices;
@@ -1190,17 +1270,79 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.overlays.image_preview.is_none() {
-            self.overlays.image_preview_return_focus = window.focused(cx);
+        self.open_image_preview_with_gallery(image, index, total, Vec::new(), window, cx);
+    }
+
+    pub(crate) fn open_image_gallery(
+        &mut self,
+        gallery: Vec<Arc<Image>>,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(image) = gallery.get(index).cloned() {
+            self.open_image_preview_with_gallery(image, index, gallery.len(), gallery, window, cx);
         }
-        self.cover_native_workspace_surface(cx);
-        self.overlays.image_preview = Some(ImagePreview {
-            image,
-            index,
-            total,
+    }
+
+    fn open_image_preview_with_gallery(
+        &mut self,
+        image: Arc<Image>,
+        index: usize,
+        total: usize,
+        gallery: Vec<Arc<Image>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.overlays.image_preview_task.take();
+        let rule = crate::app::attachment::resolve(
+            crate::app::attachment::AttachmentSource::Image(image.format()),
+        );
+        let byte_len = image.bytes().len() as u64;
+        let action = rule.preview_action(byte_len, true);
+        if action != rule.open {
+            self.open_image_action(image, action, window, cx);
+            return;
+        }
+        let project = self.workspace_project();
+        let target = self.composer.sessions.current_target().to_owned();
+        let renderer = cx.svg_renderer();
+        let decode = cx.background_executor().spawn(async move {
+            let image = crate::app::ui::images::normalized(image);
+            let rendered = image.to_image_data(renderer);
+            (image, rendered)
         });
-        self.overlays.post_render_focus = Some(PostRenderFocus::ImagePreview);
-        cx.notify();
+        self.overlays.image_preview_task = Some(cx.spawn_in(window, async move |weak, cx| {
+            let (image, rendered) = decode.await;
+            let _ = weak.update_in(cx, |this, window, cx| {
+                if this.workspace_project() != project
+                    || this.composer.sessions.current_target() != target
+                {
+                    return;
+                }
+                let Ok(rendered) = rendered else {
+                    this.close_image_preview(window, cx);
+                    this.open_image_action(image, rule.preview_action(byte_len, false), window, cx);
+                    return;
+                };
+                if this.overlays.image_preview.is_none() {
+                    this.overlays.image_preview_return_focus = window.focused(cx);
+                }
+                this.cover_native_workspace_surface(cx);
+                let viewport = cx.new(|_| {
+                    crate::app::views::dialogs::image_preview::ImageViewport::new(rendered)
+                });
+                this.overlays.image_preview = Some(ImagePreview {
+                    gallery,
+                    image,
+                    viewport,
+                    index,
+                    total,
+                });
+                this.overlays.post_render_focus = Some(PostRenderFocus::ImagePreview);
+                cx.notify();
+            });
+        }));
     }
 
     pub(in crate::app) fn close_image_preview(
@@ -1208,6 +1350,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.overlays.image_preview_task.take();
         if self.overlays.image_preview.take().is_none() {
             return;
         }
@@ -1229,7 +1372,7 @@ impl FarcasterApp {
         if self.overlays.view.settings && self.settings.proxy_save.is_some() {
             self.save_settings_proxy(cx);
         }
-        self.apply_sheet_flags(sheet_flags(None));
+        self.apply_sheet_flags(sheet_flags(None), cx);
         self.overlays.view.pending_setup = false;
         let target = self.overlays.sheet_return_focus.take();
         self.restore_overlay_focus(target, &self.overlays.sheet_focus.clone(), window, cx);
@@ -1242,6 +1385,8 @@ impl FarcasterApp {
             self.close_quit_confirmation(window, cx);
         } else if self.workspace.send_to_chat.is_some() && !self.overlays.view.project_trust {
             self.close_send_to_chat(window, cx);
+        } else if self.overlays.command_detail.is_some() {
+            self.close_command_detail(window, cx);
         } else if self.overlays.image_preview.is_some() {
             self.close_image_preview(window, cx);
         } else if self.project.repository.edits.pending.is_some() {

@@ -1,8 +1,10 @@
+use crate::app::ui::primitives::Input;
+use crate::app::ui::primitives::SelectionStyle as _;
 use gpui::{
     Div, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Role,
     StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _, px,
 };
-use gpui_component::input::{Input, InputState, Textarea, TextareaState};
+use gpui_component::input::{InputState, Textarea, TextareaState};
 
 use super::{
     adapter::{CreateStage, WorkGraphBoardView},
@@ -22,8 +24,7 @@ pub(super) fn render_session_goal(goal: &crate::agents::SessionGoal, compact: bo
         .mt(if compact { px(0.0) } else { theme().space.sm })
         .px(theme().space.sm)
         .py(theme().space.sm)
-        .border(theme().border)
-        .border_color(theme().colors.border)
+        .rounded(theme().size(6.0))
         .bg(theme().colors.surface)
         .flex()
         .items_start()
@@ -107,8 +108,9 @@ pub(super) fn render_plan_list(
         .flex()
         .flex_col()
         .p(theme().space.md)
+        .gap(theme().space.xs)
         .when(rows.is_empty(), |list| {
-            list.child(detail_empty("No nodes match your search."))
+            list.child(detail_empty("No matching nodes"))
         })
         .children(
             rows.into_iter()
@@ -124,7 +126,7 @@ fn render_plan_row(
     let number = row.node.number;
     let is_selected = selected == Some(number);
     let title_color = if row.detached || row.reached {
-        theme().colors.subtle
+        theme().colors.muted
     } else {
         theme().colors.text
     };
@@ -140,18 +142,16 @@ fn render_plan_row(
         .cursor_pointer()
         .flex_none()
         .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.select_node(number, cx)))
-        .border_l(theme().size(2.0))
-        .border_color(if is_selected {
-            theme().colors.indicator
-        } else {
-            theme().colors.panel
-        })
-        .bg(if is_selected {
-            theme().colors.highlight
-        } else {
-            theme().colors.panel
-        })
+        .aria_selected(is_selected)
+        .rounded(theme().size(6.0))
+        .bg(theme().colors.panel)
+        .selection_style(is_selected)
         .hover(|style| style.bg(theme().colors.highlight))
+        .ml(if row.root || row.detached {
+            px(0.0)
+        } else {
+            crate::app::ui::grid::tree_indent(1)
+        })
         .px(theme().space.sm)
         .py(theme().space.sm)
         .flex()
@@ -194,22 +194,34 @@ fn render_plan_row(
                 .child(
                     div()
                         .text_size(theme().type_scale.body)
-                        .font_weight(if row.current {
+                        .font_weight(if row.root || row.current {
                             FontWeight::SEMIBOLD
                         } else {
                             FontWeight::NORMAL
                         })
                         .text_color(title_color)
-                        .when(row.reached, |title| title.line_through())
                         .child(row.node.title),
                 )
                 .child(
                     div()
                         .flex()
+                        .flex_wrap()
                         .items_center()
                         .gap(theme().space.xs)
                         .text_size(theme().type_scale.caption)
                         .text_color(theme().colors.subtle)
+                        .child(format!("#{number}"))
+                        .when(row.root, |meta| meta.child("· Starting task"))
+                        .when(!row.prerequisites.is_empty(), |meta| {
+                            meta.child(format!(
+                                "· After {}",
+                                row.prerequisites
+                                    .iter()
+                                    .map(|number| format!("#{number}"))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ))
+                        })
                         .when(row.current, |meta| {
                             meta.child(div().text_color(theme().colors.indicator).child("Current"))
                         })
@@ -246,8 +258,6 @@ pub(super) fn render_create_form(
                 .flex()
                 .items_center()
                 .justify_between()
-                .border_b(theme().border)
-                .border_color(theme().colors.surface)
                 .child(
                     div()
                         .text_size(theme().type_scale.display)
@@ -303,13 +313,11 @@ pub(super) fn render_create_form(
                 .items_center()
                 .justify_end()
                 .gap(theme().space.sm)
-                .border_t(theme().border)
-                .border_color(theme().colors.surface)
                 .child(button(
-                        "workgraph-create-cancel",
-                        "Cancel",
-                        ButtonTone::Quiet,
-                        true,
+                    "workgraph-create-cancel",
+                    "Cancel",
+                    ButtonTone::Neutral,
+                    true,
                         move |window, cx| {
                             cancel.update(cx, |this, cx| {
                                 this.cancel_create(window, cx);
@@ -345,17 +353,13 @@ fn compact_field(label: &'static str, control: impl IntoElement) -> impl IntoEle
 }
 
 pub(super) fn detail_section(label: &'static str) -> Div {
-    div().flex().flex_col().gap(theme().space.xs).child(
+    div().flex().flex_col().gap(theme().space.sm).child(
         div()
             .text_size(theme().type_scale.caption)
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(theme().colors.muted)
             .child(label),
     )
-}
-
-pub(super) fn detail_rule() -> Div {
-    div().h(theme().border).w_full().bg(theme().colors.surface)
 }
 
 pub(super) fn detail_empty(text: &'static str) -> Div {

@@ -52,6 +52,7 @@ fn saved_model_refresh_and_launch_use_auto() {
                     target: "draft:auto".into(),
                     mode: PromptMode::Normal,
                     message: "test".into(),
+                    provisional_title: None,
                     display_message: None,
                     invocation: None,
                     images: vec![],

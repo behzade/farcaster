@@ -14,6 +14,54 @@ use super::{
     transcript_title_row, with_file_links,
 };
 
+pub(super) fn render_compaction(font_scale: f32, key: usize, item: &TranscriptItem) -> AnyElement {
+    use crate::{
+        app::ui::{
+            assets::AppIcon,
+            grid,
+            primitives::{AppIconSize, app_icon},
+        },
+        conversation::CompactionState,
+    };
+    let TranscriptKind::Compaction(status) = item.kind else {
+        unreachable!()
+    };
+    let (icon, color) = match status {
+        CompactionState::Failed => (AppIcon::WarningCircle, theme().colors.error),
+        CompactionState::Aborted | CompactionState::Interrupted => {
+            (AppIcon::Stop, theme().colors.muted)
+        }
+    };
+    div()
+        .id(("compaction-row", key))
+        .role(gpui::Role::Status)
+        .a11y_synthetic_children({
+            let text = item.text.clone();
+            move |builder| {
+                builder
+                    .parent_node()
+                    .set_live(gpui::accesskit::Live::Polite);
+                builder.parent_node().set_value(text.clone());
+            }
+        })
+        .w_full()
+        .px(grid::transcript_inset())
+        .py(theme().space.xs)
+        .flex()
+        .items_start()
+        .gap(theme().space.xs)
+        .text_color(color)
+        .child(grid::icon_slot().child(app_icon(icon, AppIconSize::Inline)))
+        .child(
+            selectable_text(font_scale, ("compaction-text", key), &item.text)
+                .text_size(theme().type_scale.body_small * font_scale)
+                .line_height(theme().type_scale.line_body * font_scale)
+                .min_w_0()
+                .flex_1(),
+        )
+        .into_any_element()
+}
+
 pub(super) fn render_agent_message(
     font_scale: f32,
     key: usize,
@@ -38,7 +86,7 @@ pub(super) fn render_agent_message(
     div()
         .id(("agent-result-row", key))
         .w_full()
-        .px(theme().size(18.0))
+        .px(crate::app::ui::grid::transcript_inset())
         .py(theme().size(2.0))
         .flex()
         .flex_col()
@@ -97,7 +145,7 @@ pub(super) fn render_error(
     div()
         .id(("error-row", key))
         .w_full()
-        .px(theme().size(18.0))
+        .px(crate::app::ui::grid::transcript_inset())
         .py(theme().space.sm)
         .flex()
         .flex_col()
@@ -200,7 +248,7 @@ pub(super) fn render_thinking(
     div()
         .id(("thinking-row", key))
         .w_full()
-        .px(theme().size(18.0))
+        .px(crate::app::ui::grid::transcript_inset())
         .py(theme().size(2.0))
         .flex()
         .flex_col()

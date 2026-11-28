@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde_json::{Value, json};
 
+use super::MAX_FILTERED_EVENTS_PER_POLL;
 use super::handler::IdempotencyBookkeeping;
 use super::prompt_boundary::{Boundary, PromptBoundary};
 use super::prompt_input::{PromptInput, prompt_mode, worker_mode};
@@ -11,8 +12,6 @@ use crate::{
     SessionResponsePayload as Payload, SessionTransport, SteerErrorRecovery,
     extensions::{ExtensionUiResponse, PromptImage, PromptMode},
 };
-
-const MAX_FILTERED_EVENTS_PER_POLL: usize = 256;
 
 #[derive(Clone, Copy)]
 pub(super) enum SteeringBoundary {
@@ -376,8 +375,6 @@ impl QueuedSession {
                     }
                     if let Some(dispatch) = self.dispatched.get_mut(id) {
                         let status = receipt.status;
-                        // Wait for the paired response to decide whether to return this
-                        // native steer to our queue or expose the rejection.
                         if dispatch.native_steer && status == DeliveryStatus::Rejected {
                             return None;
                         }

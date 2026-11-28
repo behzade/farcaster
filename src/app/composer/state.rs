@@ -1,19 +1,49 @@
 use super::*;
 
 impl FarcasterApp {
+    pub(in crate::app) fn signal_composer(&self, signal: crate::runtime::RuntimeSignal) {
+        if self.can_submit() {
+            self.runtime
+                .signal(self.composer.sessions.current_buffer(), signal);
+        }
+    }
+
+    pub(in crate::app) fn bind_legacy_composer(&mut self, path: &Path, harness: Backend) {
+        let legacy = session_target(path);
+        let buffer = crate::sessions::session_buffer(harness, path);
+        self.composer.sessions.bind_legacy_buffer(&legacy, &buffer);
+        self.promote_composer_images(&legacy, &buffer);
+        self.promote_composer_pastes(&legacy, &buffer);
+        for pending in self.composer.pending_submissions.values_mut() {
+            if pending.submitted_target == legacy {
+                pending.submitted_target.clone_from(&buffer);
+            }
+        }
+    }
+
     pub(in crate::app) fn switch_composer_target(
         &mut self,
         target: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some((harness, address)) = crate::sessions::composer_buffer_parts(&target)
+            && let Some(path) = crate::sessions::session_path(address)
+            && !self.sessions.all.has_shared_path(path)
+        {
+            self.bind_legacy_composer(path, harness);
+        }
         self.navigation.chat.activation.clear();
         let current = input_snapshot(self.composer.input.read(cx));
         let current_target = self.composer.sessions.current_target().to_owned();
         if !current.text.is_empty() {
             self.engage_current_draft();
         }
-        self.sync_current_draft(&current_target);
+        let before = self.sessions.drafts.len();
+        self.park_current_draft(&current_target);
+        if self.sessions.drafts.len() != before {
+            self.invalidate_active_rail_rows(cx);
+        }
         self.capture_center_surface();
         let snapshot = self.composer.sessions.switch_to(target, current);
         self.apply_composer_snapshot(snapshot, window, cx);
@@ -25,6 +55,12 @@ impl FarcasterApp {
             self.engage_current_draft();
         }
         self.composer.sessions.capture_current(snapshot);
+    }
+
+    pub(in crate::app) fn capture_composer_text(&mut self, cx: &mut Context<Self>) {
+        self.composer
+            .sessions
+            .capture_current(input_snapshot(self.composer.input.read(cx)));
     }
 
     pub(in crate::app) fn apply_composer_snapshot(
@@ -39,6 +75,30 @@ impl FarcasterApp {
             input.set_value(text, window, cx);
             input.set_selected_range(range, cx);
         });
+    }
+
+    pub(in crate::app) fn accept_composer_completion(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.views.composer.read(cx).completions_dismissed() {
+            return false;
+        }
+        let input = self.composer.input.read(cx);
+        let Some(snapshot) = completion::resolve_for_harness(
+            &input.value(),
+            input.cursor(),
+            &self.composer.project_files,
+            self.views.composer.read(cx).suggestion_selection(),
+            &self.snapshot.commands,
+            self.active_harness(),
+        ) else {
+            return false;
+        };
+        self.apply_composer_snapshot(snapshot, window, cx);
+        self.composer.focus.focus(window, cx);
+        true
     }
 
     pub(in crate::app) fn handle_composer_history_key(
@@ -82,6 +142,9 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if !self.can_submit() {
+            return false;
+        }
         let available = crate::agents::available_access_modes(
             self.snapshot.harness,
             Some(self.snapshot.catalog_model(model)),

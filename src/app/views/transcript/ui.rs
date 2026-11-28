@@ -8,6 +8,13 @@ use crate::conversation::{TranscriptItem, TranscriptKind};
 use crate::utility::persistent_vec::PersistentVec;
 
 impl FarcasterApp {
+    pub(in crate::app) fn awaiting_history_rows(&self, cx: &gpui::App) -> bool {
+        self.views
+            .transcript
+            .read(cx)
+            .awaiting_history_rows(&self.snapshot)
+    }
+
     pub(in crate::app) fn adjust_transcript_font_size(
         &mut self,
         delta: f32,
@@ -53,6 +60,9 @@ impl FarcasterApp {
         path: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
+        if self.awaiting_history_rows(cx) {
+            return;
+        }
         let expanded = self.settings.expand_transcript_folders;
         self.views.transcript.update(cx, |transcript, cx| {
             transcript.list.pause_following_tail();
@@ -116,6 +126,9 @@ impl FarcasterApp {
         expanded: bool,
         cx: &mut Context<Self>,
     ) {
+        if self.awaiting_history_rows(cx) {
+            return;
+        }
         self.views.transcript.update(cx, |transcript, cx| {
             if expanded {
                 transcript.list.pause_following_tail();
@@ -135,11 +148,22 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn sync_composer_history(&mut self) {
+        let target = self.composer.sessions.current_target();
+        if self.lifecycle.pending_session_switch.is_some()
+            || crate::sessions::composer_buffer_parts(self.composer.sessions.current_buffer())
+                .is_some_and(|(harness, _)| self.snapshot.harness != Some(harness))
+            || crate::sessions::session_path(target)
+                .is_some_and(|path| self.snapshot.selected_session.as_deref() != Some(path))
+            || (self.sessions.selected_draft.is_some()
+                && self.snapshot.selected_session.as_deref() != self.sidebar_session_path())
+        {
+            return;
+        }
         let _timing = crate::app::infrastructure::performance::OperationTiming::new(
             crate::app::infrastructure::performance::OperationKind::ComposerHistory,
             self.snapshot.conversation.items.len(),
         );
-        let target = self.composer.sessions.current_target().to_owned();
+        let target = self.composer.sessions.current_buffer().to_owned();
         let mut user_count = 0;
         let mut last_user = "";
         for item in &self.snapshot.conversation.items {
@@ -174,7 +198,12 @@ impl FarcasterApp {
     ) -> bool {
         let items = self.snapshot.transcript_presentation().items.clone();
         self.views.transcript.update(cx, |transcript, _| {
-            transcript.apply_rows(update, previous_items, &items)
+            transcript.apply_rows(
+                update,
+                previous_items,
+                &items,
+                self.snapshot.history_coverage(),
+            )
         })
     }
 
@@ -193,7 +222,12 @@ impl FarcasterApp {
         let conversation = self.snapshot.transcript_presentation();
         self.views.transcript.update(cx, |transcript, cx| {
             let rows = refresh_presentation_rows(&transcript.rows, &conversation, index);
-            let _changed = transcript.apply_rows(rows, &conversation.items, &conversation.items);
+            let _changed = transcript.apply_rows(
+                rows,
+                &conversation.items,
+                &conversation.items,
+                self.snapshot.history_coverage(),
+            );
             cx.notify();
         });
     }

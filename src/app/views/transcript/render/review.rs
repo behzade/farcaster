@@ -8,6 +8,7 @@ use gpui::{
 };
 
 use super::review_artifact::Artifact;
+use crate::app::ui::primitives::AppTooltip as _;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render(
@@ -29,7 +30,7 @@ pub(super) fn render(
     let open_entity = entity.clone();
     div()
         .w_full()
-        .px(super::theme().size(18.0))
+        .px(crate::app::ui::grid::transcript_inset())
         .py(theme().space.xs)
         .font_family(UI_FONT_FAMILY)
         .text_size(theme().type_scale.body_small * font_scale)
@@ -135,9 +136,10 @@ fn review_header(
         "Alt"
     };
     let action = if expanded { "hide" } else { "show" };
+    let label = format!("Open review: {title} · {modifier}-click to {action} locations");
     tool_changes::activation_row(
         format!("review-header-{key}"),
-        format!("Open review: {title} · {modifier}-click to {action} locations"),
+        label.clone(),
         move |alt, window, cx| {
             if alt {
                 toggle(window, cx);
@@ -146,6 +148,7 @@ fn review_header(
             }
         },
     )
+    .app_tooltip(label)
     .aria_expanded(expanded)
     .debug_selector(move || format!("review-header-{key}"))
     .gap(theme().space.sm)
@@ -155,6 +158,7 @@ fn review_header(
             .overflow_hidden()
             .text_ellipsis()
             .text_color(theme().colors.code)
+            .underline()
             .child(title),
     )
     .child(

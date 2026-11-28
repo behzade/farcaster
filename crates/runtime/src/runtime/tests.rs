@@ -121,6 +121,7 @@ pub(super) fn owner_without_process(
             },
             process: None,
             idle_retirement: Default::default(),
+            live_transcript: None,
             snapshot: RuntimeSnapshot {
                 connected: true,
                 status: "Ready".into(),
@@ -142,10 +143,12 @@ pub(super) fn owner_without_process(
             document_refresh_generation: None,
             pending_document_refresh: None,
             active_session: None,
+            unbound_prompt_draft: None,
             forked_from: None,
             parked_snapshot: None,
             queued_prompts: VecDeque::new(),
             saved_prompts: VecDeque::new(),
+            backend_activity: Default::default(),
             normal_prompt_in_flight: false,
             pending_session_controls: PendingSessionControls::default(),
             access_mode_changes: AccessModeChangeState::default(),
@@ -168,6 +171,7 @@ fn publishing_reuses_conversation_and_queue_storage_until_the_queue_changes() {
         target: "draft:one".into(),
         harness: Backend::Pi,
         project: project.clone(),
+        backend_session_id: None,
         session: None,
         mode: PromptMode::Normal,
         message: "saved text".into(),
@@ -462,6 +466,72 @@ fn access_mode_changes_during_a_response_keep_latest_and_allow_cancel() {
 }
 
 #[test]
+fn direct_resume_restores_metrics_before_history_and_accepts_new_reports() {
+    let temp = tempdir().unwrap();
+    let script = temp.path().join("fake-pi.sh");
+    fs::write(
+        &script,
+        include_str!("../../../../tests/fixtures/fake-pi.sh"),
+    )
+    .unwrap();
+    let session = temp.path().join("session.jsonl");
+    let state =
+        farcaster_storage::SharedStateStore::open_at(&temp.path().join("state.sqlite3")).unwrap();
+    let metrics = json!({"contextUsage":{"tokens":120,"contextWindow":1000,"percent":12.0}});
+    state
+        .with(|store| {
+            store.save_session_facts(
+                Backend::Pi,
+                temp.path(),
+                &session,
+                &SessionFacts {
+                    metrics: metrics.clone(),
+                    goal: Some(agents::SessionGoal {
+                        objective: "Finish UI".into(),
+                        status: "active".into(),
+                        ..Default::default()
+                    }),
+                    outcome: Some(SessionOutcome::Stopped),
+                    cache_usage: crate::conversation::CacheUsage {
+                        read_tokens: 100,
+                        prompt_tokens: 200,
+                    },
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+    let (mut owner, _) = owner_without_process(temp.path().to_owned());
+    owner.state = Some(state.clone());
+    owner.process_command = AgentLaunchConfig::test_script(&script, vec!["history-control".into()]);
+    owner.start_process(Some(session.clone()));
+    assert_eq!(owner.snapshot.stats, metrics);
+    assert_eq!(owner.snapshot.last_outcome, Some(SessionOutcome::Stopped));
+    assert_eq!(
+        owner.snapshot.session_goal.as_ref().unwrap().objective,
+        "Finish UI"
+    );
+    assert_eq!(
+        owner.snapshot.conversation.average_cache_hit_rate,
+        Some(50.0)
+    );
+    assert!(
+        !owner.snapshot.document_ready,
+        "metrics do not imply loaded history"
+    );
+    drive_process_until(&mut owner, |owner| {
+        owner.snapshot.stats.pointer("/contextUsage/tokens") == Some(&json!(4096))
+    });
+    assert_eq!(
+        state
+            .with(|store| store.load_session_facts(Backend::Pi, &session))
+            .unwrap()
+            .metrics["contextUsage"]["tokens"],
+        4096
+    );
+}
+
+#[test]
 fn access_mode_change_restarts_and_resumes_the_idle_session() -> Result<(), String> {
     let temp = tempdir().map_err(|error| error.to_string())?;
     let script = temp.path().join("fake-pi.sh");
@@ -558,7 +628,7 @@ fn persisted_submitted_draft_selects_its_session() {
         initial_draft_command(draft.clone(), Some(crate::sessions::SessionTarget {
             harness: Backend::Pi, id: "saved-pi-id".into(), path: session.clone(),
         })),
-        RuntimeCommand::SelectSession { path, harness, session_id, project: selected_project }
+        RuntimeCommand::SelectSession { path, harness, session_id, project: selected_project, .. }
             if path == session
                 && harness == Backend::Pi
                 && session_id == "saved-pi-id"
@@ -569,7 +639,7 @@ fn persisted_submitted_draft_selects_its_session() {
         initial_draft_command(draft.clone(), Some(crate::sessions::SessionTarget {
             harness: Backend::Codex, id: "thread-1".into(), path: codex.clone(),
         })),
-        RuntimeCommand::SelectSession { path, harness, session_id, project: selected_project }
+        RuntimeCommand::SelectSession { path, harness, session_id, project: selected_project, .. }
             if path == codex
                 && harness == Backend::Codex
                 && session_id == "thread-1"
@@ -577,13 +647,13 @@ fn persisted_submitted_draft_selects_its_session() {
     ));
     assert!(matches!(
         initial_draft_command(draft.clone(), None),
-        RuntimeCommand::NewSession { id, harness, profile_id: None, project: draft_project }
+        RuntimeCommand::NewSession { id, harness, profile_id: None, project: draft_project, .. }
             if id == "draft" && harness == Some(Backend::Codex) && draft_project == project
     ));
     draft.app_session_id = 42;
     assert!(matches!(
         initial_draft_command(draft, None),
-        RuntimeCommand::ResumeDraft { id, harness, project: draft_project }
+        RuntimeCommand::ResumeDraft { id, harness, project: draft_project, .. }
             if id == "draft" && harness == Some(Backend::Codex) && draft_project == project
     ));
 }
@@ -598,14 +668,29 @@ fn session_status_publication_deduplicates_but_tracks_session_changes() {
     };
     let mut published = HashMap::new();
 
-    publish_session_status_if_changed(&sender, &mut published, "target", None, RunStatus::Working);
-    publish_session_status_if_changed(&sender, &mut published, "target", None, RunStatus::Working);
+    publish_session_status_if_changed(
+        &sender,
+        &mut published,
+        "target",
+        None,
+        RunStatus::Working,
+        None,
+    );
+    publish_session_status_if_changed(
+        &sender,
+        &mut published,
+        "target",
+        None,
+        RunStatus::Working,
+        None,
+    );
     publish_session_status_if_changed(
         &sender,
         &mut published,
         "target",
         Some(PathBuf::from("session.jsonl")),
         RunStatus::Working,
+        None,
     );
 
     assert_eq!(events_rx.try_iter().count(), 2);
@@ -980,10 +1065,11 @@ fn interacted_session_document_hydrates_in_background_and_becomes_resident() -> 
     let mut documents = HashMap::new();
     let mut touches = HashMap::new();
     let mut revisions = HashMap::new();
-    let mut paths = HashMap::new();
+    let mut paths = documents::ActorPaths::default();
 
     reconcile_live_session_documents(
         std::slice::from_ref(&session),
+        &Default::default(),
         &HashSet::from([key.clone()]),
         "other",
         &mut actors,
@@ -1026,6 +1112,7 @@ fn interacted_session_document_hydrates_in_background_and_becomes_resident() -> 
     archived.archived = true;
     reconcile_live_session_documents(
         &[archived],
+        &Default::default(),
         &HashSet::from([key.clone()]),
         "other",
         &mut actors,
@@ -1040,8 +1127,8 @@ fn interacted_session_document_hydrates_in_background_and_becomes_resident() -> 
 
     assert!(!actors.contains_key(&key));
     assert!(!documents.contains_key(&key));
-    assert!(!paths.contains_key(&path));
-    assert!(!revisions.contains_key(&path));
+    assert!(paths.last_at(&path).is_none());
+    assert!(!revisions.contains_key(&key));
     Ok(())
 }
 
@@ -1049,10 +1136,13 @@ fn interacted_session_document_hydrates_in_background_and_becomes_resident() -> 
 fn selecting_a_resident_document_does_not_reload_or_message_its_actor() {
     let path = PathBuf::from("/sessions/one.jsonl");
     let select = |harness: Backend| RuntimeCommand::SelectSession {
+        display_stamp: None,
         path: path.clone(),
         harness,
         session_id: "one".into(),
         project: PathBuf::from("/project"),
+        key: None,
+        request: None,
     };
     let history = RuntimeSnapshot {
         connected: false,
@@ -1084,6 +1174,8 @@ fn selecting_a_resident_document_does_not_reload_or_message_its_actor() {
             harness: Backend::Pi,
             session_id: "one".into(),
             project: PathBuf::from("/project"),
+            key: None,
+            request: None,
         },
         Some(&history)
     ));
@@ -1093,14 +1185,18 @@ fn selecting_a_resident_document_does_not_reload_or_message_its_actor() {
 fn saved_path_reuses_the_actor_that_started_as_a_draft() {
     let path = PathBuf::from("/sessions/one.jsonl");
     let command = RuntimeCommand::SelectSession {
+        display_stamp: None,
         path: path.clone(),
         harness: Backend::Pi,
         session_id: path.to_string_lossy().into_owned(),
         project: PathBuf::from("/project"),
+        key: None,
+        request: None,
     };
     let latest = HashMap::from([(
         "draft:one".into(),
         Arc::new(RuntimeSnapshot {
+            harness: Some(Backend::Pi),
             live_session: Some(path.clone()),
             ..RuntimeSnapshot::default()
         }),
@@ -1108,7 +1204,12 @@ fn saved_path_reuses_the_actor_that_started_as_a_draft() {
 
     assert!(is_view_only_selection(&command));
     assert_eq!(
-        actor_key_for_command(&command, &format!("session:{}", path.display()), &latest,),
+        actor_key_for_command(
+            &command,
+            &format!("session:{}", path.display()),
+            &Default::default(),
+            &latest,
+        ),
         "draft:one"
     );
 
@@ -1117,10 +1218,17 @@ fn saved_path_reuses_the_actor_that_started_as_a_draft() {
         harness: Backend::Pi,
         session_id: path.to_string_lossy().into_owned(),
         project: PathBuf::from("/project"),
+        key: None,
+        request: None,
     };
     assert!(!is_view_only_selection(&restart));
     assert_eq!(
-        actor_key_for_command(&restart, &format!("session:{}", path.display()), &latest,),
+        actor_key_for_command(
+            &restart,
+            &format!("session:{}", path.display()),
+            &Default::default(),
+            &latest,
+        ),
         "draft:one"
     );
 }
@@ -1160,6 +1268,30 @@ fn catalog_discovery_is_the_authoritative_generation_namespace() {
     assert!(matches!(
         *event,
         RuntimeEvent::Sessions { generation: 7, .. }
+    ));
+}
+
+#[test]
+fn background_metadata_failure_does_not_publish_a_sidebar_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut owner, events) = owner_without_process(dir.path().into());
+    let metadata: agents::SessionMetadata = serde_json::from_value(json!({
+        "harness": Backend::Pi, "project": dir.path(), "id": "chat",
+        "path": dir.path().join("chat.jsonl"), "is_running": false,
+    }))
+    .unwrap();
+    owner.state = None;
+    owner.apply_command(RuntimeCommand::UpdateSessionMetadata(metadata.clone()));
+    assert!(matches!(events.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    owner.state = Some(
+        StateStore::open_at(&dir.path().join("state.sqlite3"))
+            .unwrap()
+            .into(),
+    );
+    owner.apply_command(RuntimeCommand::UpdateSessionMetadata(metadata));
+    assert!(matches!(
+        events.try_recv(),
+        Ok(RuntimeEvent::SessionUpdated(_))
     ));
 }
 
@@ -1272,10 +1404,22 @@ fn initial_prompt_is_not_duplicated_when_starting_its_process()
 
     assert!(owner.deferred_prompt().is_some());
     assert_eq!(owner.snapshot.conversation.items.len(), 1);
-    owner.active_session = Some(temp.path().join("session.jsonl"));
-    owner.startup_state_loaded = true;
-    owner.startup_history_loaded = true;
-    owner.maybe_send_deferred_prompt();
+    assert!(owner.snapshot.conversation.awaiting_first_activity());
+    owner.apply_response(agents::SessionResponse::success(
+        None,
+        agents::SessionResponsePayload::LoadState(serde_json::from_value(json!({
+            "isStreaming": false, "isCompacting": false, "sessionId": "new-session",
+            "sessionFile": temp.path().join("session.jsonl"), "autoCompactionEnabled": true,
+            "messageCount": 0, "pendingMessageCount": 0
+        }))?),
+    ));
+    assert!(owner.snapshot.conversation.awaiting_first_activity());
+    owner.apply_response(agents::SessionResponse::success(
+        None,
+        agents::SessionResponsePayload::LoadHistory(agents::SessionHistory::Preserve),
+    ));
+    assert!(owner.pending_request_id().is_some());
+    assert!(owner.snapshot.conversation.awaiting_first_activity());
 
     let user_messages = owner
         .snapshot
@@ -1306,7 +1450,7 @@ fn deferred_prompt_is_rejected_when_startup_state_has_no_session_path()
             harness: Backend::Pi,
             session_id: None,
             project: temp.path().to_path_buf(),
-            start: SessionStart::New,
+            start: SessionStart::New(None),
             wake: None,
             service_tier: None,
         },
@@ -1401,14 +1545,15 @@ fn new_session_stays_cold_until_the_first_prompt() -> Result<(), Box<dyn std::er
         &script,
         include_str!("../../../../tests/fixtures/fake-pi.sh"),
     )?;
-    let (mut owner, _events) = owner_without_process(old_project.path().to_path_buf());
-    owner.process_command = AgentLaunchConfig::test_script(&script, vec!["quiet".into()]);
+    let (mut owner, events) = owner_without_process(old_project.path().to_path_buf());
+    owner.process_command = AgentLaunchConfig::test_script(&script, vec!["fixed-session".into()]);
     owner.state = Some(SharedStateStore::open_at(
         &old_project.path().join("state.sqlite3"),
     )?);
 
     for profile_id in [Some("chosen-profile"), None] {
         owner.apply_command(RuntimeCommand::NewSession {
+            request: None,
             id: "draft-new".into(),
             harness: Some(Backend::Pi),
             profile_id: profile_id.map(str::to_owned),
@@ -1440,8 +1585,145 @@ fn new_session_stays_cold_until_the_first_prompt() -> Result<(), Box<dyn std::er
     assert!(owner.process.is_some());
     assert!(owner.deferred_prompt().is_some());
     assert!(owner.snapshot.connected);
+    let state = owner.state.clone().expect("persisted outbox");
+    let draft_id = state.with(|store| Ok(store.load_drafts()?[0].app_session_id))?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while owner.active_session.is_none() {
+        assert!(Instant::now() < deadline, "backend did not report its path");
+        if let Some(item) = owner.process.as_mut().and_then(|process| process.poll()) {
+            owner.apply_process_item(item);
+        } else {
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
+    assert!(owner.pending_prompt.is_some());
+    let first_metadata = events
+        .try_iter()
+        .find_map(|event| match event {
+            RuntimeEvent::SessionMetadata(metadata) => Some(metadata),
+            _ => None,
+        })
+        .expect("first session metadata");
+    state.with(|store| {
+        let rows = store.cached_sessions("")?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].app_session_id, draft_id, "first facts write");
+        assert_eq!(
+            store
+                .update_session_metadata(&first_metadata)?
+                .app_session_id,
+            draft_id
+        );
+        Ok(())
+    })?;
     if let Some(mut process) = owner.process.take() {
         process.close()?;
+    }
+    Ok(())
+}
+
+#[test]
+fn retry_from_draft_resumes_the_previously_registered_session()
+-> Result<(), Box<dyn std::error::Error>> {
+    let project = tempdir()?;
+    let script = project.path().join("fake-pi.sh");
+    fs::write(
+        &script,
+        include_str!("../../../../tests/fixtures/fake-pi.sh"),
+    )?;
+    let path = crate::sessions::normalize_session_path(&project.path().join("registered.jsonl"));
+    fs::write(&path, "")?;
+    let draft = crate::sessions::DraftSession::fresh(Some(Backend::Pi), project.path().into());
+    let store = SharedStateStore::open_at(&project.path().join("state.sqlite3"))?;
+    let target = crate::sessions::draft_target(&draft.id);
+    let app_id = store.with(|store| store.save_draft_with_identity(draft.clone()))?;
+    let parked_before_registration = store.with(|store| {
+        store.enqueue_prompt(
+            &target,
+            Backend::Pi,
+            project.path(),
+            None,
+            PromptMode::FollowUp,
+            "follow-up queued before registration",
+            &[],
+        )?;
+        Ok(store.queued_prompts()?.remove(0))
+    })?;
+
+    let registry = agents::CallerRegistry::default();
+    let registrations = store.clone();
+    registry.set_execution_sinks(
+        Some(Arc::new(move |caller, family| {
+            farcaster_storage::SessionRepository::register_caller_session(
+                &registrations,
+                caller,
+                family,
+            )
+        })),
+        None,
+    );
+    let caller = registry.issue_main_session(
+        &AgentLaunchConfig::default(),
+        &SessionLaunch {
+            harness: Backend::Pi,
+            project: project.path().into(),
+            start: SessionStart::New(Some(draft.id.clone())),
+            session_id: None,
+            wake: None,
+            service_tier: None,
+        },
+    );
+    caller.bind(path.to_string_lossy().into_owned());
+    assert_eq!(
+        registry.resolve(caller.token())?.app_session_id,
+        Some(app_id)
+    );
+    drop(caller);
+
+    let recovered_after_registration = store.with(|store| Ok(store.queued_prompts()?.remove(0)))?;
+    for queued in [
+        None,
+        Some(parked_before_registration),
+        Some(recovered_after_registration),
+    ] {
+        let (mut owner, events) = owner_without_process(project.path().to_path_buf());
+        owner.state = Some(store.clone());
+        owner.process_command = AgentLaunchConfig::test_script(&script, vec!["quiet".into()]);
+        if let Some(queued) = queued {
+            let command = RuntimeCommand::SendSaved {
+                target: queued.target.clone(),
+                id: queued.id,
+            };
+            owner.apply_command(RuntimeCommand::RecoverPending(queued));
+            owner.apply_command(command);
+        } else {
+            owner.send_prompt(
+                target.clone(),
+                PromptMode::Normal,
+                "retry".into(),
+                vec![],
+                false,
+            );
+            let identity = events
+                .try_iter()
+                .take_while(|event| !matches!(event, RuntimeEvent::SessionReset { .. }))
+                .find_map(|event| match event {
+                    RuntimeEvent::DraftPromptCommitted {
+                        draft,
+                        app_session_id,
+                        ..
+                    } => Some((draft, app_session_id)),
+                    _ => None,
+                });
+            assert_eq!(identity, Some((draft.id.clone(), app_id)));
+            store.with(|store| store.remove_draft(&draft.id))?;
+        }
+        assert!(owner.process.is_some());
+        assert_eq!(owner.harness, Some(Backend::Pi));
+        assert_eq!(owner.active_session.as_ref(), Some(&path));
+        assert_eq!(owner.session_id.as_deref(), path.to_str());
+        assert!(owner.unbound_prompt_draft.is_none());
+        owner.process.take().unwrap().close()?;
     }
     Ok(())
 }
@@ -1480,6 +1762,7 @@ fn cold_draft_model_selection_is_deferred_without_starting_the_harness() {
         efforts: None,
     };
     owner.apply_command(RuntimeCommand::NewSession {
+        request: None,
         id: "draft-cold".into(),
         harness: Some(Backend::Pi),
         profile_id: None,
@@ -1589,11 +1872,31 @@ fn background_catalog_refresh_preserves_search_until_user_clears_it()
 
 #[test]
 fn child_session_changes_publish_metadata_without_refreshing_the_catalog() {
-    let (mut owner, events) = owner_without_process(PathBuf::from("/project"));
+    let project = tempdir().unwrap();
+    let profile = "fc3a8d2d-cbc6-4d31-bb08-9a3028501147";
+    let profile_dir = project
+        .path()
+        .join("profiles")
+        .join(profile)
+        .join("backend");
+    fs::create_dir_all(&profile_dir).unwrap();
+    let native = profile_dir.join("child");
+    fs::write(&native, "").unwrap();
+    #[cfg(unix)]
+    let alias = {
+        let alias = project.path().join("alias");
+        std::os::unix::fs::symlink(&native, &alias).unwrap();
+        alias
+    };
+    #[cfg(not(unix))]
+    let alias = native.clone();
+    let canonical = native.canonicalize().unwrap();
+    let (mut owner, events) = owner_without_process(project.path().to_owned());
+    owner.process_command.profile_id = None;
     Arc::make_mut(&mut owner.snapshot.conversation).running = true;
     owner.apply_process_item(SessionEvent::Activity(
         json!({"type": "child_sessions_changed", "child": {
-            "id": "child", "path": "/sessions/child", "parent_session": "parent",
+            "id": "child", "path": alias, "parent_session": "parent",
             "title": "Reviewer", "is_running": true
         }})
         .into(),
@@ -1607,12 +1910,14 @@ fn child_session_changes_publish_metadata_without_refreshing_the_catalog() {
     assert!(published.iter().any(|event| matches!(event,
         RuntimeEvent::SessionMetadata(child)
             if child.id == "child" && child.is_running
-                && child.path == std::path::Path::new("/sessions/child")
+                && child.path == alias
     )));
     assert!(published.iter().any(|event| matches!(event,
-        RuntimeEvent::AgentActivityUpdated(child)
+        RuntimeEvent::AgentActivityUpdated { key, activity: child }
             if child.session_id == "child"
-                && child.session_path == std::path::Path::new("/sessions/child")
+                && child.session_path == alias
+                && key.path == canonical && key.native.id == child.session_id
+                && key.native.profile_id.as_deref() == Some(profile)
                 && child.lifecycle == crate::agent_activity::AgentLifecycle::Working
     )));
     assert!(owner.snapshot.conversation.running);
@@ -2286,6 +2591,7 @@ fn failed_resume_publishes_no_state_from_the_previous_process() {
     );
 
     owner.apply_history(HistoryResult {
+        transcript_stamp: None,
         generation: 1,
         path: PathBuf::from("/stale-history"),
         project: std::env::temp_dir(),
@@ -2374,10 +2680,13 @@ fn prompt_before_history_loads_resumes_the_selected_session() -> Result<(), Stri
     )?);
 
     owner.apply_command(RuntimeCommand::SelectSession {
+        display_stamp: None,
         path: session.clone(),
         harness: Backend::Cursor,
         session_id: "cursor-historical".into(),
         project: project.clone(),
+        key: None,
+        request: None,
     });
 
     assert_eq!(owner.snapshot.selected_session, Some(session.clone()));
@@ -2458,7 +2767,7 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
             harness: Backend::Pi,
             session_id: None,
             project: temp.path().to_path_buf(),
-            start: SessionStart::New,
+            start: SessionStart::New(None),
             wake: None,
             service_tier: None,
         },
@@ -2487,6 +2796,7 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
 
     owner.select_history(old_path.clone(), old_project);
     owner.apply_history(HistoryResult {
+        transcript_stamp: None,
         generation: 1,
         path: new_path.clone(),
         project: new_project.clone(),
@@ -2501,6 +2811,7 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
     });
     assert!(!owner.snapshot.history_preview);
     owner.apply_history(HistoryResult {
+        transcript_stamp: None,
         generation: 2,
         path: new_path.clone(),
         project: new_project.clone(),
@@ -2632,6 +2943,7 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
         process_command: AgentLaunchConfig::default(),
         process: None,
         idle_retirement: Default::default(),
+        live_transcript: None,
         snapshot: RuntimeSnapshot {
             connected: true,
             status: "Working".into(),
@@ -2665,10 +2977,12 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
         document_refresh_generation: None,
         pending_document_refresh: None,
         active_session: Some(active_path.clone()),
+        unbound_prompt_draft: None,
         forked_from: None,
         parked_snapshot: None,
         queued_prompts: VecDeque::new(),
         saved_prompts: VecDeque::new(),
+        backend_activity: Default::default(),
         normal_prompt_in_flight: false,
         pending_session_controls: PendingSessionControls::default(),
         access_mode_changes: AccessModeChangeState::default(),
@@ -2681,10 +2995,12 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
     conversation_mut(&mut owner.snapshot).reduce(&json!({"type":"agent_start"}));
 
     owner.select_history(history_path.clone(), history_project.clone());
-    let history = history_rx
-        .recv_timeout(Duration::from_secs(1))
-        .map_err(|error| format!("history switch was rejected: {error}"))?;
-    owner.apply_history(history);
+    while !owner.snapshot.document_ready {
+        let history = history_rx
+            .recv_timeout(Duration::from_secs(1))
+            .map_err(|error| format!("history switch was rejected: {error}"))?;
+        owner.apply_history_update(history);
+    }
 
     assert!(owner.snapshot.history_preview);
     assert_eq!(owner.snapshot.selected_session, Some(history_path));
@@ -2799,6 +3115,7 @@ fn live_session_history_load_does_not_replace_the_parked_transcript() {
     owner.history_generation = 1;
 
     owner.apply_history(HistoryResult {
+        transcript_stamp: None,
         generation: 1,
         path: path.clone(),
         project: project.clone(),
@@ -2840,6 +3157,7 @@ fn refreshing_visible_external_history_preserves_transcript_ui_state() {
 
     owner.document_refresh_generation = Some(1);
     owner.apply_history(HistoryResult {
+        transcript_stamp: None,
         generation: 1,
         path,
         project,
@@ -2876,6 +3194,7 @@ fn external_write_during_selection_refreshes_the_newly_loaded_document() {
 
     owner.refresh_session_document(path.clone(), project.clone());
     owner.apply_history(HistoryResult {
+        transcript_stamp: None,
         generation: 1,
         path,
         project,
@@ -2910,6 +3229,7 @@ fn external_document_refreshes_coalesce_while_a_load_is_in_flight() {
         Some((path.clone(), project.clone()))
     );
     owner.apply_history(HistoryResult {
+        transcript_stamp: None,
         generation: 1,
         path,
         project,

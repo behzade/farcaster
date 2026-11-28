@@ -3,6 +3,7 @@ extern crate self as agents;
 #[cfg(any(test, feature = "test-support"))]
 use farcaster_conversation as conversation;
 
+pub mod accounts;
 mod adapter;
 pub mod builtin_mcp;
 pub use farcaster_agent_protocol as contract;
@@ -15,13 +16,19 @@ pub use adapter::profile_data_environment_key;
 pub use adapter::project_shell_environment;
 #[cfg(feature = "test-support")]
 pub use adapter::set_test_project_environment;
-pub use adapter::{SignIn, SignInEvent, sign_in, sign_in_required, supports_sign_in};
+pub use adapter::{
+    SignIn, SignInEvent, refresh_login, sign_in, sign_in_methods, sign_in_required,
+    sign_in_with_method, supports_sign_in, terminal_sign_in,
+};
+pub use adapter::{account_capabilities, logout_account, read_accounts};
 pub use adapter::{
     annotate_history_message, app_shell_environment, apply_project_trust, available_access_modes,
     backend_display_name, backend_statuses, default_login_shell, delete_session_family,
     delete_session_family_with_config, discover_sessions_for, discover_sessions_for_profile,
-    effort_label, external_session_identity, generate_session_title, load_configuration_catalog,
-    load_session_history, load_session_history_for_profile, move_session_family,
+    effort_label, external_session_identity, generate_session_title, historical_worker_status,
+    load_configuration_catalog, load_session_history, load_session_history_for_import,
+    load_session_history_for_profile, load_session_history_with_page,
+    load_session_history_with_preview, local_history_revision, move_session_family,
     move_session_family_with_config, project_trust, project_trust_description,
     refresh_configuration_catalog, rename_session, saved_project_trust, seed_configuration_catalog,
     service_tier_policy, session_fork_source, spawn_session, supports_auto_title_generation,
@@ -30,14 +37,15 @@ pub use adapter::{
     supports_session_resume, supports_startup_command, supports_steering, validate_launch,
     validate_session_move, warm_session_history_for_profile, worker_factories,
 };
+pub use adapter::{cli_command_hint, model_display_name};
 pub use adapter::{delegated_worker_access_mode, worker_access_modes};
 pub use contract::WorkerStatus;
 pub use contract::extensions;
 pub use contract::{
-    AccountUsage, AccountUsageWindow, Backend, ConfigurationCatalog, DeliveredMessage,
-    DeliveryStatus, DiscoveredHistory, DiscoveredSession, DiscoveredUsage, HarnessAccessMode,
-    PeerMessage, PromptOutcome, PromptPresentation, PromptRejection, QueuedPrompt, RejectionReason,
-    SandboxState, ServiceTierApplication, ServiceTierPolicy, SessionActivityKind, SessionCommand,
+    Backend, ConfigurationCatalog, DeliveredMessage, DeliveryStatus, DiscoveredHistory,
+    DiscoveredSession, DiscoveredUsage, HarnessAccessMode, PeerMessage, PromptOutcome,
+    PromptPresentation, PromptRejection, QueuedPrompt, RejectionReason, SandboxState,
+    ServiceTierApplication, ServiceTierPolicy, SessionActivityKind, SessionCommand,
     SessionContextUsage, SessionEvent, SessionGoal, SessionHistory, SessionInbox, SessionLaunch,
     SessionMetadata, SessionOperation, SessionResponse, SessionResponseErrorKind,
     SessionResponsePayload, SessionStart, SessionTransport, SessionUsage, SessionUsageTokens,
@@ -45,6 +53,18 @@ pub use contract::{
     model_efforts, valid_worker_name, validate_child_access,
 };
 pub use contract::{Question, QuestionOption, QuestionRequest, QuestionResponse};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HistoryCoverage {
+    Suffix,
+    Complete,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HistoryPage<T = Vec<serde_json::Value>> {
+    pub content: T,
+    pub coverage: HistoryCoverage,
+}
 
 #[derive(Clone, Default)]
 pub struct AgentLaunchConfig {
@@ -59,12 +79,12 @@ pub struct AgentLaunchConfig {
 }
 pub use core::{
     CallerContext, CallerProfile, CallerRegistry, ChildSessionOutcome, CommonTool,
-    ExecutionBinding, PromptStore, TokenUsage, ToolCategory, ToolMetadata, ToolReviewState,
-    WorkerActivity, WorkerActivityState, WorkerAssignment, WorkerEvent, WorkerExecution,
-    WorkerFamilyLink, WorkerLaunch, WorkerModelSelection, WorkerPool, WorkerProfile,
-    WorkerProfiles, WorkerRouting, WorkerSendMode, WorkerSession, WorkerSessionFactory,
-    WorkerSnapshot, WorkerUsage, begin_prompt, enqueue_prompt_with_presentation,
-    has_queued_prompts_for, is_child_input_id, queued_prompts,
+    ExecutionBinding, MessageSource, PromptStore, TokenUsage, ToolCategory, ToolMetadata,
+    ToolReviewState, WorkerActivity, WorkerActivityState, WorkerAssignment, WorkerEvent,
+    WorkerExecution, WorkerFamilyLink, WorkerLaunch, WorkerModelSelection, WorkerPool,
+    WorkerPoolUpdate, WorkerProfile, WorkerProfiles, WorkerRouting, WorkerSendMode, WorkerSession,
+    WorkerSessionFactory, WorkerSnapshot, WorkerUsage, begin_prompt, has_queued_prompts_for,
+    is_child_input_id, queued_prompts,
 };
 
 #[cfg(any(test, feature = "test-support"))]

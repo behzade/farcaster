@@ -30,6 +30,7 @@ pub(in crate::app) struct ModalWindowState {
     pub(in crate::app::views) owner_window: Option<AnyWindowHandle>,
     pending: bool,
     failed: bool,
+    background_accessibility: bool,
     passive_height: Option<Pixels>,
     observers: Vec<Subscription>,
 }
@@ -48,7 +49,9 @@ pub(in crate::app) struct ModalWindow {
 
 impl FarcasterApp {
     pub(in crate::app) fn native_overlays_available(&self) -> bool {
-        cfg!(any(target_os = "macos", target_os = "linux")) && !self.overlays.modal.failed
+        cfg!(any(target_os = "macos", target_os = "linux"))
+            && !self.overlays.modal.failed
+            && !self.overlays.modal.background_accessibility
     }
 
     pub(in crate::app::views) fn native_request_is_passive(&self) -> bool {
@@ -160,6 +163,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.overlays.modal.background_accessibility = NativeHost::background_accessibility(window);
         if self.overlays.modal.observers.is_empty() {
             let id = window.window_handle().window_id();
             popup::register_owner(window, cx.entity().downgrade(), cx);
@@ -210,9 +214,6 @@ fn synchronize(owner: WeakEntity<FarcasterApp>, window: &mut Window, cx: &mut Ap
             .is_ok_and(|view| view.host.hides_on_deactivate())
     });
     let wanted = app.read(cx).modal_uses_native_host()
-        // Retain an existing panel through focus handoffs and app deactivation.
-        // AppKit hides it with the app; removing it while the owner resigns key
-        // can race the panel's activation callback and discard a focused input.
         && (popup::owner_active(window, cx) || popup_active || hides_on_deactivate)
         && window.visibility() == gpui::WindowVisibility::Visible;
     let (bounds, offset, input) = app.read(cx).modal_placement(window, cx);
@@ -261,14 +262,13 @@ fn synchronize(owner: WeakEntity<FarcasterApp>, window: &mut Window, cx: &mut Ap
     } else {
         if let Some(popup) = existing {
             let _ = popup.update(cx, |_, window, cx| stack::close(window, cx));
-            // Closing a modal should not activate the app after the user switched away.
             if popup_active && window.visibility() == gpui::WindowVisibility::Visible {
                 window.activate_window();
             }
         }
         Ok(None)
     };
-    if wanted && was_modal && input == OverlayInput::Passive {
+    if wanted && was_modal && input == OverlayInput::Passive && (owner_active || popup_active) {
         window.activate_window();
         app.update(cx, |app, _| app.request_active_surface_focus(None));
     }
@@ -316,8 +316,6 @@ fn open(
                 }
                 let window_id = window.window_handle().window_id();
                 let event_owner = owner.clone();
-                // The app's Escape prefix interceptor only belongs to its main window.
-                // Resolve modal Escape before the global sequence matcher buffers it.
                 subscriptions.push(cx.intercept_keystrokes(move |event, window, cx| {
                     if window.window_handle().window_id() != window_id {
                         return;
@@ -462,7 +460,7 @@ impl Render for ModalWindow {
             } else {
                 root
             };
-            app.render_overlay_contents(root, owner, picker, false, cx)
+            app.render_overlay_contents(root, owner, picker, false, window.is_a11y_active(), cx)
                 .child(self.tooltips.clone())
                 .on_prepaint(move |_, window, cx| {
                     if let Some(focus) = initial_focus {

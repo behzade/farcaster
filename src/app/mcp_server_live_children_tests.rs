@@ -898,7 +898,7 @@ impl LiveChildFixture {
         let root = crate::sessions::root_session_for_path(&sessions, Some(&child.path))
             .ok_or("persisted child has no root session")?;
         let activities = live_worker_activities(&sessions, vec![snapshot.clone()]);
-        let key = crate::agent_activity::agent_activity_key(&child.path);
+        let key = child.activity_key();
         let activity = activities
             .get(&key)
             .ok_or("production catalog did not match the live child pool snapshot")?;

@@ -32,8 +32,9 @@ pub(super) struct PerformanceState {
 pub(super) fn spawn(
     runtime: &RuntimeHandle,
     workgraph_updates: async_channel::Receiver<()>,
-    worker_updates: async_channel::Receiver<()>,
+    worker_updates: async_channel::Receiver<crate::agents::WorkerPoolUpdate>,
     notice_updates: async_channel::Receiver<()>,
+    window: gpui::AnyWindowHandle,
     cx: &mut Context<FarcasterApp>,
 ) -> BootstrapTasks {
     let runtime_wake = runtime.wake_receiver();
@@ -42,6 +43,9 @@ pub(super) fn spawn(
             if weak.update(cx, |this, cx| this.drain_runtime(cx)).is_err() {
                 break;
             }
+            let _ = window.update(cx, |_, window, cx| {
+                crate::app::ui::accessibility::refresh_hidden_accessibility(window, cx);
+            });
         }
     });
     let workgraph_updates = cx.spawn(async move |weak, cx| {
@@ -60,10 +64,16 @@ pub(super) fn spawn(
         }
     });
     let worker_updates = cx.spawn(async move |weak, cx| {
-        while worker_updates.recv().await.is_ok() {
+        while let Ok(update) = worker_updates.recv().await {
             if weak
                 .update(cx, |this, cx| {
-                    this.send(RuntimeCommand::RefreshSessions, cx);
+                    let command = match update {
+                        crate::agents::WorkerPoolUpdate::Catalog => RuntimeCommand::RefreshSessions,
+                        crate::agents::WorkerPoolUpdate::Status(worker) => {
+                            RuntimeCommand::RefreshWorkerStatus(worker)
+                        }
+                    };
+                    this.send(command, cx);
                 })
                 .is_err()
             {
@@ -91,6 +101,7 @@ pub(super) fn spawn(
                 .update(cx, |this, cx| {
                     let active = !this.worker_notices.snapshot(&this.project.path).is_empty();
                     if refresh.update(active) {
+                        this.notify_session_rail_shell(cx);
                         cx.notify();
                     }
                 })

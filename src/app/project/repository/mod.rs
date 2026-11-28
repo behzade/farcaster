@@ -114,11 +114,18 @@ pub(in crate::app) struct RepositoryState {
     watcher_generation: u64,
     observations: ObservationCache,
     warmed: BTreeSet<PathBuf>,
+    trust_check: Option<(bool, gpui::Task<()>)>,
+    center_restore: Option<futures::channel::oneshot::Sender<()>>,
+    refresh_after_trust: bool,
     pass_task: Option<gpui::Task<()>>,
     pass_cursor: usize,
 }
 
 impl RepositoryState {
+    pub(in crate::app) fn allows_execution_in(&self, project: &std::path::Path) -> bool {
+        self.execution_allowed && self.project == project
+    }
+
     pub(in crate::app) fn load(project: PathBuf, execution_allowed: bool) -> Self {
         let (preferences, preference_error) = crate::app::persistence::open()
             .and_then(|store| crate::repository::load_preferences(&*store))
@@ -155,6 +162,9 @@ impl RepositoryState {
             watcher_generation: 0,
             observations: ObservationCache::default(),
             warmed: BTreeSet::new(),
+            trust_check: None,
+            center_restore: None,
+            refresh_after_trust: false,
             pass_task: None,
             pass_cursor: 0,
         }
@@ -178,7 +188,7 @@ impl RepositoryState {
             self.jj_init_in_flight = false;
         }
         self.execution_allowed = execution_allowed;
-        let cached = (project_changed && execution_allowed)
+        let cached = execution_allowed
             .then(|| self.observations.reuse(&self.project, self.preference))
             .flatten();
         self.clear_observation();
@@ -265,14 +275,50 @@ impl RepositoryState {
 }
 
 impl FarcasterApp {
+    pub(in crate::app) fn wait_for_repository_trust(
+        &mut self,
+    ) -> Option<futures::channel::oneshot::Receiver<()>> {
+        self.project.repository.trust_check.as_ref()?;
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        self.project.repository.center_restore = Some(sender);
+        Some(receiver)
+    }
+
     pub(in crate::app) fn select_repository_project(
         &mut self,
         project: PathBuf,
         cx: &mut Context<Self>,
     ) {
-        let execution_allowed =
-            crate::app::project::trust::repository_execution_allowed(&project).unwrap_or(false);
-        self.set_repository_project_execution(project, execution_allowed, cx);
+        let repository = &mut self.project.repository;
+        repository.center_restore = None;
+        if let Some((previous, _)) = repository.trust_check.take() {
+            repository.execution_allowed = previous;
+        }
+        if repository.project != project {
+            repository.refresh_after_trust = false;
+            let preference = preference_for(&repository.preferences, &project);
+            let cached = repository.observations.reuse(&project, preference);
+            repository.select_project(project.clone(), false);
+            if let Some(cached) = cached {
+                repository.observations.remember(project.clone(), cached);
+            }
+        }
+        let previous = std::mem::replace(&mut repository.execution_allowed, false);
+        repository.trust_check = Some((
+            previous,
+            cx.spawn(async move |weak, cx| {
+                let path = project.clone();
+                let allowed = cx
+                    .background_spawn(async move {
+                        crate::app::project::trust::repository_execution_allowed(&path)
+                            .unwrap_or(false)
+                    })
+                    .await;
+                let _ = weak.update(cx, |app, cx| {
+                    app.set_repository_project_execution(project, allowed, cx);
+                });
+            }),
+        ));
     }
 
     pub(in crate::app) fn set_repository_project_execution(
@@ -281,6 +327,18 @@ impl FarcasterApp {
         execution_allowed: bool,
         cx: &mut Context<Self>,
     ) {
+        if let Some((previous, _)) = self.project.repository.trust_check.take() {
+            self.project.repository.execution_allowed = previous;
+            if !execution_allowed {
+                self.project.repository.observations.forget(&project);
+            }
+        }
+        if let Some(restore) = self.project.repository.center_restore.take()
+            && self.project.repository.project == project
+        {
+            let _ = restore.send(());
+        }
+        let missed_refresh = std::mem::take(&mut self.project.repository.refresh_after_trust);
         if self
             .project
             .repository
@@ -289,6 +347,11 @@ impl FarcasterApp {
             self.project.repository.ensure_row_focus(cx);
             self.notify_run_panel(cx);
             self.request_repository_refresh(cx);
+        } else {
+            self.notify_run_panel(cx);
+            if missed_refresh && execution_allowed {
+                self.request_repository_refresh(cx);
+            }
         }
     }
 
@@ -361,6 +424,7 @@ impl FarcasterApp {
             return;
         }
         self.composer.project_files.clear();
+        self.composer.project_files_error = None;
         self.composer.project_files_project = None;
         self.composer.project_files_loading = None;
         self.persist_repository_preferences(cx);
@@ -451,6 +515,10 @@ impl FarcasterApp {
     }
 
     pub(crate) fn request_repository_refresh(&mut self, cx: &mut Context<Self>) {
+        if self.project.repository.trust_check.is_some() {
+            self.project.repository.refresh_after_trust = true;
+            return;
+        }
         if !self.project.repository.execution_allowed {
             self.project.repository.clear_observation();
             self.notify_run_panel(cx);
@@ -483,6 +551,12 @@ impl FarcasterApp {
                 let Some(completion) = this.project.repository.refresh.finish(generation) else {
                     return;
                 };
+                if this.project.repository.trust_check.is_some() {
+                    this.project.repository.refresh_after_trust = true;
+                    this.project.repository.refresh.in_flight = None;
+                    this.project.repository.loading = false;
+                    return;
+                }
                 let mut display_changed =
                     completion.publish && !this.project.repository.initialized;
                 if completion.publish {
@@ -595,6 +669,7 @@ impl FarcasterApp {
 
     fn invalidate_repository_file_mentions(&mut self, cx: &mut Context<Self>) {
         self.composer.project_files.clear();
+        self.composer.project_files_error = None;
         self.composer.project_files_project = None;
         self.composer.project_files_loading = None;
         let input = self.composer.input.read(cx);

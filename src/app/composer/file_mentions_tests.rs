@@ -85,3 +85,22 @@ fn insertion_replaces_only_the_active_token_and_tracks_byte_cursor() {
     assert_eq!(text, "🙂 see @src/main.rs  now");
     assert_eq!(cursor, 22);
 }
+
+#[test]
+fn highlighted_matches_use_utf8_byte_ranges() {
+    let value = "src/فارسی/café.rs";
+    for query in ["café", "فار", "sr", "missing"] {
+        let ranges = match_ranges(value, query);
+        assert!(
+            ranges
+                .iter()
+                .all(|range| value.is_char_boundary(range.start)
+                    && value.is_char_boundary(range.end))
+        );
+        assert!(ranges.windows(2).all(|pair| pair[0].end <= pair[1].start));
+        if query == "missing" {
+            assert!(ranges.is_empty());
+        }
+    }
+    assert_eq!(match_ranges("café.rs", "é"), [3..5]);
+}

@@ -4,7 +4,8 @@ pub(crate) enum BoardLayoutMode {
     Narrow,
 }
 
-pub(crate) const BOARD_WIDTH: f32 = 1000.0;
+pub(crate) const BOARD_WIDTH: f32 = 860.0;
+pub(crate) const BOARD_HEIGHT: f32 = 520.0;
 pub(crate) const DETAIL_WIDTH: f32 = 400.0;
 pub(crate) const DETAIL_MIN_WIDTH: f32 = 360.0;
 

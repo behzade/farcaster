@@ -25,7 +25,35 @@ pub(super) static STANDARD_SERVICE_TIER: LazyLock<[String; 1]> =
 mod tests;
 
 pub(super) trait BackendAdapter: Sync {
-    /// Return locally verifiable fork ancestry for repairing older catalog rows.
+    fn cli_command_hint(&self, _name: &str) -> Option<&'static str> {
+        None
+    }
+    fn account_capabilities(&self) -> crate::accounts::AccountCapabilities {
+        crate::accounts::AccountCapabilities::default()
+    }
+    fn read_accounts(
+        &self,
+        _config: &AgentLaunchConfig,
+        _project: &Path,
+    ) -> Result<crate::accounts::AccountDiscovery, String> {
+        Err("This adapter does not support account discovery".into())
+    }
+    fn logout_account(
+        &self,
+        _config: &AgentLaunchConfig,
+        _source: &crate::accounts::AccountSource,
+        _identity: &crate::accounts::AccountIdentity,
+        _project: &Path,
+    ) -> Result<(), String> {
+        Err("This adapter does not support sign-out".into())
+    }
+    fn historical_worker_status(
+        &self,
+        _path: &Path,
+        _profile: Option<&crate::HarnessProfile>,
+    ) -> Option<crate::WorkerStatus> {
+        None
+    }
     fn fork_source(
         &self,
         _path: &Path,
@@ -36,6 +64,17 @@ pub(super) trait BackendAdapter: Sync {
     fn sign_in_required(&self, _config: &AgentLaunchConfig) -> bool {
         false
     }
+    fn sign_in_methods(&self) -> &'static [(&'static str, &'static str)] {
+        &[("default", "Sign in")]
+    }
+    fn terminal_sign_in(
+        &self,
+        _config: &AgentLaunchConfig,
+        _project: &Path,
+        _method: &str,
+    ) -> Result<Option<std::process::Command>, String> {
+        Ok(None)
+    }
     fn supports_sign_in(&self) -> bool {
         false
     }
@@ -43,6 +82,7 @@ pub(super) trait BackendAdapter: Sync {
         &self,
         _config: &AgentLaunchConfig,
         _project: &Path,
+        _method: &str,
         _cancelled: &std::sync::atomic::AtomicBool,
         _on_url: &dyn Fn(String),
     ) -> Result<(), String> {
@@ -70,7 +110,7 @@ pub(super) trait BackendAdapter: Sync {
         config: &AgentLaunchConfig,
         launch: SessionLaunch,
     ) -> Result<Box<dyn SessionTransport>, String>;
-    fn steering_boundary(&self) -> SteeringBoundary;
+    fn steering_boundary(&self, _config: &crate::AgentLaunchConfig) -> SteeringBoundary;
     fn supports_auto_title_generation(&self) -> bool {
         false
     }
@@ -209,6 +249,31 @@ pub(super) trait BackendAdapter: Sync {
     fn supports_history_warming(&self) -> bool {
         false
     }
+    fn local_history_revision(
+        &self,
+        _config: &AgentLaunchConfig,
+        _path: &Path,
+        _project: &Path,
+    ) -> Option<serde_json::Value> {
+        None
+    }
+    fn load_history_for_import(
+        &self,
+        config: &AgentLaunchConfig,
+        path: &Path,
+        project: &Path,
+        preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
+    ) -> Result<(LoadedHistory, Option<serde_json::Value>), String> {
+        let before = self.local_history_revision(config, path, project);
+        let history = match preview {
+            Some(preview) => self.load_history_with_preview(config, path, project, preview)?,
+            None => self.load_history_for_profile(config, path, project)?,
+        };
+        let revision = before.filter(|stamp| {
+            self.local_history_revision(config, path, project).as_ref() == Some(stamp)
+        });
+        Ok((history, revision))
+    }
     fn load_history_for_profile(
         &self,
         _config: &AgentLaunchConfig,
@@ -216,6 +281,15 @@ pub(super) trait BackendAdapter: Sync {
         project: &Path,
     ) -> Result<LoadedHistory, String> {
         self.load_history(path, project)
+    }
+    fn load_history_with_preview(
+        &self,
+        config: &AgentLaunchConfig,
+        path: &Path,
+        project: &Path,
+        _preview: &mut dyn FnMut(crate::HistoryPage),
+    ) -> Result<LoadedHistory, String> {
+        self.load_history_for_profile(config, path, project)
     }
     fn move_family(
         &self,
@@ -314,7 +388,7 @@ pub(super) fn launch_history(
     load: impl FnOnce(&Path) -> Result<DiscoveredHistory, String>,
 ) -> Result<Option<DiscoveredHistory>, String> {
     match &launch.start {
-        SessionStart::New => Ok(None),
+        SessionStart::New(_) => Ok(None),
         SessionStart::Resume(path) | SessionStart::Fork(path) => load(path).map(Some),
     }
 }

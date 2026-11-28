@@ -113,7 +113,7 @@ fn check_child_lease_expiry(retired: bool) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
             match updates.try_recv() {
-                Ok(()) => return Ok(()),
+                Ok(_) => return Ok(()),
                 Err(async_channel::TryRecvError::Empty) if Instant::now() < deadline => {
                     std::thread::sleep(Duration::from_millis(2))
                 }

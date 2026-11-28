@@ -116,11 +116,6 @@ pub(crate) fn suggestions(input: &str, commands: &[SlashCommand]) -> Vec<Compose
 }
 
 pub(crate) fn complete(input: &str, cursor: usize, sigil: char, name: &str) -> (String, usize) {
-    if sigil == '/' {
-        let text = format!("/{name} ");
-        let cursor = text.len();
-        return (text, cursor);
-    }
     let token_start = input[..cursor]
         .rfind(char::is_whitespace)
         .map_or(0, |index| index + 1);
@@ -133,7 +128,7 @@ pub(crate) fn complete(input: &str, cursor: usize, sigil: char, name: &str) -> (
     (text, cursor)
 }
 
-fn invocation_query(input: &str) -> Option<&str> {
+pub(in crate::app) fn invocation_query(input: &str) -> Option<&str> {
     let token = input
         .rsplit_once(char::is_whitespace)
         .map_or(input, |(_, token)| token);

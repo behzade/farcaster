@@ -1,5 +1,4 @@
 use std::{
-    ffi::OsString,
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -11,16 +10,31 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use super::super::process_command::environment;
 use crate::AgentLaunchConfig;
 use serde::Deserialize;
 
 const LOGIN_HELPER: &str = include_str!("auth.mjs");
 
-pub(super) fn environment(command: &Command, name: &str) -> Option<OsString> {
-    match command.get_envs().find(|(key, _)| *key == name) {
-        Some((_, value)) => value.map(OsString::from),
-        None => std::env::var_os(name),
-    }
+pub(super) fn account_source(
+    config: &AgentLaunchConfig,
+    project: &Path,
+    command: &Command,
+) -> Result<crate::accounts::AccountSource, String> {
+    let source = if let Some(source) =
+        super::super::accounts::environment_source(command, "CURSOR_API_KEY", project)
+    {
+        source
+    } else {
+        format!("native:{}", credential_path(config, command)?.display())
+    };
+    Ok(super::super::accounts::source(
+        config,
+        crate::Backend::Cursor,
+        project,
+        "cursor",
+        source,
+    ))
 }
 
 fn credential_path(config: &AgentLaunchConfig, command: &Command) -> Result<PathBuf, String> {
@@ -125,7 +139,7 @@ pub(super) fn sdk_command(
         self::environment(&environment, "PATH").as_deref(),
     )?;
     let mut command = Command::new(node);
-    command.current_dir(project);
+    command.current_dir(project).env_clear();
     for (key, value) in environment.get_envs() {
         match value {
             Some(value) => {
@@ -145,7 +159,6 @@ pub(super) fn sdk_command(
 struct LoginProcess(Child);
 impl Drop for LoginProcess {
     fn drop(&mut self) {
-        // Closing stdin also aborts the SDK's pending browser login.
         self.0.stdin.take();
         let deadline = Instant::now() + Duration::from_secs(2);
         while matches!(self.0.try_wait(), Ok(None)) && Instant::now() < deadline {

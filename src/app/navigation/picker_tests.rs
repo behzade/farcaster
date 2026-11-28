@@ -244,3 +244,116 @@ fn action_picker_routes_themes_and_models_without_losing_parent_context(
         },
     );
 }
+
+#[gpui::test]
+fn session_picker_routes_the_clicked_record_at_a_shared_locator(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::session_picker_routes_the_clicked_record_at_a_shared_locator"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            crate::app::project::trust::apply(project, crate::projects::TrustChoice::TrustProject)
+                .unwrap();
+            let path = crate::sessions::normalize_session_path(&project.join("shared"));
+            let mut clicked = SessionSummary::from_cached(
+                "clicked".into(),
+                path.clone(),
+                project.into(),
+                "Clicked".into(),
+                String::new(),
+                String::new(),
+                None,
+                UNIX_EPOCH,
+                0,
+                Default::default(),
+                false,
+                false,
+                String::new(),
+            )
+            .with_app_session_id(31);
+            clicked.harness = Backend::Codex;
+            let mut sibling = clicked.clone().with_app_session_id(32);
+            sibling.harness = Backend::Pi;
+            sibling.title = "Sibling".into();
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions.all = vec![clicked.clone(), sibling.clone()].into();
+                    app.sessions.visible = vec![clicked.clone(), sibling.clone()].into();
+                    app.sessions.selected_draft = None;
+                    app.switch_composer_target(
+                        crate::sessions::session_buffer(sibling.harness, &path),
+                        window,
+                        cx,
+                    );
+                    app.snapshot = std::sync::Arc::new(crate::runtime::RuntimeSnapshot {
+                        selected_session: Some(path.clone()),
+                        harness: Some(sibling.harness),
+                        project: project.into(),
+                        ..Default::default()
+                    });
+                    app.open_picker(PickerScope::Sessions, window, cx);
+                    let (rows, _) = app.picker_rows(PickerScope::Sessions);
+                    let row = rows.iter().find(|row| row.label == "Clicked").unwrap();
+                    app.sessions.all = vec![clicked.clone()].into();
+                    app.sessions.visible = vec![clicked.clone()].into();
+                    app.execute_picker_row(&row.id, window, cx);
+                    assert!(app.lifecycle.pending_session_switch.is_some());
+                    assert!(!app.pending_switch_matches(&app.snapshot));
+                    let mut accepted = (*app.snapshot).clone();
+                    accepted.harness = Some(clicked.harness);
+                    accepted.profile_id = Some("runtime-profile".into());
+                    assert!(app.pending_switch_matches(&accepted));
+                    assert_eq!(
+                        app.composer.sessions.current_buffer(),
+                        crate::sessions::session_buffer(clicked.harness, &path)
+                    );
+                })
+            });
+            cx.run_until_parked();
+            let request = std::iter::from_fn(|| runtime.try_recv_command())
+                .find_map(|command| match command {
+                    RuntimeCommand::SelectSession {
+                        key,
+                        harness,
+                        path: destination,
+                        request,
+                        ..
+                    } => {
+                        assert_eq!(key, Some(clicked.catalog_key()));
+                        assert_eq!(harness, clicked.harness);
+                        assert_eq!(destination, path);
+                        request
+                    }
+                    _ => None,
+                })
+                .expect("keyed selection dispatched");
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions.all = Default::default();
+                    app.sessions.visible = Default::default();
+                    runtime.send_event(crate::runtime::RuntimeEvent::SelectionRouted(request));
+                    let generation = app.runtime_generation + 1;
+                    for harness in [sibling.harness, clicked.harness] {
+                        runtime.send_event(crate::runtime::RuntimeEvent::Snapshot {
+                            generation,
+                            snapshot: std::sync::Arc::new(crate::runtime::RuntimeSnapshot {
+                                selected_session: Some(path.clone()),
+                                harness: Some(harness),
+                                profile_id: Some("runtime-profile".into()),
+                                project: project.into(),
+                                ..Default::default()
+                            }),
+                        });
+                        app.drain_runtime(cx);
+                        assert_eq!(
+                            app.awaiting_selection_snapshot(),
+                            harness != clicked.harness
+                        );
+                    }
+                });
+            });
+        },
+    );
+}

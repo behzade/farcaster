@@ -143,7 +143,6 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        // Modifier-only shortcuts use ModifiersChanged, never synthetic key presses.
         if matches!(
             stroke.key.as_str(),
             "shift"
@@ -160,7 +159,6 @@ impl FarcasterApp {
             return false;
         }
         self.workspace.voice.modifier_shortcut.key_down(&stroke.key);
-        // Keep Escape's navigation behavior, but don't arm voice while it is held.
         if stroke.key == "escape" {
             if self.workspace.voice.capturing_shortcut {
                 self.workspace.voice.capturing_shortcut = false;
@@ -175,7 +173,7 @@ impl FarcasterApp {
             return false;
         }
         if self.workspace.voice.key_down.as_deref() == Some(&stroke.key) {
-            return true; // Ignore autorepeat, including after recording a new shortcut.
+            return true;
         }
         if self.capture_voice_shortcut(stroke, cx) {
             self.workspace.voice.key_down = Some(stroke.key.clone());
@@ -206,7 +204,6 @@ impl FarcasterApp {
         let second_tap = matches!(self.workspace.voice.gesture, Gesture::Tapped(at) if at.elapsed() <= DOUBLE_TAP);
         self.workspace.voice.gesture = Gesture::Pressed { second_tap };
         self.start_voice(window, cx);
-        // Capture was requested above; this timer only distinguishes a tap from a hold.
         self.workspace.voice.press = self.workspace.voice.press.wrapping_add(1);
         let press = self.workspace.voice.press;
         cx.spawn_in(window, async move |weak, cx| {
@@ -310,7 +307,6 @@ impl FarcasterApp {
 
     fn start_voice(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.workspace.voice.speech.take();
-        // A second recording can replace a transcription that has not been sent yet.
         self.workspace.voice.input.take();
         if !self.can_start_voice(window, cx) {
             return;

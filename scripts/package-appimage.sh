@@ -13,6 +13,24 @@ version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,
 arch=$(uname -m)
 stage=$(mktemp -d "$out/appimage.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
+# appimagetool's downloader can fail on GitHub release redirects.
+# Supply the runtime through the output plugin instead.
+runtime=${LDAI_RUNTIME_FILE:-}
+if [ -z "$runtime" ]; then
+    command -v curl >/dev/null || {
+        echo "Install curl or set LDAI_RUNTIME_FILE to a local AppImage runtime" >&2
+        exit 1
+    }
+    runtime="$stage/runtime-$arch"
+    curl --fail --location --retry 3 \
+        "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-$arch" \
+        --output "$runtime"
+fi
+if [ ! -f "$runtime" ] || [ ! -r "$runtime" ] || [ ! -s "$runtime" ]; then
+    echo "Missing, unreadable, or empty AppImage runtime: $runtime" >&2
+    exit 1
+fi
+runtime=$(realpath "$runtime")
 appdir="$stage/AppDir"
 sh scripts/install-linux.sh "$binary" "$appdir/usr"
 
@@ -34,7 +52,8 @@ done
 filename="Farcaster-v${version}-${arch}.AppImage"
 candidate="$stage/$filename"
 unset SOURCE_DATE_EPOCH
-APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$arch" VERSION="$version" OUTPUT="$candidate" \
+APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$arch" LINUXDEPLOY_OUTPUT_VERSION="$version" \
+    LDAI_OUTPUT="$candidate" LDAI_RUNTIME_FILE="$runtime" \
     linuxdeploy --appdir "$appdir" "${libraries[@]}" \
     --exclude-library 'libwayland-client.so*' --output appimage
 

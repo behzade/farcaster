@@ -4,11 +4,13 @@ use gpui::px;
 use std::{path::PathBuf, time::SystemTime};
 
 use super::{
-    ActiveSessionItem, RailPanel, SessionRailItem, SessionRailKind, archived_panel_rows,
-    clamped_session_rail_width, first_unsubmitted_draft, hover::session_tooltip_lines,
-    minimal_row_splice, numbered_session_items, rendering::rail_panel_slot,
-    replacement_index_after_close, rows::run_status_visual, session_accessible_label,
-    subagent_counts,
+    ActiveSessionItem, SessionRailItem, SessionRailKind, clamped_session_rail_width,
+    first_unsubmitted_draft,
+    hover::session_tooltip_lines,
+    minimal_row_splice, numbered_session_items,
+    rendering::{archived_panel_rows, archived_panel_slot},
+    rows::run_status_visual,
+    session_accessible_label,
 };
 use crate::{
     app::session_folders::{SessionFolder, SessionFolders},
@@ -17,13 +19,6 @@ use crate::{
     app::ui::theme::theme,
     sessions::{DraftSession, SessionSummary, UsageSummary},
 };
-
-#[test]
-fn closing_a_session_keeps_its_visual_slot_when_possible() {
-    assert_eq!(replacement_index_after_close(4, 1), Some(2));
-    assert_eq!(replacement_index_after_close(4, 3), Some(2));
-    assert_eq!(replacement_index_after_close(1, 0), None);
-}
 
 #[test]
 fn numbers_follow_visible_order_and_skip_unsubmitted_drafts() {
@@ -186,7 +181,6 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
                         archived: self.archived,
                         drop_position: None,
                         compact: self.compact,
-                        shortcut: (self.submitted && !self.archived).then_some(1),
                     },
                     self.app.clone(),
                 )
@@ -202,9 +196,8 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
                     (!self.archived).then_some(RunStatus::Working),
                 );
                 input.compact = self.compact;
-                input.shortcut = (!self.archived).then_some(1);
                 super::rows::SessionRow::new(
-                    &item("chat", 1, "/project", kind, false),
+                    item("chat", 1, "/project", kind, false),
                     input,
                     self.app.clone(),
                 )
@@ -221,12 +214,7 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
         cx,
         |cx, app, _, _| {
             let mut columns = [None, None];
-            let slots = [
-                "session-status-slot",
-                "session-provider-slot",
-                "session-age-slot",
-                "session-shortcut-slot",
-            ];
+            let slots = ["session-status-slot", "session-provider-slot"];
             for (draft, submitted) in [(false, true), (true, false), (true, true)] {
                 for compact in [false, true] {
                     for archived in [false, true] {
@@ -249,25 +237,30 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
                             cx.debug_bounds("session-archive-action").is_some(),
                             submitted || archived
                         );
-                        assert_eq!(
-                            cx.debug_bounds("session-shortcut-1").is_some(),
-                            submitted && !archived
-                        );
+                        assert_eq!(cx.debug_bounds("session-shortcut-1").is_some(), false);
                         let bounds =
                             slots.map(|selector| cx.debug_bounds(selector).expect(selector));
-                        let expected = columns[usize::from(compact)].get_or_insert(bounds);
+                        let expected =
+                            columns[usize::from(compact && !archived)].get_or_insert(bounds);
                         assert_eq!(&bounds, expected, "columns must not depend on row state");
                         for pair in bounds.windows(2) {
                             assert!(pair[0].right() <= pair[1].left());
                         }
+                        if let Some(status) = cx.debug_bounds("session-status-glyph") {
+                            assert_eq!(
+                                status.center().x,
+                                bounds[0].center().x,
+                                "status and archive share a center"
+                            );
+                        }
                         if let Some(archive) = cx.debug_bounds("session-archive-action") {
-                            assert_eq!(archive, bounds[2], "archive/restore covers age");
+                            assert_eq!(archive, bounds[0], "archive/restore covers status");
                         }
                         if let Some(delete) = cx.debug_bounds("session-delete-action") {
-                            assert_eq!(delete, bounds[3], "delete/discard covers shortcut");
+                            assert_eq!(delete, bounds[1], "delete/discard covers provider");
                         }
                         cx.simulate_mouse_move(
-                            bounds[2].center(),
+                            bounds[0].center(),
                             None,
                             gpui::Modifiers::default(),
                         );
@@ -276,6 +269,19 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
                             bounds,
                             "hover must not shift columns"
                         );
+                        let title = cx.debug_bounds("session-title").expect("session title");
+                        for _ in 0..3 {
+                            cx.update(|window, cx| {
+                                window.focus_next(cx);
+                                window.draw(cx).clear(cx);
+                            });
+                            assert_eq!(cx.debug_bounds("session-title").unwrap(), title);
+                            assert_eq!(
+                                slots.map(|selector| cx.debug_bounds(selector).unwrap()),
+                                bounds,
+                                "keyboard focus must not shift the row"
+                            );
+                        }
                     }
                 }
             }
@@ -285,9 +291,9 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
 
 #[test]
 fn minimal_row_reconciliation_preserves_equal_prefix_and_suffix() {
-    let current = vec!["one", "two", "three"];
+    let current = ["one", "two", "three"].into_iter().collect();
 
-    assert_eq!(minimal_row_splice(&current, &current), None);
+    assert_eq!(minimal_row_splice(&current, &["one", "two", "three"]), None);
     assert_eq!(
         minimal_row_splice(&current, &["one", "changed", "three"]),
         Some((1..2, 1))
@@ -302,9 +308,9 @@ fn minimal_row_reconciliation_preserves_equal_prefix_and_suffix() {
 #[test]
 fn the_archive_panel_opens_at_five_rows_and_stops_at_the_room_it_was_given() {
     let room = theme().size(700.0);
-    let bounds = panel_bounds(room, rail_panel_slot(RailPanel::Archived, 100, false));
+    let bounds = panel_bounds(room, archived_panel_slot(100, false));
     let header = f32::from(theme().controls.icon_button);
-    let row = f32::from(super::session_row_height(true));
+    let row = f32::from(super::session_row_height(false));
     assert_eq!(f32::from(bounds.height), header + row * 5.0);
     assert_eq!(f32::from(bounds.min_height), header + row);
     assert_eq!(bounds.max_height, room);
@@ -312,10 +318,7 @@ fn the_archive_panel_opens_at_five_rows_and_stops_at_the_room_it_was_given() {
 
 #[test]
 fn the_archive_panel_shows_one_whole_row_at_its_minimum_size() {
-    let bounds = panel_bounds(
-        theme().size(700.0),
-        rail_panel_slot(RailPanel::Archived, 100, false),
-    );
+    let bounds = panel_bounds(theme().size(700.0), archived_panel_slot(100, false));
     assert_eq!(archived_panel_rows(bounds.min_height), 1);
     assert_eq!(archived_panel_rows(bounds.height), 5);
     assert!(archived_panel_rows(bounds.max_height) > 5);
@@ -325,7 +328,7 @@ fn the_archive_panel_shows_one_whole_row_at_its_minimum_size() {
 fn the_archive_panel_bounds_stay_valid_without_archived_chats() {
     for room in [px(0.0), theme().layout.folders_min, theme().size(600.0)] {
         for collapsed in [false, true] {
-            let bounds = panel_bounds(room, rail_panel_slot(RailPanel::Archived, 0, collapsed));
+            let bounds = panel_bounds(room, archived_panel_slot(0, collapsed));
             assert!(bounds.min_height <= bounds.max_height);
             assert!(bounds.height >= bounds.min_height);
             assert!(bounds.height <= bounds.max_height);
@@ -438,24 +441,15 @@ fn tooltips_report_model_effort_and_direct_subagent_counts() {
         other.session,
     ];
 
-    let counts = subagent_counts(&crate::sessions::SessionCatalog::from(sessions.clone()));
+    let catalog = crate::sessions::SessionCatalog::from(sessions);
+    let count = catalog.child_count(&catalog[0]);
 
-    assert_eq!(counts.get(&sessions[0].path), Some(&2));
+    assert_eq!(count, 2);
     assert!(
-        session_tooltip_lines(
-            sessions.first().expect("root session fixture"),
-            counts[&sessions[0].path],
-        )
-        .iter()
-        .any(|line| line == "Subagents: 2 subagents")
+        session_tooltip_lines(&catalog[0], count)
+            .iter()
+            .any(|line| line == "Subagents: 2 subagents")
     );
-}
-
-#[test]
-fn every_rail_panel_is_numbered_in_stack_order() {
-    for (index, panel) in RailPanel::ALL.into_iter().enumerate() {
-        assert_eq!(panel.index(), index);
-    }
 }
 
 #[test]
@@ -471,13 +465,9 @@ fn direct_worker_counts_do_not_merge_profile_copies() {
     child.parent_session = Some("same".into());
     child.profile_id = first.profile_id.clone();
     child.parent_app_session_id = Some(second.app_session_id);
-    let counts = subagent_counts(&crate::sessions::SessionCatalog::from(vec![
-        first.clone(),
-        second.clone(),
-        child,
-    ]));
-    assert_eq!(counts.get(&first.path), None);
-    assert_eq!(counts.get(&second.path), Some(&1));
+    let catalog = crate::sessions::SessionCatalog::from(vec![first.clone(), second.clone(), child]);
+    assert_eq!(catalog.child_count(&first), 0);
+    assert_eq!(catalog.child_count(&second), 1);
 }
 
 #[test]
@@ -497,19 +487,18 @@ fn profile_copies_keep_distinct_list_and_navigation_keys_when_reordered() {
                 super::active_item_identity(&ActiveSessionItem::Session(row.clone())),
                 key
             );
-            assert_eq!(
-                super::VisibleSessionTarget::Persisted(row.session.clone()).rail_identity(),
-                key
-            );
             key
         });
         assert_ne!(keys[0], keys[1]);
         let reordered = [keys[1].clone(), keys[0].clone()];
-        assert_eq!(minimal_row_splice(&keys, &reordered), Some((0..2, 2)));
+        assert_eq!(
+            minimal_row_splice(&keys.iter().cloned().collect(), &reordered),
+            Some((0..2, 2))
+        );
         let list = gpui::ListState::new(2, gpui::ListAlignment::Top, px(0.0));
-        let current = std::cell::RefCell::new(keys.to_vec());
+        let current = std::cell::RefCell::new(keys.iter().cloned().collect());
         super::reconcile_list_rows(&list, &current, reordered.to_vec());
-        assert_eq!(*current.borrow(), reordered);
+        assert_eq!(*current.borrow(), reordered.to_vec());
     }
 }
 
@@ -550,5 +539,48 @@ fn unbound_rail_keys_keep_locator_scope_and_bound_keys_survive_metadata_changes(
     assert_eq!(
         super::session_row_identity(&first),
         super::session_row_identity(&other)
+    );
+}
+
+#[gpui::test]
+fn sidebar_gear_opens_settings_without_the_action_picker(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::sidebar_gear_opens_settings_without_the_action_picker"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.simulate_resize(gpui::size(px(1440.0), px(900.0)));
+            cx.update(|window, cx| {
+                window.activate_window();
+                window.draw(cx).clear(cx);
+                assert!(
+                    app.read(cx).views.panel_space.unwrap() > px(100.0),
+                    "archive sizing must use the list area, not the footer height"
+                );
+            });
+            let gear = cx
+                .debug_bounds("sidebar-settings-control")
+                .expect("Settings control");
+            assert_eq!(
+                gear.size.width,
+                theme().controls.icon_button,
+                "keep the full hit area"
+            );
+            cx.simulate_click(gear.center(), Default::default());
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                let app = app.read(cx);
+                assert!(
+                    app.overlays.view.settings,
+                    "gear should open Settings directly"
+                );
+                assert!(
+                    app.navigation.picker.is_none(),
+                    "gear should not open the action picker"
+                );
+            });
+        },
     );
 }

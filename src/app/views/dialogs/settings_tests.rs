@@ -1,6 +1,7 @@
 use super::*;
 use crate::app::workspace::worker_tasks::WorkerProfileEdit;
-use gpui::VisualTestContext;
+use gpui::{Focusable as _, VisualTestContext};
+use gpui_component::WindowExt as _;
 
 fn draw(cx: &mut VisualTestContext) {
     cx.update(|window, cx| window.draw(cx).clear(cx));
@@ -96,7 +97,7 @@ fn tabs_keep_worker_drafts_and_move_focus_to_visible_controls(cx: &mut gpui::Tes
             let font = cx.debug_bounds("settings-font-size").unwrap();
             assert!(font.bottom() <= content.bottom());
             assert!(cx.debug_bounds("settings-workers").is_none());
-            assert!(content.bottom() <= cx.debug_bounds("close-settings").unwrap().top());
+            assert!(cx.debug_bounds("close-settings").unwrap().bottom() <= content.top());
 
             click(cx, "settings-tab-General");
             cx.update(|window, cx| {
@@ -407,6 +408,122 @@ fn voice_shortcut_records_cancels_rejects_conflicts_and_resets(cx: &mut gpui::Te
                     .unwrap()
                     .is_none()
             );
+        },
+    );
+}
+
+#[gpui::test]
+fn proxy_can_be_cleared_and_typed_repeatedly(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::proxy_can_be_cleared_and_typed_repeatedly"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.open_settings(window, cx);
+                    app.settings.tab = SettingsTab::Connections;
+                })
+            });
+            draw(cx);
+            for _ in 0..4 {
+                let input = cx.update(|_, cx| app.read(cx).settings.network_proxy_input.clone());
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| app.clear_network_proxy(window, cx))
+                });
+                draw(cx);
+                cx.update(|window, cx| {
+                    assert!(input.read(cx).focus_handle(cx).is_focused(window));
+                    assert!(input.read(cx).value().is_empty());
+                });
+                let control = cx.debug_bounds("network-proxy-control").unwrap();
+                assert!(control.size.width >= gpui::px(200.0));
+                cx.simulate_input("http://127.0.0.1:7890");
+                cx.update(|_, cx| {
+                    assert_eq!(input.read(cx).value().to_string(), "http://127.0.0.1:7890")
+                });
+            }
+        },
+    );
+}
+
+#[gpui::test]
+fn proxy_field_click_focuses_text_without_clear(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::proxy_field_click_focuses_text_without_clear"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.open_settings(window, cx);
+                    app.settings.tab = SettingsTab::Connections;
+                })
+            });
+            draw(cx);
+            cx.update(|window, cx| {
+                window.replace_root(cx, |window, cx| {
+                    gpui_component::Root::new(app.clone(), window, cx)
+                });
+                window.activate_window();
+            });
+            cx.run_until_parked();
+            draw(cx);
+            cx.update(|window, _| assert!(window.is_window_active()));
+            let input = cx.update(|_, cx| app.read(cx).settings.network_proxy_input.clone());
+            for initial in ["", "http://127.0.0.1:7890"] {
+                click(cx, "settings-tab-General");
+                click(cx, "settings-tab-Connections");
+                for edge in [0, 1, 2] {
+                    cx.update(|window, cx| {
+                        if !initial.is_empty() {
+                            input.update(cx, |input, cx| input.set_value(initial, window, cx));
+                        }
+                        let focus = app.read(cx).settings.tab_focus
+                            [SettingsTab::Connections as usize]
+                            .clone();
+                        focus.focus(window, cx);
+                    });
+                    draw(cx);
+                    let bounds = cx.debug_bounds("network-proxy-input").unwrap();
+                    let click = match edge {
+                        0 => bounds.center(),
+                        1 => gpui::point(bounds.left() + gpui::px(2.), bounds.center().y),
+                        _ => gpui::point(bounds.right() - gpui::px(2.), bounds.center().y),
+                    };
+                    cx.simulate_event(gpui::MouseDownEvent {
+                        position: click,
+                        button: gpui::MouseButton::Left,
+                        click_count: 1,
+                        ..Default::default()
+                    });
+                    draw(cx);
+                    cx.simulate_event(gpui::MouseUpEvent {
+                        position: click,
+                        button: gpui::MouseButton::Left,
+                        click_count: 1,
+                        ..Default::default()
+                    });
+                    draw(cx);
+                    cx.update(|window, cx| {
+                        assert!(
+                            input.read(cx).focus_handle(cx).is_focused(window),
+                            "value={initial:?}, edge={edge}"
+                        );
+                        assert_eq!(
+                            window.focused_input(cx),
+                            Some(gpui_component::input::AnyInputState::Input(input.clone())),
+                            "the clicked field must own native text input"
+                        );
+                    });
+                    cx.simulate_input("x");
+                    cx.update(|_, cx| assert!(input.read(cx).value().contains('x')));
+                }
+            }
         },
     );
 }

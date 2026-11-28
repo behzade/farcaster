@@ -104,14 +104,29 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn select_project(&mut self, project: PathBuf, cx: &mut Context<Self>) {
+        let allowed = super::trust::repository_execution_allowed(&project).unwrap_or(false);
+        self.set_repository_project_execution(project.clone(), allowed, cx);
+        self.update_selected_project(project, cx);
+    }
+
+    pub(in crate::app) fn select_project_for_navigation(
+        &mut self,
+        project: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_repository_project(project.clone(), cx);
+        self.update_selected_project(project, cx);
+    }
+
+    fn update_selected_project(&mut self, project: PathBuf, cx: &mut Context<Self>) {
         if self.project.path != project {
+            self.project.navigation_trust = None;
             self.composer.project_files.clear();
+            self.composer.project_files_error = None;
             self.composer.project_files_project = None;
             self.composer.project_files_loading = None;
         }
         self.project.path = project.clone();
-        self.select_repository_project(project.clone(), cx);
-        self.warm_repository_observations(cx);
         if projects::select(
             &mut self.project.registered,
             &self.project.excluded,
@@ -119,12 +134,16 @@ impl FarcasterApp {
         ) {
             self.save_project_registry();
         }
+        self.start_offscreen_observation_pass(cx);
+        self.remember_session_selection();
     }
 
     pub(in crate::app) fn request_composer_project_files(&mut self, cx: &mut Context<Self>) {
         let project = self.project.path.clone();
         if !self.project.repository.execution_allowed {
             self.composer.project_files.clear();
+            self.composer.project_files_error =
+                Some("Allow repository access to mention files".into());
             self.composer.project_files_project = Some(project);
             self.composer.project_files_loading = None;
             self.notify_composer(cx);
@@ -149,7 +168,16 @@ impl FarcasterApp {
                 }
                 if this.project.path == project && this.project.repository.preference == preference
                 {
-                    this.composer.project_files = files;
+                    match files {
+                        Ok(files) => {
+                            this.composer.project_files = files;
+                            this.composer.project_files_error = None;
+                        }
+                        Err(error) => {
+                            this.composer.project_files.clear();
+                            this.composer.project_files_error = Some(error);
+                        }
+                    }
                     this.composer.project_files_project = Some(project);
                     this.notify_composer(cx);
                 }

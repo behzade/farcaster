@@ -8,6 +8,48 @@ fn delivery(id: &str, text: &str, status: &str) -> Value {
 }
 
 #[test]
+fn working_status_survives_delivery_until_activity_or_settlement() {
+    let mut state = ConversationState::default();
+    state.replace_history(&[
+        json!({"role":"assistant","content":[{"type":"text","text":"previous turn"}]}),
+    ]);
+    let prompt = state.push_local_user("hello".into(), 0, false);
+    state.bind_submitted_prompt("prompt", &prompt);
+    state.begin_run();
+    assert!(state.awaiting_first_activity());
+    for status in ["accepted", "delivered"] {
+        state.reduce(
+            &json!({"type":"prompt_delivery","submissionId":"prompt","status":status,
+            "message":{"role":"user","content":"hello"}}),
+        );
+        assert!(state.awaiting_first_activity());
+        assert_eq!(state.items.len(), 2);
+    }
+
+    state.reduce(&json!({"type":"message_start","message":{"role":"assistant","content":[]}}));
+    assert!(state.awaiting_first_activity());
+    for event in [
+        json!({"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"hi"}}),
+        json!({"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"checking"}}),
+        json!({"type":"tool_execution_start","toolCallId":"read-1","toolName":"read","args":{"path":"main.rs"}}),
+    ] {
+        let mut active = state.clone();
+        active.reduce(&event);
+        assert!(!active.awaiting_first_activity(), "{event}");
+        assert_eq!(active.items.len(), 3);
+    }
+
+    let mut whitespace = state.clone();
+    whitespace.reduce(&json!({"type":"message_update","assistantMessageEvent":{
+        "type":"text_delta","contentIndex":1,"delta":" \n"}}));
+    assert!(whitespace.awaiting_first_activity());
+
+    state.settle_run();
+    assert!(!state.awaiting_first_activity());
+    assert_eq!(state.items.len(), 2);
+}
+
+#[test]
 fn borrowed_receipts_preserve_order_payload_and_delivery_changes() {
     let mut state = ConversationState::default();
     assert!(!state.has_pending_receipts());

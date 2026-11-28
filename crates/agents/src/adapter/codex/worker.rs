@@ -34,10 +34,9 @@ use super::{
 use crate::{
     adapter::{child_stderr, farcaster_mcp, main_session},
     agents::{
-        AgentLaunchConfig, CommonTool, PeerMessage, SessionGoal, TokenUsage, ToolReviewState,
-        WorkerActivity, WorkerActivityState, WorkerContext, WorkerEvent, WorkerInput,
-        WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
-        WorkerUsage,
+        AgentLaunchConfig, PeerMessage, SessionGoal, TokenUsage, ToolReviewState, WorkerActivity,
+        WorkerActivityState, WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse,
+        WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory, WorkerUsage,
     },
 };
 
@@ -133,7 +132,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             caller_identity.select_model(provider, model);
         }
         caller_identity.set_effort(effort.as_deref());
-        Ok(Box::new(CodexWorkerSession {
+        let mut worker = CodexWorkerSession {
             caller_identity,
             child,
             writer: Some(writer),
@@ -181,7 +180,13 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             events: VecDeque::from([WorkerEvent::SessionChanged { locator: thread_id }]),
             turn_error: None,
             retrying: false,
-        }))
+            account_source: super::accounts::source(&command, &launch.project)
+                .ok()
+                .map(crate::accounts::AccountSource::for_run),
+            account_generation: 0,
+        };
+        worker.refresh_account();
+        Ok(Box::new(worker))
     }
 }
 
@@ -234,18 +239,7 @@ pub fn spawn_main(
 > {
     let mut prepared = command.command(&launch.project)?;
     configure_service_tier(&mut prepared, launch.service_tier.as_deref())?;
-    let caller_identity = crate::core::CallerRegistry::shared().issue_with_access(
-        &launch.project,
-        crate::core::CallerProfile {
-            backend: Backend::Codex,
-            provider: None,
-            model: None,
-            effort: None,
-        },
-        launch.wake.clone(),
-        command.access_mode,
-    );
-    caller_identity.set_harness_profile_id(command.profile_id.clone());
+    let caller_identity = crate::core::CallerRegistry::shared().issue_main_session(command, launch);
     configure_codex_app_server(&mut prepared, command.access_mode);
     if farcaster_mcp::enabled() {
         configure_farcaster_mcp(&mut prepared, caller_identity.token());
@@ -312,6 +306,10 @@ pub fn spawn_main(
         })
         .collect();
     let mut session = CodexWorkerSession {
+        account_source: super::accounts::source(command, &launch.project)
+            .ok()
+            .map(crate::accounts::AccountSource::for_run),
+        account_generation: 0,
         caller_identity,
         child,
         writer: Some(writer),
@@ -360,6 +358,7 @@ pub fn spawn_main(
         turn_error: None,
         retrying: false,
     };
+    session.refresh_account();
     let goal_request =
         session.request("thread/goal/get", json!({"threadId": thread_id.clone()}))?;
     session
@@ -512,7 +511,7 @@ fn setup_main_connection(
     let (mut metadata, skills) = load_main_metadata(&mut connection, &launch.project)?;
     let cwd = launch.project.to_string_lossy();
     let thread = match &launch.start {
-        crate::SessionStart::New => connection.start_thread(&cwd, None, None, access_mode)?,
+        crate::SessionStart::New(_) => connection.start_thread(&cwd, None, None, access_mode)?,
         crate::SessionStart::Resume(_) => {
             let thread_id = main_session::launch_session_locator(launch)
                 .ok_or_else(|| "Codex resume requires a thread id".to_owned())?;
@@ -655,7 +654,10 @@ fn supported_model_efforts(model: &Value) -> Vec<String> {
 }
 
 enum PendingRequest {
+    AccountIdentity(u64),
+    AccountLimits(u64),
     Command(commands::Request),
+    Compact,
     LoadSkills,
     ObsoleteSkills,
     StartTurn,
@@ -772,10 +774,12 @@ struct PendingApproval {
 enum ApprovalReply {
     Decision,
     Permissions(Value),
-    McpConfirmation,
+    McpConfirmation(super::super::mcp_confirmation::Confirmation),
 }
 
 struct CodexWorkerSession {
+    account_source: Option<crate::accounts::AccountSource>,
+    account_generation: u64,
     caller_identity: crate::core::CallerIdentity,
     child: Child,
     writer: Option<ChildStdin>,
@@ -944,8 +948,8 @@ impl WorkerSession for CodexWorkerSession {
             ApprovalReply::Decision => {
                 json!({"decision": if accepted { "accept" } else { "decline" }})
             }
-            ApprovalReply::McpConfirmation => {
-                super::super::mcp_confirmation::reply(accepted, response.cancel)
+            ApprovalReply::McpConfirmation(confirmation) => {
+                confirmation.reply(response.value.as_deref(), response.cancel)
             }
         };
         let encoded = encode_response(&approval.id, result)?;
@@ -964,7 +968,6 @@ impl WorkerSession for CodexWorkerSession {
     }
 
     fn respond_questions(&mut self, response: crate::QuestionResponse) -> Result<(), String> {
-        // Resolution can race a user's click. Never send an answer for a cleared request.
         let Some(pending) = self.pending_questions.get(&response.id) else {
             return Ok(());
         };
@@ -1061,7 +1064,7 @@ impl WorkerSession for CodexWorkerSession {
     fn compact(&mut self) -> Result<(), String> {
         let id = self.request("thread/compact/start", json!({"threadId": self.thread_id}))?;
         self.manual_compaction = true;
-        self.pending.insert(id, PendingRequest::Ignore);
+        self.pending.insert(id, PendingRequest::Compact);
         Ok(())
     }
 
@@ -1111,7 +1114,6 @@ impl WorkerSession for CodexWorkerSession {
                     &event,
                     WorkerEvent::Activity(
                         WorkerActivity::TextDelta { .. }
-                            | WorkerActivity::ThinkingStarted { .. }
                             | WorkerActivity::ThinkingDelta { .. }
                             | WorkerActivity::ToolStarted { .. }
                             | WorkerActivity::ToolUpdated { .. }
@@ -1132,8 +1134,6 @@ impl WorkerSession for CodexWorkerSession {
                         .as_deref()
                         .is_some_and(|id| id.starts_with(QUESTION_SUBMISSION_PREFIX)) =>
                 {
-                    // Keep the receipt identity so shared delivery matching cannot
-                    // mistake this answer for a same-text composer submission.
                     self.resolve_question_submission(submission_id.as_deref().unwrap());
                 }
                 WorkerEvent::PromptCancelled { submission_id }
@@ -1186,6 +1186,47 @@ impl WorkerSession for CodexWorkerSession {
 }
 
 impl CodexWorkerSession {
+    fn account_response(&mut self, generation: u64, result: &Value) {
+        if generation == self.account_generation
+            && let Some(source) = self.account_source.clone()
+        {
+            crate::accounts::publish_account_event(crate::accounts::AccountEvent::Observed {
+                observation: super::accounts::observation(
+                    source,
+                    &result["account"],
+                    crate::accounts::account_now(),
+                ),
+                run_id: Some(format!("codex:{}", self.thread_id)),
+                evidence: crate::accounts::AccountBindingEvidence::ObservedAtStartup,
+            });
+            if !result["account"].is_null()
+                && let Ok(id) = self.request("account/rateLimits/read", Value::Null)
+            {
+                self.pending
+                    .insert(id, PendingRequest::AccountLimits(generation));
+            }
+        }
+    }
+
+    fn account_limits(&self, limits: &Value) {
+        if let Some(source) = self.account_source.clone() {
+            crate::accounts::publish_account_event(crate::accounts::AccountEvent::LimitsObserved {
+                source,
+                limits: super::accounts::limits(limits, crate::accounts::account_now()),
+            });
+        }
+    }
+
+    fn refresh_account(&mut self) {
+        self.account_generation = self.account_generation.wrapping_add(1);
+        if self.account_source.is_some()
+            && let Ok(id) = self.request("account/read", json!({"refreshToken":false}))
+        {
+            self.pending
+                .insert(id, PendingRequest::AccountIdentity(self.account_generation));
+        }
+    }
+
     fn poll_event(&mut self) -> Option<WorkerEvent> {
         if self.abort_failure.is_some() {
             return None;
@@ -1244,6 +1285,15 @@ impl CodexWorkerSession {
                 };
                 if accepted.is_ok() {
                     self.prompt_requests.remove(id);
+                    // Compaction has no userMessage echo. Its native acknowledgement
+                    // proves that the command was consumed, even while it keeps running.
+                    if matches!(self.pending.get(id), Some(PendingRequest::Compact)) {
+                        self.events.push_back(WorkerEvent::Activity(
+                            WorkerActivity::CommandCompleted {
+                                submission_id: prompt.clone(),
+                            },
+                        ));
+                    }
                     if let Some(PendingRequest::Control {
                         client_id: Some(client_id),
                         ..
@@ -1258,6 +1308,14 @@ impl CodexWorkerSession {
             }
             match inbound {
                 Ok(CodexInbound::Response { id, result }) => match self.pending.remove(&id) {
+                    Some(PendingRequest::AccountIdentity(generation)) => {
+                        self.account_response(generation, &result)
+                    }
+                    Some(PendingRequest::AccountLimits(generation)) => {
+                        if generation == self.account_generation {
+                            self.account_limits(&result);
+                        }
+                    }
                     Some(PendingRequest::Command(request)) => {
                         self.command_response(request, Ok(result));
                         if let Some(event) = self.events.pop_front() {
@@ -1290,13 +1348,9 @@ impl CodexWorkerSession {
                                 });
                             }
                         };
-                        let started = self.begin_turn(&turn.id);
                         self.capture_handoff_target(&turn.id);
-                        if let Err(error) = self.interrupt_started_turn_if_requested() {
-                            return Some(WorkerEvent::Failed(error));
-                        }
-                        if started {
-                            return Some(WorkerEvent::Started);
+                        if let Some(event) = self.observe_turn_start(&turn.id, false) {
+                            return Some(event);
                         }
                     }
                     Some(PendingRequest::LoadGoal) => {
@@ -1400,14 +1454,10 @@ impl CodexWorkerSession {
                         for submission_id in admitted {
                             self.record_prompt_ack(submission_id, Ok(()));
                         }
-                        if let Some(turn) = started_turn {
-                            let started = self.begin_turn(&turn.id);
-                            if let Err(error) = self.interrupt_started_turn_if_requested() {
-                                return Some(WorkerEvent::Failed(error));
-                            }
-                            if started {
-                                self.events.push_back(WorkerEvent::Started);
-                            }
+                        if let Some(turn) = started_turn
+                            && let Some(event) = self.observe_turn_start(&turn.id, false)
+                        {
+                            return Some(event);
                         }
                     }
                     Some(PendingRequest::AbortCleanup { target_turn, phase }) => {
@@ -1415,6 +1465,11 @@ impl CodexWorkerSession {
                             Ok(Some(event)) => return Some(event),
                             Ok(None) => {}
                             Err(error) => return Some(WorkerEvent::Failed(error)),
+                        }
+                    }
+                    Some(PendingRequest::Compact) => {
+                        if let Some(event) = self.events.pop_front() {
+                            return Some(event);
                         }
                     }
                     Some(
@@ -1449,6 +1504,9 @@ impl CodexWorkerSession {
                         self.record_prompt_ack(prompt.clone(), Err(error.message.clone().into()));
                     }
                     match self.pending.remove(&id) {
+                        Some(
+                            PendingRequest::AccountIdentity(_) | PendingRequest::AccountLimits(_),
+                        ) => continue,
                         Some(PendingRequest::Command(request)) => {
                             self.command_response(request, Err(error.message));
                             return self.events.pop_front();
@@ -1596,7 +1654,7 @@ impl CodexWorkerSession {
                                 error.code
                             )));
                         }
-                        Some(PendingRequest::Ignore) | None => {}
+                        Some(PendingRequest::Compact | PendingRequest::Ignore) | None => {}
                     }
                     self.manual_compaction = false;
                     self.compacting = false;
@@ -1608,6 +1666,18 @@ impl CodexWorkerSession {
                 Ok(CodexInbound::Notification { method, params }) => {
                     let method_name = method.as_str();
                     let method = CodexMethod::parse(method_name);
+                    if method == CodexMethod::AccountUpdated {
+                        if let Some(source) = self.account_source.clone() {
+                            crate::accounts::publish_account_event(
+                                crate::accounts::AccountEvent::AuthInvalidated { source },
+                            );
+                        }
+                        self.refresh_account();
+                        continue;
+                    }
+                    if method == CodexMethod::AccountRateLimitsUpdated {
+                        self.account_limits(&params);
+                    }
                     if method == CodexMethod::ServerRequestResolved {
                         if let Some(event) = self.resolve_input(&params) {
                             return Some(event);
@@ -1662,16 +1732,9 @@ impl CodexWorkerSession {
                     match method {
                         CodexMethod::TurnStarted => {
                             if let Some(turn_id) = params["turn"]["id"].as_str() {
-                                let started = self.begin_turn(turn_id);
                                 self.capture_handoff_target(turn_id);
-                                if let Err(error) = self.maybe_submit_handoff() {
-                                    return Some(WorkerEvent::Failed(error));
-                                }
-                                if let Err(error) = self.interrupt_started_turn_if_requested() {
-                                    return Some(WorkerEvent::Failed(error));
-                                }
-                                if started {
-                                    return Some(WorkerEvent::Started);
+                                if let Some(event) = self.observe_turn_start(turn_id, true) {
+                                    return Some(event);
                                 }
                             } else {
                                 log_bad_codex_notification(
@@ -1728,7 +1791,14 @@ impl CodexWorkerSession {
                             );
                         }
                         CodexMethod::ItemStarted => {
-                            if let Some(activity) = self.input_delivery(&params["item"]) {
+                            let batch_input = params["item"]["clientId"]
+                                .as_str()
+                                .and_then(|id| self.batch_deliveries.get(id))
+                                .is_some_and(|batch| batch.len() > 1);
+                            if let Some(mut activity) = self.input_delivery(&params["item"]) {
+                                if !batch_input && let Some(id) = params["item"]["id"].as_str() {
+                                    activity.link_delivered_input(id, params["turnId"].as_str());
+                                }
                                 return Some(WorkerEvent::Activity(activity));
                             }
                             let item_type = params.pointer("/item/type").and_then(Value::as_str);
@@ -1737,6 +1807,9 @@ impl CodexWorkerSession {
                             }
                             if item_type == Some("reasoning") {
                                 self.reasoning_started = true;
+                            }
+                            if let Some(activity) = assistant_item(&params, false) {
+                                return Some(WorkerEvent::Activity(activity));
                             }
                             if item_type == Some("contextCompaction") {
                                 self.compacting = true;
@@ -1818,6 +1891,9 @@ impl CodexWorkerSession {
                             if let Some(output) = codex_agent_message_text(&params["item"]) {
                                 self.output = output;
                             }
+                            if let Some(activity) = assistant_item(&params, true) {
+                                return Some(WorkerEvent::Activity(activity));
+                            }
                             if item_type == Some("contextCompaction") {
                                 self.compacting = false;
                                 return Some(WorkerEvent::Activity(
@@ -1859,7 +1935,7 @@ impl CodexWorkerSession {
                             }
                         }
                         CodexMethod::AutoApprovalReviewStarted => {
-                            let Some((started, review)) = codex_tool_review_started(&params) else {
+                            let Some(review) = codex_tool_review_started(&params) else {
                                 log_bad_codex_notification(
                                     method_name,
                                     &params,
@@ -1867,12 +1943,10 @@ impl CodexWorkerSession {
                                 );
                                 continue;
                             };
-                            self.events.push_back(WorkerEvent::Activity(review));
-                            return Some(WorkerEvent::Activity(started));
+                            return Some(WorkerEvent::Activity(review));
                         }
                         CodexMethod::AutoApprovalReviewCompleted => {
-                            let Some((review, finished)) = codex_tool_review_completed(&params)
-                            else {
+                            let Some(review) = codex_tool_review_completed(&params) else {
                                 log_bad_codex_notification(
                                     method_name,
                                     &params,
@@ -1880,9 +1954,6 @@ impl CodexWorkerSession {
                                 );
                                 continue;
                             };
-                            if let Some(finished) = finished {
-                                self.events.push_back(WorkerEvent::Activity(finished));
-                            }
                             return Some(WorkerEvent::Activity(review));
                         }
                         CodexMethod::GuardianWarning => {}
@@ -1912,6 +1983,7 @@ impl CodexWorkerSession {
                                     .get("modelContextWindow")
                                     .and_then(Value::as_u64)
                                     .unwrap_or(0),
+                                context_used: None,
                                 cost: None,
                             };
                             self.command_state.usage = Some(reported_usage);
@@ -2083,6 +2155,8 @@ impl CodexWorkerSession {
                             }
                         }
                         CodexMethod::ThreadStatusChanged
+                        | CodexMethod::ThreadReadStateChanged
+                        | CodexMethod::TurnModerationMetadata
                         | CodexMethod::TurnDiffUpdated
                         | CodexMethod::TurnPlanUpdated
                         | CodexMethod::ServerRequestResolved
@@ -2095,6 +2169,8 @@ impl CodexWorkerSession {
                         CodexMethod::SkillsChanged
                         | CodexMethod::McpServerStartupStatusUpdated
                         | CodexMethod::AccountRateLimitsUpdated
+                        | CodexMethod::AccountUpdated
+                        | CodexMethod::DeprecationNotice
                         | CodexMethod::Warning
                         | CodexMethod::ConfigWarning
                         | CodexMethod::RemoteControlStatusChanged
@@ -2154,6 +2230,10 @@ impl CodexWorkerSession {
                                 continue;
                             }
                         };
+                    let options = match &reply {
+                        ApprovalReply::McpConfirmation(confirmation) => confirmation.options(),
+                        _ => vec!["Allow".into(), "Decline".into()],
+                    };
                     let input_id = input_id(&id);
                     self.pending_inputs.insert(
                         input_id.clone(),
@@ -2170,7 +2250,7 @@ impl CodexWorkerSession {
                     return Some(WorkerEvent::NeedsInput(WorkerInput {
                         id: input_id,
                         prompt,
-                        options: vec!["Allow".into(), "Decline".into()],
+                        options,
                         secret: false,
                     }));
                 }
@@ -2616,7 +2696,20 @@ impl CodexWorkerSession {
         Err(format!("Codex did not {operation} within 15 seconds"))
     }
 
-    fn begin_turn(&mut self, turn_id: &str) -> bool {
+    fn observe_turn_start(&mut self, turn_id: &str, submit_handoff: bool) -> Option<WorkerEvent> {
+        self.begin_turn(turn_id);
+        let handoff = if submit_handoff {
+            self.maybe_submit_handoff()
+        } else {
+            Ok(())
+        };
+        if let Err(error) = handoff.and_then(|()| self.interrupt_started_turn_if_requested()) {
+            self.events.push_back(WorkerEvent::Failed(error));
+        }
+        self.events.pop_front()
+    }
+
+    fn begin_turn(&mut self, turn_id: &str) {
         let is_new = self.current_turn.as_deref() != Some(turn_id);
         if is_new && let Some(previous) = self.current_turn.clone() {
             self.clear_turn_inputs(&self.thread_id.clone(), &previous);
@@ -2625,18 +2718,11 @@ impl CodexWorkerSession {
         self.caller_identity
             .set_activity(WorkerActivityState::Working);
         if is_new {
+            self.events.push_back(WorkerEvent::Started);
             self.output.clear();
-            self.reasoning_started = false;
+            self.reasoning_started = !self.manual_compaction;
             self.turn_error = None;
-            if !self.manual_compaction {
-                self.reasoning_started = true;
-                self.events
-                    .push_back(WorkerEvent::Activity(WorkerActivity::ThinkingStarted {
-                        content_index: 0,
-                    }));
-            }
         }
-        is_new
     }
 
     fn activity(&self) -> WorkerActivityState {
@@ -2897,6 +2983,11 @@ impl CodexWorkerSession {
 
 impl Drop for CodexWorkerSession {
     fn drop(&mut self) {
+        if let Some(source) = self.account_source.take() {
+            crate::accounts::publish_account_event(crate::accounts::AccountEvent::Disconnected {
+                source,
+            });
+        }
         let _ = self.close();
     }
 }
@@ -2986,6 +3077,26 @@ fn codex_input_delivery(item: &Value) -> Option<NativeInputDelivery> {
     })
 }
 
+fn assistant_item(params: &Value, completed: bool) -> Option<WorkerActivity> {
+    let item = &params["item"];
+    let id = item["id"].as_str()?;
+    let final_content = match item["type"].as_str()? {
+        "agentMessage" => completed.then(
+            || json!({"type":"text","text":codex_agent_message_text(item).unwrap_or_default()}),
+        ),
+        "reasoning" => completed
+            .then(|| json!({"type":"thinking","thinking":super::catalog::reasoning_text(item)})),
+        _ => return None,
+    };
+    Some(WorkerActivity::AssistantItem {
+        source: crate::MessageSource {
+            id: id.into(),
+            turn_id: params["turnId"].as_str().map(str::to_owned),
+        },
+        final_content,
+    })
+}
+
 fn codex_agent_message_text(item: &Value) -> Option<String> {
     if item.get("type").and_then(Value::as_str) != Some("agentMessage") {
         return None;
@@ -3051,26 +3162,8 @@ fn codex_telemetry(method: CodexMethod<'_>, params: &Value) -> Option<WorkerActi
                 .filter(|value| !value.is_null())
                 .cloned(),
         }),
-        CodexMethod::AccountRateLimitsUpdated => Some(WorkerActivity::AccountUsageChanged(
-            codex_account_usage(params.get("rateLimits")?),
-        )),
         _ => None,
     }
-}
-
-fn codex_account_usage(limits: &Value) -> crate::AccountUsage {
-    const WEEK_MINUTES: u64 = 7 * 24 * 60;
-    let weekly = ["primary", "secondary"]
-        .into_iter()
-        .filter_map(|key| limits.get(key))
-        .find(|window| window["windowDurationMins"].as_u64() == Some(WEEK_MINUTES))
-        .and_then(|window| {
-            crate::AccountUsageWindow::from_used_percent(
-                window["usedPercent"].as_f64()?,
-                window["resetsAt"].as_i64(),
-            )
-        });
-    crate::AccountUsage { weekly }
 }
 
 fn codex_child_event_outcome(item: &Value) -> Option<crate::ChildSessionOutcome> {
@@ -3109,7 +3202,10 @@ fn codex_notification_is_for_thread(
     match params.get("threadId").and_then(Value::as_str) {
         Some(reported) if reported != thread_id => false,
         _ if method.tier() == CodexNotificationTier::Global => {
-            if matches!(method, CodexMethod::Warning | CodexMethod::ConfigWarning) {
+            if matches!(
+                method,
+                CodexMethod::Warning | CodexMethod::ConfigWarning | CodexMethod::DeprecationNotice
+            ) {
                 zlog::warn!("Codex app-server {method_name}: {params}");
             }
             false
@@ -3160,36 +3256,16 @@ fn codex_passive_item(item: &Value) -> bool {
         })
 }
 
-fn codex_tool_review_started(params: &Value) -> Option<(WorkerActivity, WorkerActivity)> {
+fn codex_tool_review_started(params: &Value) -> Option<WorkerActivity> {
     let id = params.get("targetItemId")?.as_str()?;
-    let action = params.get("action")?;
-    let kind = action.get("type")?.as_str()?;
-    let (name, args) = match kind {
-        "command" => (
-            CommonTool::Bash.name().to_owned(),
-            json!({
-                "command": action.get("command").cloned().unwrap_or(Value::Null),
-                "cwd": action.get("cwd").cloned().unwrap_or(Value::Null),
-            }),
-        ),
-        _ => (kind.to_owned(), action.clone()),
-    };
-    Some((
-        WorkerActivity::ToolStarted {
-            id: id.to_owned(),
-            name,
-            args,
-            metadata: tool::metadata(action, kind),
-        },
-        WorkerActivity::ToolReviewChanged {
-            id: id.to_owned(),
-            state: ToolReviewState::Reviewing,
-            detail: None,
-        },
-    ))
+    Some(WorkerActivity::ToolReviewChanged {
+        id: id.to_owned(),
+        state: ToolReviewState::Reviewing,
+        detail: None,
+    })
 }
 
-fn codex_tool_review_completed(params: &Value) -> Option<(WorkerActivity, Option<WorkerActivity>)> {
+fn codex_tool_review_completed(params: &Value) -> Option<WorkerActivity> {
     let review = params.get("review")?;
     let approved = review.get("status").and_then(Value::as_str) == Some("approved");
     let mut summary = Vec::new();
@@ -3208,19 +3284,11 @@ fn codex_tool_review_completed(params: &Value) -> Option<(WorkerActivity, Option
     } else {
         ToolReviewState::Blocked
     };
-    let finished = (!approved).then(|| WorkerActivity::ToolFinished {
-        id: id.clone(),
-        result: json!([]),
-        is_error: true,
-    });
-    Some((
-        WorkerActivity::ToolReviewChanged {
-            id,
-            state,
-            detail: (!summary.is_empty()).then(|| summary.join("\n")),
-        },
-        finished,
-    ))
+    Some(WorkerActivity::ToolReviewChanged {
+        id,
+        state,
+        detail: (!summary.is_empty()).then(|| summary.join("\n")),
+    })
 }
 
 fn codex_tool_start(params: &Value) -> Option<WorkerActivity> {
@@ -3271,57 +3339,7 @@ fn codex_tool_end(params: &Value) -> Option<WorkerActivity> {
         return None;
     }
     let id = item.get("id")?.as_str()?;
-    let failed = item
-        .get("status")
-        .and_then(Value::as_str)
-        .is_some_and(|status| matches!(status, "failed" | "declined"));
-    let result = if let Some(content) = item.pointer("/result/content").and_then(Value::as_array) {
-        Value::Array(content.clone())
-    } else if failed
-        && let Some(error) = item
-            .pointer("/error/message")
-            .and_then(Value::as_str)
-            .or_else(|| item.get("error").and_then(Value::as_str))
-    {
-        json!([{"type": "text", "text": error}])
-    } else if let Some(output) = item.get("aggregatedOutput").and_then(Value::as_str) {
-        json!([{"type": "text", "text": output}])
-    } else if let Some(output) = item.get("result").or_else(|| item.get("output")) {
-        json!([{
-            "type": "text",
-            "text": output.as_str().map(str::to_owned).unwrap_or_else(|| output.to_string()),
-        }])
-    } else if kind == "commandExecution" && item.get("aggregatedOutput").is_none_or(Value::is_null)
-    {
-        json!([{"type": "text", "text": ""}])
-    } else if kind == "webSearch" {
-        json!([{"type": "text", "text": tool::web_search_query(item).unwrap_or_default()}])
-    } else if kind == "fileChange" && !failed {
-        json!([{"type": "text", "text": "Applied patch"}])
-    } else if kind == "imageView" {
-        json!([{
-            "type": "text",
-            "text": item.get("path").and_then(Value::as_str).unwrap_or_default(),
-        }])
-    } else if kind == "sleep" {
-        json!([{
-            "type": "text",
-            "text": format!("Waited {}", tool::wait_duration(item)),
-        }])
-    } else if kind == "subAgentActivity" {
-        json!([{"type": "text", "text": tool::subagent_summary(item)}])
-    } else if kind == "collabAgentToolCall" {
-        json!([{
-            "type": "text",
-            "text": item
-                .get("agentsStates")
-                .map(Value::to_string)
-                .unwrap_or_else(|| item.get("status").map(Value::to_string).unwrap_or_default()),
-        }])
-    } else {
-        zlog::warn!("Codex tool completion had no mappable result: {item}");
-        json!([])
-    };
+    let (result, failed) = tool::completion(item, kind);
     Some(WorkerActivity::ToolFinished {
         id: id.to_owned(),
         result,
@@ -3338,14 +3356,14 @@ fn approval_request(
         if params["threadId"].as_str() != Some(thread_id) {
             return Err("MCP confirmation belongs to another thread");
         }
-        let prompt = super::super::mcp_confirmation::prompt(
+        let confirmation = super::super::mcp_confirmation::Confirmation::parse(
             params["serverName"].as_str().unwrap_or_default(),
-            params["message"].as_str().unwrap_or_default(),
-            params["mode"].as_str().unwrap_or_default(),
-            &params["requestedSchema"],
-            &params["_meta"],
+            params,
         )?;
-        return Ok((prompt, ApprovalReply::McpConfirmation));
+        return Ok((
+            confirmation.prompt.clone(),
+            ApprovalReply::McpConfirmation(confirmation),
+        ));
     }
     if CodexMethod::parse(method) == CodexMethod::PermissionsApproval {
         let permissions = params

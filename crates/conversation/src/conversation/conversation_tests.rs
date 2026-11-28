@@ -131,11 +131,13 @@ fn saved_presentations_restore_compact_history_in_order() {
         &mut messages,
         &[
             farcaster_agent_protocol::PromptPresentation {
+                submission_id: None,
                 resolved_message: "same expansion".into(),
                 display_message: "$commit first".into(),
                 invocation: "same expansion".into(),
             },
             farcaster_agent_protocol::PromptPresentation {
+                submission_id: None,
                 resolved_message: "same expansion".into(),
                 display_message: "$commit second".into(),
                 invocation: "same expansion".into(),
@@ -177,6 +179,7 @@ fn presentation_matching_keeps_text_block_and_fallback_rules() {
     for (mut message, expected) in messages {
         message["role"] = "user".into();
         let presentation = farcaster_agent_protocol::PromptPresentation {
+            submission_id: None,
             resolved_message: expected.into(),
             display_message: "$example".into(),
             invocation: "resolved".into(),
@@ -519,6 +522,22 @@ fn cache_hit_rate_uses_all_assistant_prompt_tokens_for_the_session() {
         json!({"role":"assistant","content":[],"usage":{"input":100,"cacheRead":300,"cacheWrite":100}}),
     ]);
     assert_eq!(state.average_cache_hit_rate, Some(50.0));
+    let observed = state.cache_usage();
+    state.replace_history(&[json!({"role":"assistant","content":[]})]);
+    assert_eq!(state.cache_usage(), observed);
+    state.replace_history(&[
+        json!({"role":"assistant","content":[],"usage":{"input":100,"cacheRead":0,"cacheWrite":0}}),
+    ]);
+    assert_eq!(state.cache_usage(), observed);
+    state.replace_history(&[
+        json!({"role":"assistant","content":[],"usage":{"input":100,"cacheRead":0,"cacheWrite":0}}),
+        json!({"role":"assistant","content":[],"usage":{"input":100,"cacheRead":300,"cacheWrite":100}}),
+    ]);
+    assert_eq!(
+        state.cache_usage(),
+        observed,
+        "history replay does not count usage twice"
+    );
 
     state.reduce(&json!({"type":"message_end","message":{
         "role":"assistant",
@@ -1252,4 +1271,32 @@ fn tool_metadata_is_identical_in_live_and_history_projection() {
     assert_eq!(left.arguments, right.arguments);
     assert_eq!(left.state, right.state);
     assert_eq!(left.summary(), right.summary());
+}
+
+#[test]
+fn repeated_prompts_restore_invocations_by_submission_id() {
+    let presentation = |id: &str, display: &str| farcaster_agent_protocol::PromptPresentation {
+        submission_id: Some(id.into()),
+        resolved_message: "same".into(),
+        display_message: display.into(),
+        invocation: "command".into(),
+    };
+    let mut messages = [
+        json!({"role":"user","content":"same","submissionId":"b"}),
+        json!({"role":"user","content":"same"}),
+        json!({"role":"user","content":"same","submissionId":"a"}),
+        json!({"role":"user","content":"same"}),
+    ];
+    annotate_prompt_presentations(
+        &mut messages,
+        &[
+            presentation("a", "$first"),
+            presentation("b", "$second"),
+            presentation("missing", "$unknown"),
+        ],
+    );
+    assert_eq!(messages[0]["farcasterUserInvocation"], "$second");
+    assert_eq!(messages[2]["farcasterUserInvocation"], "$first");
+    assert!(messages[1].get("farcasterUserInvocation").is_none());
+    assert!(messages[3].get("farcasterUserInvocation").is_none());
 }

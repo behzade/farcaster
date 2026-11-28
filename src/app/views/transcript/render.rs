@@ -16,6 +16,7 @@ use gpui_component::{
 };
 
 use crate::{
+    app::ui::layout::transcript_column,
     app::ui::primitives::{
         ButtonTone, ContextMenuTrigger, button, disclosure_detail, disclosure_title_row,
     },
@@ -55,6 +56,7 @@ pub(super) use chunking::{
     MARKDOWN_CHUNK_HARD_BYTES, markdown_chunk_text, markdown_chunks, markdown_fence,
     markdown_fence_closes,
 };
+pub(super) use chunking::{MarkdownChunk, chunk_text_with_structure};
 use detail_rows::{render_agent_message, render_error, render_thinking};
 #[allow(unused_imports)]
 pub(super) use detail_rows::{thinking_has_details, thinking_preview, thinking_preview_emphasis};
@@ -69,12 +71,80 @@ pub(super) use rows::matching_item_prefix;
 pub(crate) use rows::*;
 use tool_rows::{render_activity_group, render_tool};
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct TranscriptViewport {
+    pub(in crate::app) switch_trace: Option<(
+        std::sync::Arc<crate::app::infrastructure::performance::SwitchPaintTrace>,
+        bool,
+    )>,
     pub(crate) font_scale: f32,
     pub(crate) following: bool,
     pub(crate) unseen: usize,
     pub(crate) tail_reserve: Pixels,
+    pub(crate) show_working: bool,
+}
+
+pub(crate) fn loading_history() -> AnyElement {
+    div()
+        .debug_selector(|| "transcript-loading".into())
+        .size_full()
+        .bg(theme().colors.canvas)
+        .child(
+            crate::app::ui::layout::chat_column()
+                .py(theme().space.md)
+                .text_size(theme().type_scale.body_small)
+                .text_color(theme().colors.muted)
+                .child("Loading history…"),
+        )
+        .into_any_element()
+}
+
+pub(crate) fn loading_earlier(height: Pixels) -> AnyElement {
+    div()
+        .w_full()
+        .h(height)
+        .overflow_hidden()
+        .flex()
+        .flex_col()
+        .justify_end()
+        .debug_selector(|| "transcript-older-loading".into())
+        .child(
+            crate::app::ui::layout::chat_column()
+                .py(theme().space.sm)
+                .text_size(theme().type_scale.body_small)
+                .text_color(theme().colors.muted)
+                .child("Loading earlier messages…"),
+        )
+        .into_any_element()
+}
+
+fn working_status(font_scale: f32) -> Div {
+    div()
+        .debug_selector(|| "transcript-working".into())
+        .px(crate::app::ui::grid::transcript_inset())
+        .py(theme().size(2.0))
+        .text_size(theme().type_scale.body_small * font_scale)
+        .line_height(theme().type_scale.line_body * font_scale)
+        .text_color(theme().colors.muted)
+        .child("Working…")
+}
+
+pub(crate) fn with_saved_position_notice(document: AnyElement) -> AnyElement {
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .child(
+            crate::app::ui::layout::chat_column()
+                .debug_selector(|| "transcript-position-unavailable".into())
+                .flex_none()
+                .py(theme().space.sm)
+                .text_size(theme().type_scale.body_small)
+                .text_color(theme().colors.muted)
+                .child("Your saved position is unavailable. Showing the saved part of this conversation."),
+        )
+        .child(div().flex_1().min_h_0().child(document))
+        .into_any_element()
 }
 
 pub(super) fn expanded_by_default(
@@ -238,7 +308,7 @@ pub(super) fn copy_transcript_items(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn render(
+pub(crate) fn build_list(
     list_state: &TranscriptListState,
     viewport: TranscriptViewport,
     rows: std::sync::Arc<PersistentVec<TranscriptRow>>,
@@ -247,24 +317,15 @@ pub(crate) fn render(
     file_trees: std::collections::HashMap<usize, crate::app::ui::change_tree::ChangeTreeState>,
     markdown_cache: TranscriptMarkdownCache,
     entity: WeakEntity<FarcasterApp>,
-) -> AnyElement {
-    if rows.is_empty() {
-        return div()
-            .size_full()
-            .bg(theme().colors.canvas)
-            .into_any_element();
-    }
-
+) -> list::TranscriptList {
     let font_scale = viewport.font_scale;
-    let visual_selection_active = list_state.selected_text().is_some();
-    let jump = entity.clone();
     let row_entity = entity;
     let selection_groups = rows.clone();
     let row_selection_groups = rows.clone();
     let selection_copy_rows = rows.clone();
     let selection_items = conversation.items.clone();
     let selection_state = list_state.clone();
-    let view = transcript_list_grouped(
+    transcript_list_grouped(
         list_state.clone(),
         move |index| selection_group_start(&selection_groups, index),
         move |range| copy_transcript_row_range(&selection_items, &selection_copy_rows, range),
@@ -277,14 +338,15 @@ pub(crate) fn render(
                 return div().into_any_element();
             };
             let expanded = resolved_expanded(row, &conversation.items, &disclosure_states);
-            let reserves_tail = index + 1 == rows.len()
-                && latest_allows_tail_reserve(row, &conversation.items, expanded);
-            let content = div()
+            let last = index + 1 == rows.len();
+            let reserves_tail =
+                last && latest_allows_tail_reserve(row, &conversation.items, expanded);
+            let column = transcript_column();
+            #[cfg(test)]
+            let column = column.debug_selector(move || format!("transcript-row-{index}"));
+            let content = column
                 .text_size(theme().type_scale.body * font_scale)
                 .line_height(theme().type_scale.line_body * font_scale)
-                .w_full()
-                .max_w(theme().layout.conversation_width)
-                .mx_auto()
                 .when(reserves_tail, |row| row.pb(viewport.tail_reserve))
                 .child(
                     div()
@@ -308,6 +370,9 @@ pub(crate) fn render(
                             cx,
                         ))),
                 )
+                .when(last && viewport.show_working, |column| {
+                    column.child(working_status(font_scale))
+                })
                 .into_any_element();
             transcript_context_menu(
                 index,
@@ -319,9 +384,59 @@ pub(crate) fn render(
                 content,
             )
         },
-    );
+    )
+    .with_switch_trace(viewport.switch_trace)
+}
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render(
+    list_state: &TranscriptListState,
+    viewport: TranscriptViewport,
+    rows: std::sync::Arc<PersistentVec<TranscriptRow>>,
+    conversation: Arc<crate::reviews::presentation::TranscriptPresentation>,
+    disclosure_states: std::collections::HashMap<usize, bool>,
+    file_trees: std::collections::HashMap<usize, crate::app::ui::change_tree::ChangeTreeState>,
+    markdown_cache: TranscriptMarkdownCache,
+    entity: WeakEntity<FarcasterApp>,
+) -> AnyElement {
+    if rows.is_empty() {
+        return div()
+            .size_full()
+            .bg(theme().colors.canvas)
+            .when(viewport.show_working, |root| {
+                root.child(transcript_column().child(working_status(viewport.font_scale)))
+            })
+            .into_any_element();
+    }
+
+    let history_tail = list_state.is_history_tail();
+    let visual_selection_active = list_state.selected_text().is_some();
+    let jump = entity.clone();
+    let view = build_list(
+        list_state,
+        viewport.clone(),
+        rows,
+        conversation,
+        disclosure_states,
+        file_trees,
+        markdown_cache,
+        entity,
+    );
     div()
+        .id(if history_tail {
+            "history-tail"
+        } else {
+            "transcript-document"
+        })
+        .when(history_tail, |root| {
+            root.capture_key_down(|event, window, cx| {
+                if crate::app::ui::primitives::activates_button(event) {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                }
+            })
+        })
+        .relative()
         .size_full()
         .when(visual_selection_active, |root| {
             root.key_context(list::TRANSCRIPT_SELECTION_KEY_CONTEXT)
@@ -337,15 +452,15 @@ pub(crate) fn render(
                 .bg(theme().colors.canvas)
                 .child(view),
         )
-        .when(!viewport.following, |root| {
+        .when(!history_tail && !viewport.following, |root| {
             root.child(
                 div()
-                    .flex_none()
+                    .absolute()
+                    .bottom(theme().space.xs)
+                    .w_full()
                     .flex()
                     .justify_center()
-                    .bg(theme().colors.canvas)
-                    .py(theme().space.xs)
-                    .child(button(
+                    .child(div().block_mouse_except_scroll().child(button(
                         "jump-to-latest",
                         if viewport.unseen == 0 {
                             "Jump to latest".to_owned()
@@ -357,7 +472,7 @@ pub(crate) fn render(
                         move |_, cx| {
                             let _ = jump.update(cx, |this, cx| this.jump_to_latest(cx));
                         },
-                    )),
+                    ))),
             )
         })
         .into_any_element()
@@ -421,6 +536,16 @@ fn transcript_context_menu(
                         this.set_transcript_item_expanded(row.disclosure_key(), !expanded, cx);
                     });
                 })).separator();
+                let commands = items.iter_range(row.item_start()..row.item_end())
+                    .filter_map(|item| item.tool_details.as_ref()?.command_preview())
+                    .collect::<Vec<_>>();
+                if !commands.is_empty() {
+                    let label = if commands.len() == 1 { "Copy full invocation" } else { "Copy full invocations" };
+                    let commands = commands.join("\n\n");
+                    menu = menu.item(PopupMenuItem::new(label).on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(commands.clone()));
+                    }));
+                }
                 let raw = items.iter_range(row.item_start()..row.item_end())
                     .filter_map(|item| item.tool_details.as_ref().map(|details| details.inspection_text()))
                     .collect::<Vec<_>>().join("\n\n");
@@ -537,11 +662,18 @@ fn render_row(
             follows_tool,
             markdown_cache.state_with(
                 MarkdownStateKey::message_chunk(index, block, revision),
-                || markdown_chunk_text(&items[index].text, MarkdownChunk { start, end, fence }),
+                || {
+                    markdown_cache.chunk_text(
+                        index,
+                        &items[index].text,
+                        MarkdownChunk { start, end, fence },
+                    )
+                },
                 items[index].kind == TranscriptKind::User,
                 cx,
             ),
             entity.clone(),
+            cx,
         ),
         TranscriptRow::StreamChunk {
             index,
@@ -569,7 +701,13 @@ fn render_row(
                     cx,
                 ),
                 entity.clone(),
+                cx,
             )
+        }
+        TranscriptRow::Item { index, .. }
+            if matches!(items[index].kind, TranscriptKind::Compaction(_)) =>
+        {
+            detail_rows::render_compaction(font_scale, key, &items[index])
         }
         TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Error => {
             render_error(font_scale, key, &items[index], expanded, entity)
@@ -594,6 +732,7 @@ fn render_row(
                 )),
                 Some(invocation_transcript_markdown_style(resolved)),
                 entity.clone(),
+                cx,
             )
         }
         TranscriptRow::Item { index, .. } if items[index].invocation.is_some() => {
@@ -649,6 +788,7 @@ fn render_row(
                 markdown_state,
                 None,
                 entity,
+                cx,
             )
         }
     }
@@ -688,7 +828,11 @@ fn selectable_text(
     id: impl Into<gpui::ElementId>,
     text: impl Into<gpui::SharedString>,
 ) -> TextView {
-    styled_selectable_text(font_scale, TextView::markdown(id, text))
+    let text = text.into();
+    styled_selectable_text(
+        font_scale,
+        TextView::markdown(id, super::markdown::clickable_images(&text).into_owned()),
+    )
 }
 
 fn selectable_text_state(font_scale: f32, state: &Entity<TextViewState>) -> TextView {
@@ -714,12 +858,13 @@ fn technical_text(
     selectable_text(font_scale, id, text)
         .font_family(MONO_FONT_FAMILY)
         .text_size(theme().type_scale.body_small * font_scale)
-        .line_height(theme().type_scale.line_body * font_scale)
+        .line_height(theme().type_scale.line_code * font_scale)
 }
 
 fn scaled_markdown_style(mut style: TextViewStyle, font_scale: f32) -> TextViewStyle {
     style.heading_base_font_size = theme().type_scale.reading * font_scale;
     style.code_block.text.font_size = Some((theme().type_scale.body_small * font_scale).into());
+    style.code_block.text.line_height = Some((theme().type_scale.line_code * font_scale).into());
     style
 }
 
@@ -727,6 +872,7 @@ pub(super) fn transcript_markdown_style() -> TextViewStyle {
     transcript_markdown_style_with_inline_code(HighlightStyle {
         color: Some(theme().colors.code.into()),
         background_color: Some(theme().colors.panel.into()),
+        font_weight: Some(FontWeight::NORMAL),
         ..HighlightStyle::default()
     })
 }
@@ -758,7 +904,7 @@ fn transcript_markdown_style_with_inline_code(inline_code: HighlightStyle) -> Te
     code_block.overflow.x = Some(Overflow::Scroll);
     code_block.restrict_scroll_to_axis = Some(true);
     TextViewStyle {
-        paragraph_gap: rems(0.5),
+        paragraph_gap: rems(0.75),
         heading_base_font_size: theme().type_scale.reading,
         highlight_theme: highlight_theme(),
         code_block,
@@ -778,9 +924,10 @@ fn fenced_text(text: &str) -> String {
 fn item_color(item: &TranscriptItem) -> gpui::Rgba {
     match item.kind {
         TranscriptKind::Error => theme().colors.error,
-        TranscriptKind::Notice | TranscriptKind::Custom | TranscriptKind::AgentResult => {
-            theme().colors.muted
-        }
+        TranscriptKind::Notice
+        | TranscriptKind::Custom
+        | TranscriptKind::AgentResult
+        | TranscriptKind::Compaction(_) => theme().colors.muted,
         TranscriptKind::User | TranscriptKind::Assistant | TranscriptKind::PeerMessage => {
             theme().colors.text
         }

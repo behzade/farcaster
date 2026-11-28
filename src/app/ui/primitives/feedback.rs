@@ -38,10 +38,8 @@ pub(crate) fn feedback(
             builder.parent_node().set_live(live);
             builder.parent_node().set_value(accessible.as_ref());
         })
-        .rounded(theme().radius)
-        .bg(theme().colors.panel)
-        .border(theme().border)
-        .border_color(color)
+        .rounded(theme().size(4.0))
+        .bg(theme().colors.surface)
         .px(theme().space.sm)
         .py(theme().space.xs)
         .text_size(theme().type_scale.caption)

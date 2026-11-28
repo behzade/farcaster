@@ -53,7 +53,7 @@ pub(in crate::app) struct SendToChat {
     pub picker: Option<DestinationPicker>,
     pub error: Option<String>,
     destinations: Vec<CodeDestination>,
-    target: String,
+    buffer: String,
     return_focus: Option<FocusHandle>,
     _subscription: Subscription,
 }
@@ -65,6 +65,43 @@ impl SendToChat {
 }
 
 impl FarcasterApp {
+    fn current_code_destination(&self) -> Option<CodeDestination> {
+        if self.awaiting_selection_snapshot() {
+            return None;
+        }
+        let target = self.composer.sessions.current_target();
+        let buffer = self.composer.sessions.current_buffer();
+        let session = if let Some(path) = crate::sessions::session_path(target) {
+            let row =
+                crate::app::composer::sessions::catalog_row_for_buffer(buffer, &self.sessions.all);
+            let harness = crate::sessions::composer_buffer_parts(buffer)
+                .map(|(harness, _)| harness)
+                .or_else(|| row.map(|row| row.harness));
+            let destination = row
+                .filter(|row| !row.id.is_empty() && row.id != path.to_string_lossy())
+                .map(|row| row.target())
+                .or_else(|| {
+                    (self.snapshot.selected_session.as_deref() == Some(path)
+                        && self.snapshot.harness == harness)
+                        .then(|| self.snapshot.session_target())
+                        .flatten()
+                })
+                .or_else(|| row.map(|row| row.target()))?;
+            Some(destination)
+        } else {
+            None
+        };
+        Some(CodeDestination {
+            target: target.to_owned(),
+            harness: session
+                .as_ref()
+                .map(|session| session.harness)
+                .or_else(|| self.active_harness()),
+            session,
+            label: "Current chat".into(),
+        })
+    }
+
     pub(in crate::app) fn open_send_to_chat(
         &mut self,
         window: &mut Window,
@@ -107,14 +144,17 @@ impl FarcasterApp {
         else {
             return;
         };
+        let Some(current) = self.current_code_destination() else {
+            return;
+        };
         let settings = TaskSettings {
             project: self.workspace_project(),
-            harness: self.active_harness().to_owned(),
+            harness: current.harness,
             model: self.snapshot.session_identity().model.cloned(),
             effort: self.snapshot.session_identity().effort.map(str::to_owned),
             access_mode: self.snapshot.access_mode_for_new_session(),
         };
-        let target = self.composer.sessions.current_target().to_owned();
+        let buffer = self.composer.sessions.current_buffer().to_owned();
         let generation = self.workspace.editor.request_generation;
         let return_focus = window.focused(cx);
         let capture = editor.update(cx, |editor, cx| editor.capture_code(cx));
@@ -122,7 +162,8 @@ impl FarcasterApp {
             let result = capture.await;
             let _ = weak.update_in(cx, |this, window, cx| {
                 this.workspace.send_to_chat_capture = None;
-                if this.composer.sessions.current_target() != target
+                if this.awaiting_selection_snapshot()
+                    || this.composer.sessions.current_buffer() != buffer
                     || this.workspace.editor.request_generation != generation
                     || this.workspace.editor.view.as_ref() != Some(&editor)
                     || this.workspace.surface != AppSurface::Editor
@@ -159,12 +200,6 @@ impl FarcasterApp {
                     FarcasterApp::confirm_send_to_chat,
                 );
                 let input_focus = input.read(cx).focus_handle(cx);
-                let current = CodeDestination {
-                    target: target.clone(),
-                    session: this.snapshot.session_target(),
-                    label: "Current chat".into(),
-                    harness: settings.harness,
-                };
                 let destinations =
                     destinations::choices(&settings.project, current, &this.sessions.all);
                 this.workspace.send_to_chat = Some(SendToChat {
@@ -176,7 +211,7 @@ impl FarcasterApp {
                     destinations,
                     picker: None,
                     error: None,
-                    target,
+                    buffer,
                     return_focus,
                     _subscription: subscription,
                 });
@@ -221,7 +256,7 @@ impl FarcasterApp {
         if dialog.picker.is_some() {
             return;
         }
-        if dialog.target != self.composer.sessions.current_target() {
+        if dialog.buffer != self.composer.sessions.current_buffer() {
             self.send_to_chat_error(
                 "Return to the original session to use this code capture.".into(),
                 cx,

@@ -10,8 +10,10 @@ use crate::{
 pub(in crate::app) struct HarnessSignInState {
     pub active: Option<SignIn>,
     pub url: Option<String>,
+    pub terminal: Option<gpui::Entity<super::Terminal>>,
     pub message: Option<String>,
     pub failed: bool,
+    pub signing_out: bool,
     task: Option<Task<()>>,
 }
 
@@ -36,9 +38,14 @@ impl FarcasterApp {
         &mut self,
         backend: Backend,
         profile_id: Option<String>,
+        method: &str,
+        window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        if self.settings.sign_in.active.is_some() {
+        if self.settings.sign_in.active.is_some()
+            || self.settings.sign_in.terminal.is_some()
+            || self.settings.sign_in.signing_out
+        {
             return;
         }
         let result = (|| {
@@ -49,7 +56,56 @@ impl FarcasterApp {
                 app_proxy: crate::app::persistence::open()?.load_network_proxy()?,
                 ..Default::default()
             };
-            crate::agents::sign_in(config, backend, self.project.path.clone())
+            if let Some(command) =
+                crate::agents::terminal_sign_in(&config, backend, &self.project.path, method)?
+            {
+                let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
+                let command = crate::app::infrastructure::editor_launch::prepare_command(
+                    &directory.path().join("login.sh"),
+                    &command,
+                    &self.project.path,
+                )?;
+                let mut options =
+                    gpui_libghostty::TerminalOptions::new(command, self.project.path.clone());
+                options.configuration = gpui_libghostty::TerminalConfiguration::Custom(
+                    crate::app::ui::theme::terminal_theme(),
+                );
+                let terminal = super::Terminal::spawn(options, window, cx)?;
+                let monitored = terminal.downgrade();
+                self.settings.sign_in.terminal = Some(terminal);
+                let terminal_profile = profile_id.clone();
+                self.monitor_native_process(window, cx, move |this, _, cx| {
+                    let _directory = &directory;
+                    let Some(terminal) = monitored.upgrade() else {
+                        return false;
+                    };
+                    if this.settings.sign_in.terminal.as_ref() != Some(&terminal) {
+                        return false;
+                    }
+                    if terminal.read(cx).is_alive() {
+                        return true;
+                    }
+                    this.close_sign_in_terminal(Some("Terminal login finished."), cx);
+                    crate::agents::refresh_login(&config, backend);
+                    this.send(RuntimeCommand::RefreshAccounts, cx);
+                    if this.active_profile_id() == terminal_profile
+                        && this.snapshot.harness == Some(backend)
+                    {
+                        this.send(
+                            RuntimeCommand::LoadConfiguration {
+                                harness: backend,
+                                project: this.project.path.clone(),
+                            },
+                            cx,
+                        );
+                    }
+                    cx.notify();
+                    false
+                });
+                return Ok(None);
+            }
+            crate::agents::sign_in_with_method(config, backend, self.project.path.clone(), method)
+                .map(Some)
         })();
         self.settings.sign_in.url = None;
         self.settings.sign_in.failed = false;
@@ -58,7 +114,10 @@ impl FarcasterApp {
                 self.settings.sign_in.message = Some(error);
                 self.settings.sign_in.failed = true;
             }
-            Ok(sign_in) => {
+            Ok(None) => {
+                self.settings.sign_in.message = None;
+            }
+            Ok(Some(sign_in)) => {
                 let events = sign_in.events.clone();
                 self.settings.sign_in.active = Some(sign_in);
                 self.settings.sign_in.message = Some(format!(
@@ -103,7 +162,8 @@ impl FarcasterApp {
                                                         cx,
                                                     );
                                                 }
-                                                "Signed in. You can start a session.".into()
+                                                this.send(RuntimeCommand::RefreshAccounts, cx);
+                                                "Sign-in completed.".into()
                                             }
                                             Err(error) => error,
                                         });
@@ -125,7 +185,79 @@ impl FarcasterApp {
         cx.notify();
     }
 
+    pub(in crate::app) fn sign_out_account(
+        &mut self,
+        source: crate::agents::accounts::AccountSource,
+        identity: crate::agents::accounts::AccountIdentity,
+        cx: &mut Context<Self>,
+    ) {
+        if self.settings.sign_in.active.is_some()
+            || self.settings.sign_in.terminal.is_some()
+            || self.settings.sign_in.signing_out
+        {
+            return;
+        }
+        let result = (|| {
+            Ok::<_, String>(AgentLaunchConfig {
+                profiles: self.settings.harness_profiles.clone(),
+                profile_id: source.profile_id.clone(),
+                app_proxy: crate::app::persistence::open()?.load_network_proxy()?,
+                ..Default::default()
+            })
+        })();
+        let config = match result {
+            Ok(config) => config,
+            Err(error) => {
+                self.settings.sign_in.message = Some(error);
+                self.settings.sign_in.failed = true;
+                cx.notify();
+                return;
+            }
+        };
+        let project = std::path::PathBuf::from(&source.context);
+        self.settings.sign_in.signing_out = true;
+        self.settings.sign_in.message = None;
+        self.settings.sign_in.task = Some(cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    crate::agents::logout_account(&config, &source, &identity, &project)
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                this.settings.sign_in.signing_out = false;
+                this.settings.sign_in.failed = result.is_err();
+                this.settings.sign_in.message = Some(
+                    result
+                        .err()
+                        .unwrap_or_else(|| "Signed out of the shared CLI login.".into()),
+                );
+                this.send(RuntimeCommand::RefreshAccounts, cx);
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
+
+    pub(in crate::app) fn close_sign_in_terminal(
+        &mut self,
+        message: Option<&'static str>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(terminal) = self.settings.sign_in.terminal.take() else {
+            return false;
+        };
+        terminal.update(cx, |terminal, _| terminal.set_visible(false));
+        if let Some(message) = message {
+            self.settings.sign_in.message = Some(message.into());
+            self.settings.sign_in.failed = false;
+        }
+        cx.notify();
+        true
+    }
+
     pub(in crate::app) fn cancel_harness_sign_in(&mut self, cx: &mut Context<Self>) {
+        self.close_sign_in_terminal(Some("Terminal login closed."), cx);
         if let Some(sign_in) = &self.settings.sign_in.active {
             sign_in.cancel();
             self.settings.sign_in.url = None;

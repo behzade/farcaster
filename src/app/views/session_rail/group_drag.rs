@@ -54,7 +54,7 @@ pub(super) fn draggable_title(
     title.on_drag(DraggedGroup { target, label }, move |drag, _, _, cx| {
         let _ = entity.update(cx, |this, cx| {
             this.sessions.group_drop_target = None;
-            this.notify_session_rail(cx);
+            this.notify_session_rail_shell(cx);
         });
         cx.new(|_| drag.clone())
     })
@@ -87,7 +87,7 @@ pub(super) fn group_drop_target(
                 let next = Some((hovered.clone(), position));
                 if this.sessions.group_drop_target != next {
                     this.sessions.group_drop_target = next;
-                    this.notify_session_rail(cx);
+                    this.notify_session_rail_shell(cx);
                 }
             });
         },

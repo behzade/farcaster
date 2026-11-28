@@ -160,7 +160,6 @@ impl Endpoint {
         stream
             .set_write_timeout(Some(Duration::from_secs(2)))
             .map_err(|error| RequestError::Io("Set write timeout", error))?;
-        // Tokens come from Hex's discovery/start responses, never from a shell command.
         if [self.token.as_str(), owner.unwrap_or("")]
             .iter()
             .any(|token| token.contains(['\r', '\n']))
@@ -228,11 +227,8 @@ fn record(
     commands: mpsc::Receiver<Control>,
     updates: &async_channel::Sender<Event>,
 ) -> Result<(), String> {
-    // A new press must wait for the previous recording's cancel/finish to
-    // release Hex's microphone, rather than racing it and getting "busy".
     static RECORDING: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _recording = RECORDING.lock().unwrap_or_else(|error| error.into_inner());
-    // A recording released before it even acquires the microphone is too short.
     if !matches!(commands.try_recv(), Err(mpsc::TryRecvError::Empty)) {
         return Ok(());
     }
@@ -272,7 +268,6 @@ fn record_with_endpoint(
                     Ok(reply) => reply,
                     Err(error) => break Err(error),
                 };
-                // Hex has ended the recording; cancelling it now returns 409.
                 let text = reply["transcript"]
                     .as_str()
                     .ok_or("Hex did not return a transcript")?;
@@ -292,7 +287,6 @@ fn record_with_endpoint(
             }
         }
     };
-    // Also release recording after a failed finish or heartbeat.
     let _ = endpoint.request("POST", &format!("{path}/cancel"), Some(owner), Value::Null);
     result
 }

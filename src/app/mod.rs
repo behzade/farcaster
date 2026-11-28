@@ -1,4 +1,5 @@
 use crate::agents::Backend;
+mod attachment;
 mod bootstrap;
 mod change_detection;
 mod composer;
@@ -26,8 +27,8 @@ mod workspace;
 use change_detection::*;
 pub(crate) use composer::ComposerImage;
 pub(crate) use composer::ComposerPaste;
+use composer::file_mentions;
 use composer::submissions::PendingSubmission;
-use composer::{completion as composer_completion, file_mentions};
 pub(crate) use navigation::{PICKER_KEY_CONTEXT, PickerScope, ProjectPickerIntent};
 use project::{registry as project_registry, repository};
 use session::{archive, status::roots_waiting_for_descendants};
@@ -70,10 +71,7 @@ use crate::{
     protocol::{BackgroundJob, Model},
     runtime::{RuntimeCommand, RuntimeEvent, RuntimeHandle, RuntimeSnapshot},
     sessions,
-    sessions::{
-        SessionRootIndex, SessionSummary, SessionTarget, descendant_sessions_for_root,
-        root_session_for_path,
-    },
+    sessions::{SessionSummary, SessionTarget},
 };
 #[cfg(test)]
 use crate::{app::views::transcript::transcript_splice, protocol::ExtensionUiRequest};
@@ -136,6 +134,8 @@ actions!(
         ComposerHistoryNext,
         ComposerCompletionPrevious,
         ComposerCompletionNext,
+        ComposerCompletionAccept,
+        ComposerCompletionDismiss,
         ShowKeybindings,
         IncreaseTranscriptFontSize,
         DecreaseTranscriptFontSize,
@@ -167,6 +167,7 @@ pub(super) enum AppSurface {
 enum PostRenderFocus {
     ActiveSurface(Option<FocusHandle>),
     ImagePreview,
+    CommandDetail,
 }
 
 #[derive(Clone)]
@@ -178,7 +179,9 @@ struct SessionTitleEdit {
 
 #[derive(Clone)]
 pub(crate) struct ImagePreview {
+    pub(crate) gallery: Vec<Arc<Image>>,
     pub(crate) image: Arc<Image>,
+    pub(in crate::app) viewport: Entity<views::dialogs::image_preview::ImageViewport>,
     pub(crate) index: usize,
     pub(crate) total: usize,
 }
@@ -186,6 +189,7 @@ pub(crate) struct ImagePreview {
 pub(crate) struct FarcasterApp {
     runtime: RuntimeHandle,
     pub(crate) snapshot: Arc<RuntimeSnapshot>,
+    accounts: Arc<crate::agents::accounts::AccountsSnapshot>,
     runtime_generation: u64,
     project: project::ProjectState,
     sessions: session::SessionState,

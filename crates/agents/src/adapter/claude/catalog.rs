@@ -241,7 +241,17 @@ fn history(rows: &[Value], sidechain: bool) -> DiscoveredHistory {
         messages: chain
             .iter()
             .filter(|row| row["isMeta"] != true)
-            .flat_map(|row| history_messages(&row["message"]))
+            .flat_map(|row| {
+                let mut messages = history_messages(row);
+                if let Some(id) = row["uuid"].as_str() {
+                    for message in &mut messages {
+                        if message["role"] != "toolResult" {
+                            message["nativeMessageId"] = Value::from(id);
+                        }
+                    }
+                }
+                messages
+            })
             .collect::<Vec<_>>()
             .into(),
         model,
@@ -271,7 +281,7 @@ fn profile_projects_root(config: &crate::AgentLaunchConfig) -> Result<PathBuf, S
     }
 }
 
-fn load_history_in(root: &Path, path: &Path) -> Result<DiscoveredHistory, String> {
+fn history_file(root: &Path, path: &Path) -> Result<(PathBuf, bool), String> {
     let id = external_session_locator(BACKEND, path).ok_or("invalid Claude session locator")?;
     let (parent, agent) = id
         .split_once('/')
@@ -280,31 +290,58 @@ fn load_history_in(root: &Path, path: &Path) -> Result<DiscoveredHistory, String
     if let Some(agent) = agent {
         child_id(parent, agent).ok_or("invalid Claude agent ID")?;
     }
-    let matching = files(root)?
-        .into_iter()
-        .filter(|path| path.file_stem().and_then(|stem| stem.to_str()) == Some(parent))
-        .collect::<Vec<_>>();
-    match matching.as_slice() {
-        [path] => {
-            let path = agent.map_or_else(
-                || path.clone(),
-                |agent| {
-                    path.with_extension("")
-                        .join("subagents")
-                        .join(format!("agent-{agent}.jsonl"))
-                },
-            );
-            HISTORY.load(
-                (path.clone(), agent.is_some()),
-                || FileStamp::read(&path),
-                || read(&path).map(|rows| history(&rows, agent.is_some())),
-            )
+    let projects = fs::read_dir(root).map_err(|error| format!("read Claude projects: {error}"))?;
+    let name = format!("{parent}.jsonl");
+    let mut matched = None;
+    for project in projects {
+        let project = project.map_err(|error| error.to_string())?;
+        if !project
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_dir()
+        {
+            continue;
         }
-        [] => Err(format!("Claude transcript {id} not found")),
-        _ => Err(format!(
-            "Claude transcript {id} exists in more than one project"
-        )),
+        let candidate = project.path().join(&name);
+        match fs::symlink_metadata(&candidate) {
+            Ok(meta) if meta.is_file() => {
+                if matched.replace(candidate).is_some() {
+                    return Err(format!(
+                        "Claude transcript {id} exists in more than one project"
+                    ));
+                }
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
     }
+    let path = matched.ok_or_else(|| format!("Claude transcript {id} not found"))?;
+    let path = match agent {
+        Some(agent) => path
+            .with_extension("")
+            .join("subagents")
+            .join(format!("agent-{agent}.jsonl")),
+        None => path,
+    };
+    Ok((path, agent.is_some()))
+}
+
+pub(super) fn local_history_revision(
+    config: &crate::AgentLaunchConfig,
+    path: &Path,
+) -> Option<Value> {
+    let (file, _) = history_file(&profile_projects_root(config).ok()?, path).ok()?;
+    FileStamp::local_revision(&file)
+}
+
+fn load_history_in(root: &Path, path: &Path) -> Result<DiscoveredHistory, String> {
+    let (file, child) = history_file(root, path)?;
+    HISTORY.load(
+        (file.clone(), child),
+        || FileStamp::read(&file),
+        || read(&file).map(|rows| history(&rows, child)),
+    )
 }
 
 pub fn discover(locator_root: &Path, query: &str) -> Result<Vec<DiscoveredSession>, String> {

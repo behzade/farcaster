@@ -34,7 +34,7 @@ pub(super) fn create(
     });
     let composer_focus = composer.read(cx).focus_handle(cx);
 
-    let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search sessions"));
+    let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
     let search_focus = search.read(cx).focus_handle(cx);
     let session_title = cx.new(|cx| InputState::new(window, cx));
     let network_proxy = cx.new(|cx| {
@@ -47,13 +47,13 @@ pub(super) fn create(
             .placeholder("micro -softwrap true")
             .default_value(saved_editor_command)
     });
-    let harness_profile_name =
-        cx.new(|cx| InputState::new(window, cx).placeholder("Name, e.g. Claudex"));
-    let harness_profile_executable = cx.new(|cx| {
-        InputState::new(window, cx).placeholder("Command or absolute path, e.g. claudex")
-    });
+    let harness_profile_name = cx.new(|cx| InputState::new(window, cx).placeholder("Profile name"));
+    let harness_profile_executable =
+        cx.new(|cx| InputState::new(window, cx).placeholder("Command or absolute path"));
     let harness_profile_data_directory = cx.new(|cx| {
-        InputState::new(window, cx).placeholder("Optional data directory, e.g. ~/.codex2")
+        InputState::new(window, cx).placeholder(
+            FarcasterApp::harness_profile_directory_placeholder(crate::agents::Backend::Claude),
+        )
     });
     let dialog = cx.new(|cx| {
         TextareaState::new(window, cx)
@@ -93,5 +93,5 @@ pub(in crate::app) fn composer_input(
         .soft_wrap(true)
         .scroll_beyond_last_line(Some(0))
         .submit_on_enter(true)
-        .placeholder("What would you like to work on?")
+        .placeholder("What would you like to work on? @ files, $ skills")
 }

@@ -1,10 +1,10 @@
 use crate::app::ui::primitives::AppTooltip as _;
-use std::rc::Rc;
+use std::{cell::Cell, rc::Rc};
 
 use gpui::{
     AnyElement, App, Div, ElementId, InteractiveElement as _, IntoElement, KeyDownEvent,
     ParentElement as _, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _,
-    Window,
+    Window, div,
 };
 use gpui_component::{
     Disableable as _, IconNamed, Sizable as _, Size,
@@ -17,6 +17,67 @@ use crate::{
 };
 
 type ButtonPress = dyn Fn(&mut Window, &mut App);
+
+pub(super) struct Accessible<T>(pub T);
+
+impl<T: gpui::InteractiveElement> gpui::InteractiveElement for Accessible<T> {
+    fn interactivity(&mut self) -> &mut gpui::Interactivity {
+        self.0.interactivity()
+    }
+}
+impl<T: gpui::InteractiveElement> gpui::StatefulInteractiveElement for Accessible<T> {}
+
+pub(super) fn on_accessible_click<T: gpui::InteractiveElement>(
+    control: T,
+    press: impl Fn(&mut Window, &mut App) + 'static,
+) -> T {
+    let enabled = Rc::new(Cell::new(false));
+    let rendered = enabled.clone();
+    Accessible(control)
+        .a11y_synthetic_children(move |tree| {
+            rendered.set(!tree.parent_node().is_disabled());
+        })
+        .on_a11y_action(gpui::AccessibleAction::Click, move |_, window, cx| {
+            if enabled.get() {
+                press_accessibly(&press, window, cx);
+            }
+        })
+        .0
+}
+
+pub(crate) trait ButtonPressExt {
+    fn on_press(self, enabled: bool, on_press: impl Fn(&mut Window, &mut App) + 'static) -> Button;
+}
+
+impl ButtonPressExt for Button {
+    fn on_press(self, enabled: bool, on_press: impl Fn(&mut Window, &mut App) + 'static) -> Button {
+        on_press_button(self, enabled, on_press)
+    }
+}
+
+pub(crate) fn on_press_button(
+    button: Button,
+    enabled: bool,
+    on_press: impl Fn(&mut Window, &mut App) + 'static,
+) -> Button {
+    let on_press: Rc<ButtonPress> = Rc::new(on_press);
+    let accessible_press = on_press.clone();
+    on_accessible_click(button, move |window, cx| {
+        if enabled {
+            accessible_press(window, cx);
+        }
+    })
+    .on_click(move |_, window, cx| {
+        if enabled {
+            on_press(window, cx);
+        }
+    })
+}
+
+fn press_accessibly(press: &ButtonPress, window: &mut Window, cx: &mut App) {
+    press(window, cx);
+    crate::app::ui::accessibility::refresh_hidden_accessibility(window, cx);
+}
 
 pub(crate) fn preserve_pointer_focus(_: &gpui::MouseDownEvent, window: &mut Window, cx: &mut App) {
     window.prevent_default();
@@ -38,11 +99,16 @@ pub(crate) fn button(
     enabled: bool,
     on_press: impl Fn(&mut Window, &mut App) + 'static,
 ) -> Button {
-    let button = Button::new(id)
-        .label(label)
-        .with_size(Size::Small)
-        .disabled(!enabled)
-        .on_click(move |_, window, cx| on_press(window, cx));
+    let label = label.into();
+    let button = on_press_button(
+        Button::new(id)
+            .accessibility_label(label.clone())
+            .child(button_content(label))
+            .with_size(Size::Small)
+            .disabled(!enabled),
+        enabled,
+        on_press,
+    );
     tone_button(button, tone)
 }
 
@@ -52,8 +118,10 @@ pub(crate) fn dropdown_button(
     tone: ButtonTone,
     enabled: bool,
 ) -> Button {
+    let label = label.into();
     let button = Button::new(id)
-        .label(label)
+        .accessibility_label(label.clone())
+        .child(button_content(label))
         .dropdown_caret(true)
         .with_size(Size::Small)
         .disabled(!enabled);
@@ -71,11 +139,21 @@ pub(crate) fn dropdown_content_button(
     let button = Button::new(id)
         .accessibility_label(accessible_label.clone())
         .app_tooltip(accessible_label)
-        .child(content)
+        .child(button_content(content))
         .dropdown_caret(true)
         .with_size(Size::Small)
         .disabled(!enabled);
     tone_button(button, tone)
+}
+
+fn button_content(content: impl IntoElement) -> Div {
+    div()
+        .min_w_0()
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .text_ellipsis()
+        .text_size(theme().type_scale.body)
+        .child(content)
 }
 
 pub(crate) fn icon_button(
@@ -98,7 +176,7 @@ pub(crate) fn prominent_icon_button(
     icon_button_with_size(id, icon, label, AppIconSize::Prominent, tone, on_press)
 }
 
-fn icon_button_with_size(
+pub(crate) fn icon_button_with_size(
     id: impl Into<ElementId>,
     icon: impl IconNamed,
     label: impl Into<SharedString>,
@@ -108,14 +186,29 @@ fn icon_button_with_size(
 ) -> Stateful<Div> {
     let on_press: Rc<ButtonPress> = Rc::new(on_press);
     let click = Rc::clone(&on_press);
-    tone_icon_control(icon_control(id, label).child(app_icon(icon, size)), tone)
-        .on_click(move |_, window, cx| click(window, cx))
-        .on_key_down(move |event, window, cx| {
-            if activates_button(event) {
-                cx.stop_propagation();
-                on_press(window, cx);
-            }
+    on_press_control(
+        tone_icon_control(icon_control(id, label).child(app_icon(icon, size)), tone),
+        move |window, cx| click(window, cx),
+    )
+    .on_key_down(move |event, window, cx| {
+        if activates_button(event) {
+            cx.stop_propagation();
+            on_press(window, cx);
+        }
+    })
+}
+
+pub(crate) fn on_press_control(
+    control: Stateful<Div>,
+    on_press: impl Fn(&mut Window, &mut App) + 'static,
+) -> Stateful<Div> {
+    let on_press: Rc<ButtonPress> = Rc::new(on_press);
+    let accessible_press = Rc::clone(&on_press);
+    control
+        .on_a11y_action(gpui::AccessibleAction::Click, move |_, window, cx| {
+            press_accessibly(accessible_press.as_ref(), window, cx);
         })
+        .on_click(move |_, window, cx| on_press(window, cx))
 }
 
 pub(crate) fn activates_button(event: &KeyDownEvent) -> bool {
@@ -146,7 +239,7 @@ fn tone_icon_control(control: Stateful<Div>, tone: ButtonTone) -> Stateful<Div> 
     }
 }
 
-fn tone_button(button: Button, tone: ButtonTone) -> Button {
+pub(super) fn tone_button(button: Button, tone: ButtonTone) -> Button {
     match tone {
         ButtonTone::Accent => button.primary(),
         ButtonTone::Neutral => button.secondary(),

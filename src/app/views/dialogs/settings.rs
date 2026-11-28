@@ -1,7 +1,9 @@
 use crate::app::ui::primitives::AppTooltip as _;
+use crate::app::ui::primitives::SelectionStyle as _;
+use gpui_component::Selectable as _;
 mod appearance;
 mod harness_profiles;
-mod harness_sign_in;
+pub(in crate::app::views) mod harness_sign_in;
 mod worker_tasks;
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _,
@@ -10,7 +12,6 @@ use gpui::{
 use gpui_component::{
     Disableable as _, Sizable as _, Size,
     button::{Button, ButtonVariants as _},
-    input::Input,
 };
 
 use super::super::FarcasterApp;
@@ -18,7 +19,8 @@ use crate::{
     app::OVERLAY_KEY_CONTEXT,
     app::ui::assets::AppIcon,
     app::ui::primitives::{
-        AppIconSize, ButtonTone, FeedbackTone, app_icon, button, feedback, modal,
+        AppIconSize, ButtonPressExt as _, ButtonTone, Dropdown, DropdownItem, FeedbackTone, Input,
+        app_icon, button, feedback, modal, on_press_control,
     },
     app::ui::theme::theme,
     app::workspace::{
@@ -35,11 +37,13 @@ pub(in crate::app::views) fn render(
 ) -> AnyElement {
     let dismiss = entity.clone();
     let tab = app.settings.tab;
+    let terminal_sign_in = tab == SettingsTab::Accounts && app.settings.sign_in.terminal.is_some();
     let content = match tab {
         SettingsTab::General => general(app, entity.clone(), cx),
         SettingsTab::Workers => worker_tasks::render(app, entity.clone(), cx),
         SettingsTab::Appearance => appearance::render(app, entity.clone()),
         SettingsTab::Connections => connections(app, entity.clone()),
+        SettingsTab::Accounts => super::super::accounts::settings(app, entity.clone()),
     };
     modal(
         "settings",
@@ -65,78 +69,54 @@ pub(in crate::app::views) fn render(
                         .justify_between()
                         .flex_wrap()
                         .gap(theme().space.sm)
-                        .px(theme().size(24.0))
+                        .px(crate::app::ui::grid::form_inset())
                         .py(theme().space.md)
-                        .border_b_1()
-                        .border_color(theme().colors.surface)
                         .child(
                             div()
                                 .text_size(theme().type_scale.display)
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .child("Settings"),
                         )
-                        .child(div().flex().gap(theme().space.xs).children(
-                            SettingsTab::ALL.into_iter().map(|page| {
-                                let select = entity.clone();
-                                let selected = page == tab;
-                                settings_control(
-                                    format!("settings-tab-{}", page.label()),
-                                    page.label(),
-                                    &app.settings.tab_focus[page as usize],
-                                )
-                                .debug_selector(move || format!("settings-tab-{}", page.label()))
-                                .w_auto()
-                                .px(theme().space.sm)
-                                .aria_selected(selected)
-                                .text_color(if selected {
-                                    theme().colors.indicator
-                                } else {
-                                    theme().colors.muted
-                                })
-                                .when(selected, |tab| tab.bg(theme().colors.highlight))
-                                .child(page.label())
-                                .on_click(move |_, window, cx| {
-                                    let _ = select.update(cx, |this, cx| {
-                                        this.workspace.voice.capturing_shortcut = false;
-                                        this.settings.tab = page;
-                                        this.settings.tab_focus[page as usize].focus(window, cx);
-                                        cx.notify();
-                                    });
-                                })
-                            }),
-                        )),
-                )
-                .child(
-                    div()
-                        .id(format!(
-                            "settings-scroll-{}-{}",
-                            tab.label(),
-                            app.settings.themes.editing
-                        ))
-                        .debug_selector(|| "settings-content".into())
-                        .min_h_0()
-                        .h(theme().size(520.0))
-                        .max_h(theme().size(520.0))
-                        .overflow_y_scroll()
-                        .p(theme().size(24.0))
-                        .child(content),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap(theme().space.sm)
-                        .px(theme().size(24.0))
-                        .py(theme().space.md)
-                        .border_t_1()
-                        .border_color(theme().colors.surface)
                         .child(
                             div()
-                                .text_size(theme().type_scale.caption)
-                                .text_color(theme().colors.muted)
-                                .child("Valid changes save automatically."),
+                                .id("settings-tabs")
+                                .role(gpui::Role::TabList)
+                                .aria_label("Settings pages")
+                                .flex()
+                                .gap(theme().space.xs)
+                                .children(SettingsTab::ALL.into_iter().map(|page| {
+                                    let select = entity.clone();
+                                    let selected = page == tab;
+                                    on_press_control(
+                                        settings_control(
+                                            format!("settings-tab-{}", page.label()),
+                                            page.label(),
+                                            &app.settings.tab_focus[page as usize],
+                                        )
+                                        .role(gpui::Role::Tab)
+                                        .debug_selector(move || {
+                                            format!("settings-tab-{}", page.label())
+                                        })
+                                        .w_auto()
+                                        .px(theme().space.sm)
+                                        .aria_selected(selected)
+                                        .text_color(theme().colors.muted)
+                                        .selection_style(selected)
+                                        .child(page.label()),
+                                        move |window, cx| {
+                                            let _ = select.update(cx, |this, cx| {
+                                                this.workspace.voice.capturing_shortcut = false;
+                                                if page != SettingsTab::Accounts {
+                                                    this.close_sign_in_terminal(None, cx);
+                                                }
+                                                this.settings.tab = page;
+                                                this.settings.tab_focus[page as usize]
+                                                    .focus(window, cx);
+                                                cx.notify();
+                                            });
+                                        },
+                                    )
+                                })),
                         )
                         .child(
                             settings_action(
@@ -152,6 +132,27 @@ pub(in crate::app::views) fn render(
                             .debug_selector(|| "close-settings".into()),
                         ),
                 )
+                .child(
+                    div()
+                        .id(format!(
+                            "settings-scroll-{}-{}-{}",
+                            tab.label(),
+                            app.settings.themes.editing,
+                            terminal_sign_in
+                        ))
+                        .role(gpui::Role::Group)
+                        .aria_label(format!("{} settings", tab.label()))
+                        .debug_selector(|| "settings-content".into())
+                        .min_h_0()
+                        .h(theme().size(520.0))
+                        .max_h(theme().size(520.0))
+                        .when(terminal_sign_in, |body| {
+                            body.flex().flex_col().overflow_hidden()
+                        })
+                        .when(!terminal_sign_in, |body| body.overflow_y_scroll())
+                        .p(crate::app::ui::grid::form_inset())
+                        .child(content),
+                )
         },
     )
     .into_any_element()
@@ -164,6 +165,7 @@ fn settings_control(
 ) -> gpui::Stateful<gpui::Div> {
     crate::app::ui::primitives::icon_control(id, label)
         .track_focus(focus)
+        .rounded(theme().size(4.0))
         .hover(|control| control.bg(theme().colors.highlight))
 }
 
@@ -183,7 +185,7 @@ fn settings_action(
         .size(theme().controls.icon_button)
         .disabled(!enabled)
         .child(app_icon(icon, AppIconSize::Control))
-        .on_click(move |_, window, cx| on_press(window, cx))
+        .on_press(enabled, on_press)
 }
 
 fn general(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>, cx: &gpui::App) -> AnyElement {
@@ -200,10 +202,14 @@ fn general(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>, cx: &gpui::App)
                 FeedbackTone::Error,
             ))
         })
+        .child(transcript_font_size(
+            app.views.transcript.read(cx).font_size,
+            entity.clone(),
+        ))
         .child(toggle_setting(
             "session-project-groups-toggle",
             "Group sessions by project",
-            "Group all chats by project. Turn off to use custom folders.",
+            "",
             app.settings.group_sessions_by_project,
             entity.clone(),
             FarcasterApp::toggle_settings_project_groups,
@@ -218,14 +224,10 @@ fn general(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>, cx: &gpui::App)
                 ))
             },
         )
-        .child(transcript_font_size(
-            app.views.transcript.read(cx).font_size,
-            entity.clone(),
-        ))
         .child(toggle_setting(
             "transcript-folders-toggle",
             "Expand changed folders in transcript",
-            "Start change folders expanded. Your manual folder choices stay as you left them.",
+            "",
             app.settings.expand_transcript_folders,
             entity.clone(),
             FarcasterApp::toggle_settings_transcript_folders,
@@ -257,7 +259,7 @@ fn voice_setting(
     let description = if !available {
         "Install and open Hex to enable voice (3.3 or later on Linux)."
     } else {
-        "Hold to speak; release to send. Double-tap to lock; press again to send. Replies are read aloud outside chat."
+        "Hold to speak; release to send. Double-tap to lock; press again to send. Spoken replies outside chat."
     };
     let capture = entity.clone();
     let reset = entity.clone();
@@ -267,75 +269,73 @@ fn voice_setting(
         .flex_col()
         .gap(theme().space.sm)
         .child(
-            div()
+            setting_row("Voice", description)
                 .debug_selector(|| "settings-voice".into())
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap(theme().space.md)
-                .child(setting_label("Voice", description))
                 .child(
                     Button::new("voice-toggle")
+                        .w(theme().size(56.0))
+                        .flex_none()
                         .debug_selector(|| "voice-toggle".into())
                         .accessibility_label("Voice")
                         .label(if enabled { "On" } else { "Off" })
                         .with_size(Size::Small)
                         .toggled(enabled)
                         .disabled(!available)
-                        .when(enabled, |button| button.primary())
-                        .when(!enabled, |button| button.secondary())
-                        .on_click(move |_, _, cx| {
+                        .secondary()
+                        .selected(enabled)
+                        .selection_style(enabled)
+                        .on_press(available, move |_, cx| {
                             let _ = entity.update(cx, FarcasterApp::toggle_settings_voice);
                         }),
                 ),
         )
         .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap(theme().space.md)
-                .child(setting_label(
-                    "Voice shortcut",
-                    if recording {
-                        "Press a shortcut. Click again to cancel."
-                    } else {
-                        "Click to record a new shortcut."
-                    },
-                ))
-                .child(
-                    div()
-                        .flex()
-                        .gap(theme().space.sm)
-                        .child(
-                            Button::new("voice-shortcut")
-                                .debug_selector(|| "voice-shortcut".into())
-                                .label(if recording {
-                                    "Press shortcut…".to_owned()
-                                } else {
-                                    app.voice_shortcut_label(cx)
-                                })
+            setting_row(
+                "Voice shortcut",
+                if recording {
+                    "Press a shortcut. Click again to cancel."
+                } else {
+                    ""
+                },
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(theme().space.sm)
+                    .child(
+                        Button::new("voice-shortcut")
+                            .debug_selector(|| "voice-shortcut".into())
+                            .accessibility_label(if recording {
+                                "Voice shortcut: press a shortcut".to_owned()
+                            } else {
+                                format!("Voice shortcut: {}", app.voice_shortcut_label(cx))
+                            })
+                            .label(if recording {
+                                "Press shortcut…".to_owned()
+                            } else {
+                                app.voice_shortcut_label(cx)
+                            })
+                            .with_size(Size::Small)
+                            .secondary()
+                            .on_press(true, move |_, cx| {
+                                let _ =
+                                    capture.update(cx, FarcasterApp::begin_voice_shortcut_capture);
+                            }),
+                    )
+                    .when(app.settings.voice_shortcut.is_some(), |row| {
+                        row.child(
+                            Button::new("voice-shortcut-reset")
+                                .debug_selector(|| "voice-shortcut-reset".into())
+                                .accessibility_label("Reset voice shortcut")
+                                .label("Reset")
                                 .with_size(Size::Small)
                                 .secondary()
-                                .on_click(move |_, _, cx| {
-                                    let _ = capture
-                                        .update(cx, FarcasterApp::begin_voice_shortcut_capture);
+                                .on_press(true, move |_, cx| {
+                                    let _ = reset.update(cx, FarcasterApp::reset_voice_shortcut);
                                 }),
                         )
-                        .when(app.settings.voice_shortcut.is_some(), |row| {
-                            row.child(
-                                Button::new("voice-shortcut-reset")
-                                    .debug_selector(|| "voice-shortcut-reset".into())
-                                    .label("Reset")
-                                    .with_size(Size::Small)
-                                    .secondary()
-                                    .on_click(move |_, _, cx| {
-                                        let _ =
-                                            reset.update(cx, FarcasterApp::reset_voice_shortcut);
-                                    }),
-                            )
-                        }),
-                ),
+                    }),
+            ),
         )
         .into_any_element()
 }
@@ -347,11 +347,10 @@ fn connections(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEleme
         .flex_col()
         .gap(theme().size(24.0))
         .child(harness_profiles::render(app, entity.clone()))
-        .child(harness_sign_in::render(app, entity.clone()))
         .child(toggle_setting(
             "builtin-mcp-toggle",
             "Built-in MCP",
-            "Add local tools to new sessions. Turning this off disconnects existing MCP clients.",
+            "Disabling disconnects existing MCP clients.",
             crate::builtin_mcp::enabled(),
             entity.clone(),
             FarcasterApp::toggle_settings_builtin_mcp,
@@ -365,40 +364,34 @@ fn connections(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEleme
                 .flex_col()
                 .gap(theme().space.sm)
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap(theme().space.md)
-                        .child(setting_label(
-                            "Network proxy",
-                            "Used when the project environment has no HTTP or HTTPS proxy.",
-                        ))
-                        .child(
-                            div()
-                                .w(theme().size(300.0))
-                                .flex_none()
-                                .flex()
-                                .items_center()
-                                .gap(theme().space.sm)
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .child(Input::new(&app.settings.network_proxy_input)),
-                                )
-                                .child(settings_action(
-                                    "clear-network-proxy",
-                                    "Clear network proxy",
-                                    AppIcon::Eraser,
-                                    true,
-                                    move |window, cx| {
-                                        let _ = clear.update(cx, |this, cx| {
-                                            this.clear_network_proxy(window, cx)
-                                        });
-                                    },
-                                )),
-                        ),
+                    setting_row("Network proxy", "Fallback when the project has no proxy.").child(
+                        div()
+                            .debug_selector(|| "network-proxy-control".into())
+                            .w(theme().size(300.0))
+                            .max_w_full()
+                            .min_w_0()
+                            .flex()
+                            .items_center()
+                            .gap(theme().space.sm)
+                            .child(
+                                div()
+                                    .debug_selector(|| "network-proxy-input".into())
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(Input::new(&app.settings.network_proxy_input).w_full()),
+                            )
+                            .child(settings_action(
+                                "clear-network-proxy",
+                                "Clear network proxy",
+                                AppIcon::Eraser,
+                                true,
+                                move |window, cx| {
+                                    let _ = clear.update(cx, |this, cx| {
+                                        this.clear_network_proxy(window, cx)
+                                    });
+                                },
+                            )),
+                    ),
                 )
                 .when_some(
                     app.settings.network_proxy_error.clone(),
@@ -422,50 +415,42 @@ fn editor_setting(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
         .flex()
         .flex_col()
         .gap(theme().space.md)
-        .child(setting_label(
-            "Editor",
-            "Open files, projects, and review locations in this editor. Chat code capture uses embedded Neovim.",
-        ))
         .child(
-            div()
-                .flex()
-                .gap(theme().space.xs)
-                .flex_wrap()
-                .children(available.into_iter().map(|option| {
-                    editor_option(
-                        format!("editor-{}", option.as_str()),
-                        option.label(),
-                        AppIcon::for_editor(option),
-                        option,
-                        selected,
-                        entity.clone(),
-                    )
-                })),
+            setting_row("Editor", "Chat code capture uses embedded Neovim.").child(
+                Dropdown::new(
+                    "editor-choice",
+                    selected.label(),
+                    available
+                        .into_iter()
+                        .map(|option| {
+                            let entity = entity.clone();
+                            DropdownItem::new(option.label(), move |_, cx| {
+                                let _ =
+                                    entity.update(cx, |this, cx| this.select_editor(option, cx));
+                            })
+                            .icon(AppIcon::for_editor(option))
+                            .selected(option == selected)
+                        })
+                        .collect(),
+                )
+                .w(theme().size(180.0))
+                .accessibility_label(format!("Editor: {}", selected.label()))
+                .debug_selector(|| "editor-choice".into()),
+            ),
         )
         .when(choice == EditorChoice::Custom, |section| {
-            section.child(setting_label("Terminal command", "Command and arguments, for example micro -softwrap true. Quote paths containing spaces. Applies to new editor sessions."))
-                .child(Input::new(&app.settings.editor_command_input))
-        })
-        .into_any_element()
-}
-
-fn editor_option(
-    id: String,
-    label: &'static str,
-    icon: AppIcon,
-    option: EditorChoice,
-    selected: EditorChoice,
-    entity: WeakEntity<FarcasterApp>,
-) -> AnyElement {
-    Button::new(id)
-        .icon(icon)
-        .label(label)
-        .with_size(Size::Small)
-        .toggled(option == selected)
-        .when(option == selected, |button| button.primary())
-        .when(option != selected, |button| button.secondary())
-        .on_click(move |_, _, cx| {
-            let _ = entity.update(cx, |this, cx| this.select_editor(option, cx));
+            section.child(
+                setting_row(
+                    "Terminal command",
+                    "Quote paths with spaces. Applies to new editor sessions.",
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(Input::new(&app.settings.editor_command_input)),
+                ),
+            )
         })
         .into_any_element()
 }
@@ -478,30 +463,28 @@ fn toggle_setting(
     entity: WeakEntity<FarcasterApp>,
     toggle: fn(&mut FarcasterApp, &mut gpui::Context<FarcasterApp>),
 ) -> AnyElement {
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap(theme().space.md)
-        .child(setting_label(title, description))
+    setting_row(title, description)
         .child(
             Button::new(id)
+                .accessibility_label(title)
+                .w(theme().size(56.0))
+                .flex_none()
                 .label(if enabled { "On" } else { "Off" })
                 .with_size(Size::Small)
                 .toggled(enabled)
-                .when(enabled, |button| button.primary())
-                .when(!enabled, |button| button.secondary())
-                .on_click(move |_, _, cx| {
+                .secondary()
+                .selected(enabled)
+                .selection_style(enabled)
+                .on_press(true, move |_, cx| {
                     let _ = entity.update(cx, toggle);
                 }),
         )
         .into_any_element()
 }
 
-fn setting_label(title: &'static str, description: &'static str) -> AnyElement {
+fn setting_label(title: impl Into<gpui::SharedString>, description: &'static str) -> AnyElement {
     div()
         .min_w_0()
-        .max_w(theme().size(480.0))
         .flex()
         .flex_col()
         .gap(theme().space.xs)
@@ -510,35 +493,35 @@ fn setting_label(title: &'static str, description: &'static str) -> AnyElement {
                 .text_size(theme().type_scale.body)
                 .font_weight(gpui::FontWeight::MEDIUM)
                 .text_color(theme().colors.text)
-                .child(title),
+                .child(title.into()),
         )
-        .child(
-            div()
-                .text_size(theme().type_scale.body_small)
-                .text_color(theme().colors.muted)
-                .child(description),
-        )
+        .when(!description.is_empty(), |label| {
+            label.child(
+                div()
+                    .text_size(theme().type_scale.body_small)
+                    .text_color(theme().colors.muted)
+                    .child(description),
+            )
+        })
         .into_any_element()
+}
+
+fn setting_row(title: impl Into<gpui::SharedString>, description: &'static str) -> gpui::Div {
+    div().flex().items_center().gap(theme().space.md).child(
+        div()
+            .w(gpui::relative(0.4))
+            .max_w(theme().size(320.0))
+            .flex_none()
+            .child(setting_label(title, description)),
+    )
 }
 
 fn transcript_font_size(size: gpui::Pixels, entity: WeakEntity<FarcasterApp>) -> AnyElement {
     use crate::app::ui::theme::TRANSCRIPT_FONT_SIZE_RANGE;
 
     let size = f32::from(size);
-    div()
+    setting_row("Transcript font size", "")
         .debug_selector(|| "settings-font-size".into())
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap(theme().space.md)
-        .child(setting_label(
-            "Transcript font size",
-            if cfg!(target_os = "macos") {
-                "Applies to all sessions. Cmd+- / Cmd+= also adjust the size."
-            } else {
-                "Applies to all sessions. Ctrl+- / Ctrl+= also adjust the size."
-            },
-        ))
         .child(
             div()
                 .flex()

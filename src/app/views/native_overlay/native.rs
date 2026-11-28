@@ -33,6 +33,37 @@ pub(super) struct TestHost(pub NativeHost);
 impl gpui::Global for TestHost {}
 
 impl NativeHost {
+    #[cfg(target_os = "macos")]
+    pub(in crate::app) fn decoration_layer(
+        window: &Window,
+    ) -> Option<objc2::rc::Retained<objc2_quartz_core::CALayer>> {
+        macos::Host::capture(window).ok()?.decoration_layer()
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(in crate::app) fn request_background_frame(window: &Window) {
+        if let Ok(native) = macos::Host::capture(window) {
+            native.request_frame();
+        }
+    }
+
+    pub(in crate::app) fn background_accessibility(window: &Window) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            window.is_a11y_active() && !macos::Host::application_active()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = window;
+            false
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(in crate::app) fn prepare_accessibility(window: &Window) -> Result<(), String> {
+        macos::Host::prepare_accessibility(window)
+    }
+
     pub(super) fn open_panel<V: Render + 'static>(
         owner: &Window,
         bounds: Bounds<Pixels>,
@@ -52,6 +83,7 @@ impl NativeHost {
             kind: host.panel_kind(owner, offset, input),
             focus: false,
             show: false,
+            inactive_frame_interval: None,
             titlebar: None,
             is_movable: false,
             is_resizable: false,
@@ -60,7 +92,6 @@ impl NativeHost {
             window_background: gpui::WindowBackgroundAppearance::Transparent,
             ..Default::default()
         };
-        // Tooltips need no input state. Skip Root and its full-window shadow.
         let popup = if host.relays_input(input) && input != OverlayInput::Tooltip {
             let owner_handle = owner.window_handle();
             let root = cx
@@ -89,8 +120,24 @@ impl NativeHost {
         if host.is_wayland() {
             super::stack::register(owner.window_handle(), popup.into(), cx);
         }
-        let result = popup
-            .update(cx, |_, window, _| {
+        // Do not lease the panel's view here: preparing its AX tree draws that
+        // same view. Panel::update would hold it borrowed throughout the draw.
+        let handle: gpui::AnyWindowHandle = popup.into();
+        let result = handle
+            .update(cx, |_, window, cx| {
+                if input != OverlayInput::Tooltip {
+                    window.set_window_title(match input {
+                        OverlayInput::Modal => "Farcaster — Dialog",
+                        OverlayInput::Passive => "Farcaster — Popup",
+                        OverlayInput::Tooltip => unreachable!(),
+                    });
+                }
+                #[cfg(target_os = "macos")]
+                if owner.is_a11y_active() && input != OverlayInput::Tooltip {
+                    Self::prepare_accessibility(window)?;
+                    window.draw(cx).clear(cx);
+                }
+                let _ = cx;
                 host.present(window, bounds, offset, input)
             })
             .map_err(|error| error.to_string())
@@ -122,7 +169,6 @@ impl NativeHost {
     }
 
     pub(super) fn relays_input(&self, input: OverlayInput) -> bool {
-        // Wayland popups and passive X11 panels leave native focus on the owner.
         if self.is_wayland() {
             return true;
         }
@@ -156,8 +202,6 @@ impl NativeHost {
                 offset.y
             },
         );
-        // GPUI clamps anchors inside the parent's visible geometry. Compensate
-        // for client-side shadow insets so popup and owner coordinates agree.
         let padding = gpui_component::window_paddings(owner);
         let minimum = gpui::point(padding.left, padding.top);
         let maximum = gpui::point(
@@ -191,8 +235,6 @@ impl NativeHost {
                         gpui::px(0.0)
                     },
                 ),
-            // Async requests have no triggering press serial. Keyboard and IME
-            // input stays on the owner and is relayed to this popup instead.
             grab: false,
         })
     }
@@ -314,7 +356,8 @@ mod macos {
     use gpui::{Bounds, Pixels, Window};
     use objc2::{MainThreadMarker, rc::Retained};
     use objc2_app_kit::{
-        NSApplication, NSPanel, NSView, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
+        NSAccessibility, NSApplication, NSPanel, NSPopUpMenuWindowLevel, NSView, NSWindow,
+        NSWindowCollectionBehavior, NSWindowOrderingMode, NSWindowStyleMask,
     };
     use objc2_foundation::{NSPoint, NSRect, NSSize};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -342,6 +385,29 @@ mod macos {
     }
 
     impl Host {
+        pub(super) fn decoration_layer(&self) -> Option<Retained<objc2_quartz_core::CALayer>> {
+            self.view.layer()
+        }
+
+        pub(super) fn request_frame(&self) {
+            self.view.setNeedsDisplay(true);
+        }
+
+        pub(super) fn application_active() -> bool {
+            MainThreadMarker::new()
+                .is_some_and(|main| NSApplication::sharedApplication(main).isActive())
+        }
+
+        pub(super) fn prepare_accessibility(window: &Window) -> Result<(), String> {
+            let native = Self::capture(window)?;
+            let view = native
+                .window
+                .contentView()
+                .ok_or("native panel has no content view")?;
+            let _ = view.accessibilityChildren();
+            Ok(())
+        }
+
         pub(super) fn capture(window: &Window) -> Result<Self, String> {
             let main =
                 MainThreadMarker::new().ok_or("notification window requires the main thread")?;
@@ -350,7 +416,6 @@ mod macos {
             let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
                 return Err("notification owner is not an AppKit window".into());
             };
-            // Match a retained AppKit view to GPUI's opaque handle without dereferencing it.
             NSApplication::sharedApplication(main)
                 .windows()
                 .iter()
@@ -391,16 +456,26 @@ mod macos {
             panel.setHidesOnDeactivate(true);
             panel.setHasShadow(false);
             self.position_window(&popup.window, bounds, offset);
-            match input {
-                super::OverlayInput::Passive | super::OverlayInput::Tooltip => {
-                    popup.window.orderFront(None)
-                }
-                super::OverlayInput::Modal => {
-                    panel.setCollectionBehavior(
-                        NSWindowCollectionBehavior::MoveToActiveSpace
-                            | NSWindowCollectionBehavior::FullScreenAuxiliary,
-                    );
-                    popup.window.makeKeyAndOrderFront(None);
+            let main =
+                MainThreadMarker::new().ok_or("panel presentation requires the main thread")?;
+            if !NSApplication::sharedApplication(main).isActive() {
+                panel.setCollectionBehavior(self.window.collectionBehavior());
+                popup.window.orderWindow_relativeTo(
+                    NSWindowOrderingMode::Above,
+                    self.window.windowNumber(),
+                );
+            } else {
+                match input {
+                    super::OverlayInput::Passive | super::OverlayInput::Tooltip => {
+                        popup.window.orderFront(None)
+                    }
+                    super::OverlayInput::Modal => {
+                        panel.setCollectionBehavior(
+                            NSWindowCollectionBehavior::MoveToActiveSpace
+                                | NSWindowCollectionBehavior::FullScreenAuxiliary,
+                        );
+                        popup.window.makeKeyAndOrderFront(None);
+                    }
                 }
             }
             // Changing the style mask clears AppKit's first responder. GPUI's
@@ -421,6 +496,16 @@ mod macos {
             bounds: Bounds<Pixels>,
             offset: gpui::Point<Pixels>,
         ) {
+            if let Some(main) = MainThreadMarker::new() {
+                let level = if NSApplication::sharedApplication(main).isActive() {
+                    NSPopUpMenuWindowLevel
+                } else {
+                    self.window.level()
+                };
+                if popup.level() != level {
+                    popup.setLevel(level);
+                }
+            }
             let rect = NSRect::new(
                 NSPoint::new(
                     offset.x.as_f32() as f64,

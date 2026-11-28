@@ -11,6 +11,8 @@ pub(super) enum CodexMethod<'a> {
     SkillsChanged,
     McpServerStartupStatusUpdated,
     AccountRateLimitsUpdated,
+    AccountUpdated,
+    DeprecationNotice,
     Warning,
     ConfigWarning,
     RemoteControlStatusChanged,
@@ -36,6 +38,8 @@ pub(super) enum CodexMethod<'a> {
     ThreadSettingsUpdated,
     ThreadNameUpdated,
     ThreadStatusChanged,
+    ThreadReadStateChanged,
+    TurnModerationMetadata,
     TurnDiffUpdated,
     TurnPlanUpdated,
     ServerRequestResolved,
@@ -55,6 +59,8 @@ impl<'a> CodexMethod<'a> {
             "skills/changed" => Self::SkillsChanged,
             "mcpServer/startupStatus/updated" => Self::McpServerStartupStatusUpdated,
             "account/rateLimits/updated" => Self::AccountRateLimitsUpdated,
+            "account/updated" => Self::AccountUpdated,
+            "deprecationNotice" => Self::DeprecationNotice,
             "warning" => Self::Warning,
             "configWarning" => Self::ConfigWarning,
             "remoteControl/status/changed" => Self::RemoteControlStatusChanged,
@@ -82,6 +88,8 @@ impl<'a> CodexMethod<'a> {
             "thread/settings/updated" => Self::ThreadSettingsUpdated,
             "thread/name/updated" => Self::ThreadNameUpdated,
             "thread/status/changed" => Self::ThreadStatusChanged,
+            "thread/readState/changed" => Self::ThreadReadStateChanged,
+            "turn/moderationMetadata" => Self::TurnModerationMetadata,
             "turn/diff/updated" => Self::TurnDiffUpdated,
             "turn/plan/updated" => Self::TurnPlanUpdated,
             "serverRequest/resolved" => Self::ServerRequestResolved,
@@ -104,9 +112,11 @@ impl<'a> CodexMethod<'a> {
             Self::McpServerStartupStatusUpdated | Self::AccountRateLimitsUpdated => {
                 CodexNotificationTier::Telemetry
             }
-            Self::Warning | Self::ConfigWarning | Self::RemoteControlStatusChanged => {
-                CodexNotificationTier::Global
-            }
+            Self::Warning
+            | Self::ConfigWarning
+            | Self::RemoteControlStatusChanged
+            | Self::AccountUpdated
+            | Self::DeprecationNotice => CodexNotificationTier::Global,
             _ => CodexNotificationTier::Thread,
         }
     }

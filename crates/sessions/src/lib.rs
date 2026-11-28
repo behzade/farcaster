@@ -8,7 +8,8 @@ mod identity;
 
 pub use composer::{
     ComposerPersistence, ComposerRecord, ComposerSessions, ComposerSnapshot, HistoryNavigation,
-    draft_id, draft_target, project_target, session_path, session_target,
+    composer_buffer_parts, composer_command_target, draft_id, draft_target, project_target,
+    session_buffer, session_path, session_target,
 };
 pub use contract::{
     LoadedHistory, PromptDeliveryReconciliation, RUNNING_ACTIVITY_TIMEOUT, RestoredQuestion,
@@ -26,8 +27,9 @@ pub use core::{
     session_family_for_path, set_archived, take_catalog_metrics,
 };
 pub use draft::{
-    DraftSession, establish_submission, fill_session_association, reconciliation_candidates,
-    submitted_draft_associations, sync_materialized_draft, update_persisted_submission,
+    DraftSession, establish_submission, fill_session_association, provisional_session_title,
+    reconciliation_candidates, submitted_draft_associations, sync_materialized_draft,
+    update_persisted_submission,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use folders::SessionFolder;

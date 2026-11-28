@@ -50,7 +50,19 @@ impl StateStore {
                     migrate_v14_to_v15(&migration)?;
                 }
                 Some(14) => migrate_v14_to_v15(&migration)?,
-                Some(15..=21) => {}
+                Some(15..=25 | 29) => {}
+                Some(26..=27) => {
+                    migration
+                        .execute("DELETE FROM transcript_viewports", [])
+                        .map_err(|error| format!("invalidate old transcript viewports: {error}"))?;
+                }
+                Some(28) => {
+                    migration.execute(
+                        "DELETE FROM transcript_viewports WHERE items IS NULL AND EXISTS (
+                         SELECT 1 FROM session_events WHERE session_id=transcript_viewports.session_id
+                         AND json_extract(body,'$.type')='prompt_presentation')", [],
+                    ).map_err(|error| format!("invalidate skipped prompt viewports: {error}"))?;
+                }
                 Some(version) => {
                     return Err(format!(
                         "GUI state schema {version} is not supported by this build"
@@ -64,6 +76,12 @@ impl StateStore {
             super::migrate_v20::migrate(&migration)?;
             super::migrate_v21::migrate(&migration)?;
             super::migrate_v22::migrate(&migration)?;
+            migration.execute_batch("CREATE TABLE IF NOT EXISTS account_state (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL);")
+                .map_err(|e| format!("Create account state: {e}"))?;
+            super::worker_status::migrate(&migration)?;
+            migration
+                .execute_batch(include_str!("transcript_schema.sql"))
+                .map_err(|error| format!("create stored transcripts: {error}"))?;
             migration
                 .execute(
                     "INSERT INTO meta(key, value) VALUES('schema_version', ?1)
@@ -86,6 +104,7 @@ impl StateStore {
                 .map_err(|error| format!("resolve session locator directory: {error}"))?,
         )?;
         super::workgraph_identity::migrate(&mut store.connection)?;
+        store.schedule_viewport_backfill();
         Ok(store)
     }
 
@@ -116,10 +135,7 @@ impl StateStore {
                     |row| row.get::<_, i64>(0),
                 )
                 .map_err(|error| format!("read legacy pi-gpui schema version: {error}"))?;
-            if !matches!(
-                version,
-                7 | 11 | 12 | 13 | 14 | 15 | 17 | 18 | 19 | 20 | 21 | SCHEMA_VERSION
-            ) {
+            if !matches!(version, 7 | 11..=15 | 17..=SCHEMA_VERSION) {
                 return Err(format!(
                     "legacy pi-gpui state schema {version} is not supported by this build"
                 ));

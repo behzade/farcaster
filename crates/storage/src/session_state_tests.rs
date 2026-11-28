@@ -13,6 +13,32 @@ fn draft(store: &mut StateStore, project: &Path, id: &str) -> DraftSession {
 }
 
 #[test]
+fn selected_session_ignores_archived_and_moved_chats() {
+    let temp = tempdir();
+    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3")).unwrap();
+    let selected = draft(&mut store, temp.path(), "selected");
+    store
+        .save_session_changes(&SessionStateChanges {
+            selected_sessions: [(temp.path().to_path_buf(), Some(selected.app_session_id))].into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let id = sessions::AppSessionId::new(selected.app_session_id).unwrap();
+    store.set_app_session_archived(id, true).unwrap();
+    assert_eq!(store.load_selected_session(temp.path()).unwrap(), None);
+    store.set_app_session_archived(id, false).unwrap();
+    assert_eq!(
+        store.load_selected_session(temp.path()).unwrap(),
+        Some(id.get())
+    );
+
+    let mut moved = selected.clone();
+    moved.project = temp.path().join("other");
+    store.allocate_app_session_id(&moved).unwrap();
+    assert_eq!(store.load_selected_session(temp.path()).unwrap(), None);
+}
+
+#[test]
 fn delayed_updates_do_not_restore_deleted_or_promoted_drafts_or_remove_new_ones() {
     let temp = tempdir();
     let mut store = StateStore::open_at(&temp.path().join("state.sqlite3")).expect("store");
@@ -551,6 +577,7 @@ fn a_batch_rolls_back_projects_draft_changes_and_deletions_if_folders_fail() {
         ]
         .into(),
         folders: Some(Default::default()),
+        ..Default::default()
     };
     store
         .connection

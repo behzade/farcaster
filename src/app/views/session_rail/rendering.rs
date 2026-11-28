@@ -1,28 +1,12 @@
-use std::{
-    collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
-};
-
 use gpui::{
     Bounds, Div, DragMoveEvent, FontWeight, InteractiveElement as _, ListState, Pixels, Point,
     Stateful, Styled as _, WeakEntity, div,
 };
 
-use super::{
-    FarcasterApp, RailPanel,
-    drag::DraggedSession,
-    groups::{SessionRailItem, SessionRailKind},
-};
-use crate::{
-    app::{
-        session::status::resolved_session_status,
-        ui::{
-            primitives::{PanelSlot, ReorderPosition},
-            theme::theme,
-        },
-    },
-    runtime::RunStatus,
-    sessions::SessionCatalog,
+use super::{FarcasterApp, drag::DraggedSession, groups::SessionRailKind};
+use crate::app::ui::{
+    primitives::{PanelSlot, ReorderPosition},
+    theme::theme,
 };
 
 pub(super) const ARCHIVED_OPEN_ROWS: usize = 5;
@@ -30,13 +14,14 @@ pub(super) const ARCHIVED_OPEN_ROWS: usize = 5;
 pub(super) fn session_section_header() -> Div {
     div()
         .w_full()
-        .h(theme().controls.icon_button)
+        .h(theme().controls.icon_button + theme().space.sm)
+        .pt(theme().space.sm)
         .flex_none()
         .flex()
         .items_center()
         .gap(theme().space.xs)
         .pr(theme().space.xs)
-        .text_size(theme().type_scale.caption)
+        .text_size(theme().type_scale.body_small)
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(theme().colors.muted)
 }
@@ -110,59 +95,23 @@ pub(super) fn session_section_drop_target(
         })
 }
 
-pub(super) fn subagent_counts(sessions: &SessionCatalog) -> HashMap<PathBuf, usize> {
-    sessions
-        .iter()
-        .filter_map(|session| {
-            let count = sessions.child_count(session);
-            (count > 0).then(|| (session.path.clone(), count))
-        })
-        .collect()
-}
-
-pub(super) fn inactive_session_badge(
-    kind: SessionRailKind,
-    item: &SessionRailItem,
-    run_statuses: &HashMap<String, RunStatus>,
-    live_session: Option<&Path>,
-    live_status: RunStatus,
-    waiting_roots: &HashSet<PathBuf>,
-) -> Option<RunStatus> {
-    if kind != SessionRailKind::Archived {
-        return None;
-    }
-    let target = format!("session:{}", item.session.path.display());
-    let status = resolved_session_status(
-        &item.session,
-        run_statuses.get(&target).copied(),
-        live_session,
-        live_status,
-        waiting_roots.contains(&item.session.path),
-    );
-    (status != RunStatus::Done).then_some(status)
-}
-
 pub(super) fn archived_panel_height(rows: usize) -> Pixels {
-    theme().controls.icon_button + super::session_row_height(true) * rows as f32
+    theme().controls.icon_button + super::session_row_height(false) * rows as f32
 }
 
-pub(super) fn rail_panel_slot(panel: RailPanel, archived: usize, collapsed: bool) -> PanelSlot {
+pub(super) fn archived_panel_slot(archived: usize, collapsed: bool) -> PanelSlot {
     if collapsed {
         return PanelSlot::new(theme().controls.icon_button, theme().controls.icon_button);
     }
-    match panel {
-        RailPanel::Archived => PanelSlot::new(
-            archived_panel_height(1),
-            archived_panel_height(archived.clamp(1, ARCHIVED_OPEN_ROWS)),
-        ),
-        RailPanel::Notifications => {
-            PanelSlot::new(theme().layout.notice_panel_min, theme().layout.notice_panel)
-        }
-    }
+    PanelSlot::new(
+        archived_panel_height(1),
+        archived_panel_height(archived.clamp(1, ARCHIVED_OPEN_ROWS)),
+    )
 }
 
+#[cfg(test)]
 pub(super) fn archived_panel_rows(height: Pixels) -> usize {
-    ((height - theme().controls.icon_button) / super::session_row_height(true)).max(0.0) as usize
+    ((height - theme().controls.icon_button) / super::session_row_height(false)).max(0.0) as usize
 }
 
 #[cfg(test)]

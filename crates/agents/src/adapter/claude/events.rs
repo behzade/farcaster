@@ -36,6 +36,43 @@ pub(super) fn text(content: &Value) -> String {
     }
 }
 
+fn tool_content(content: &Value) -> Vec<Value> {
+    match content {
+        Value::Array(blocks) => blocks
+            .iter()
+            .map(|block| match string(block, "type") {
+                "image" if block["source"]["type"] == "base64" => json!({
+                    "type":"image", "data":block["source"]["data"],
+                    "mimeType":block["source"]["media_type"]
+                }),
+                _ => block.clone(),
+            })
+            .collect(),
+        _ => vec![json!({"type":"text","text":text(content)})],
+    }
+}
+
+fn native_tool_result<'a>(frame: &'a Value, blocks: &[Value]) -> Option<&'a Value> {
+    let native = frame
+        .get("tool_use_result")
+        .or_else(|| frame.get("toolUseResult"))?;
+    (!native.is_null()
+        && blocks
+            .iter()
+            .filter(|block| block["type"] == "tool_result")
+            .count()
+            == 1)
+        .then_some(native)
+}
+
+fn tool_result(block: &Value, native: Option<&Value>) -> Value {
+    let mut result = json!({"content":tool_content(&block["content"])});
+    if let Some(native) = native {
+        result["details"] = json!({"native": native});
+    }
+    result
+}
+
 pub(super) fn tool_metadata(name: &str, input: &Value) -> ToolMetadata {
     let category = match name {
         "Read" => ToolCategory::Read,
@@ -66,25 +103,34 @@ pub(super) fn tokens(usage: &Value) -> TokenUsage {
     }
 }
 
-pub(super) fn history_messages(message: &Value) -> Vec<Value> {
+pub(super) fn history_messages(frame: &Value) -> Vec<Value> {
+    let message = &frame["message"];
     if let Some(text) = message.get("content").and_then(Value::as_str) {
         return vec![json!({"role":message["role"], "content":[{"type":"text", "text":text}]})];
     }
     let mut messages = Vec::new();
     let mut content = Vec::new();
-    for block in blocks(message).iter() {
+    let blocks = blocks(message);
+    let native = native_tool_result(frame, &blocks);
+    for block in blocks.iter() {
         match string(block, "type") {
-            "tool_result" => messages.push(json!({"role":"toolResult",
-                "toolCallId":block["tool_use_id"], "isError":block["is_error"].as_bool().unwrap_or(false),
-                "content":[{"type":"text","text":text(&block["content"])}]})),
+            "tool_result" => {
+                let mut result = tool_result(block, native);
+                result["role"] = "toolResult".into();
+                result["toolCallId"] = block["tool_use_id"].clone();
+                result["isError"] = block["is_error"].as_bool().unwrap_or(false).into();
+                messages.push(result);
+            }
             "tool_use" => content.push(json!({"type":"toolCall", "id":block["id"],
                 "name":block["name"], "arguments":block["input"],
-                "metadata":tool_metadata(string(block,"name"), &block["input"])})),
+                "toolMetadata":tool_metadata(string(block,"name"), &block["input"])})),
             "thinking" => content.push(json!({"type":"thinking", "thinking":block["thinking"]})),
             "text" => content.push(block.clone()),
-            "image" => content.push(json!({"type":"image", "mimeType":block["source"]["media_type"],
-                "data":block["source"]["data"]})),
-            _ => {},
+            "image" => content.push(
+                json!({"type":"image", "mimeType":block["source"]["media_type"],
+                "data":block["source"]["data"]}),
+            ),
+            _ => {}
         }
     }
     if !content.is_empty() {
@@ -244,12 +290,23 @@ impl Events {
                         _ => {},
                     }
                 }
+                if let [block] = content.as_ref()
+                    && let Some(id) = frame["uuid"].as_str()
+                    && matches!(block["type"].as_str(), Some("text" | "thinking"))
+                {
+                    self.activity(WorkerActivity::AssistantItem {
+                        source: crate::MessageSource { id: id.into(), turn_id: None },
+                        final_content: Some(block.clone()),
+                    });
+                }
             }
             "user" => {
-                for block in blocks(&frame["message"]).iter() {
+                let blocks = blocks(&frame["message"]);
+                let native = native_tool_result(frame, &blocks);
+                for block in blocks.iter() {
                     if block["type"] == "tool_result" && self.tools.remove(string(block,"tool_use_id")) {
                         self.activity(WorkerActivity::ToolFinished { id:string(block,"tool_use_id").into(),
-                            result:json!({"content":[{"type":"text","text":text(&block["content"])}]}),
+                            result:tool_result(block, native),
                             is_error:block["is_error"].as_bool().unwrap_or(false) });
                     }
                 }
@@ -271,28 +328,6 @@ impl Events {
             "tool_progress" => self.activity(WorkerActivity::ToolUpdated {
                 id:string(frame,"tool_use_id").into(),
                 content:json!([{"type":"text","text":format!("Running for {}s", frame["elapsed_time_seconds"])}]) }),
-            "rate_limit_event" => {
-                let info = &frame["rate_limit_info"];
-                if info["rateLimitType"].as_str() == Some("seven_day")
-                    && let Some(utilization) = info["utilization"].as_f64()
-                {
-                    let used_percent = if utilization <= 1.0 {
-                        utilization * 100.0
-                    } else {
-                        utilization
-                    };
-                    if let Some(weekly) = crate::AccountUsageWindow::from_used_percent(
-                        used_percent,
-                        info["resetsAt"].as_i64(),
-                    ) {
-                        self.activity(WorkerActivity::AccountUsageChanged(
-                            crate::AccountUsage {
-                                weekly: Some(weekly),
-                            },
-                        ));
-                    }
-                }
-            },
             "system" => match string(frame,"subtype") {
                 "task_started" | "task_progress" | "task_notification" => {
                     self.child_task(frame);

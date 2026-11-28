@@ -1,6 +1,18 @@
-use gpui::Pixels;
+use gpui::{Div, Pixels, Styled as _, div};
 
 use crate::app::ui::theme::theme;
+
+pub(crate) fn chat_column() -> Div {
+    div()
+        .w_full()
+        .max_w(theme().size(950.0 + 2.0 * 40.0))
+        .mx_auto()
+        .px(theme().size(40.0))
+}
+
+pub(crate) fn transcript_column() -> Div {
+    chat_column().px(theme().size(40.0) - super::grid::transcript_inset())
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LayoutMode {

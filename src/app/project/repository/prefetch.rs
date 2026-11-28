@@ -9,14 +9,27 @@ use super::{FarcasterApp, RepositoryObservation, observations::ScanResult, prefe
 use crate::app::project::trust::repository_execution_allowed;
 use crate::repository::{BackendPreference, RepositoryBackend};
 
-fn observe_if_allowed(
-    allowed: impl FnOnce() -> Result<bool, String>,
-    scan: impl FnOnce() -> Option<ScanResult>,
-) -> Option<ScanResult> {
-    allowed().unwrap_or(false).then(scan).flatten()
+enum PrefetchResult {
+    Untrusted,
+    Scanned(Option<ScanResult>),
 }
 
-fn observe_background(project: &Path, preference: BackendPreference) -> Option<ScanResult> {
+fn observe_if_allowed(
+    mut allowed: impl FnMut() -> Result<bool, String>,
+    scan: impl FnOnce() -> Option<ScanResult>,
+) -> PrefetchResult {
+    if !allowed().unwrap_or(false) {
+        return PrefetchResult::Untrusted;
+    }
+    let result = scan();
+    if allowed().unwrap_or(false) {
+        PrefetchResult::Scanned(result)
+    } else {
+        PrefetchResult::Untrusted
+    }
+}
+
+fn observe_background(project: &Path, preference: BackendPreference) -> PrefetchResult {
     observe_if_allowed(
         || repository_execution_allowed(project),
         || {
@@ -37,6 +50,16 @@ fn observe_background(project: &Path, preference: BackendPreference) -> Option<S
 }
 
 impl FarcasterApp {
+    fn repository_project_is_known(&self, project: &Path) -> bool {
+        !self.project.excluded.iter().any(|p| p == project)
+            && (self.project.registered.iter().any(|p| p == project)
+                || self
+                    .sessions
+                    .visible
+                    .iter()
+                    .any(|row| row.project == project))
+    }
+
     fn known_repository_projects(&self) -> Vec<PathBuf> {
         let mut projects = self.project.registered.clone();
         projects.extend(
@@ -137,15 +160,11 @@ impl FarcasterApp {
         {
             return;
         }
-        if !self.known_repository_projects().contains(&project) {
+        if !self.repository_project_is_known(&project) {
             self.forget_repository_project(&project);
             return;
         }
         self.project.repository.warmed.insert(project.clone());
-        if !repository_execution_allowed(&project).unwrap_or(false) {
-            self.project.repository.observations.forget(&project);
-            return;
-        }
         let preference = preference_for(&self.project.repository.preferences, &project);
         let Some(ticket) = self
             .project
@@ -165,14 +184,15 @@ impl FarcasterApp {
                     return;
                 }
                 let eligible = project != this.project.repository.project
-                    && this.known_repository_projects().contains(&project)
-                    && preference_for(&this.project.repository.preferences, &project) == preference
-                    && repository_execution_allowed(&project).unwrap_or(false);
-                if !eligible {
+                    && this.repository_project_is_known(&project)
+                    && preference_for(&this.project.repository.preferences, &project) == preference;
+                if !eligible || matches!(scanned, PrefetchResult::Untrusted) {
                     this.project.repository.observations.forget(&project);
                     return;
                 }
-                let Some(scanned) = scanned else { return };
+                let PrefetchResult::Scanned(Some(scanned)) = scanned else {
+                    return;
+                };
                 if let Some(observation) = RepositoryObservation::from_scan(preference, scanned) {
                     this.project
                         .repository

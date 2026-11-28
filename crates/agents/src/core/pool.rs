@@ -31,19 +31,28 @@ use family::{FamilyFence, family_is_stopping};
 
 const MAX_TERMINAL_HISTORY: usize = 64;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkerPoolUpdate {
+    Catalog,
+    Status(String),
+}
+
 #[derive(Clone)]
 pub struct WorkerPool {
     inner: Arc<PoolInner>,
 }
 
+type StatusSink = Arc<dyn Fn(farcaster_sessions::AppSessionId, WorkerStatus) + Send + Sync>;
+
 struct PoolInner {
+    status_sink: std::sync::OnceLock<StatusSink>,
     factories: BTreeMap<Backend, Arc<dyn WorkerSessionFactory>>,
     allowed_projects: Mutex<BTreeSet<std::path::PathBuf>>,
     app_proxy: Mutex<Option<String>>,
     concurrency: WorkerConcurrency,
     process_limit: usize,
-    updates: async_channel::Sender<()>,
-    update_receiver: async_channel::Receiver<()>,
+    updates: async_channel::Sender<WorkerPoolUpdate>,
+    update_receiver: async_channel::Receiver<WorkerPoolUpdate>,
     state: Mutex<PoolState>,
 }
 
@@ -133,6 +142,7 @@ impl WorkerPool {
         let (updates, update_receiver) = async_channel::unbounded();
         Ok(Self {
             inner: Arc::new(PoolInner {
+                status_sink: Default::default(),
                 factories,
                 allowed_projects: Mutex::new(BTreeSet::from([allowed_project])),
                 app_proxy: Mutex::new(None),
@@ -145,7 +155,14 @@ impl WorkerPool {
         })
     }
 
-    pub fn updates(&self) -> async_channel::Receiver<()> {
+    pub fn set_status_sink(&self, sink: StatusSink) -> Result<(), String> {
+        self.inner
+            .status_sink
+            .set(sink)
+            .map_err(|_| "worker status sink already installed".into())
+    }
+
+    pub fn updates(&self) -> async_channel::Receiver<WorkerPoolUpdate> {
         self.inner.update_receiver.clone()
     }
 
@@ -302,6 +319,17 @@ impl WorkerPool {
             .lock()
             .map_err(|_| "worker proxy configuration is unavailable".to_owned())? = proxy;
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn delayed_setup_completion_for_test(&self, id: &str) -> Result<impl Drop, String> {
+        let state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| "worker pool state is unavailable")?;
+        let record = state.records.get(id).ok_or("worker is unavailable")?;
+        Ok(setup::SetupCompletion(record.setup_done.clone()))
     }
 
     #[cfg(test)]
@@ -617,6 +645,36 @@ impl WorkerPool {
         state.records.values().map(snapshot).collect()
     }
 
+    /// Return a live update only when one worker owns this session. Shared bindings
+    /// need the same ordering and outcome reconciliation as full catalog discovery.
+    pub fn status_snapshot(&self, id: &str) -> Result<Option<WorkerSnapshot>, String> {
+        let state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| "worker pool state is unavailable")?;
+        let Some(record) = state.records.get(id) else {
+            return Ok(None);
+        };
+        let worker = snapshot(record)?;
+        let Some(key) = worker.session_key.as_ref() else {
+            return Ok(None);
+        };
+        for (other_id, other) in &state.records {
+            if other_id == id || other.launch.project != worker.project {
+                continue;
+            }
+            let binding = other
+                .session_binding
+                .lock()
+                .map_err(|_| "worker session binding is unavailable")?;
+            if binding.as_ref().and_then(|owner| owner.key.as_ref()) == Some(key) {
+                return Ok(None);
+            }
+        }
+        Ok(Some(worker))
+    }
+
     pub fn stop_session_family(
         &self,
         project: &Path,
@@ -699,9 +757,12 @@ impl WorkerPool {
                     current.status = WorkerStatus::Stopped;
                     super::activity::record(&current.project);
                     current.pending_input = None;
+                    let _ = self
+                        .inner
+                        .updates
+                        .try_send(WorkerPoolUpdate::Status(id.clone()));
                 }
             }
-            notify(&self.inner.updates);
             drop(state);
             for (_, setup_done, _, _) in &setup_waiters {
                 wait_for_setup(setup_done)?;
@@ -729,6 +790,10 @@ impl WorkerPool {
                 current.status = WorkerStatus::Stopped;
                 super::activity::record(&current.project);
                 current.pending_input = None;
+                let _ = self
+                    .inner
+                    .updates
+                    .try_send(WorkerPoolUpdate::Status(id.clone()));
             }
             let current = snapshot(record)?;
             if current.status != WorkerStatus::Stopped
@@ -738,9 +803,6 @@ impl WorkerPool {
                     format!("worker {} process cleanup was not confirmed", current.id)
                 }));
             }
-        }
-        if !ids.is_empty() {
-            notify(&self.inner.updates);
         }
         if failures.is_empty() {
             Ok(ids.len())
@@ -852,10 +914,7 @@ impl WorkerPool {
             if let Ok(mut cancelled) = record.setup_cancelled.lock() {
                 *cancelled = false;
             }
-            let (setup_done, _) = &*record.setup_done;
-            if let Ok(mut setup_done) = setup_done.lock() {
-                *setup_done = false;
-            }
+            record.setup_done = Arc::new((Mutex::new(false), Condvar::new()));
             if let Ok(mut current) = record.snapshot.lock() {
                 current.status = WorkerStatus::Pending;
                 super::activity::record(&current.project);
@@ -917,8 +976,8 @@ fn find_pending_child<'a>(
     })
 }
 
-fn notify(updates: &async_channel::Sender<()>) {
-    let _ = updates.try_send(());
+fn notify(updates: &async_channel::Sender<WorkerPoolUpdate>) {
+    let _ = updates.try_send(WorkerPoolUpdate::Catalog);
 }
 
 impl Drop for PoolInner {
@@ -1018,14 +1077,15 @@ fn retire_idle_for_new_worker(state: &mut PoolState, process_limit: usize) -> Re
         .collect::<Vec<_>>();
     if ids.len() < retire
         && let Some(error) = state.records.values().find_map(|record| {
-            (record.thread.is_none() && !record.cleanup_confirmed.load(Ordering::SeqCst)).then(
-                || {
-                    snapshot(record)
-                        .ok()
-                        .and_then(|snapshot| snapshot.error)
-                        .unwrap_or_else(|| "worker cleanup is not confirmed".into())
-                },
-            )
+            (record.thread.is_none()
+                && !record.cleanup_confirmed.load(Ordering::SeqCst)
+                && record.setup_done.0.lock().is_ok_and(|done| *done))
+            .then(|| {
+                snapshot(record)
+                    .ok()
+                    .and_then(|snapshot| snapshot.error)
+                    .unwrap_or_else(|| "worker cleanup is not confirmed".into())
+            })
         })
     {
         return Err(error);

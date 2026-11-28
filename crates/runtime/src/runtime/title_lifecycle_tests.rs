@@ -233,6 +233,7 @@ fn serve(
                 }
                 json!({"thread":{"id":if ephemeral {"title-thread"} else {"main-thread"}, "cwd":project, "name":state.name, "turns":[]}})
             }
+            "account/read" => json!({"account":null}),
             "thread/goal/get" => json!({"goal":null}),
             "turn/start" => json!({"turn":{"id":"turn-1", "status":"inProgress"}}),
             "thread/queue/add" => json!({"queuedSubmission": {

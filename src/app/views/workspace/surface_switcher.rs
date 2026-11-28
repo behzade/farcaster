@@ -1,9 +1,8 @@
+use crate::app::ui::primitives::SelectionStyle as _;
 use crate::{
     app::ui::assets::AppIcon,
     app::ui::layout::{TRAFFIC_LIGHT_INSET, shows_left_inline},
-    app::ui::primitives::{
-        AppIconSize, AppTooltip as _, ButtonTone, app_icon, icon_button, icon_control,
-    },
+    app::ui::primitives::{AppIconSize, AppTooltip as _, app_icon, icon_control, on_press_control},
     app::ui::theme::theme,
     app::workspace::editor::effective_editor_choice,
     app::{AppSurface, FarcasterApp, views::session_rail::project_label},
@@ -52,46 +51,29 @@ impl FarcasterApp {
         });
 
         let bar_entity = entity.clone();
-        let rail_toggle = entity.clone();
         div()
             .id("workspace-bar")
             .debug_selector(|| "workspace-bar".into())
             .relative()
-            .h(theme().size(38.0))
+            .h(crate::app::ui::grid::header_height())
             .flex_none()
             .flex()
             .items_center()
-            .gap(theme().space.sm)
             .px(theme().size(12.0))
             .when(
                 cfg!(target_os = "macos")
                     && (!shows_left_inline(mode) || self.workspace.session_rail_hidden),
                 |bar| bar.pl(theme().size(TRAFFIC_LIGHT_INSET)),
             )
-            .border_b(theme().border)
-            .border_color(theme().colors.surface)
-            .bg(theme().colors.canvas)
+            .bg(theme().colors.composer)
             .on_hover(move |hovered, _window, cx| {
                 let _ = bar_entity.update(cx, |app, cx| {
                     app.set_workspace_bar_hovered(*hovered, cx);
                 });
             })
-            .when(
-                shows_left_inline(mode) && self.workspace.session_rail_hidden,
-                |bar| {
-                    bar.child(icon_button(
-                        "toggle-session-rail",
-                        AppIcon::SidebarLeft,
-                        "Show sessions",
-                        ButtonTone::Quiet,
-                        move |_, cx| {
-                            let _ = rail_toggle.update(cx, |this, cx| this.toggle_session_rail(cx));
-                        },
-                    ))
-                },
-            )
             .child(
                 div()
+                    .debug_selector(|| "workspace-breadcrumb".into())
                     .min_w_0()
                     .flex_1()
                     .flex()
@@ -99,42 +81,55 @@ impl FarcasterApp {
                     .gap(theme().space.sm)
                     .overflow_hidden()
                     .whitespace_nowrap()
-                    .text_size(theme().type_scale.caption)
+                    .text_size(theme().type_scale.body)
                     .child(
                         app_icon(AppIcon::Folder, AppIconSize::Inline)
                             .text_color(theme().colors.subtle),
                     )
                     .child(
                         div()
-                            .id("workspace-project-new-session")
-                            .role(gpui::Role::Button)
-                            .aria_label(project_hint.clone())
-                            .tab_index(0)
-                            .cursor_pointer()
-                            .text_color(theme().colors.muted)
-                            .hover(|link| link.text_color(theme().colors.text))
-                            .focus_visible(|link| link.text_color(theme().colors.indicator))
-                            .app_tooltip(project_hint.clone())
-                            .child(project)
-                            .on_click(move |_, window, cx| {
-                                let _ = project_entity.update(cx, |app, cx| {
-                                    app.new_session(project_path.clone(), window, cx);
-                                });
-                            }),
-                    )
-                    .when_some(title, |workspace, title| {
-                        workspace
-                            .child(div().text_color(theme().colors.subtle).child("/"))
+                            .min_w_0()
+                            .flex()
+                            .items_center()
                             .child(
                                 div()
-                                    .min_w_0()
-                                    .overflow_hidden()
-                                    .text_ellipsis()
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(theme().colors.text)
-                                    .child(title),
+                                    .id("workspace-project-new-session")
+                                    .role(gpui::Role::Button)
+                                    .aria_label(project_hint.clone())
+                                    .tab_index(0)
+                                    .cursor_pointer()
+                                    .text_color(theme().colors.muted)
+                                    .hover(|link| link.text_color(theme().colors.text))
+                                    .focus_visible(|link| link.text_color(theme().colors.indicator))
+                                    .app_tooltip(project_hint.clone())
+                                    .child(project)
+                                    .on_click(move |_, window, cx| {
+                                        let _ = project_entity.update(cx, |app, cx| {
+                                            app.new_session(project_path.clone(), window, cx);
+                                        });
+                                    }),
                             )
-                    })
+                            .when_some(title, |workspace, title| {
+                                workspace
+                                    .child(
+                                        div()
+                                            .px(theme().size(2.0))
+                                            .text_color(theme().colors.subtle)
+                                            .child("/"),
+                                    )
+                                    .child(
+                                        div()
+                                            .debug_selector(|| "workspace-session-title".into())
+                                            .min_w_0()
+                                            .overflow_hidden()
+                                            .text_ellipsis()
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .text_color(theme().colors.text)
+                                            .app_tooltip(title.clone())
+                                            .child(title),
+                                    )
+                            }),
+                    )
                     .child(
                         div()
                             .flex_1()
@@ -144,14 +139,17 @@ impl FarcasterApp {
                             }),
                     ),
             )
-            .child(self.render_workspace_panels(mode, entity.clone()))
             .child(
                 div()
-                    .w(theme().size(1.0))
-                    .h(theme().space.md)
-                    .bg(theme().colors.surface),
+                    .debug_selector(|| "workspace-navigation".into())
+                    .flex_none()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .ml(theme().space.md)
+                    .child(self.render_workspace_panels(mode, entity.clone()))
+                    .child(self.render_surface_switcher(entity, harness_icon)),
             )
-            .child(self.render_surface_switcher(entity, harness_icon))
             .when(self.workspace.voice.recording(), |bar| {
                 bar.child(
                     div()
@@ -198,12 +196,16 @@ impl FarcasterApp {
         let editor =
             effective_editor_choice(self.settings.editor_choice, &self.workspace_project());
         div()
+            .id("workspace-surface-tabs")
+            .role(gpui::Role::TabList)
+            .aria_label("Workspace views")
             .h_full()
             .flex()
             .items_center()
             .gap(theme().size(2.0))
             .child(surface_control(
                 "show-chat-surface",
+                "Chat",
                 chat_hint,
                 harness_icon,
                 self.workspace.surface == AppSurface::Chat,
@@ -212,6 +214,7 @@ impl FarcasterApp {
             ))
             .child(surface_control(
                 "show-editor-surface",
+                "Editor",
                 format!(
                     "{} ({modifier}+E in app views; {} anywhere)",
                     editor.label(),
@@ -226,6 +229,7 @@ impl FarcasterApp {
             ))
             .child(surface_control(
                 "show-terminal-surface",
+                "Terminal",
                 format!(
                     "Terminal ({modifier}+T in app views; {} anywhere)",
                     crate::app::ui::navigation::command_key(
@@ -244,38 +248,42 @@ type SurfaceAction = fn(&mut FarcasterApp, &mut Window, &mut Context<FarcasterAp
 
 fn surface_control(
     id: &'static str,
+    caption: &'static str,
     label: impl Into<gpui::SharedString>,
     icon: AppIcon,
     active: bool,
     entity: WeakEntity<FarcasterApp>,
     action: SurfaceAction,
 ) -> gpui::Stateful<gpui::Div> {
-    icon_control(id, label)
-        .relative()
-        .w(theme().size(34.0))
-        .h_full()
-        .rounded_none()
-        .text_color(theme().colors.muted)
-        .hover(move |control| {
-            control.bg(theme().colors.highlight).text_color(if active {
-                theme().colors.indicator
-            } else {
-                theme().colors.text
+    let click_entity = entity.clone();
+    on_press_control(
+        icon_control(id, label)
+            .role(gpui::Role::Tab)
+            .debug_selector(move || id.into())
+            .aria_selected(active)
+            .relative()
+            .w_auto()
+            .px(theme().space.sm)
+            .gap(theme().space.xs)
+            .h_full()
+            .rounded_none()
+            .text_color(theme().colors.muted)
+            .hover(|control| {
+                control
+                    .bg(theme().colors.highlight)
+                    .text_color(theme().colors.text)
             })
-        })
-        .when(active, |control| {
-            control.text_color(theme().colors.indicator).child(
-                div()
-                    .absolute()
-                    .bottom_0()
-                    .left_0()
-                    .right_0()
-                    .h(theme().size(2.0))
-                    .bg(theme().colors.indicator),
-            )
-        })
-        .child(app_icon(icon, AppIconSize::Control))
-        .on_click(move |_, window, cx| {
+            .selection_style(active)
+            .child(app_icon(icon, AppIconSize::Control))
+            .child(div().text_size(theme().type_scale.caption).child(caption)),
+        move |window, cx| {
+            let _ = click_entity.update(cx, |app, cx| action(app, window, cx));
+        },
+    )
+    .on_key_down(move |event, window, cx| {
+        if crate::app::ui::primitives::activates_button(event) {
+            cx.stop_propagation();
             let _ = entity.update(cx, |app, cx| action(app, window, cx));
-        })
+        }
+    })
 }

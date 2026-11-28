@@ -1,13 +1,57 @@
-use std::path::{Path, PathBuf};
-
-use gpui::{ClickEvent, MouseButton, WeakEntity};
+use gpui::{
+    ClickEvent, IntoElement as _, MouseButton, ParentElement as _, Styled as _, WeakEntity,
+};
 use gpui_component::text::TextView;
-use url::Url;
 
-use crate::app::FarcasterApp;
+use crate::app::{
+    FarcasterApp,
+    attachment::{self, AttachmentSource},
+};
 
 pub(super) fn with_file_links(text: TextView, entity: WeakEntity<FarcasterApp>) -> TextView {
-    text.on_link_click(move |url, event, window, cx| {
+    let code_entity = entity.clone();
+    text.code_block_actions(move |block, _, _| {
+        let mut actions = gpui::div()
+            .flex()
+            .gap_1()
+            .child(super::copy_code::CopyCodeButton::new(block.code()));
+        if let Some(rule) = block
+            .lang()
+            .map(|language| attachment::resolve(AttachmentSource::Code(&language)))
+            && let Some(source_action) = rule.source
+        {
+            for (id, icon, label, action) in [
+                (
+                    "open-html-browser",
+                    crate::app::ui::assets::AppIcon::Eye,
+                    "Open HTML in browser",
+                    rule.open,
+                ),
+                (
+                    "edit-html-source",
+                    crate::app::ui::assets::AppIcon::Code,
+                    "Edit HTML source",
+                    source_action,
+                ),
+            ] {
+                let entity = code_entity.clone();
+                let source = block.code().to_string();
+                actions = actions.child(crate::app::ui::primitives::icon_button(
+                    id,
+                    icon,
+                    label,
+                    crate::app::ui::primitives::ButtonTone::Quiet,
+                    move |window, cx| {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.open_html_code(source.clone(), action, window, cx)
+                        });
+                    },
+                ));
+            }
+        }
+        actions.into_any_element()
+    })
+    .on_link_click(move |url, event, window, cx| {
         let activate = match event {
             ClickEvent::Mouse(click) => {
                 matches!(click.up.button, MouseButton::Left | MouseButton::Middle)
@@ -19,59 +63,20 @@ pub(super) fn with_file_links(text: TextView, entity: WeakEntity<FarcasterApp>) 
             return;
         }
         let _ = entity.update(cx, |this, cx| {
-            if let Some((path, line)) = local_file_target(url, &this.workspace_project()) {
-                this.open_file_editor_at_line(path, line, window, cx);
-            } else {
-                cx.open_url(url);
-            }
+            this.open_transcript_link(url, window, cx);
         });
     })
 }
 
-fn local_file_target(link: &str, project: &Path) -> Option<(PathBuf, Option<u64>)> {
-    if link.is_empty() || link.starts_with('#') || link.starts_with("//") {
-        return None;
-    }
-    let (path, fragment) = link
-        .split_once('#')
-        .map_or((link, None), |(path, fragment)| (path, Some(fragment)));
-    let fragment_line = fragment.and_then(|fragment| {
-        let start = fragment.strip_prefix('L')?.split('-').next()?;
-        positive_line(start)
-    });
-    let (path, line) = split_line_suffix(path);
-    let url = match Url::parse(path) {
-        Ok(url) => url,
-        Err(url::ParseError::RelativeUrlWithoutBase) => {
-            Url::from_directory_path(project).ok()?.join(path).ok()?
-        }
-        Err(_) => return None,
-    };
-    if url.scheme() != "file" {
-        return None;
-    }
-    Some((url.to_file_path().ok()?, fragment_line.or(line)))
+pub(super) fn with_transcript_images(
+    text: TextView,
+    entity: WeakEntity<FarcasterApp>,
+    cx: &gpui::App,
+) -> TextView {
+    let project = entity
+        .upgrade()
+        .map(|entity| entity.read(cx).workspace_project())
+        .unwrap_or_default();
+    with_file_links(text, entity)
+        .image_source(move |uri| crate::app::workspace::files::image_source(uri.as_ref(), &project))
 }
-
-fn positive_line(value: &str) -> Option<u64> {
-    value.parse().ok().filter(|line| *line > 0)
-}
-
-fn split_line_suffix(path: &str) -> (&str, Option<u64>) {
-    let Some((prefix, last)) = path.rsplit_once(':') else {
-        return (path, None);
-    };
-    let Some(last) = positive_line(last) else {
-        return (path, None);
-    };
-    if let Some((path, line)) = prefix.rsplit_once(':')
-        && let Some(line) = positive_line(line)
-    {
-        return (path, Some(line));
-    }
-    (prefix, Some(last))
-}
-
-#[cfg(test)]
-#[path = "links_tests.rs"]
-mod tests;

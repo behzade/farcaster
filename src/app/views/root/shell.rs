@@ -7,11 +7,20 @@ use super::{super::FarcasterApp, draft, sidebar_resize::Sidebar};
 use crate::app::{
     AppSurface,
     ui::{
-        layout::{LayoutMode, composer_bottom_clearance, shows_left_inline, shows_right_inline},
-        primitives::AppTooltip as _,
+        accessibility::cached_panel,
+        layout::{
+            LayoutMode, chat_column, composer_bottom_clearance, shows_left_inline,
+            shows_right_inline,
+        },
+        primitives::{
+            AppTooltip as _, RaisedEdge, activates_button, icon_control, on_press_control,
+            raised_edge_shadow,
+        },
         theme::theme,
     },
 };
+
+const SIDEBAR_EDGE_WIDTH: f32 = 16.0;
 
 impl FarcasterApp {
     pub(super) fn render_chat_main(
@@ -51,11 +60,7 @@ impl FarcasterApp {
             })
             .when(has_conversation, |main| {
                 main.child(
-                    div()
-                        .w_full()
-                        .max_w(theme().layout.conversation_width)
-                        .mx_auto()
-                        .px(theme().space.md)
+                    chat_column()
                         .pt(theme().space.sm)
                         .pb(composer_bottom_clearance(viewport_height))
                         .flex_none()
@@ -103,6 +108,16 @@ impl FarcasterApp {
                 _ => self.render_chat_main(entity.clone(), viewport_height),
             }
         };
+        let shadows = [
+            Some(RaisedEdge::Top),
+            (shows_left_inline(mode) && !self.workspace.session_rail_hidden)
+                .then_some(RaisedEdge::Left),
+            (shows_right_inline(mode) && !self.workspace.run_panel_hidden)
+                .then_some(RaisedEdge::Right),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|edge| raised_edge_shadow(edge, native_surface && !native_surface_covered));
 
         div()
             .flex_1()
@@ -111,21 +126,40 @@ impl FarcasterApp {
             .flex()
             .flex_col()
             .child(self.render_workspace_bar(entity.clone(), mode))
-            .child(div().relative().flex_1().min_h_0().child(main).when(
-                native_surface
-                    && self.extensions.active.dialog.is_some()
-                    && !self.modal_rendered_in_native_window(),
-                |center| {
-                    center.child(
-                        div()
-                            .absolute()
-                            .left_0()
-                            .right_0()
-                            .bottom_0()
-                            .child(self.render_composer_request(entity, request_focused)),
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .when(native_surface, |center| {
+                        center
+                            .when(
+                                shows_left_inline(mode) && self.workspace.session_rail_hidden,
+                                |center| center.pl(theme().size(SIDEBAR_EDGE_WIDTH)),
+                            )
+                            .when(
+                                shows_right_inline(mode) && self.workspace.run_panel_hidden,
+                                |center| center.pr(theme().size(SIDEBAR_EDGE_WIDTH)),
+                            )
+                    })
+                    .child(main)
+                    .when(
+                        native_surface
+                            && self.extensions.active.dialog.is_some()
+                            && !self.modal_rendered_in_native_window(),
+                        |center| {
+                            center.child(
+                                div()
+                                    .absolute()
+                                    .left_0()
+                                    .right_0()
+                                    .bottom_0()
+                                    .child(self.render_composer_request(entity, request_focused)),
+                            )
+                        },
                     )
-                },
-            ))
+                    .children(shadows),
+            )
             .into_any_element()
     }
 
@@ -152,8 +186,6 @@ impl FarcasterApp {
         let layout = crate::app::infrastructure::persistence::PanelLayout {
             session_rail_hidden: self.workspace.session_rail_hidden,
             run_panel_hidden: self.workspace.run_panel_hidden,
-            notifications_collapsed: self.views.notification_panel.is_collapsed(),
-            notifications_height: self.views.notification_panel.stored_height(),
             archived_expanded: self.sessions.archived_expanded,
             archived_height: self.views.archived_panel.stored_height(),
         };
@@ -171,8 +203,10 @@ impl FarcasterApp {
         main: AnyElement,
         session_rail_width: gpui::Pixels,
         run_panel_width: gpui::Pixels,
+        accessibility_active: bool,
     ) -> AnyElement {
         div()
+            .relative()
             .size_full()
             .flex()
             .when(
@@ -186,18 +220,15 @@ impl FarcasterApp {
                             .min_w(theme().layout.session_rail_min)
                             .max_w(theme().layout.session_rail_max)
                             .flex_none()
-                            .border_r(theme().border)
-                            .border_color(theme().colors.border)
+                            .bg(theme().colors.composer)
                             .when(
                                 !(self.modal_rendered_in_native_window()
                                     && self.overlays.view.sessions),
                                 |panel| {
-                                    panel.child(
-                                        self.views
-                                            .session_rail
-                                            .clone()
-                                            .cached(gpui::StyleRefinement::default().size_full()),
-                                    )
+                                    panel.child(cached_panel(
+                                        self.views.session_rail.clone(),
+                                        accessibility_active,
+                                    ))
                                 },
                             )
                             .child(resize_handle(
@@ -216,7 +247,7 @@ impl FarcasterApp {
             .when(
                 shows_right_inline(mode) && !self.workspace.run_panel_hidden,
                 |shell| {
-                    let resize = entity;
+                    let resize = entity.clone();
                     shell.child(
                         div()
                             .relative()
@@ -224,8 +255,7 @@ impl FarcasterApp {
                             .min_w(theme().layout.run_panel_min)
                             .max_w(theme().layout.run_panel_max)
                             .flex_none()
-                            .border_l(theme().border)
-                            .border_color(theme().colors.border)
+                            .bg(theme().colors.composer)
                             .child(
                                 if self.modal_rendered_in_native_window() && self.overlays.view.run
                                 {
@@ -235,11 +265,7 @@ impl FarcasterApp {
                                 {
                                     self.views.workgraph_detail.clone().into_any_element()
                                 } else {
-                                    self.views
-                                        .run_panel
-                                        .clone()
-                                        .cached(gpui::StyleRefinement::default().size_full())
-                                        .into_any_element()
+                                    cached_panel(self.views.run_panel.clone(), accessibility_active)
                                 },
                             )
                             .child(resize_handle(
@@ -257,6 +283,14 @@ impl FarcasterApp {
                             )),
                     )
                 },
+            )
+            .when(
+                shows_left_inline(mode) && self.workspace.session_rail_hidden,
+                |shell| shell.child(expand_sidebar_control(Sidebar::Sessions, entity.clone())),
+            )
+            .when(
+                shows_right_inline(mode) && self.workspace.run_panel_hidden,
+                |shell| shell.child(expand_sidebar_control(Sidebar::SourceControl, entity)),
             )
             .into_any_element()
     }
@@ -291,5 +325,59 @@ fn resize_handle(
                 .opacity(0.0)
                 .bg(theme().colors.muted)
                 .group_hover(id, |line| line.opacity(1.0)),
+        )
+}
+
+fn expand_sidebar_control(
+    sidebar: Sidebar,
+    entity: WeakEntity<FarcasterApp>,
+) -> impl gpui::IntoElement {
+    let (group, id, label) = match sidebar {
+        Sidebar::Sessions => ("session-rail-edge", "toggle-session-rail", "Show sessions"),
+        Sidebar::SourceControl => ("run-panel-edge", "toggle-run-panel", "Show source control"),
+    };
+    let click = entity.clone();
+    let expand = move |entity: &WeakEntity<FarcasterApp>, cx: &mut gpui::App| {
+        let _ = entity.update(cx, |app, cx| match sidebar {
+            Sidebar::Sessions => app.toggle_session_rail(cx),
+            Sidebar::SourceControl => app.toggle_run_panel(cx),
+        });
+    };
+    div()
+        .id(group)
+        .debug_selector(move || group.into())
+        .absolute()
+        .top(crate::app::ui::grid::header_height())
+        .bottom_0()
+        .when(matches!(sidebar, Sidebar::Sessions), |edge| edge.left_0())
+        .when(matches!(sidebar, Sidebar::SourceControl), |edge| {
+            edge.right_0()
+        })
+        .w(theme().size(SIDEBAR_EDGE_WIDTH))
+        .flex()
+        .items_center()
+        .justify_center()
+        .group(group)
+        .child(
+            on_press_control(
+                icon_control(id, label)
+                    .debug_selector(move || id.into())
+                    .w(theme().size(8.0))
+                    .h(theme().size(96.0))
+                    .max_h_full()
+                    .rounded(theme().size(4.0))
+                    .bg(theme().colors.muted)
+                    .opacity(0.0)
+                    .group_hover(group, |button| button.opacity(1.0))
+                    .focus_visible(|button| button.opacity(1.0))
+                    .hover(|button| button.bg(theme().colors.text)),
+                move |_, cx| expand(&click, cx),
+            )
+            .on_key_down(move |event, _, cx| {
+                if activates_button(event) {
+                    cx.stop_propagation();
+                    expand(&entity, cx);
+                }
+            }),
         )
 }

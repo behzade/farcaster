@@ -9,8 +9,7 @@ use crate::{
     app::ui::theme::{MONO_FONT_FAMILY, theme},
     app::views::workgraph::{
         components::{
-            detail_action, detail_copy, detail_empty, detail_rule, detail_section, evidence_label,
-            requirement_label,
+            detail_action, detail_copy, detail_section, evidence_label, requirement_label,
         },
         contract::{PlanData, PlanLoadState},
         layout::{BoardLayoutMode, DETAIL_MIN_WIDTH, DETAIL_WIDTH},
@@ -58,16 +57,8 @@ fn render_node_identity(node: &workgraph::Node, current: bool, leaf: bool) -> im
 fn render_acceptance(node: &workgraph::Node) -> impl IntoElement {
     detail_section("Acceptance").child(
         detail_copy()
-            .text_color(if node.acceptance.is_empty() {
-                theme().colors.subtle
-            } else {
-                theme().colors.text
-            })
-            .child(if node.acceptance.is_empty() {
-                "No acceptance condition recorded.".to_owned()
-            } else {
-                node.acceptance.clone()
-            }),
+            .text_color(theme().colors.text)
+            .child(node.acceptance.clone()),
     )
 }
 
@@ -84,16 +75,10 @@ fn render_scoped_paths(node: &workgraph::Node) -> impl IntoElement {
 fn render_outcome(
     completion: workgraph::CompletionRequirement,
     outcome: Option<&workgraph::Outcome>,
-    current: bool,
 ) -> impl IntoElement {
     detail_section("Outcome")
         .p(theme().space.sm)
-        .border_l(theme().size(2.0))
-        .border_color(if current {
-            theme().colors.indicator
-        } else {
-            theme().colors.border
-        })
+        .rounded(theme().size(6.0))
         .bg(theme().colors.surface)
         .when_some(outcome, |section, step| {
             section.child(detail_copy().child(step.note.clone())).child(
@@ -108,18 +93,12 @@ fn render_outcome(
             )
         })
         .when(outcome.is_none(), |section| {
-            section
-                .child(detail_empty(if current {
-                    "Awaiting an outcome to advance."
-                } else {
-                    "No completion recorded."
-                }))
-                .child(
-                    div()
-                        .text_size(theme().type_scale.caption)
-                        .text_color(theme().colors.muted)
-                        .child(format!("Evidence: {}", requirement_label(completion))),
-                )
+            section.child(
+                div()
+                    .text_size(theme().type_scale.caption)
+                    .text_color(theme().colors.muted)
+                    .child(format!("Evidence: {}", requirement_label(completion))),
+            )
         })
 }
 
@@ -128,11 +107,7 @@ fn render_successors(
     entity: Entity<WorkGraphBoardView>,
 ) -> impl IntoElement {
     let add_successor = entity.clone();
-    let leaf = successors.is_empty();
     detail_section("Next steps")
-        .when(leaf, |section| {
-            section.child(detail_empty("Completing this node ends the branch."))
-        })
         .children(successors.into_iter().map(|successor| {
             let number = successor.number;
             let entity = entity.clone();
@@ -180,13 +155,11 @@ impl WorkGraphBoardView {
             .flex_none()
             .h_full()
             .overflow_y_scroll()
-            .px(theme().space.md)
-            .py(theme().space.md)
-            .bg(theme().colors.panel)
+            .p(theme().size(24.0))
             .when(!external && !narrow, |detail| {
                 detail
-                    .border_l(theme().border)
-                    .border_color(theme().colors.surface)
+                    .bg(theme().colors.canvas)
+                    .rounded_br(crate::app::ui::primitives::surface_radius())
             })
             .child(match (snapshot, node) {
                 (Some(snapshot), Some(node)) => {
@@ -229,7 +202,7 @@ impl WorkGraphBoardView {
                             Some(button(
                                 format!("workgraph-link-walk-{walk}"),
                                 "Attach current session",
-                                ButtonTone::Quiet,
+                                ButtonTone::Neutral,
                                 true,
                                 move |_, cx| {
                                     entity.update(cx, |this, cx| {
@@ -244,17 +217,18 @@ impl WorkGraphBoardView {
                     div()
                         .flex()
                         .flex_col()
-                        .gap(theme().space.md)
+                        .gap(theme().size(24.0))
                         .w_full()
                         .max_w(theme().size(620.0))
                         .mx_auto()
                         .child(render_node_identity(node, current, leaf))
-                        .child(render_acceptance(node))
+                        .when(!node.acceptance.is_empty(), |detail| {
+                            detail.child(render_acceptance(node))
+                        })
                         .when(!node.files.is_empty(), |detail| {
                             detail.child(render_scoped_paths(node))
                         })
-                        .child(render_outcome(node.completion, outcome, current))
-                        .child(detail_rule())
+                        .child(render_outcome(node.completion, outcome))
                         .child(render_successors(successors, entity))
                         .when_some(session_action, |detail, action| {
                             detail.child(detail_action(action))
@@ -273,13 +247,7 @@ impl WorkGraphBoardView {
                         div()
                             .text_size(theme().type_scale.body)
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("No node selected"),
-                    )
-                    .child(
-                        div()
-                            .text_size(theme().type_scale.caption)
-                            .text_color(theme().colors.subtle)
-                            .child("Choose a node to inspect its scope and outcome."),
+                            .child("Select a node"),
                     )
                     .into_any_element(),
             })
@@ -288,12 +256,6 @@ impl WorkGraphBoardView {
     pub(crate) fn render_external_detail(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let entity = cx.entity();
         match &self.state {
-            PlanLoadState::Loading => feedback(
-                "workgraph-detail-loading",
-                "Loading node…",
-                FeedbackTone::Info,
-            )
-            .into_any_element(),
             PlanLoadState::Failed(error) => {
                 feedback("workgraph-detail-error", error.clone(), FeedbackTone::Error)
                     .into_any_element()
