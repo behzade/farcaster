@@ -1,5 +1,10 @@
 use crate::Backend;
+
+const MAX_FILTERED_EVENTS_PER_POLL: usize = 256;
+
+mod accounts;
 mod acp;
+pub use accounts::{account_capabilities, logout_account, read_accounts};
 mod antigravity;
 mod auxiliary;
 mod backend;
@@ -36,13 +41,33 @@ mod shell_environment;
 mod sign_in;
 mod stream_text;
 use backend::for_backend;
-pub use sign_in::{SignIn, SignInEvent, sign_in, sign_in_required, supports_sign_in};
+pub fn cli_command_hint(backend: Backend, name: &str) -> Option<&'static str> {
+    for_backend(backend).cli_command_hint(name)
+}
+
+pub fn model_display_name(harness: Backend, model: &crate::extensions::Model) -> String {
+    let name = if model.name.is_empty() {
+        &model.id
+    } else {
+        &model.name
+    };
+    match harness {
+        Backend::Cursor | Backend::Antigravity => acp::display_model_name(name),
+        _ => name.to_owned(),
+    }
+}
+pub use sign_in::{
+    SignIn, SignInEvent, refresh_login, sign_in, sign_in_methods, sign_in_required,
+    sign_in_with_method, supports_sign_in, terminal_sign_in,
+};
 pub fn profile_data_environment_key(backend: Backend) -> Option<&'static str> {
     for_backend(backend).profile_data_environment_key()
 }
 pub use session_storage::{
     delete_session_family, delete_session_family_with_config, discover_sessions_for,
-    discover_sessions_for_profile, load_session_history, load_session_history_for_profile,
+    discover_sessions_for_profile, historical_worker_status, load_session_history,
+    load_session_history_for_import, load_session_history_for_profile,
+    load_session_history_with_page, load_session_history_with_preview, local_history_revision,
     move_session_family, move_session_family_with_config, session_fork_source,
     supports_session_move, validate_session_move, warm_session_history_for_profile,
 };
@@ -264,7 +289,7 @@ pub fn spawn_session(
     launch: crate::SessionLaunch,
 ) -> Result<Box<dyn crate::SessionTransport>, String> {
     use queued_session::SteeringBoundary;
-    let policy = for_backend(launch.harness).steering_boundary();
+    let policy = for_backend(launch.harness).steering_boundary(config);
     let hook = matches!(
         policy,
         SteeringBoundary::Held | SteeringBoundary::StopAfterBatch

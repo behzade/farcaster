@@ -6,35 +6,6 @@ use crate::agents::{
 use crate::runtime::tests::owner_without_process;
 
 #[test]
-fn account_usage_event_updates_the_runtime_snapshot() {
-    let mut snapshot = RuntimeSnapshot::default();
-    let event = json!({
-        "type": "account_usage_changed",
-        "usage": {
-            "weekly": {
-                "remainingPercent": 68.0,
-                "resetsAt": 1_788_766_092_i64
-            }
-        }
-    });
-
-    assert!(update_account_usage_from_event(
-        &mut snapshot,
-        &SessionActivityKind::AccountUsageChanged,
-        &event,
-    ));
-    assert_eq!(
-        snapshot
-            .account_usage
-            .weekly
-            .expect("fixture value")
-            .remaining_percent,
-        68.0
-    );
-    assert!(snapshot.account_usage_observed_at.is_some());
-}
-
-#[test]
 fn missing_usage_preserves_known_metrics() {
     let previous = json!({
         "tokens": {"input": 100, "output": 20, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 120},
@@ -433,4 +404,19 @@ fn stale_model_failure_does_not_reject_a_newer_startup_choice() {
     assert!(owner.deferred_prompt().is_some());
     assert!(owner.snapshot.pending_initial_model);
     assert!(owner.pending_session_controls.model_pending());
+}
+
+#[test]
+fn occupancy_updates_can_reset_to_zero_without_changing_session_totals() {
+    let mut stats = json!({"tokens":{"totalTokens":300}});
+    for (used, percent) in [(80, 20.0), (0, 0.0)] {
+        let update = json!({"type":"context_usage_update","contextWindow":400,"contextUsed":used});
+        assert!(update_context_from_event(&mut stats, &update));
+        assert!(!update_tokens_from_event(&mut stats, &update));
+        assert_eq!(
+            stats["contextUsage"],
+            json!({"tokens":used,"contextWindow":400,"percent":percent})
+        );
+        assert_eq!(stats["tokens"]["totalTokens"], 300);
+    }
 }

@@ -42,7 +42,7 @@ impl FarcasterApp {
         agent_launch: crate::agents::AgentLaunchConfig,
         repository_execution_allowed: bool,
         workgraph_updates: async_channel::Receiver<()>,
-        worker_updates: async_channel::Receiver<()>,
+        worker_updates: async_channel::Receiver<crate::agents::WorkerPoolUpdate>,
         notice_board: mcp_server::NoticeBoard,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -56,13 +56,11 @@ impl FarcasterApp {
             crate::app::infrastructure::performance::StartupTiming::new("app.spawn_runtime");
         let runtime = RuntimeHandle::spawn(
             project.clone(),
+            persisted.initial_draft.clone(),
             persisted
-                .drafts
-                .iter()
-                .find(|draft| draft.id == persisted.selected_draft)
-                .expect("startup draft is registered")
-                .clone(),
-            None,
+                .initial_session
+                .as_ref()
+                .map(SessionSummary::target),
             agent_launch,
             runtime_host::host(cx.background_executor().clone()),
         );
@@ -89,7 +87,7 @@ impl FarcasterApp {
         project: PathBuf,
         runtime: RuntimeHandle,
         workgraph_updates: async_channel::Receiver<()>,
-        worker_updates: async_channel::Receiver<()>,
+        worker_updates: async_channel::Receiver<crate::agents::WorkerPoolUpdate>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -104,11 +102,12 @@ impl FarcasterApp {
                 projects: vec![project.clone()],
                 ..Default::default()
             },
+            initial_draft: draft.clone(),
+            initial_session: None,
             drafts: vec![draft],
             error: None,
             session_order: Vec::new(),
             session_folders: Default::default(),
-            selected_draft: draft_id.clone(),
             preferred_harness: Some(crate::agents::Backend::Pi),
             preferred_profile_id: None,
             draft_session_ids: HashMap::new(),
@@ -145,7 +144,7 @@ impl FarcasterApp {
         project: PathBuf,
         repository_execution_allowed: bool,
         workgraph_updates: async_channel::Receiver<()>,
-        worker_updates: async_channel::Receiver<()>,
+        worker_updates: async_channel::Receiver<crate::agents::WorkerPoolUpdate>,
         notice_board: mcp_server::NoticeBoard,
         persisted: persisted::PersistedState,
         runtime: RuntimeHandle,
@@ -166,6 +165,7 @@ impl FarcasterApp {
             workgraph_updates,
             worker_updates,
             notice_board.updates(),
+            window.window_handle(),
             cx,
         );
         let performance = tasks::start_performance_monitor(window, cx);
@@ -199,9 +199,14 @@ impl FarcasterApp {
 
         let mut this = Self {
             runtime,
+            accounts: Arc::default(),
             snapshot: Arc::new(RuntimeSnapshot {
                 status: "Starting".into(),
                 project: project.clone(),
+                selected_session: persisted
+                    .initial_session
+                    .as_ref()
+                    .map(|session| session.path.clone()),
                 ..RuntimeSnapshot::default()
             }),
             runtime_generation: 0,
@@ -210,6 +215,9 @@ impl FarcasterApp {
                 registered: persisted.projects.projects,
                 excluded: persisted.projects.excluded_projects,
                 repository,
+                navigation_trust: None,
+                trust_display: None,
+                trust_display_task: None,
                 trust_error: None,
                 trust_project: None,
                 trust_backend: None,
@@ -228,8 +236,14 @@ impl FarcasterApp {
                 group_drop_target: None,
                 drafts: persisted.drafts,
                 draft_session_ids: persisted.draft_session_ids,
+                draft_receipts: session::state_writer::observe_draft_receipts(cx),
+                allocating_drafts: HashMap::new(),
                 pending_draft_saves: HashSet::new(),
-                selected_draft: Some(persisted.selected_draft),
+                pending_folder_drafts: HashMap::new(),
+                selected_draft: persisted
+                    .initial_session
+                    .is_none()
+                    .then_some(persisted.initial_draft.id),
                 preferred_harness: persisted.preferred_harness,
                 preferred_profile_id: persisted.preferred_profile_id,
                 submitted_drafts: persisted.submitted_drafts,
@@ -240,6 +254,7 @@ impl FarcasterApp {
                 editing_title: None,
                 pending_titles: HashMap::new(),
                 pending_title_focus: false,
+                archive_writes: Default::default(),
                 pending_archive: None,
                 deleting_folders: HashMap::new(),
                 pending_delete: None,
@@ -262,6 +277,7 @@ impl FarcasterApp {
                 input: inputs.composer,
                 decorations: inputs.composer_decorations,
                 project_files: Vec::new(),
+                project_files_error: None,
                 project_files_project: None,
                 project_files_loading: None,
                 sessions: persisted.composer_sessions,
@@ -385,10 +401,6 @@ impl FarcasterApp {
                 workgraph_detail: regions.workgraph_detail,
                 workgraph_sidebar: regions.workgraph_sidebar,
                 workgraph_inspector_issue: None,
-                notification_panel: ui::primitives::ResizeState::restored(
-                    persisted.panel_layout.notifications_height,
-                    persisted.panel_layout.notifications_collapsed,
-                ),
                 archived_panel: ui::primitives::ResizeState::restored(
                     persisted.panel_layout.archived_height,
                     !persisted.panel_layout.archived_expanded,
@@ -400,7 +412,9 @@ impl FarcasterApp {
                 modal: Default::default(),
                 notices: Default::default(),
                 view: Default::default(),
+                command_detail: None,
                 image_preview: None,
+                image_preview_task: None,
                 image_preview_focus: cx.focus_handle(),
                 image_preview_return_focus: None,
                 sheet_focus: cx.focus_handle(),
@@ -410,6 +424,14 @@ impl FarcasterApp {
             lifecycle: infrastructure::AppLifecycle {
                 performance_monitor: performance.monitor,
                 pending_session_switch: None,
+                switch_sequence: 0,
+                navigation_intent: 0,
+                opening_local: None,
+                switch_paint: None,
+                awaiting_switch_route: None,
+                awaiting_draft_snapshot: None,
+                switch_recovery: None,
+                requested_session_key: None,
                 pending_quit: None,
                 saving_before_quit: false,
                 _performance_task: performance.task,

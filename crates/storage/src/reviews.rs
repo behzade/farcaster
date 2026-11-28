@@ -226,8 +226,6 @@ fn register_caller_binding_in(
                 |row| row.get(0),
             )
             .map_err(|error| format!("read caller family: {error}"))?;
-        // Ordinary refreshes preserve the stored family, including a parent ID
-        // replaced by a merge. A new child still needs an atomic attachment.
         if !linked {
             return Err("worker parent session is not bound yet".into());
         }
@@ -253,6 +251,9 @@ fn register_caller_session_in(
             != Some((caller.backend, caller.session.clone()))
     {
         return Err("caller session locator does not match its native identity".into());
+    }
+    if let Some(draft) = &caller.prompt_draft {
+        return super::draft_storage::register_prompt_caller(tx, draft, caller);
     }
     if let Some(id) = find_caller_session_id(tx, caller)? {
         return Ok(id);

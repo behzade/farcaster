@@ -12,6 +12,7 @@ pub(in crate::app) fn new(
     draft
 }
 
+#[cfg(test)]
 pub(in crate::app) fn save(draft: &sessions::DraftSession) -> Result<i64, String> {
     sessions::save_draft(&mut *crate::app::persistence::open()?, draft)
 }

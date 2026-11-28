@@ -1,4 +1,6 @@
+mod active_cache;
 mod active_rail;
+pub(in crate::app::views) use active_cache::PreparedActiveRows;
 mod colors;
 mod draft_row;
 mod drag;
@@ -15,56 +17,42 @@ mod tests;
 
 use std::{collections::HashSet, path::PathBuf};
 
+use crate::utility::persistent_vec::PersistentVec;
 use gpui::{Pixels, px};
 
 use self::{
     drag::DraggedSession,
     groups::{
         ActiveSessionItem, SessionRailItem, merge_visible_session_order, reordered_session_ids,
-        session_rail_lists_for_roots,
     },
-    rendering::{archived_panel_rows, rail_panel_slot},
+    rendering::archived_panel_slot,
 };
 use super::super::FarcasterApp;
 use super::SessionReveal;
 use crate::{
-    app::ui::primitives::{
-        ReorderPosition, ResizeBounds, ResizeState, panel_bounds, panel_resized, panel_room,
-    },
+    app::session::archive::RailSessionIdentity,
+    app::ui::primitives::{ReorderPosition, ResizeBounds, panel_bounds},
     app::ui::theme::theme,
-    sessions::DraftSession,
-    sessions::SessionSummary,
+    sessions::{AppSessionId, DraftSession, SessionSummary},
 };
 
 pub(in crate::app) use group_drag::GroupTarget;
 pub(in crate::app) use groups::SessionRailKind;
 pub(in crate::app) use hover::{session_hover_details, session_tooltip_content};
+#[cfg(test)]
+pub(in crate::app::views) use inactive_rail::ArchivedItem;
+pub(in crate::app::views) use inactive_rail::{
+    ArchivedRow, reconcile_archived_rows, remap_archived_scroll,
+};
 pub(in crate::app) use rows::project_label;
 pub(super) use rows::session_row_height;
 
+pub(super) fn rail_inset() -> Pixels {
+    crate::app::ui::grid::sidebar_inset()
+}
+
 #[cfg(test)]
-use self::{rendering::subagent_counts, rows::session_accessible_label};
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum RailPanel {
-    Archived,
-    Notifications,
-}
-
-impl RailPanel {
-    pub(super) const ALL: [Self; 2] = [Self::Archived, Self::Notifications];
-
-    fn labels(self) -> (&'static str, &'static str) {
-        match self {
-            Self::Archived => ("archived-panel", "Archived"),
-            Self::Notifications => ("notification-panel", "Notifications"),
-        }
-    }
-
-    fn index(self) -> usize {
-        self as usize
-    }
-}
+use self::rows::session_accessible_label;
 
 pub(super) fn clamped_session_rail_width(width: f32) -> Pixels {
     px(width.clamp(
@@ -73,42 +61,44 @@ pub(super) fn clamped_session_rail_width(width: f32) -> Pixels {
     ))
 }
 
-#[allow(clippy::large_enum_variant)]
-#[derive(Clone, Debug)]
-enum VisibleSessionTarget {
-    Draft(DraftSession),
-    Persisted(SessionSummary),
+impl RailSessionIdentity {
+    fn for_draft(draft: &DraftSession) -> Self {
+        AppSessionId::new(draft.app_session_id)
+            .map_or_else(|| Self::Draft(draft.id.clone()), Self::App)
+    }
+
+    fn for_session(session: &SessionSummary) -> Self {
+        AppSessionId::new(session.app_session_id).map_or_else(
+            || Self::Session(session.path.clone(), session.native_identity()),
+            Self::App,
+        )
+    }
+
+    fn for_item(item: &ActiveSessionItem) -> Self {
+        match item {
+            ActiveSessionItem::Draft(draft) => Self::for_draft(draft),
+            ActiveSessionItem::Session(item) => Self::for_session(&item.session),
+        }
+    }
+
+    fn matches(&self, item: &ActiveSessionItem) -> bool {
+        match (self, item) {
+            (Self::App(id), item) => item.app_session_id() == id.get(),
+            (Self::Draft(id), ActiveSessionItem::Draft(draft)) => draft.id == *id,
+            (Self::Session(path, native), ActiveSessionItem::Session(item)) => {
+                item.session.path == *path && item.session.native_identity() == *native
+            }
+            _ => false,
+        }
+    }
 }
 
-impl VisibleSessionTarget {
-    fn from_row(row: folders::FolderRow) -> Option<Self> {
-        match row {
-            folders::FolderRow::Session(item) => Self::from_item(&item),
-            folders::FolderRow::Header(..)
-            | folders::FolderRow::Project { .. }
-            | folders::FolderRow::New => None,
-        }
-    }
-
-    fn from_item(item: &ActiveSessionItem) -> Option<Self> {
-        match item {
-            ActiveSessionItem::Draft(draft) => Some(Self::Draft(draft.clone())),
-            ActiveSessionItem::Session(item) => Some(Self::Persisted(item.session.clone())),
-        }
-    }
-
-    fn rail_identity(&self) -> String {
-        match self {
-            Self::Draft(draft) => format!("draft:{}", draft.id),
-            Self::Persisted(session) => session_row_identity(session),
-        }
-    }
-
-    fn app_session_id(&self) -> i64 {
-        match self {
-            Self::Draft(draft) => draft.app_session_id,
-            Self::Persisted(session) => session.app_session_id,
-        }
+fn session_from_row(row: folders::FolderRow) -> Option<ActiveSessionItem> {
+    match row {
+        folders::FolderRow::Session(item) => Some(*item),
+        folders::FolderRow::Header(..)
+        | folders::FolderRow::Project { .. }
+        | folders::FolderRow::New => None,
     }
 }
 
@@ -124,42 +114,49 @@ fn session_item_identity(item: &SessionRailItem) -> String {
 }
 
 pub(in crate::app::views) fn session_row_identity(session: &SessionSummary) -> String {
-    format!("session:{:?}", session.key())
+    session_key_identity(&session.catalog_key())
+}
+
+fn session_key_identity(key: &crate::sessions::SessionKey) -> String {
+    format!("session:{key:?}")
 }
 
 fn reconcile_list_rows(
     list: &gpui::ListState,
-    current: &std::cell::RefCell<Vec<String>>,
+    current: &std::cell::RefCell<PersistentVec<String>>,
     next: Vec<String>,
 ) {
     let mut current = current.borrow_mut();
     if let Some((range, count)) = minimal_row_splice(&current, &next) {
-        list.splice(range, count);
-        *current = next;
+        list.splice(range.clone(), count);
+        current.splice(
+            range.clone(),
+            next.into_iter().skip(range.start).take(count),
+        );
     }
 }
 
-fn minimal_row_splice<T: Eq>(current: &[T], next: &[T]) -> Option<(std::ops::Range<usize>, usize)> {
+fn minimal_row_splice<T: Eq + Clone>(
+    current: &PersistentVec<T>,
+    next: &[T],
+) -> Option<(std::ops::Range<usize>, usize)> {
     let prefix = current
         .iter()
         .zip(next)
         .take_while(|(left, right)| left == right)
         .count();
-    let suffix = current[prefix..]
-        .iter()
-        .rev()
-        .zip(next[prefix..].iter().rev())
+    if prefix == current.len() && prefix == next.len() {
+        return None;
+    }
+    let suffix = current
+        .iter_rev()
+        .zip(next.iter().rev())
+        .take(current.len().min(next.len()) - prefix)
         .take_while(|(left, right)| left == right)
         .count();
     let old_end = current.len().saturating_sub(suffix);
     let replacement_count = next.len().saturating_sub(prefix + suffix);
     (prefix != old_end || replacement_count != 0).then_some((prefix..old_end, replacement_count))
-}
-
-fn replacement_index_after_close(len: usize, current: usize) -> Option<usize> {
-    (current + 1 < len)
-        .then_some(current + 1)
-        .or_else(|| current.checked_sub(1))
 }
 
 fn first_unsubmitted_draft(rows: &[ActiveSessionItem]) -> Option<&DraftSession> {
@@ -191,39 +188,25 @@ impl FarcasterApp {
     ) {
         if number == 0 {
             if let Some(draft) = first_unsubmitted_draft(&self.visible_active_items()).cloned() {
-                self.select_visible_session(VisibleSessionTarget::Draft(draft), window, cx);
+                self.select_visible_session(ActiveSessionItem::Draft(draft), window, cx);
             }
             return;
         }
-        let rows = self
-            .session_folder_rows(self.visible_active_items())
-            .into_iter()
-            .filter_map(|row| match row {
-                folders::FolderRow::Session(item) => Some(*item),
-                folders::FolderRow::Header(_)
-                | folders::FolderRow::Project { .. }
-                | folders::FolderRow::New => None,
-            })
-            .collect::<Vec<_>>();
-        if let Some(target) = numbered_session_items(&rows)
-            .get(number - 1)
-            .and_then(|item| VisibleSessionTarget::from_item(item))
-        {
-            self.select_visible_session(target, window, cx);
+        let rows = self.visible_session_targets();
+        if let Some(&target) = numbered_session_items(&rows).get(number - 1) {
+            self.select_visible_session(target.clone(), window, cx);
         }
     }
 
-    fn selected_app_session_id(&self) -> Option<i64> {
+    fn selected_rail_identity(&self) -> Option<RailSessionIdentity> {
         self.sessions
             .selected_draft
             .as_deref()
             .and_then(|id| self.sessions.drafts.iter().find(|draft| draft.id == id))
-            .map(|draft| draft.app_session_id)
+            .map(RailSessionIdentity::for_draft)
             .or_else(|| {
-                self.sessions
-                    .visible
-                    .root_for_path(self.snapshot.selected_session.as_deref())
-                    .map(|session| session.app_session_id)
+                self.selected_rail_root()
+                    .map(RailSessionIdentity::for_session)
             })
     }
 
@@ -233,23 +216,30 @@ impl FarcasterApp {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let sessions = self.selectable_session_targets();
-        let selected_id = self
-            .sessions
-            .visible
-            .root_for_path(Some(&path))
-            .map(|session| session.app_session_id);
-        let replacement = selected_id
-            .and_then(|id| {
-                sessions
-                    .iter()
-                    .position(|session| session.app_session_id() == id)
-            })
-            .and_then(|index| replacement_index_after_close(sessions.len(), index))
-            .and_then(|index| sessions.get(index))
-            .map(VisibleSessionTarget::app_session_id);
+        let prepared = self.prepared_active_rows(cx);
+        let selected = self
+            .selected_rail_root()
+            .map(RailSessionIdentity::for_session);
+        let replacement = selected.and_then(|selected| prepared.replacement(&selected));
 
-        self.request_session_archive_and_advance(path, replacement, window, cx);
+        if let Some(key) = self
+            .sidebar_catalog_row(&self.sessions.all)
+            .map(SessionSummary::catalog_key)
+        {
+            self.request_rail_archive(key, true, window, cx);
+        } else if !self.sessions.all.has_shared_path(&path)
+            && (self.lifecycle.pending_session_switch.is_none()
+                || self.lifecycle.requested_session_key.is_none())
+        {
+            self.request_session_archive(path, true, window, cx);
+        } else {
+            return;
+        }
+        if let Some(pending) = self.sessions.pending_archive.as_mut() {
+            pending.replacement = replacement.as_ref().map(RailSessionIdentity::for_item);
+        } else if let Some(target) = replacement {
+            self.select_visible_session(target, window, cx);
+        }
     }
 
     pub(in crate::app) fn switch_relative_session(
@@ -258,40 +248,37 @@ impl FarcasterApp {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let sessions = self.visible_session_targets();
-        let selected_id = self.selected_app_session_id();
-        let selected = selected_id.and_then(|selected_id| {
-            sessions
-                .iter()
-                .position(|session| session.app_session_id() == selected_id)
-        });
-        let Some(current) = selected else { return };
-        let next = current as isize + direction;
-        if next >= 0
-            && let Some(target) = sessions.get(next as usize).cloned()
+        let mut sessions = self.visible_session_targets();
+        let Some(selected) = self.selected_rail_identity() else {
+            return;
+        };
+        let Some(current) = sessions
+            .iter()
+            .position(|session| selected.matches(session))
+        else {
+            return;
+        };
+        if let Some(next) = current.checked_add_signed(direction)
+            && next < sessions.len()
         {
-            self.select_visible_session(target, window, cx);
+            self.select_visible_session(sessions.swap_remove(next), window, cx);
         }
     }
 
-    pub(in crate::app) fn select_visible_app_session(
+    pub(in crate::app) fn select_visible_replacement(
         &mut self,
-        app_session_id: i64,
+        replacement: RailSessionIdentity,
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        if let Some(target) = self
-            .selectable_session_targets()
-            .into_iter()
-            .find(|target| target.app_session_id() == app_session_id)
-        {
+        if let Some(target) = self.prepared_active_rows(cx).selectable(&replacement) {
             self.select_visible_session(target, window, cx);
         }
     }
 
     fn select_visible_session(
         &mut self,
-        target: VisibleSessionTarget,
+        target: ActiveSessionItem,
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
@@ -299,21 +286,19 @@ impl FarcasterApp {
             return;
         }
         match target {
-            VisibleSessionTarget::Draft(draft) => {
+            ActiveSessionItem::Draft(draft) => {
                 self.resume_draft_and_focus(draft.id, draft.project, window, cx);
             }
-            VisibleSessionTarget::Persisted(session) => {
-                self.select_session_and_focus(session.path, session.project, window, cx);
+            ActiveSessionItem::Session(item) => {
+                self.select_rail_session(item.session.catalog_key(), window, cx);
             }
         }
     }
 
-    fn selectable_session_targets(&self) -> Vec<VisibleSessionTarget> {
-        let mut targets = self.visible_session_targets();
-        targets.retain(
-            |target| !matches!(target, VisibleSessionTarget::Draft(draft) if !draft.submitted),
-        );
-        targets
+    fn prepared_active_rows(&self, cx: &mut gpui::Context<Self>) -> PreparedActiveRows {
+        self.views
+            .session_rail
+            .update(cx, |view, _| view.prepared_rows(self))
     }
 
     fn session_folder_rows(&self, items: Vec<ActiveSessionItem>) -> Vec<folders::FolderRow> {
@@ -324,25 +309,59 @@ impl FarcasterApp {
                 &self.sessions.folders.project_order,
             )
         } else {
-            folders::folder_rows(items, &self.sessions.folders)
+            folders::folder_rows_with_pending(
+                items,
+                &self.sessions.folders,
+                &self.sessions.pending_folder_drafts,
+            )
         }
     }
 
-    fn visible_session_targets(&self) -> Vec<VisibleSessionTarget> {
+    fn visible_session_targets(&self) -> Vec<ActiveSessionItem> {
         self.session_folder_rows(self.visible_active_items())
             .into_iter()
-            .filter_map(VisibleSessionTarget::from_row)
+            .filter_map(session_from_row)
             .collect()
     }
 
-    fn visible_active_items(&self) -> Vec<ActiveSessionItem> {
-        session_rail_lists_for_roots(
+    fn active_rail_lists(
+        &self,
+        project_filter: Option<&std::path::Path>,
+    ) -> groups::SessionRailLists {
+        groups::active_session_rail_lists_for_roots(
             self.sessions.visible.roots(),
             &self.sessions.drafts,
-            self.sessions.project_filter.as_deref(),
+            project_filter,
             &self.sessions.order,
+            |draft| self.present_rail_draft(draft),
         )
-        .active
+    }
+
+    fn present_rail_draft(&self, draft: &mut DraftSession) {
+        if draft.submitted || self.composer.pending_submissions.is_empty() {
+            return;
+        }
+        if let Some(pending) = self
+            .composer
+            .pending_submissions
+            .values()
+            .filter(|pending| {
+                pending.result.is_none()
+                    && crate::sessions::draft_id(&pending.submitted_target)
+                        == Some(draft.id.as_str())
+            })
+            .min_by_key(|pending| (pending.submitted_at, &pending.id))
+        {
+            draft.submitted = true;
+            if draft.title.is_none() {
+                draft.title = crate::sessions::provisional_session_title(&pending.text);
+            }
+        }
+    }
+
+    fn visible_active_items(&self) -> Vec<ActiveSessionItem> {
+        self.active_rail_lists(self.sessions.project_filter.as_deref())
+            .active
     }
 
     pub(super) fn begin_session_rail_resize(
@@ -383,112 +402,35 @@ impl FarcasterApp {
         }
     }
 
-    fn panel_state(&self, panel: RailPanel) -> ResizeState {
-        match panel {
-            RailPanel::Archived => self.views.archived_panel,
-            RailPanel::Notifications => self.views.notification_panel,
-        }
-    }
-
-    fn panel_state_mut(&mut self, panel: RailPanel) -> &mut ResizeState {
-        match panel {
-            RailPanel::Archived => &mut self.views.archived_panel,
-            RailPanel::Notifications => &mut self.views.notification_panel,
-        }
-    }
-
-    fn panel_collapsed(&self, panel: RailPanel) -> bool {
-        match panel {
-            RailPanel::Archived => !self.sessions.archived_expanded,
-            RailPanel::Notifications => self.views.notification_panel.is_collapsed(),
-        }
-    }
-
-    fn rail_panel_sizes(&self, archived: usize) -> (Vec<Pixels>, Vec<Pixels>) {
-        RailPanel::ALL
-            .into_iter()
-            .map(|panel| {
-                let slot = rail_panel_slot(panel, archived, self.panel_collapsed(panel));
-                (
-                    self.panel_state(panel).height_or(slot.preferred),
-                    slot.floor,
-                )
-            })
-            .unzip()
-    }
-
     fn panel_budget(&self) -> Pixels {
         self.views
             .panel_space
-            .unwrap_or_else(|| theme().layout.notice_panel_max)
+            .unwrap_or(theme().layout.window_height)
     }
 
-    pub(super) fn panel_bounds(&self, panel: RailPanel, collapsed: bool) -> ResizeBounds {
-        self.panel_bounds_with_archived_count(panel, collapsed, self.archived_session_count())
-    }
-
-    fn panel_bounds_with_archived_count(
-        &self,
-        panel: RailPanel,
-        collapsed: bool,
-        archived: usize,
-    ) -> ResizeBounds {
-        let (sizes, floors) = self.rail_panel_sizes(archived);
-        let index = panel.index();
-        let resizing = self.panel_state(panel).is_resizing();
-        let room = panel_room(&sizes, &floors, self.panel_budget(), index, resizing);
-        panel_bounds(room, rail_panel_slot(panel, archived, collapsed))
-    }
-
-    fn archived_session_count(&self) -> usize {
-        groups::active_session_rail_lists_for_roots(
-            self.sessions.visible.roots(),
-            &self.sessions.drafts,
-            self.sessions.project_filter.as_deref(),
-            &self.sessions.order,
-        )
-        .archived_count
-    }
-    fn archived_visible_rows(&self) -> usize {
-        if !self.sessions.archived_expanded {
-            return 0;
-        }
-        archived_panel_rows(
-            self.panel_state(RailPanel::Archived)
-                .height(self.panel_bounds(RailPanel::Archived, false)),
+    fn archive_bounds(&self, collapsed: bool, archived: usize) -> ResizeBounds {
+        panel_bounds(
+            self.panel_budget(),
+            archived_panel_slot(archived, collapsed),
         )
     }
 
-    pub(super) fn toggle_rail_panel(&mut self, panel: RailPanel, cx: &mut gpui::Context<Self>) {
-        match panel {
-            RailPanel::Archived => {
-                self.sessions.archived_expanded = !self.sessions.archived_expanded;
-                if self.sessions.archived_expanded {
-                    self.views.archived_session_rail.update(cx, |view, _| {
-                        view.reveal = Some(SessionReveal::Index(0));
-                    });
-                }
-            }
-            RailPanel::Notifications => {
-                let collapsed = self.views.notification_panel.is_collapsed();
-                self.views.notification_panel.set_collapsed(!collapsed);
-                if collapsed {
-                    self.extensions.active.mark_notifications_seen();
-                }
-            }
+    pub(in crate::app::views) fn toggle_archive(&mut self, cx: &mut gpui::Context<Self>) {
+        self.sessions.archived_expanded = !self.sessions.archived_expanded;
+        if self.sessions.archived_expanded {
+            self.views.archived_session_rail.update(cx, |view, _| {
+                view.reveal = Some(SessionReveal::Index(0));
+            });
         }
         self.save_panel_layout();
-        self.notify_session_rail(cx);
+        self.notify_session_rail_shell(cx);
+        self.repaint_archived_session_rail(cx);
     }
 
-    pub(super) fn begin_rail_panel_resize(
-        &mut self,
-        panel: RailPanel,
-        pointer_y: Pixels,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        let bounds = self.panel_bounds(panel, false);
-        self.panel_state_mut(panel).begin_resize(bounds, pointer_y);
+    fn begin_archive_resize(&mut self, pointer_y: Pixels, cx: &mut gpui::Context<Self>) {
+        let count = self.prepared_active_rows(cx).archived_count;
+        let bounds = self.archive_bounds(false, count);
+        self.views.archived_panel.begin_resize(bounds, pointer_y);
         self.notify_session_rail_shell(cx);
     }
 
@@ -497,44 +439,24 @@ impl FarcasterApp {
         pointer_y: Pixels,
         cx: &mut gpui::Context<Self>,
     ) {
-        let (mut sizes, floors) = self.rail_panel_sizes(self.archived_session_count());
-        for panel in RailPanel::ALL {
-            if !self.panel_state(panel).is_resizing() {
-                continue;
-            }
-            let index = panel.index();
-            let bounds = self.panel_bounds(panel, false);
-            sizes[index] = self.panel_state(panel).height(bounds);
-            if !self.panel_state_mut(panel).update_resize(bounds, pointer_y) {
-                continue;
-            }
-            let after = self.panel_state(panel).height(bounds);
-            for (panel, height) in RailPanel::ALL.into_iter().zip(panel_resized(
-                &sizes,
-                &floors,
-                self.panel_budget(),
-                index,
-                after,
-            )) {
-                self.panel_state_mut(panel).set_height(height);
-            }
+        let count = self.prepared_active_rows(cx).archived_count;
+        let bounds = self.archive_bounds(false, count);
+        if self.views.archived_panel.update_resize(bounds, pointer_y) {
             self.notify_session_rail_shell(cx);
         }
     }
 
     pub(super) fn finish_rail_panel_resize(&mut self, cx: &mut gpui::Context<Self>) {
-        for panel in RailPanel::ALL {
-            if self.panel_state_mut(panel).finish_resize() {
-                self.save_panel_layout();
-                self.notify_session_rail_shell(cx);
-            }
+        if self.views.archived_panel.finish_resize() {
+            self.save_panel_layout();
+            self.notify_session_rail_shell(cx);
         }
     }
 
     pub(super) fn begin_session_drag(&mut self, cx: &mut gpui::Context<Self>) {
         self.sessions.drop_target = None;
         self.sessions.group_drop_target = None;
-        self.notify_session_rail(cx);
+        self.notify_session_rail_shell(cx);
     }
 
     pub(super) fn update_session_drop_target(
@@ -546,14 +468,14 @@ impl FarcasterApp {
         let next = Some((target, position));
         if self.sessions.drop_target != next {
             self.sessions.drop_target = next;
-            self.notify_session_rail(cx);
+            self.notify_session_rail_shell(cx);
         }
     }
 
     pub(super) fn clear_session_drop_target(&mut self, cx: &mut gpui::Context<Self>) {
         self.sessions.drop_target = None;
         self.sessions.group_drop_target = None;
-        self.notify_session_rail(cx);
+        self.notify_session_rail_shell(cx);
     }
 
     fn complete_session_row_drop(
@@ -581,28 +503,20 @@ impl FarcasterApp {
                 return;
             }
         }
-        let visible = session_rail_lists_for_roots(
-            self.sessions.visible.roots(),
-            &self.sessions.drafts,
-            self.sessions.project_filter.as_deref(),
-            &self.sessions.order,
-        )
-        .active
-        .iter()
-        .map(ActiveSessionItem::app_session_id)
-        .collect::<Vec<_>>();
-        if let Some(order) = reordered_session_ids(&visible, drag.app_session_id, target, position)
-        {
-            let all = session_rail_lists_for_roots(
-                self.sessions.visible.roots(),
-                &self.sessions.drafts,
-                None,
-                &self.sessions.order,
-            )
+        let visible = self
+            .active_rail_lists(self.sessions.project_filter.as_deref())
             .active
             .iter()
             .map(ActiveSessionItem::app_session_id)
             .collect::<Vec<_>>();
+        if let Some(order) = reordered_session_ids(&visible, drag.app_session_id, target, position)
+        {
+            let all = self
+                .active_rail_lists(None)
+                .active
+                .iter()
+                .map(ActiveSessionItem::app_session_id)
+                .collect::<Vec<_>>();
             let active_order = merge_visible_session_order(&all, &order);
             let active_ids = all.into_iter().collect::<HashSet<_>>();
             self.sessions.order.retain(|id| !active_ids.contains(id));

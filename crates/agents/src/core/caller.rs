@@ -91,6 +91,7 @@ pub struct CallerContext {
     pub session_locator: Option<PathBuf>,
     pub harness_profile_id: Option<String>,
     pub app_session_id: Option<AppSessionId>,
+    pub prompt_draft: Option<String>,
     pub backend: Backend,
     pub provider: Option<String>,
     pub model: Option<String>,
@@ -101,6 +102,7 @@ pub struct CallerContext {
 
 struct RegisteredCaller {
     persist_session: bool,
+    prompt_draft: Option<String>,
     session_record: Option<i64>,
     execution: Option<ExecutionBinding>,
     worker_id: String,
@@ -108,6 +110,7 @@ struct RegisteredCaller {
     project: PathBuf,
     session: Option<String>,
     session_locator: Option<PathBuf>,
+    normalized_locator: Option<PathBuf>,
     harness_profile_id: Option<String>,
     backend: Backend,
     provider: Option<String>,
@@ -248,8 +251,6 @@ impl CallerRegistry {
                 .get(token)
                 .filter(|caller| caller.persist_session)
                 .and_then(|caller| {
-                    // Only a new binding publishes family state. Refreshes must
-                    // preserve parent IDs that storage may have merged already.
                     let family = if caller.session_record.is_none() {
                         caller.family_link()
                     } else {
@@ -277,6 +278,7 @@ impl CallerRegistry {
             && caller.harness_profile_id == context.harness_profile_id
         {
             caller.session_record = Some(record);
+            caller.prompt_draft = None;
         }
         self.refresh_family(token);
         Ok(())
@@ -416,8 +418,6 @@ impl CallerRegistry {
     }
 
     fn persist_family(&self, token: &str) {
-        // Retry deferred children before an explicit family update. A failed
-        // registration must not fall back to publishing an unparented row.
         if self.has_session_sink()
             && let Err(error) = self.try_bind_record(token)
         {
@@ -447,6 +447,29 @@ impl CallerRegistry {
         self.issue_with_access(project, profile, wake, crate::HarnessAccessMode::Auto)
     }
 
+    pub fn issue_main_session(
+        &self,
+        config: &crate::AgentLaunchConfig,
+        launch: &crate::SessionLaunch,
+    ) -> CallerIdentity {
+        let caller = self.issue_with_access(
+            &launch.project,
+            CallerProfile {
+                backend: launch.harness,
+                provider: None,
+                model: None,
+                effort: None,
+            },
+            launch.wake.clone(),
+            config.access_mode,
+        );
+        caller.set_harness_profile_id(config.profile_id.clone());
+        if let crate::SessionStart::New(Some(draft)) = &launch.start {
+            caller.set_prompt_draft(draft.clone());
+        }
+        caller
+    }
+
     pub fn issue_with_access(
         &self,
         project: &Path,
@@ -474,6 +497,7 @@ impl CallerRegistry {
                 token.clone(),
                 RegisteredCaller {
                     persist_session: true,
+                    prompt_draft: None,
                     session_record: None,
                     execution: None,
                     worker_id,
@@ -481,6 +505,7 @@ impl CallerRegistry {
                     project,
                     session: None,
                     session_locator: None,
+                    normalized_locator: None,
                     harness_profile_id: None,
                     backend: profile.backend,
                     provider: profile.provider,
@@ -571,6 +596,7 @@ impl CallerRegistry {
             token.clone(),
             RegisteredCaller {
                 persist_session: true,
+                prompt_draft: None,
                 session_record: None,
                 execution: None,
                 worker_id,
@@ -578,6 +604,7 @@ impl CallerRegistry {
                 project,
                 session: None,
                 session_locator: None,
+                normalized_locator: None,
                 harness_profile_id: None,
                 backend: profile.backend,
                 provider: profile.provider,
@@ -655,7 +682,6 @@ impl CallerRegistry {
             .map(|(name, profile, _)| (name, profile))
     }
 
-    /// Resolve the UI name, execution profile and worker profile in one scan.
     pub fn session_presentation(
         &self,
         key: &SessionKey,
@@ -664,7 +690,6 @@ impl CallerRegistry {
         Self::presentation_for(&callers, key)
     }
 
-    /// UI frames use persisted session metadata if backend registry updates hold the lock.
     pub fn try_session_presentation(
         &self,
         key: &SessionKey,
@@ -679,18 +704,21 @@ impl CallerRegistry {
     ) -> Option<(String, CallerProfile, Option<String>)> {
         let caller = unique_caller(callers.values().filter(|caller| {
             // Stored session IDs need no context allocation or filesystem lookup.
-            // Keep locator matching unchanged for sessions not yet in the store.
             match key {
                 SessionKey::App(id) => {
                     caller.session.is_some()
                         && caller.session_record.and_then(AppSessionId::new).as_ref() == Some(id)
                 }
-                _ => {
-                    caller
-                        .session_key()
-                        .and_then(|session| session.key)
-                        .as_ref()
-                        == Some(key)
+                SessionKey::Locator {
+                    harness,
+                    profile_id,
+                    path,
+                } => {
+                    caller.session.is_some()
+                        && caller.session_record.and_then(AppSessionId::new).is_none()
+                        && caller.backend == *harness
+                        && caller.harness_profile_id == *profile_id
+                        && caller.normalized_locator.as_ref() == Some(path)
                 }
             }
         }))?;
@@ -874,6 +902,7 @@ impl RegisteredCaller {
             session_locator: self.session_locator.clone(),
             harness_profile_id: self.harness_profile_id.clone(),
             app_session_id: self.session_record.and_then(AppSessionId::new),
+            prompt_draft: self.prompt_draft.clone(),
             backend: self.backend,
             provider: self.provider.clone(),
             model: self.model.clone(),
@@ -991,8 +1020,6 @@ impl CallerIdentity {
             .ok()
             .and_then(|sink| sink.clone());
         if let Some(sink) = sink {
-            // bind_record has already attached the family. A turn registration
-            // only resolves identity, including any merge since that binding.
             match sink(&context, &binding, None) {
                 Ok(session_record) => binding.session_record = session_record,
                 Err(error) => {
@@ -1039,6 +1066,14 @@ impl CallerIdentity {
         self.bind_with_locator(session_locator, None);
     }
 
+    fn set_prompt_draft(&self, draft: String) {
+        if let Ok(mut callers) = self.registry.callers.lock()
+            && let Some(caller) = callers.get_mut(&self.token)
+        {
+            caller.prompt_draft = Some(draft);
+        }
+    }
+
     pub fn set_harness_profile_id(&self, profile_id: Option<String>) {
         if let Ok(mut callers) = self.registry.callers.lock()
             && let Some(caller) = callers.get_mut(&self.token)
@@ -1052,6 +1087,14 @@ impl CallerIdentity {
 
     pub fn bind_with_locator(&self, session: impl Into<String>, locator: Option<PathBuf>) {
         let session = session.into();
+        let normalized_locator = locator
+            .as_deref()
+            .or_else(|| {
+                Path::new(&session)
+                    .is_absolute()
+                    .then(|| Path::new(&session))
+            })
+            .map(farcaster_sessions::normalize_session_path);
         let before = self.registry.callers.lock().ok().and_then(|callers| {
             callers
                 .get(&self.token)
@@ -1066,6 +1109,7 @@ impl CallerIdentity {
             }
             context.session = Some(session);
             context.session_locator = locator;
+            context.normalized_locator = normalized_locator;
             context.activity = WorkerActivityState::Idle;
         }
         self.registry.bind_record(&self.token);

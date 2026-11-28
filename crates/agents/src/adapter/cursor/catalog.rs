@@ -1,14 +1,13 @@
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    time::UNIX_EPOCH,
 };
 
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 
 use super::PROFILE;
-use crate::{DiscoveredSession, DiscoveredUsage};
+use crate::DiscoveredSession;
 
 #[derive(Deserialize, Serialize)]
 struct SessionMeta {
@@ -210,63 +209,8 @@ fn listed_session(
     query: &str,
     value: &serde_json::Value,
 ) -> Option<DiscoveredSession> {
-    let id = value.get("sessionId")?.as_str()?.to_owned();
-    if id.is_empty()
-        || !id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-    {
-        return None;
-    }
-    let project = PathBuf::from(value.get("cwd")?.as_str()?);
-    if !project.is_absolute()
-        || !project.is_dir()
-        || farcaster_projects::is_temporary_project(&project)
-    {
-        return None;
-    }
-    let title = value
-        .get("title")
-        .and_then(serde_json::Value::as_str)
-        .filter(|title| !title.trim().is_empty())
-        .unwrap_or("New Cursor session")
-        .to_owned();
-    let search = format!("{title} {} {}", project.display(), PROFILE.name);
-    if !query.is_empty() && !search.to_ascii_lowercase().contains(query) {
-        return None;
-    }
-    if matches!(inspect(&id), Ok((_, true))) {
-        return None;
-    }
-    let timestamp = value
-        .get("updatedAt")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    let modified =
-        time::OffsetDateTime::parse(&timestamp, &time::format_description::well_known::Rfc3339)
-            .ok()
-            .map(std::time::SystemTime::from)
-            .unwrap_or(UNIX_EPOCH);
-    Some(DiscoveredSession {
-        path: super::super::main_session::external_session_path(locator_root, PROFILE.backend, &id),
-        parent_session: crate::core::CallerRegistry::shared().session_parent(PROFILE.backend, &id),
-        forked_from: None,
-        id,
-        harness: PROFILE.backend,
-        project,
-        title,
-        first_user_message: String::new(),
-        timestamp,
-        modified,
-        message_count: 0,
-        usage: DiscoveredUsage::default(),
-        archived: false,
-        is_running: false,
-        model: None,
-        thinking_level: None,
-        search,
-    })
+    let session = super::super::acp::catalog::listed_session(&PROFILE, locator_root, query, value)?;
+    (!matches!(inspect(&session.id), Ok((_, true)))).then_some(session)
 }
 
 fn decode_hex(value: &str) -> Option<Vec<u8>> {

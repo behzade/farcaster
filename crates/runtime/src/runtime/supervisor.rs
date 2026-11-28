@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent_activity::SessionStatusRecord;
 use crate::agents::Backend;
 
 mod commands;
@@ -49,7 +50,7 @@ pub(super) struct UiEventSender {
 }
 
 impl UiEventSender {
-    fn send(&self, event: RuntimeEvent) -> Result<(), ()> {
+    pub(super) fn send(&self, event: RuntimeEvent) -> Result<(), ()> {
         self.events.send(event).map_err(|_| ())?;
         let _ = self.wake.try_send(());
         Ok(())
@@ -250,9 +251,15 @@ impl SessionRuntimeHandle {
     }
 
     pub(super) fn send(&self, command: RuntimeCommand) {
-        if self.commands.send(command).is_ok() {
-            self.thread.unpark();
-        }
+        let _ = self.try_send(command);
+    }
+
+    fn try_send(&self, command: RuntimeCommand) -> Result<(), String> {
+        self.commands
+            .send(command)
+            .map_err(|_| "Session runtime stopped".to_owned())?;
+        self.thread.unpark();
+        Ok(())
     }
 
     fn signal(&self, signal: RuntimeSignal) {
@@ -267,14 +274,106 @@ impl SessionRuntimeHandle {
     }
 }
 
+type PublishedStatuses = HashMap<String, (Option<PathBuf>, RunStatus, Option<SessionStatusRecord>)>;
+
+fn resident_status_record(
+    published: &PublishedStatuses,
+    catalog: &sessions::SessionCatalog,
+    target: &str,
+    snapshot: Option<&RuntimeSnapshot>,
+    path: Option<&std::path::Path>,
+) -> Option<SessionStatusRecord> {
+    if let Some(id) = sessions::AppSessionId::from_key(target) {
+        return Some(SessionStatusRecord::App(id));
+    }
+    let path = path?;
+    if let Some((old_path, _, Some(previous))) = published.get(target)
+        && old_path.as_deref() == Some(path)
+        && let Some(row) = previous.resolve(catalog)
+        && row.path == path
+        && snapshot
+            .is_none_or(|snapshot| snapshot.harness.is_none() || snapshot.matches_session_row(row))
+    {
+        return Some(SessionStatusRecord::for_row(row));
+    }
+    if target.starts_with("session-record:") {
+        let mut matches = catalog
+            .at_path(path)
+            .filter(|row| documents::record_actor_key(&row.catalog_key()) == target);
+        if let Some(row) = matches.next()
+            && matches.next().is_none()
+        {
+            return Some(SessionStatusRecord::for_row(row));
+        }
+    }
+    let snapshot = snapshot?;
+    if let Some(row) = snapshot.catalog_row_at(catalog, path) {
+        return Some(SessionStatusRecord::for_row(row));
+    }
+    let native_id = &snapshot.session.as_ref()?.session_id;
+    if native_id.is_empty()
+        || catalog
+            .at_path(path)
+            .any(|row| snapshot.matches_session_row(row))
+    {
+        return None;
+    }
+    Some(SessionStatusRecord::Native(
+        crate::agent_activity::WorkerActivityKey {
+            path: path.to_owned(),
+            native: sessions::NativeSessionIdentity {
+                project: snapshot.project.clone(),
+                harness: snapshot.harness?,
+                profile_id: snapshot.profile_id.clone(),
+                id: native_id.clone(),
+            },
+        },
+    ))
+}
+
+fn publish_resident_status(
+    sender: &UiEventSender,
+    published: &mut PublishedStatuses,
+    catalog: &sessions::SessionCatalog,
+    target: &str,
+    snapshot: Option<&RuntimeSnapshot>,
+    status: RunStatus,
+) {
+    let session = snapshot.and_then(|s| s.live_session.as_ref().or(s.selected_session.as_ref()));
+    let record = resident_status_record(
+        published,
+        catalog,
+        target,
+        snapshot,
+        session.map(PathBuf::as_path),
+    );
+    if record.is_none()
+        && let Some(path) = session
+        && catalog.by_path(path).is_some()
+    {
+        if sessions::session_path(target).is_some() {
+            return;
+        }
+        if sessions::draft_id(target).is_none()
+            || catalog.has_shared_path(path)
+            || status == RunStatus::Stopped
+        {
+            publish_session_status_if_changed(sender, published, target, None, status, None);
+            return;
+        }
+    }
+    publish_session_status_if_changed(sender, published, target, session.cloned(), status, record);
+}
+
 pub(super) fn publish_session_status_if_changed(
     sender: &UiEventSender,
-    published: &mut HashMap<String, (Option<PathBuf>, RunStatus)>,
+    published: &mut PublishedStatuses,
     target: &str,
     session: Option<PathBuf>,
     status: RunStatus,
+    record: Option<SessionStatusRecord>,
 ) {
-    let next = (session.clone(), status);
+    let next = (session.clone(), status, record.clone());
     if published.get(target) == Some(&next) {
         return;
     }
@@ -283,6 +382,7 @@ pub(super) fn publish_session_status_if_changed(
         target: target.to_owned(),
         session,
         status,
+        record,
     });
 }
 
@@ -361,9 +461,10 @@ fn persist_configurations(
 fn saved_access_mode(
     state: Option<&farcaster_storage::SharedStateStore>,
     session: &std::path::Path,
+    harness: Option<Backend>,
 ) -> Option<HarnessAccessMode> {
     let state = state?;
-    match state.with(|store| store.session_access_mode(session)) {
+    match state.with(|store| store.session_access_mode_for_backend(session, harness)) {
         Ok(mode) => mode,
         Err(error) => {
             zlog::error!("Restore session access mode: {error}");
@@ -442,13 +543,14 @@ struct Supervisor {
     selected_session: Option<PathBuf>,
     generation: u64,
     latest: HashMap<String, Arc<RuntimeSnapshot>>,
-    account_usage: HashMap<(Backend, Option<String>), (Instant, crate::agents::AccountUsage)>,
-    catalog_sessions: Vec<SessionSummary>,
+    accounts: super::accounts::AccountService,
+    catalog_sessions: sessions::SessionCatalog,
     catalog_generation: u64,
-    actor_paths: HashMap<PathBuf, String>,
+    actor_paths: documents::ActorPaths,
     failed_actor_shutdowns: HashMap<PathBuf, String>,
+    failed_draft_shutdowns: HashMap<sessions::AppSessionId, String>,
     interacted: HashSet<String>,
-    document_revisions: HashMap<PathBuf, (SystemTime, usize)>,
+    document_revisions: HashMap<String, (PathBuf, SystemTime, usize)>,
     pending_extensions: HashMap<String, Vec<crate::protocol::ExtensionUiRequest>>,
     active_dialogs: HashMap<String, Vec<crate::protocol::ExtensionUiRequest>>,
     needs_input: HashSet<String>,
@@ -461,7 +563,7 @@ struct Supervisor {
     configuration_tx: Option<mpsc::Sender<ConfigurationUpdate>>,
     configuration_requests: HashSet<(Backend, Option<String>, PathBuf)>,
     requested_access_modes: HashMap<String, (Backend, PathBuf, HarnessAccessMode)>,
-    published_statuses: HashMap<String, (Option<PathBuf>, RunStatus)>,
+    published_statuses: PublishedStatuses,
 }
 
 fn run_supervisor(
@@ -534,7 +636,7 @@ impl Supervisor {
         let selected = initial_key.clone();
         let generation = 0_u64;
         let mut latest = HashMap::<String, Arc<RuntimeSnapshot>>::new();
-        let catalog_sessions = Vec::<SessionSummary>::new();
+        let catalog_sessions = sessions::SessionCatalog::default();
         let catalog_generation = 0_u64;
         if let Some(target) = initial_session.clone() {
             latest.insert(
@@ -548,10 +650,10 @@ impl Supervisor {
                 }),
             );
         }
-        let mut actor_paths = initial_session
-            .as_ref()
-            .map(|target| HashMap::from([(target.path.clone(), initial_key.clone())]))
-            .unwrap_or_default();
+        let mut actor_paths = documents::ActorPaths::default();
+        if let Some(target) = &initial_session {
+            actor_paths.insert(target.path.clone(), target.harness, initial_key.clone());
+        }
         let interacted = HashSet::from([initial_key.clone()]);
         let document_revisions = HashMap::new();
         let pending_extensions = HashMap::<String, Vec<crate::protocol::ExtensionUiRequest>>::new();
@@ -587,9 +689,9 @@ impl Supervisor {
             configurations.restore(defaults);
         }
         if let Some(actor) = actors.get(&initial_key) {
-            let access_mode = initial_session
-                .as_ref()
-                .and_then(|session| saved_access_mode(catalog_state.as_ref(), &session.path));
+            let access_mode = initial_session.as_ref().and_then(|session| {
+                saved_access_mode(catalog_state.as_ref(), &session.path, Some(session.harness))
+            });
             match configuration_for_target(
                 &process_command,
                 catalog_state.as_ref(),
@@ -612,7 +714,7 @@ impl Supervisor {
             }
         }
         let (configuration_tx, configuration_rx) = mpsc::channel();
-        let published_statuses = HashMap::<String, (Option<PathBuf>, RunStatus)>::new();
+        let published_statuses = PublishedStatuses::new();
         if let Ok(state) = host.state_store()
             && let Ok(prompts) = state.with(|store| agents::queued_prompts(store))
         {
@@ -620,10 +722,9 @@ impl Supervisor {
                 let key = prompt.session.as_ref().map_or_else(
                     || prompt.target.clone(),
                     |session| {
-                        actor_paths
-                            .entry(session.clone())
-                            .or_insert_with(|| format!("session:{}", session.display()))
-                            .clone()
+                        let key = actor_paths.session_key(session, prompt.harness, &latest);
+                        actor_paths.insert(session.clone(), prompt.harness, key.clone());
+                        key
                     },
                 );
                 let actor = actors.entry(key).or_insert_with(|| {
@@ -640,7 +741,10 @@ impl Supervisor {
             }
         }
         let selected_session = initial_session.as_ref().map(|target| target.path.clone());
+        let accounts =
+            super::accounts::AccountService::new(catalog_state.clone(), refresh_configuration);
         Self {
+            accounts,
             host,
             process_command,
             command_rx,
@@ -655,11 +759,11 @@ impl Supervisor {
             selected_session,
             generation,
             latest,
-            account_usage: HashMap::new(),
             catalog_sessions,
             catalog_generation,
             actor_paths,
             failed_actor_shutdowns: HashMap::new(),
+            failed_draft_shutdowns: HashMap::new(),
             interacted,
             document_revisions,
             pending_extensions,
@@ -681,6 +785,11 @@ impl Supervisor {
     fn run(mut self) {
         let mut running = true;
         while running {
+            self.accounts.tick(
+                &self.process_command,
+                &self.selected_project,
+                &self.event_tx,
+            );
             self.drain_configuration_updates();
             self.drain_actor_events();
             running = self.process_next_command();
@@ -702,20 +811,25 @@ pub(super) fn initial_draft_command(
     let project = draft.project;
     if let Some(target) = session {
         return RuntimeCommand::SelectSession {
+            display_stamp: None,
             session_id: target.id,
             path: target.path,
             harness: target.harness,
             project,
+            key: None,
+            request: None,
         };
     }
     if draft.app_session_id > 0 {
         RuntimeCommand::ResumeDraft {
+            request: None,
             id: draft.id,
             harness: draft.harness,
             project,
         }
     } else {
         RuntimeCommand::NewSession {
+            request: None,
             id: draft.id,
             harness: draft.harness,
             profile_id: draft.profile_id,
@@ -735,6 +849,7 @@ pub(super) fn command_targets_catalog(command: &RuntimeCommand) -> bool {
         command,
         RuntimeCommand::LoadSessions(_)
             | RuntimeCommand::RefreshSessions
+            | RuntimeCommand::RefreshWorkerStatus(_)
             | RuntimeCommand::UpdateSessionMetadata(_)
             | RuntimeCommand::SetSessionArchived { .. }
             | RuntimeCommand::RenameSession { .. }
@@ -832,23 +947,31 @@ pub(super) fn target_command_needs_actor_message(
 pub(super) fn actor_key_for_command(
     command: &RuntimeCommand,
     requested_key: &str,
+    paths: &documents::ActorPaths,
     latest: &HashMap<String, Arc<RuntimeSnapshot>>,
 ) -> String {
-    let path = match command {
+    let (path, harness) = match command {
         RuntimeCommand::ForkSession { .. } => {
             return format!("{requested_key}:{}", uuid::Uuid::new_v4());
         }
-        RuntimeCommand::SelectSession { path, .. }
-        | RuntimeCommand::RestartSession { path, .. } => path,
+        RuntimeCommand::SelectSession { path, harness, .. }
+        | RuntimeCommand::RestartSession { path, harness, .. } => (path, *harness),
         _ => return requested_key.to_owned(),
     };
+    if let Some(key) = paths.resident(path, harness, latest) {
+        return key.clone();
+    }
     latest
         .iter()
         .find(|(_, snapshot)| {
-            snapshot.live_session.as_deref() == Some(path.as_path())
-                || snapshot.selected_session.as_deref() == Some(path.as_path())
+            snapshot.harness == Some(harness)
+                && (snapshot.live_session.as_ref() == Some(path)
+                    || snapshot.selected_session.as_ref() == Some(path))
         })
-        .map_or_else(|| requested_key.to_owned(), |(key, _)| key.clone())
+        .map_or_else(
+            || paths.available_key(path, harness, requested_key, latest),
+            |(key, _)| key.clone(),
+        )
 }
 
 #[cfg(test)]

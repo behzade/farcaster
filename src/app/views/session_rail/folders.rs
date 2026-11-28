@@ -1,5 +1,6 @@
 use crate::app::ui::primitives::ContextMenuExt as _;
 use crate::app::ui::primitives::DropdownMenu as _;
+use crate::app::ui::primitives::Input;
 use std::path::PathBuf;
 
 use super::{
@@ -26,7 +27,7 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
 use gpui_component::{
-    input::{Input, InputState},
+    input::InputState,
     menu::{PopupMenu, PopupMenuItem},
 };
 
@@ -52,16 +53,28 @@ pub(super) enum FolderRow {
     New,
 }
 
+#[cfg(test)]
 pub(super) fn folder_rows(
     items: Vec<ActiveSessionItem>,
     folders: &SessionFolders,
 ) -> Vec<FolderRow> {
+    folder_rows_with_pending(items, folders, &Default::default())
+}
+
+pub(super) fn folder_rows_with_pending(
+    items: Vec<ActiveSessionItem>,
+    folders: &SessionFolders,
+    pending: &std::collections::HashMap<String, u64>,
+) -> Vec<FolderRow> {
     let mut sections = std::collections::BTreeMap::<Option<u64>, Vec<ActiveSessionItem>>::new();
     for item in items {
-        sections
-            .entry(folders.folder_for(item.app_session_id()))
-            .or_default()
-            .push(item);
+        let folder = match &item {
+            ActiveSessionItem::Draft(draft) => {
+                crate::app::session_folders::draft_folder(draft, folders, pending)
+            }
+            _ => folders.folder_for(item.app_session_id()),
+        };
+        sections.entry(folder).or_default().push(item);
     }
     let mut rows = sections
         .remove(&None)
@@ -129,7 +142,7 @@ pub(super) fn project_group_rows(
     rows
 }
 
-fn project_labels(paths: Vec<PathBuf>) -> Vec<String> {
+pub(super) fn project_labels(paths: Vec<PathBuf>) -> Vec<String> {
     let suffixes = paths
         .iter()
         .map(|path| {
@@ -199,6 +212,7 @@ fn group_title(
         .child(
             div()
                 .min_w_0()
+                .flex_1()
                 .whitespace_nowrap()
                 .text_ellipsis()
                 .child(label),
@@ -209,7 +223,7 @@ fn group_title(
                     .debug_selector(|| "session-group-count".into())
                     .flex_none()
                     .text_color(theme().colors.subtle)
-                    .child(format!("({count})")),
+                    .child(count.to_string()),
             )
         })
 }
@@ -240,7 +254,7 @@ pub(super) fn project_header(
         })
         .group("session-project-header")
         .w_full()
-        .px(theme().space.sm)
+        .px(super::rail_inset())
         .child(
             draggable_title(
                 group_title(
@@ -305,7 +319,10 @@ pub(super) fn new_folder_row(
 ) -> AnyElement {
     let edit = entity.clone();
     let cancel = entity.clone();
-    let row = session_section_header().id("new-folder-row").w_full();
+    let row = session_section_header()
+        .id("new-folder-row")
+        .w_full()
+        .px(super::rail_inset());
     if editing {
         return row
             .on_action(move |_: &gpui_component::input::Escape, _, cx| {
@@ -333,15 +350,18 @@ pub(super) fn new_folder_row(
             this.clear_session_drop_target(cx);
         });
     })
-    .child(button(
-        "new-folder",
-        "+ New folder",
-        ButtonTone::Quiet,
-        true,
-        move |window, cx| {
-            let _ = edit.update(cx, |this, cx| this.begin_folder_edit(None, window, cx));
-        },
-    ))
+    .child(
+        button(
+            "new-folder",
+            "+ New folder",
+            ButtonTone::Quiet,
+            true,
+            move |window, cx| {
+                let _ = edit.update(cx, |this, cx| this.begin_folder_edit(None, window, cx));
+            },
+        )
+        .px_0(),
+    )
     .into_any_element()
 }
 
@@ -374,7 +394,7 @@ pub(super) fn folder_header(
         .debug_selector(move || format!("session-folder-{id}"))
         .group("session-folder-header")
         .w_full()
-        .px(theme().space.sm)
+        .px(super::rail_inset())
         .cursor_pointer()
         .hover(|row| row.bg(theme().colors.highlight))
         .on_hover(move |hovered: &bool, _, cx| {

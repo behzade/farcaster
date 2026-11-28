@@ -6,16 +6,37 @@ impl StateStore {
         super::identity::resolve_session_profile(&self.connection, &locator, None)
     }
 
+    pub fn session_profile_for_backend(
+        &self,
+        session: &Path,
+        harness: Option<Backend>,
+    ) -> Result<Option<String>, String> {
+        super::identity::resolve_harness_profile(
+            &self.connection,
+            &crate::sessions::normalize_session_path(session),
+            harness.map(|h| h.as_str()),
+            None,
+        )
+    }
+
     pub fn session_access_mode(
         &self,
         session: &Path,
+    ) -> Result<Option<crate::agents::HarnessAccessMode>, String> {
+        self.session_access_mode_for_backend(session, None)
+    }
+
+    pub fn session_access_mode_for_backend(
+        &self,
+        session: &Path,
+        harness: Option<Backend>,
     ) -> Result<Option<crate::agents::HarnessAccessMode>, String> {
         let locator = crate::sessions::normalize_session_path(session);
         let value = self
             .connection
             .query_row(
-                "SELECT access_mode FROM sessions WHERE locator=?1",
-                [locator.to_string_lossy()],
+                "SELECT access_mode FROM sessions WHERE locator=?1 AND (?2 IS NULL OR harness=?2)",
+                params![locator.to_string_lossy(), harness.map(|h| h.as_str())],
                 |row| row.get::<_, Option<String>>(0),
             )
             .optional()
@@ -36,6 +57,15 @@ impl StateStore {
         session: &Path,
         mode: crate::agents::HarnessAccessMode,
     ) -> Result<(), String> {
+        self.set_session_access_mode_for_backend(session, None, mode)
+    }
+
+    pub fn set_session_access_mode_for_backend(
+        &self,
+        session: &Path,
+        harness: Option<Backend>,
+        mode: crate::agents::HarnessAccessMode,
+    ) -> Result<(), String> {
         let locator = crate::sessions::normalize_session_path(session);
         let mode = match mode {
             crate::agents::HarnessAccessMode::Sandboxed => "sandboxed",
@@ -45,8 +75,8 @@ impl StateStore {
         let changed = self
             .connection
             .execute(
-                "UPDATE sessions SET access_mode=?2 WHERE locator=?1",
-                params![locator.to_string_lossy(), mode],
+                "UPDATE sessions SET access_mode=?2 WHERE locator=?1 AND (?3 IS NULL OR harness=?3)",
+                params![locator.to_string_lossy(), mode, harness.map(|h| h.as_str())],
             )
             .map_err(|error| format!("save session access mode: {error}"))?;
         if changed == 1 {
@@ -66,7 +96,7 @@ impl StateStore {
         ))
     }
 
-    fn read_cached_sessions(
+    pub(super) fn read_cached_sessions(
         connection: &Connection,
         id: Option<i64>,
     ) -> Result<Vec<SessionSummary>, String> {
@@ -80,11 +110,14 @@ impl StateStore {
                         s.archived_at IS NOT NULL, s.harness,
                         m.provider, m.model, m.effort, COALESCE(s.backend_id, s.locator),
                         parent.harness, s.parent_id, s.created_ms, s.profile_id,
-                        s.forked_from_backend_id
+                        s.forked_from_backend_id, f.routing_json, s.client_key,
+                        EXISTS (SELECT 1 FROM transcript_documents d WHERE d.session_id=s.id)
                    FROM sessions s
                    JOIN projects p ON p.id = s.project_id
                    LEFT JOIN sessions parent ON parent.id = s.parent_id
                    LEFT JOIN session_models m ON m.session_id = s.id
+                   LEFT JOIN worker_families f ON f.child_id = s.id
+                        AND parent.id IS NOT NULL AND p.deleted_at IS NULL
                   WHERE s.locator IS NOT NULL AND {}
                   ORDER BY s.modified_ms DESC, s.timestamp DESC",
                 if id.is_some() {
@@ -114,12 +147,18 @@ impl StateStore {
         update: &crate::agents::SessionMetadata,
     ) -> Result<SessionSummary, String> {
         let path = crate::sessions::normalize_session_path(&update.path);
+        // Profile resolution reads before the first write. Reserve the writer now
+        // so SQLite can wait for another writer without upgrading a stale snapshot.
         let tx = self
             .connection
-            .transaction()
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| error.to_string())?;
-        let profile_id =
-            super::identity::resolve_session_profile(&tx, &path, update.profile_id.as_deref())?;
+        let profile_id = super::identity::resolve_harness_profile(
+            &tx,
+            &path,
+            Some(update.harness.as_str()),
+            update.profile_id.as_deref(),
+        )?;
         let now = u64_to_i64(now_ms());
         let access_mode = update.access_mode.map(|mode| match mode {
             crate::agents::HarnessAccessMode::Sandboxed => "sandboxed",
@@ -129,7 +168,7 @@ impl StateStore {
         let project = ensure_project(&tx, &update.project, now)?;
         let mut statement = tx
             .prepare(
-                "SELECT id FROM sessions
+                "SELECT id, locator IS ?4 AND profile_id IS ?5 AND backend_id IS ?3 FROM sessions
                   WHERE harness=?1 AND project_id=?2
                     AND (locator=?4 OR (profile_id IS ?5 AND backend_id=?3))
                   ORDER BY backend_id=?3 DESC, locator=?4 DESC, id",
@@ -144,24 +183,26 @@ impl StateStore {
                     path.to_string_lossy(),
                     profile_id,
                 ],
-                |row| row.get(0),
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, bool>(1)?)),
             )
             .map_err(|error| error.to_string())?
-            .collect::<rusqlite::Result<Vec<i64>>>()
+            .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(|error| error.to_string())?;
         drop(statement);
-        if let Some(legacy) = super::identity::legacy_session_id_for_locator(
-            &tx,
-            update.harness,
-            &path,
-            &update.project,
-        )? && !candidates.contains(&legacy)
+        if !candidates.iter().any(|(_, exact)| *exact)
+            && let Some(legacy) = super::identity::legacy_session_id_for_locator(
+                &tx,
+                update.harness,
+                &path,
+                &update.project,
+            )?
+            && !candidates.iter().any(|(id, _)| *id == legacy)
         {
-            candidates.push(legacy);
+            candidates.push((legacy, false));
         }
-        let existing = candidates.first().copied();
+        let existing = candidates.first().map(|(id, _)| *id);
         if let Some(keep) = existing {
-            for other in candidates.into_iter().skip(1) {
+            for (other, _) in candidates.into_iter().skip(1) {
                 super::identity::merge_session(&tx, keep, other)?;
             }
         }
@@ -473,22 +514,98 @@ impl StateStore {
     }
 
     pub fn set_session_archived(&self, path: &Path, archived: bool) -> Result<(), String> {
+        self.archive_sessions_at_path(path, archived).map(|_| ())
+    }
+
+    pub fn contains_project_sessions(
+        &self,
+        project: &Path,
+        rows: &[&SessionSummary],
+    ) -> Result<bool, String> {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .map_err(|error| error.to_string())?;
+        let mut statement = transaction
+            .prepare_cached(
+                "SELECT p.path,s.locator,s.harness,s.profile_id,s.backend_id
+             FROM sessions s JOIN projects p ON p.id=s.project_id
+             WHERE s.id=?1 AND s.locator IS NOT NULL",
+            )
+            .map_err(|error| error.to_string())?;
+        for row in rows.iter().filter(|row| row.app_session_id > 0) {
+            let stored = statement
+                .query_row([row.app_session_id], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, Option<String>>(3)?,
+                        r.get::<_, Option<String>>(4)?,
+                    ))
+                })
+                .optional()
+                .map_err(|error| error.to_string())?;
+            let Some((stored_project, locator, harness, profile, native)) = stored else {
+                return Ok(false);
+            };
+            let matches_path = |stored: &str, path: &Path| {
+                Path::new(stored) == path
+                    || sessions::normalize_session_path(Path::new(stored)) == path
+            };
+            if !matches_path(&stored_project, project)
+                || !matches_path(&locator, &row.path)
+                || harness != row.harness.as_str()
+                || profile != row.profile_id
+                || native.is_some_and(|id| id != row.id && row.id != locator)
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    pub fn archive_sessions_at_path(
+        &self,
+        path: &Path,
+        archived: bool,
+    ) -> Result<Vec<SessionSummary>, String> {
+        self.archive_matching_sessions(path, None, archived)
+    }
+
+    pub fn archive_matching_sessions(
+        &self,
+        path: &Path,
+        target: Option<&sessions::SessionTarget>,
+        archived: bool,
+    ) -> Result<Vec<SessionSummary>, String> {
         let locator = crate::sessions::normalize_session_path(path);
         let tx = Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)
             .map_err(|error| format!("start session archive intent: {error}"))?;
         let mut ids = tx
-            .prepare("SELECT id FROM sessions WHERE locator=?1")
+            .prepare("SELECT id FROM sessions WHERE locator=?1 AND (?2 IS NULL OR harness=?2)")
             .and_then(|mut statement| {
                 statement
-                    .query_map([locator.to_string_lossy()], |row| row.get::<_, i64>(0))?
+                    .query_map(
+                        params![
+                            locator.to_string_lossy(),
+                            target.map(|t| t.harness.as_str())
+                        ],
+                        |row| row.get::<_, i64>(0),
+                    )?
                     .collect::<rusqlite::Result<Vec<_>>>()
             })
             .map_err(|error| format!("find session to archive {}: {error}", path.display()))?;
         if ids.is_empty() {
             let legacy_locators = legacy_session_locator_index(&tx)?;
-            let Some(id) = legacy_session_id_from_index(&legacy_locators, &locator, None, None)?
+            let Some(id) = legacy_session_id_from_index(
+                &legacy_locators,
+                &locator,
+                target.map(|t| t.harness),
+                None,
+            )?
             else {
-                return Ok(());
+                return Ok(Vec::new());
             };
             tx.execute(
                 "UPDATE sessions SET locator=?2 WHERE id=?1",
@@ -499,11 +616,27 @@ impl StateStore {
             })?;
             ids.push(id);
         }
+        let mut rows = Vec::new();
         for id in ids {
+            if let Some(target) = target {
+                let native_id: Option<String> = tx
+                    .query_row("SELECT backend_id FROM sessions WHERE id=?1", [id], |row| {
+                        row.get(0)
+                    })
+                    .map_err(|e| e.to_string())?;
+                if native_id
+                    .as_deref()
+                    .is_some_and(|id| id != target.id && target.id != target.path.to_string_lossy())
+                {
+                    return Err("The session identity changed before archiving".into());
+                }
+            }
             super::session_state::apply_archive_intent(&tx, id, archived)?;
+            rows.extend(Self::read_cached_sessions(&tx, Some(id))?);
         }
         tx.commit()
-            .map_err(|error| format!("commit session archive intent: {error}"))
+            .map_err(|error| format!("commit session archive intent: {error}"))?;
+        Ok(rows)
     }
 }
 
@@ -513,9 +646,10 @@ fn upsert_bound_session(
     legacy_locators: &LegacyLocatorIndex,
 ) -> Result<(), String> {
     let locator = crate::sessions::normalize_session_path(&session.path);
-    let profile_id = super::identity::resolve_session_profile(
+    let profile_id = super::identity::resolve_harness_profile(
         transaction,
         &locator,
+        Some(session.harness.as_str()),
         session.profile_id.as_deref(),
     )?;
     let locator_text = locator.to_string_lossy();
@@ -764,8 +898,14 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
         row.get(15)?,
     )
     .with_app_session_id(id);
+    session.draft_id = row.get(28)?;
+    session.has_local_transcript = row.get(29)?;
     session.profile_id = row.get(25)?;
     session.forked_from = row.get(26)?;
+    session.worker_profile = row
+        .get::<_, Option<String>>(27)?
+        .and_then(|json| serde_json::from_str::<crate::agents::WorkerRouting>(&json).ok())
+        .map(|routing| routing.assignment.profile);
     session.created_at = session
         .created_at
         .or(UNIX_EPOCH.checked_add(Duration::from_millis(row.get::<_, u64>(24)?)));

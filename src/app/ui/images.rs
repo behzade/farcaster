@@ -55,7 +55,10 @@ pub(crate) fn image(encoded: &Arc<EncodedImage>) -> Arc<Image> {
         cache.get_or_insert_with(encoded, || {
             let format = ImageFormat::from_mime_type(encoded.mime_type())
                 .expect("encoded transcript image MIME must be supported");
-            Arc::new(Image::from_bytes(format, encoded.bytes().to_vec()))
+            normalized(Arc::new(Image::from_bytes(
+                format,
+                encoded.bytes().to_vec(),
+            )))
         })
     })
 }
@@ -67,6 +70,18 @@ pub(crate) fn from_preview(preview: Arc<Image>) -> Option<Arc<EncodedImage>> {
     )?);
     CACHE.with_borrow_mut(|cache| cache.get_or_insert_with(&encoded, || preview));
     Some(encoded)
+}
+
+pub(crate) fn normalized(image: Arc<Image>) -> Arc<Image> {
+    let format = image::guess_format(image.bytes())
+        .ok()
+        .and_then(|format| ImageFormat::from_mime_type(format.to_mime_type()));
+    match format {
+        Some(format) if format != image.format() => {
+            Arc::new(Image::from_bytes(format, image.bytes().to_vec()))
+        }
+        _ => image,
+    }
 }
 
 #[cfg(test)]

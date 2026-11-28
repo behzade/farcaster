@@ -16,6 +16,7 @@ pub use lifecycle::with_test_worker_pool;
 pub use lifecycle::{
     McpServer, finish_session_family_worker_stop, install_listener, set_enabled,
     set_worker_app_proxy, start, stop_session_family_workers, worker_snapshots,
+    worker_status_snapshot,
 };
 pub use notice_board::{NoticeBoard, NoticeView};
 pub use workers::{SendParams, send};

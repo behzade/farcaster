@@ -94,6 +94,15 @@ fn main() -> std::process::ExitCode {
             if let Err(error) = pool.set_app_proxy(agent_launch.app_proxy.clone()) {
                 return fail(format!("initialize worker proxy: {error}"));
             }
+            let worker_store = state_store.clone();
+            if let Err(error) = pool.set_status_sink(std::sync::Arc::new(move |id, status| {
+                if let Err(error) = worker_store.with(|store| store.save_worker_status(id, status))
+                {
+                    zlog::warn!("Save worker status: {error}");
+                }
+            })) {
+                return fail(error);
+            }
             if let Err(error) = pool.restore_families(saved_worker_routes) {
                 return fail(format!("restore saved worker routes: {error}"));
             }

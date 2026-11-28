@@ -89,19 +89,16 @@ fn dialog_backdrop(
 }
 
 fn dialog_surface(id: impl Into<gpui::ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
-    div()
+    super::floating_surface()
         .id(id)
         .role(Role::Dialog)
         .aria_label(label)
+        .a11y_synthetic_children(|builder| builder.parent_node().set_modal())
         .tab_group()
         .w(theme().layout.dialog_width)
         .max_w_full()
         .max_h(theme().layout.dialog_max_height)
         .overflow_y_scroll()
-        .rounded(theme().radius)
-        .border(theme().border)
-        .border_color(theme().colors.border)
-        .bg(theme().colors.panel)
         .on_click(|_, _, cx| cx.stop_propagation())
 }
 

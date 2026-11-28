@@ -9,7 +9,10 @@ mod sidebar_resize;
 pub(in crate::app::views) use actions::bind_actions as bind_overlay_actions;
 pub(in crate::app) use sidebar_resize::SidebarResize;
 
-use gpui::{InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _, div};
+use gpui::{
+    InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    StatefulInteractiveElement as _, Styled as _, div,
+};
 
 use super::FarcasterApp;
 use crate::app::ui::{
@@ -58,8 +61,21 @@ impl Render for FarcasterApp {
             main,
             session_rail_width,
             run_panel_width,
+            window.is_a11y_active(),
         );
         let picker = self.render_picker(entity.clone(), cx);
+        let workspace_covered = work_active || self.native_workspace_covered_by_overlay();
+        let shell = div()
+            .id("workspace-content")
+            .role(gpui::Role::Group)
+            .aria_label("Workspace")
+            .a11y_synthetic_children(move |builder| {
+                if workspace_covered {
+                    builder.parent_node().set_hidden();
+                }
+            })
+            .size_full()
+            .child(shell);
         let root = div()
             .relative()
             .size_full()
@@ -67,7 +83,6 @@ impl Render for FarcasterApp {
             .font(ui_font())
             .key_context(key_context)
             .track_focus(&self.navigation.chat.focus)
-            // Handle unused Chat clicks before GPUI focuses the root.
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, window, cx| {
@@ -110,11 +125,18 @@ impl Render for FarcasterApp {
             .text_size(theme().type_scale.body);
         let root = actions::bind(root, cx).child(shell);
 
-        self.render_root_overlays(root, entity, picker, work_active, cx)
-            .child(super::native_overlay::keyboard::input_proxy(
-                window,
-                &self.navigation.chat.focus,
-                cx,
-            ))
+        self.render_root_overlays(
+            root,
+            entity,
+            picker,
+            work_active,
+            window.is_a11y_active(),
+            cx,
+        )
+        .child(super::native_overlay::keyboard::input_proxy(
+            window,
+            &self.navigation.chat.focus,
+            cx,
+        ))
     }
 }

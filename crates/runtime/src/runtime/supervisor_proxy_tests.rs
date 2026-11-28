@@ -64,7 +64,7 @@ fn test_supervisor(
     let (_, configuration_rx) = mpsc::channel();
     (
         Supervisor {
-            account_usage: HashMap::new(),
+            accounts: crate::runtime::accounts::AccountService::new(None, false),
             host: crate::test_support::host(),
             process_command,
             command_rx,
@@ -79,10 +79,11 @@ fn test_supervisor(
             selected_session: None,
             generation: 0,
             latest: HashMap::new(),
-            catalog_sessions: Vec::new(),
+            catalog_sessions: Default::default(),
             catalog_generation: 0,
-            actor_paths: HashMap::new(),
+            actor_paths: Default::default(),
             failed_actor_shutdowns: HashMap::new(),
+            failed_draft_shutdowns: HashMap::new(),
             interacted: HashSet::new(),
             document_revisions: HashMap::new(),
             pending_extensions: HashMap::new(),

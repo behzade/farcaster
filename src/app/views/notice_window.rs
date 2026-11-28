@@ -86,7 +86,6 @@ impl FarcasterApp {
         }
         self.overlays.notices.pending = true;
         let owner = cx.entity().downgrade();
-        // Run outside the owner's entity update: opening a window paints it immediately.
         window.defer(cx, move |window, cx| synchronize(owner, window, cx));
     }
 }
@@ -179,6 +178,7 @@ fn open(
         kind: host.kind(owner_window, anchor),
         focus: false,
         show: false,
+        inactive_frame_interval: None,
         titlebar: None,
         is_movable: false,
         is_resizable: false,
@@ -187,7 +187,6 @@ fn open(
         window_background: gpui::WindowBackgroundAppearance::Transparent,
         ..Default::default()
     };
-    // show=false lets us configure AppKit's focus behavior before the panel becomes visible.
     let handle = cx
         .open_window(options, move |_, cx| {
             cx.new(|_| NoticeWindow {

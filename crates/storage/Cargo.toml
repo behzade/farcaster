@@ -11,9 +11,11 @@ test-support = []
 
 [dependencies]
 async-channel = "2.5.0"
-base64 = "0.22.1"
+base64 = "0.23.1"
 farcaster-access = { path = "../access" }
 farcaster-agent-protocol = { path = "../agent-protocol" }
+farcaster-conversation = { path = "../conversation" }
+farcaster-reviews = { path = "../reviews" }
 farcaster-agents = { path = "../agents" }
 farcaster-editors = { path = "../editors" }
 farcaster-projects = { path = "../projects" }

@@ -193,10 +193,11 @@ mod exchange {
 
     #[test]
     fn mcp_confirmation_native_transport_preserves_all_choices() {
-        for (accepted, cancel, action) in [
-            (true, false, "accept"),
-            (false, false, "decline"),
-            (true, true, "cancel"),
+        for (choice, cancel, action, persistence) in [
+            ("Allow for this session", false, "accept", Some("session")),
+            ("Always allow", false, "accept", Some("always")),
+            ("Decline", false, "decline", None),
+            ("Always allow", true, "cancel", None),
         ] {
             let (finish, finished) = mpsc::channel();
             let (connection, peer) = connect(move |mut peer| {
@@ -204,11 +205,17 @@ mod exchange {
                 let prompt = peer.read();
                 peer.write(json!({"jsonrpc":"2.0","id":"desktop-approval","method":"elicitation/create","params":{
                     "sessionId":"one","mode":"form","message":"Allow desktop access?",
-                    "requestedSchema":{"type":"object","properties":{}}
+                    "requestedSchema":{"type":"object","properties":{}}, "_meta":{"persist":["session","always"]}
                 }}));
                 let answer = peer.read();
                 assert_eq!(answer["id"], "desktop-approval");
                 assert_eq!(answer["result"]["action"], action);
+                assert_eq!(
+                    answer["result"].get("_meta"),
+                    persistence
+                        .map(|persist| json!({"persist":persist}))
+                        .as_ref()
+                );
                 assert_eq!(
                     answer["result"]["content"],
                     if action == "accept" {
@@ -239,7 +246,9 @@ mod exchange {
             connection
                 .respond(
                     &id,
-                    crate::adapter::mcp_confirmation::reply(accepted, cancel),
+                    crate::adapter::mcp_confirmation::Confirmation::parse("test", &params)
+                        .expect("confirmation")
+                        .reply(Some(choice), cancel),
                 )
                 .expect("reply");
             assert!(
@@ -265,7 +274,6 @@ mod exchange {
             assert_eq!(answer["id"], "approve-7");
             assert_eq!(answer["result"]["outcome"]["optionId"], "allow-once-7");
             peer.reply(&prompt, json!({"stopReason":"end_turn"}));
-            // Keep the peer open until the client has consumed the response.
             finished
                 .recv_timeout(Duration::from_secs(3))
                 .expect("release ACP test peer");
@@ -307,7 +315,6 @@ mod exchange {
                 let request = peer.read();
                 peer.write(json!({"jsonrpc":"2.0", "id":request["id"], "error":{"code":code, "message":"request denied"}}));
             }
-            // Trigger EOF only after the client has consumed both error responses.
             finished
                 .recv_timeout(Duration::from_secs(3))
                 .expect("release ACP error peer");

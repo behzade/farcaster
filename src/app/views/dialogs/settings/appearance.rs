@@ -1,10 +1,12 @@
 use super::*;
 use crate::app::{
-    ui::theme::{Appearance, Colors, LengthKey, ThemeToken, length_label, token_label},
+    ui::theme::{
+        Appearance, LengthKey, MONO_FONT_FAMILY, SyntaxKey, ThemeDefinition, ThemeToken,
+        length_label, token_label,
+    },
     workspace::theme_settings::ThemeSettings,
 };
 use gpui::SharedString;
-use gpui_component::Selectable as _;
 
 pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
     let themes = &app.settings.themes;
@@ -77,8 +79,8 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
                 section.children(theme_editor(themes, editable, entity))
             } else {
                 section
-                    .child(theme_list(themes, entity.clone()))
-                    .child(theme_actions(themes, editable, entity))
+                    .child(theme_actions(themes, editable, entity.clone()))
+                    .child(theme_list(themes, entity))
             }
         })
         .into_any_element()
@@ -90,8 +92,8 @@ fn theme_list(themes: &ThemeSettings, entity: WeakEntity<FarcasterApp>) -> AnyEl
     let mut list = div()
         .debug_selector(|| "settings-theme-list".into())
         .flex()
-        .flex_col()
-        .gap(theme().space.xs);
+        .flex_wrap()
+        .gap(theme().space.sm);
     for (index, definition) in themes.library.display_order().into_iter().enumerate() {
         let active = definition.name == selected;
         let custom = themes.library.is_user_theme(&definition.name);
@@ -101,11 +103,14 @@ fn theme_list(themes: &ThemeSettings, entity: WeakEntity<FarcasterApp>) -> AnyEl
             div()
                 .id(("theme-select", index))
                 .debug_selector(move || format!("theme-select-{index}"))
+                .w(gpui::relative(0.48))
+                .min_w(theme().size(240.0))
+                .flex_none()
                 .px(theme().space.sm)
                 .py(theme().space.sm)
-                .border_1()
-                .border_color(gpui::rgba(0x00000000))
-                .when(active, |row| row.bg(theme().colors.highlight))
+                .rounded(theme().size(6.0))
+                .bg(theme().colors.surface)
+                .selection_style(active)
                 .when(editable, |row| {
                     row.role(gpui::Role::Button)
                         .aria_label(definition.name.clone())
@@ -117,9 +122,13 @@ fn theme_list(themes: &ThemeSettings, entity: WeakEntity<FarcasterApp>) -> AnyEl
                         .tab_index(0)
                         .cursor_pointer()
                         .when(!active, |row| {
-                            row.hover(|row| row.bg(theme().colors.surface))
+                            row.hover(|row| row.bg(theme().colors.highlight))
                         })
-                        .focus_visible(|row| row.border_color(theme().colors.focus_border))
+                        .focus_visible(|row| {
+                            row.shadow(crate::app::ui::primitives::focus_outline(
+                                theme().colors.focus_border,
+                            ))
+                        })
                         .on_click(move |_, window, cx| {
                             if !active {
                                 let _ = select.update(cx, |this, cx| {
@@ -129,76 +138,136 @@ fn theme_list(themes: &ThemeSettings, entity: WeakEntity<FarcasterApp>) -> AnyEl
                         })
                 })
                 .flex()
-                .items_center()
-                .justify_between()
+                .flex_col()
+                .items_start()
                 .gap(theme().space.sm)
                 .child(
                     div()
                         .min_w_0()
+                        .w_full()
                         .flex()
-                        .flex_col()
-                        .gap(theme().space.xs)
+                        .items_center()
+                        .justify_between()
+                        .gap(theme().space.sm)
                         .child(
                             div()
-                                .flex()
-                                .items_center()
-                                .gap(theme().space.sm)
-                                .child(
-                                    div()
-                                        .truncate()
-                                        .text_size(theme().type_scale.body)
-                                        .text_color(theme().colors.text)
-                                        .child(definition.name.clone()),
-                                )
-                                .child(theme_palette(index, definition.colors)),
+                                .min_w_0()
+                                .flex_1()
+                                .truncate()
+                                .text_size(theme().type_scale.body)
+                                .text_color(theme().colors.text)
+                                .child(definition.name.clone()),
                         )
                         .child(
                             div()
+                                .flex_none()
                                 .text_size(theme().type_scale.caption)
-                                .text_color(theme().colors.muted)
-                                .child(if custom { "Your theme" } else { "Built in" }),
+                                .when(active, |badge| {
+                                    badge
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(theme().colors.accent)
+                                })
+                                .when(!active, |badge| badge.text_color(theme().colors.muted))
+                                .child(if active {
+                                    "Active"
+                                } else if custom {
+                                    "Your theme"
+                                } else {
+                                    "Built in"
+                                }),
                         ),
                 )
-                .when(active, |row| {
-                    row.child(
-                        div()
-                            .flex_none()
-                            .text_size(theme().type_scale.caption)
-                            .text_color(theme().colors.indicator)
-                            .child("Active"),
-                    )
-                }),
+                .child(theme_preview(index, &definition)),
         );
     }
     list.into_any_element()
 }
 
-fn theme_palette(index: usize, colors: Colors) -> gpui::Stateful<gpui::Div> {
+fn theme_preview(index: usize, definition: &ThemeDefinition) -> gpui::Div {
+    let colors = definition.colors;
     div()
-        .id(("theme-palette", index))
+        .debug_selector(move || format!("theme-preview-{index}"))
+        .font_weight(gpui::FontWeight::NORMAL)
+        .w_full()
+        .max_w_full()
         .flex()
+        .flex_col()
         .flex_none()
-        .gap(theme().size(2.0))
-        .app_tooltip("Background · Text · Accent · Links · Success · Warning · Error")
-        .children(
-            [
-                colors.canvas,
-                colors.text,
-                colors.accent,
-                colors.link,
-                colors.success,
-                colors.warning,
-                colors.error,
-            ]
-            .into_iter()
-            .map(|color| {
-                div()
-                    .size(theme().size(12.0))
-                    .flex_none()
-                    .border_1()
-                    .border_color(theme().colors.border)
-                    .bg(color)
-            }),
+        .gap(theme().space.xs)
+        .p(theme().space.sm)
+        .rounded(theme().size(4.0))
+        .border_1()
+        .border_color(colors.border)
+        .bg(colors.canvas)
+        .text_size(theme().type_scale.caption)
+        .text_color(colors.text)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(theme().space.sm)
+                .px(theme().space.sm)
+                .py(theme().space.xs)
+                .rounded(theme().size(3.0))
+                .bg(colors.panel)
+                .child(
+                    div().flex().font_family(MONO_FONT_FAMILY).children(
+                        [
+                            ("let ", SyntaxKey::keyword),
+                            ("ready", SyntaxKey::primary),
+                            (" = ", SyntaxKey::operator),
+                            ("true", SyntaxKey::boolean),
+                            (";", SyntaxKey::punctuation),
+                        ]
+                        .into_iter()
+                        .map(|(text, token)| {
+                            div()
+                                .text_color(definition.color(ThemeToken::Syntax(token)))
+                                .child(text)
+                        }),
+                    ),
+                )
+                .child(div().ml_auto().text_color(colors.link).child("Changes")),
+        )
+        .child(
+            div()
+                .flex()
+                .gap(theme().space.sm)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .px(theme().space.sm)
+                        .py(theme().space.xs)
+                        .rounded(theme().size(4.0))
+                        .border_1()
+                        .border_color(colors.focus_border)
+                        .bg(colors.canvas)
+                        .text_color(colors.muted)
+                        .child("Search…"),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .items_center()
+                        .px(theme().space.sm)
+                        .py(theme().space.xs)
+                        .rounded(theme().size(4.0))
+                        .border_1()
+                        .border_color(colors.indicator)
+                        .shadow(crate::app::ui::primitives::focus_outline(colors.indicator))
+                        .bg(colors.canvas)
+                        .child(div().bg(colors.selection_background()).child("Selected"))
+                        .child(
+                            div()
+                                .w(gpui::px(1.0))
+                                .h(theme().type_scale.caption)
+                                .bg(colors.text),
+                        ),
+                ),
         )
 }
 
@@ -215,30 +284,30 @@ fn theme_actions(
     div()
         .flex()
         .items_center()
-        .gap(theme().space.xs)
+        .gap(theme().space.sm)
         .flex_wrap()
-        .child(settings_action(
+        .child(button(
             "theme-export",
-            "Export active theme as CSS",
-            AppIcon::DownloadSimple,
+            "Export",
+            ButtonTone::Neutral,
             editable,
             move |window, cx| {
                 let _ = export.update(cx, |this, cx| this.export_theme(window, cx));
             },
         ))
-        .child(settings_action(
+        .child(button(
             "theme-import",
-            "Import theme from CSS",
-            AppIcon::UploadSimple,
+            "Import",
+            ButtonTone::Neutral,
             editable,
             move |window, cx| {
                 let _ = import.update(cx, |this, cx| this.import_theme(window, cx));
             },
         ))
-        .child(settings_action(
+        .child(button(
             "theme-duplicate",
             "Duplicate to edit",
-            AppIcon::Copy,
+            ButtonTone::Neutral,
             editable,
             move |window, cx| {
                 let _ = duplicate.update(cx, |this, cx| {
@@ -248,10 +317,10 @@ fn theme_actions(
         ))
         .when(themes.draft.is_some(), |actions| {
             actions.child(
-                settings_action(
+                button(
                     "theme-delete",
                     "Delete theme",
-                    AppIcon::Trash,
+                    ButtonTone::Neutral,
                     editable,
                     move |window, cx| {
                         let _ = delete.update(cx, |this, cx| this.delete_theme(window, cx));
@@ -305,9 +374,7 @@ fn theme_editor(
                         },
                     )
                     .selected(selected)
-                    .when(selected, |button| {
-                        button.text_color(theme().colors.indicator)
-                    })
+                    .selection_style(selected)
                     .toggled(selected)
                 }),
         ),

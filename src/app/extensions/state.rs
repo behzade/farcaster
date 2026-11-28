@@ -101,11 +101,7 @@ impl FarcasterApp {
         generation: u64,
         _cx: &mut Context<Self>,
     ) {
-        let notification = matches!(request, ExtensionUiRequest::Notify { .. });
         let applied = self.extensions.active.apply(request);
-        if notification && !self.views.notification_panel.is_collapsed() {
-            self.extensions.active.mark_notifications_seen();
-        }
         match applied {
             ExtensionEffect::DialogOpened => self.extensions.pending_dialog_setup = true,
             ExtensionEffect::SetTitle(title) => {
@@ -149,11 +145,19 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let record = (!self.sessions.all.has_shared_path(&path))
+            .then(|| self.sessions.all.by_path(&path))
+            .flatten()
+            .map(|row| row.catalog_key());
         self.views.transcript.update(cx, |transcript, cx| {
-            transcript.follow_session(&path);
+            transcript.follow_session(&path, record.clone());
             cx.notify();
         });
-        self.select_session_and_focus(path, project, window, cx);
+        if let Some(key) = record {
+            self.select_catalog_session(key, true, window, cx);
+        } else {
+            self.select_session_and_focus(path, project, window, cx);
+        }
     }
 
     pub(in crate::app) fn show_attention_notification(
@@ -204,9 +208,6 @@ impl FarcasterApp {
         self.extensions
             .active
             .push_notification(tag, message, crate::protocol::NotifyTone::Info);
-        if !self.views.notification_panel.is_collapsed() {
-            self.extensions.active.mark_notifications_seen();
-        }
     }
 
     fn attention_notification_tag(&mut self, target: Option<(PathBuf, PathBuf)>) -> String {

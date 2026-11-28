@@ -1,3 +1,5 @@
+pub mod markdown_structure;
+
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
@@ -15,6 +17,9 @@ use crate::{
 };
 
 #[cfg(test)]
+#[path = "conversation/compaction_tests.rs"]
+mod compaction_tests;
+#[cfg(test)]
 #[path = "conversation/notices_tests.rs"]
 mod notices_tests;
 
@@ -23,6 +28,7 @@ mod attachments;
 #[path = "conversation/delivery.rs"]
 mod delivery;
 pub use delivery::{PendingReceipt, PendingReceiptRef};
+pub use farcaster_agent_protocol::CacheUsage;
 #[cfg(test)]
 #[path = "conversation/delivery_tests.rs"]
 mod delivery_tests;
@@ -33,6 +39,9 @@ mod images;
 pub use images::EncodedImage;
 #[path = "conversation/stream.rs"]
 mod stream;
+#[path = "conversation/viewport.rs"]
+mod viewport;
+pub use viewport::viewport_item_matches;
 #[path = "conversation/tool_details.rs"]
 mod tool_details;
 #[path = "conversation/tools.rs"]
@@ -53,7 +62,7 @@ const MAX_DIAGNOSTICS: usize = 32;
 const STREAM_CHUNK_BYTES: usize = 2 * 1024;
 const STREAM_TAIL_MAX_BYTES: usize = STREAM_CHUNK_BYTES;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TranscriptKind {
     User,
     Assistant,
@@ -61,12 +70,30 @@ pub enum TranscriptKind {
     Tool,
     Error,
     Notice,
+    Compaction(CompactionState),
     Custom,
     AgentResult,
     PeerMessage,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CompactionState {
+    Aborted,
+    Failed,
+    Interrupted,
+}
+
+impl CompactionState {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Aborted => "Compaction cancelled",
+            Self::Failed => "Compaction failed",
+            Self::Interrupted => "Compaction interrupted",
+        }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct ToolPresentation {
     path: String,
     additions: usize,
@@ -121,7 +148,7 @@ fn change_counts(diff: &str) -> (usize, usize) {
     })
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToolReviewState {
     Reviewing,
     Approved,
@@ -138,17 +165,18 @@ impl ToolReviewState {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct ToolReview {
     pub state: ToolReviewState,
     pub detail: Option<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct TranscriptItem {
     pub kind: TranscriptKind,
     pub label: String,
     pub text: String,
+    #[serde(skip)]
     pub images: Arc<Vec<Arc<EncodedImage>>>,
     pub files: Arc<Vec<FileAttachment>>,
     pub stream_chunks: Arc<Vec<Arc<str>>>,
@@ -347,9 +375,13 @@ impl ConversationState {
             tool_review: None,
             invocation,
         });
-        self.items.push(item.clone());
-        self.optimistic_user = Some(item.clone());
+        self.append_local_user(item.clone());
         item
+    }
+
+    pub fn append_local_user(&mut self, item: Arc<TranscriptItem>) {
+        self.items.push(item.clone());
+        self.optimistic_user = Some(item);
     }
 
     pub fn rollback_local_user(&mut self, optimistic: &Arc<TranscriptItem>) -> bool {
@@ -410,10 +442,34 @@ impl ConversationState {
         })
     }
 
+    pub fn awaiting_first_activity(&self) -> bool {
+        self.active_run_start().is_some_and(|start| {
+            self.items
+                .iter_range(start..self.items.len())
+                .all(|item| match item.kind {
+                    TranscriptKind::User | TranscriptKind::PeerMessage => true,
+                    TranscriptKind::Assistant => {
+                        !item.has_attachments()
+                            && item.text.trim_start().is_empty()
+                            && item
+                                .stream_chunks
+                                .iter()
+                                .all(|chunk| chunk.trim_start().is_empty())
+                    }
+                    _ => false,
+                })
+        })
+    }
+
     pub fn ended_in_error(&self) -> bool {
         self.items
             .iter_rev()
-            .find(|item| item.kind != TranscriptKind::Notice)
+            .find(|item| {
+                !matches!(
+                    item.kind,
+                    TranscriptKind::Notice | TranscriptKind::Compaction(_)
+                )
+            })
             .is_some_and(|item| item.kind == TranscriptKind::Error)
     }
 
@@ -540,3 +596,7 @@ mod tests;
 #[cfg(test)]
 #[path = "conversation/receipt_fallback_tests.rs"]
 mod receipt_fallback_tests;
+
+#[cfg(test)]
+#[path = "conversation/output_images_tests.rs"]
+mod output_images_tests;

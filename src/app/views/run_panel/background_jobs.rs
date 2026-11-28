@@ -9,15 +9,13 @@ use crate::{
 
 pub(super) fn background_job_row(job: &BackgroundJob) -> AnyElement {
     div()
-        .px(theme().size(2.0))
-        .py(theme().size(3.0))
+        .px_0()
+        .py(theme().space.xs)
         .flex()
         .items_start()
-        .gap(theme().size(7.0))
+        .gap(theme().space.xs)
         .child(
-            div()
-                .size(theme().icons.inline)
-                .flex_none()
+            crate::app::ui::grid::icon_slot()
                 .text_color(background_job_color(job.state))
                 .child(app_icon(
                     background_job_icon(job.state),

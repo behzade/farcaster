@@ -21,6 +21,7 @@ impl PendingQueuedPrompt {
             harness: self.harness,
             project: self.project.clone(),
             session: self.session.clone(),
+            backend_session_id: self.backend_session_id.clone(),
             mode: self.mode,
             message: self.message.clone(),
             display_message: self.display_message.clone(),
@@ -216,8 +217,17 @@ impl RuntimeOwner {
             {
                 state.with(|store| store.cancel_queued_prompts(&[outbox_id]))?;
             }
-            if let Some(session) = self.active_session.as_deref() {
-                state.with(|store| store.dismiss_prompt_receipt(session, id))?;
+            if let (Some(harness), Some(path)) = (self.harness, self.active_session.as_deref()) {
+                farcaster_storage::SessionRepository::dismiss_transcript_receipt(
+                    state,
+                    farcaster_storage::TranscriptSession {
+                        harness,
+                        path,
+                        project: &self.project,
+                        profile_id: self.process_command.profile_id.as_deref(),
+                    },
+                    id,
+                )?;
             }
             Ok::<_, String>(())
         })();

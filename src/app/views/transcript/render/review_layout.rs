@@ -1,20 +1,20 @@
 use super::*;
 
 pub(super) fn arrange(
-    rows: PersistentVec<TranscriptRow>,
+    rows: Vec<TranscriptRow>,
     items: &(impl Indexed<Arc<TranscriptItem>> + ?Sized),
     active_start: Option<usize>,
     completed_runs: &[std::ops::Range<usize>],
-) -> PersistentVec<TranscriptRow> {
+) -> Vec<TranscriptRow> {
     if !rows
         .iter()
         .any(|row| matches!(row, TranscriptRow::Review { .. }))
     {
         return rows;
     }
-    let mut output = PersistentVec::default();
+    let mut output = Vec::with_capacity(rows.len());
     let mut span = Vec::new();
-    for row in rows.iter().copied() {
+    for row in rows {
         let index = row.item_start();
         let completed = completed_runs.get(completed_runs.partition_point(|run| run.end < index));
         let inside_completed = completed.is_some_and(|run| run.start < index && index < run.end);
@@ -40,7 +40,7 @@ pub(super) fn arrange(
 }
 
 fn finish(
-    output: &mut PersistentVec<TranscriptRow>,
+    output: &mut Vec<TranscriptRow>,
     span: &[TranscriptRow],
     items: &(impl Indexed<Arc<TranscriptItem>> + ?Sized),
     active_start: Option<usize>,

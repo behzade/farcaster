@@ -15,24 +15,38 @@ fn repeated_forks_get_distinct_actors_and_selection_reuses_a_fork() {
         session_id: "source".into(),
         project: "/project".into(),
     };
-    let first = actor_key_for_command(&command, "fork:/source", &HashMap::new());
-    let second = actor_key_for_command(&command, "fork:/source", &HashMap::new());
+    let first = actor_key_for_command(
+        &command,
+        "fork:/source",
+        &Default::default(),
+        &HashMap::new(),
+    );
+    let second = actor_key_for_command(
+        &command,
+        "fork:/source",
+        &Default::default(),
+        &HashMap::new(),
+    );
     assert_ne!(first, second);
     let snapshots = HashMap::from([(
         first.clone(),
         Arc::new(RuntimeSnapshot {
+            harness: Some(Backend::Pi),
             live_session: Some("/fork".into()),
             ..RuntimeSnapshot::default()
         }),
     )]);
     let selection = RuntimeCommand::SelectSession {
+        display_stamp: None,
         path: "/fork".into(),
         harness: Backend::Pi,
         session_id: "fork".into(),
         project: "/project".into(),
+        key: None,
+        request: None,
     };
     assert_eq!(
-        actor_key_for_command(&selection, "requested", &snapshots),
+        actor_key_for_command(&selection, "requested", &Default::default(), &snapshots),
         first
     );
 }
@@ -90,6 +104,7 @@ fn startup_and_later_draft_selection_use_the_same_profile_defaults() -> Result<(
         if select_again {
             commands
                 .send(RuntimeCommand::ResumeDraft {
+                    request: None,
                     id: "custom-startup".into(),
                     harness: Some(Backend::Codex),
                     project: project.clone(),
@@ -238,6 +253,7 @@ fn recovered_draft_prompts_follow_their_own_actors_and_stay_saved() -> Result<()
 
         commands
             .send(RuntimeCommand::ResumeDraft {
+                request: None,
                 id: key.trim_start_matches("draft:").into(),
                 harness: Some(harness),
                 project,

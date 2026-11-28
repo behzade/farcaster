@@ -63,42 +63,47 @@ impl AgentLaunchConfig {
     }
 
     pub fn command(&self, project: &Path) -> Result<std::process::Command, String> {
-        let profile = self.selected_profile()?;
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         let environment = super::shell_environment::project_shell_environment(project)?;
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         let environment: Option<Vec<(std::ffi::OsString, std::ffi::OsString)>> = None;
-        let environment_value = |name: &str| {
-            environment
-                .as_ref()
-                .and_then(|values| values.iter().find(|(key, _)| key == name))
-                .map(|(_, value)| value.clone())
-                .or_else(|| std::env::var_os(name))
-        };
-        let executable = profile.as_ref().map_or(self.program.as_path(), |profile| {
-            profile.executable.as_path()
-        });
-        let program =
-            resolve_agent_program(executable, project, environment_value("PATH").as_deref())?;
+        self.command_with_environment(project, environment)
+    }
+
+    pub(super) fn cached_command(&self, project: &Path) -> Option<std::process::Command> {
+        #[cfg(all(not(test), any(target_os = "linux", target_os = "macos")))]
+        let environment = Some(super::shell_environment::cached_environment(project)?);
+        #[cfg(any(test, not(any(target_os = "linux", target_os = "macos"))))]
+        let environment = None;
+        self.command_with_environment(project, environment).ok()
+    }
+
+    fn command_with_environment(
+        &self,
+        project: &Path,
+        environment: Option<Vec<(std::ffi::OsString, std::ffi::OsString)>>,
+    ) -> Result<std::process::Command, String> {
+        let profile = self.selected_profile()?;
         let network = farcaster_access::network_configuration(
             environment.as_deref(),
             self.app_proxy.as_deref(),
         );
-        let mut environment = environment;
-        if let Some(environment) = environment.as_mut() {
-            farcaster_access::append_app_proxy_environment(environment, &network);
-        }
+        let mut environment = environment.unwrap_or_else(|| std::env::vars_os().collect());
+        farcaster_access::append_app_proxy_environment(&mut environment, &network);
+        let executable = profile.as_ref().map_or(self.program.as_path(), |profile| {
+            profile.executable.as_path()
+        });
+        let search_path = environment
+            .iter()
+            .find(|(key, _)| key == "PATH")
+            .map(|(_, value)| value.as_os_str());
+        let program = resolve_agent_program(executable, project, search_path)?;
         let mut command = std::process::Command::new(program);
-        command.args(&self.prefix_args).current_dir(project);
-        if let Some(environment) = environment {
-            command.env_clear().envs(environment);
-        } else if network.app_proxy.is_some() {
-            let mut proxy_environment = std::env::vars_os()
-                .filter(|(name, _)| name == "no_proxy" || name == "NO_PROXY")
-                .collect();
-            farcaster_access::append_app_proxy_environment(&mut proxy_environment, &network);
-            command.envs(proxy_environment);
-        }
+        command
+            .args(&self.prefix_args)
+            .current_dir(project)
+            .env_clear()
+            .envs(environment);
         if let Some(profile) = profile
             && let (Some(key), Some(directory)) =
                 (profile.data_environment_key(), profile.data_directory)
@@ -111,6 +116,16 @@ impl AgentLaunchConfig {
         }
         Ok(command)
     }
+}
+
+pub(super) fn environment(
+    command: &std::process::Command,
+    name: &str,
+) -> Option<std::ffi::OsString> {
+    command
+        .get_envs()
+        .find(|(key, _)| *key == name)
+        .and_then(|(_, value)| value.map(std::ffi::OsString::from))
 }
 
 #[cfg(test)]

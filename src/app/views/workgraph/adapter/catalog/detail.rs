@@ -1,3 +1,4 @@
+use crate::app::ui::primitives::SelectionStyle as _;
 use gpui::{
     Div, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _, px,
@@ -5,9 +6,11 @@ use gpui::{
 use workgraph::{PlanOverview, ProjectGraph, WorkStatus};
 
 use super::{WorkGraphBoardView, caption, status_label};
+use crate::app::views::workgraph::components::{detail_action, detail_section};
 use crate::app::{
     ui::{
-        primitives::{ButtonTone, button},
+        assets::AppIcon,
+        primitives::{ButtonTone, button, icon_button},
         theme::theme,
     },
     views::workgraph::{
@@ -43,6 +46,7 @@ impl WorkGraphBoardView {
                     .find(|node| node.number == task && node.plan_number == number)
             })
             .or_else(|| graph.nodes.iter().find(|node| node.plan_number == number));
+        let narrow = layout == BoardLayoutMode::Narrow;
         div()
             .id("plan-overview-detail")
             .w(px(DETAIL_WIDTH))
@@ -50,90 +54,126 @@ impl WorkGraphBoardView {
             .min_w_0()
             .h_full()
             .overflow_y_scroll()
-            .when(layout == BoardLayoutMode::Narrow, |detail| detail.w_full())
-            .border_l(theme().border)
-            .border_color(theme().colors.border)
-            .p(theme().space.md)
+            .when(narrow, |detail| detail.w_full())
+            .bg(theme().colors.canvas)
+            .rounded_br(crate::app::ui::primitives::surface_radius())
+            .when(narrow, |detail| {
+                detail.rounded_bl(crate::app::ui::primitives::surface_radius())
+            })
+            .p(theme().size(24.0))
             .flex()
             .flex_col()
-            .gap(theme().space.sm)
-            .child(button(
-                "catalog-detail-back",
-                "Close details",
-                ButtonTone::Quiet,
-                true,
-                move |_, cx| {
-                    back.update(cx, |this, cx| {
-                        this.catalog.selected = None;
-                        this.catalog.task = None;
-                        cx.notify();
-                    })
-                },
-            ))
+            .gap(theme().size(20.0))
             .child(
                 div()
-                    .text_size(theme().type_scale.reading)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(plan.title.clone()),
-            )
-            .child(status_label(row.status))
-            .child(caption(format!(
-                "{} of {} tasks done · {} blocked",
-                row.done, row.total, row.blocked
-            )))
-            .child(button(
-                "catalog-open-plan",
-                "Open plan",
-                ButtonTone::Neutral,
-                true,
-                move |window, cx| open.update(cx, |this, cx| this.open_plan(number, window, cx)),
-            ))
-            .child(caption("Tasks"))
-            .child(
-                div()
-                    .id("catalog-detail-tasks")
-                    .max_h(theme().size(240.0))
-                    .overflow_y_scroll()
-                    .flex_none()
-                    .children(
-                        graph
-                            .nodes
-                            .iter()
-                            .filter(|node| node.plan_number == number)
-                            .map(|node| {
-                                let is_selected =
-                                    task.is_some_and(|task| task.number == node.number);
-                                let task = node.number;
-                                let entity = entity.clone();
+                    .flex()
+                    .flex_col()
+                    .gap(theme().space.sm)
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .items_start()
+                            .justify_between()
+                            .gap(theme().space.sm)
+                            .child(
                                 div()
-                                    .id(format!("catalog-task-{task}"))
-                                    .role(gpui::Role::Button)
-                                    .aria_label(format!("Inspect task {}", node.title))
-                                    .flex_none()
-                                    .cursor_pointer()
-                                    .border_b(theme().border)
-                                    .border_color(theme().colors.border)
-                                    .py(theme().space.sm)
-                                    .bg(if is_selected {
-                                        theme().colors.highlight
-                                    } else {
-                                        theme().colors.panel
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_size(theme().type_scale.reading)
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(plan.title.clone()),
+                            )
+                            .child(icon_button(
+                                "catalog-detail-back",
+                                if narrow {
+                                    AppIcon::ArrowLeft
+                                } else {
+                                    AppIcon::X
+                                },
+                                "Close details",
+                                ButtonTone::Quiet,
+                                move |_, cx| {
+                                    back.update(cx, |this, cx| {
+                                        this.catalog.selected = None;
+                                        this.catalog.task = None;
+                                        cx.notify();
                                     })
-                                    .hover(|style| style.bg(theme().colors.highlight))
-                                    .on_click(move |_, _, cx| {
-                                        entity.update(cx, |this, cx| {
-                                            this.catalog.task = Some(task);
-                                            cx.notify();
+                                },
+                            )),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap(theme().space.sm)
+                            .child(status_label(row.status))
+                            .child(caption(format!(
+                                "{} of {} tasks done · {} blocked",
+                                row.done, row.total, row.blocked
+                            ))),
+                    )
+                    .child(div().pt(theme().space.xs).child(detail_action(button(
+                        "catalog-open-plan",
+                        "Open plan",
+                        ButtonTone::Neutral,
+                        true,
+                        move |window, cx| {
+                            open.update(cx, |this, cx| this.open_plan(number, window, cx))
+                        },
+                    )))),
+            )
+            .child(
+                detail_section("Tasks").child(
+                    div()
+                        .id("catalog-detail-tasks")
+                        .max_h(theme().size(240.0))
+                        .overflow_y_scroll()
+                        .flex_none()
+                        .flex()
+                        .flex_col()
+                        .gap(theme().space.xs)
+                        .children(
+                            graph
+                                .nodes
+                                .iter()
+                                .filter(|node| node.plan_number == number)
+                                .map(|node| {
+                                    let is_selected =
+                                        task.is_some_and(|task| task.number == node.number);
+                                    let task = node.number;
+                                    let entity = entity.clone();
+                                    div()
+                                        .id(format!("catalog-task-{task}"))
+                                        .role(gpui::Role::Button)
+                                        .aria_label(format!("Inspect task {}", node.title))
+                                        .flex_none()
+                                        .cursor_pointer()
+                                        .aria_selected(is_selected)
+                                        .rounded(theme().size(6.0))
+                                        .p(theme().space.sm)
+                                        .bg(theme().colors.panel)
+                                        .selection_style(is_selected)
+                                        .hover(|style| style.bg(theme().colors.highlight))
+                                        .on_click(move |_, _, cx| {
+                                            entity.update(cx, |this, cx| {
+                                                this.catalog.task = Some(task);
+                                                cx.notify();
+                                            })
                                         })
-                                    })
-                                    .child(
-                                        div()
-                                            .text_size(theme().type_scale.body_small)
-                                            .child(format!("#{task} {}", node.title)),
-                                    )
-                                    .child(status_label(graph.work_status(task)))
-                            }),
-                    ),
+                                        .flex()
+                                        .flex_col()
+                                        .gap(theme().size(3.0))
+                                        .child(
+                                            div()
+                                                .text_size(theme().type_scale.body_small)
+                                                .child(format!("#{task} {}", node.title)),
+                                        )
+                                        .child(status_label(graph.work_status(task)))
+                                }),
+                        ),
+                ),
             )
             .when_some(task, |detail, task| {
                 let state = graph.task_state(task.number);
@@ -143,25 +183,27 @@ impl WorkGraphBoardView {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(task.title.clone()),
                     )
-                    .child(caption("Acceptance"))
-                    .child(div().text_size(theme().type_scale.body_small).child(
-                        if task.acceptance.is_empty() {
-                            "No acceptance condition recorded.".into()
-                        } else {
-                            task.acceptance.clone()
-                        },
-                    ))
+                    .when(!task.acceptance.is_empty(), |detail| {
+                        detail.child(
+                            detail_section("Acceptance").child(
+                                div()
+                                    .text_size(theme().type_scale.body_small)
+                                    .child(task.acceptance.clone()),
+                            ),
+                        )
+                    })
                     .when_some(
                         state.as_ref().and_then(|state| state.completion.as_ref()),
                         |detail, completion| {
-                            detail
-                                .child(caption("Outcome"))
-                                .child(
-                                    div()
-                                        .text_size(theme().type_scale.body_small)
-                                        .child(completion.outcome.note.clone()),
-                                )
-                                .child(caption(completion.outcome.evidence.reference.clone()))
+                            detail.child(
+                                detail_section("Outcome")
+                                    .child(
+                                        div()
+                                            .text_size(theme().type_scale.body_small)
+                                            .child(completion.outcome.note.clone()),
+                                    )
+                                    .child(caption(completion.outcome.evidence.reference.clone())),
+                            )
                         },
                     )
                     .when_some(
@@ -170,31 +212,54 @@ impl WorkGraphBoardView {
                             detail.child(caption(format!("Owner: {}", owner.session_id)))
                         },
                     )
-                    .child(caption("Depends on"))
-                    .child(render_relations(graph, task.number, true, entity.clone()))
-                    .child(caption(
-                        if graph.work_status(task.number) == WorkStatus::Done {
-                            "Enables"
-                        } else {
-                            "Next tasks"
+                    .when(
+                        graph.edges.iter().any(|edge| edge.to == task.number),
+                        |detail| {
+                            detail.child(detail_section("Depends on").child(render_relations(
+                                graph,
+                                task.number,
+                                true,
+                                entity.clone(),
+                            )))
                         },
-                    ))
-                    .child(render_relations(graph, task.number, false, entity.clone()))
+                    )
+                    .when(
+                        graph.edges.iter().any(|edge| edge.from == task.number),
+                        |detail| {
+                            detail.child(
+                                detail_section(
+                                    if graph.work_status(task.number) == WorkStatus::Done {
+                                        "Enables"
+                                    } else {
+                                        "Next tasks"
+                                    },
+                                )
+                                .child(render_relations(
+                                    graph,
+                                    task.number,
+                                    false,
+                                    entity.clone(),
+                                )),
+                            )
+                        },
+                    )
             })
-            .child(caption("Linked sessions"))
             .when(
-                !graph
-                    .sessions
-                    .iter()
-                    .any(|session| session.plan_number == number),
-                |detail| detail.child(caption("No linked sessions.")),
-            )
-            .children(
                 graph
                     .sessions
                     .iter()
-                    .filter(|session| session.plan_number == number)
-                    .map(|session| caption(session.session_id.clone())),
+                    .any(|session| session.plan_number == number),
+                |detail| {
+                    detail.child(
+                        detail_section("Linked sessions").children(
+                            graph
+                                .sessions
+                                .iter()
+                                .filter(|session| session.plan_number == number)
+                                .map(|session| caption(session.session_id.clone())),
+                        ),
+                    )
+                },
             )
     }
 }
@@ -223,7 +288,6 @@ fn render_relations(
         .flex()
         .flex_col()
         .gap(theme().space.xs)
-        .when(nodes.is_empty(), |list| list.child(caption("None")))
         .children(nodes.into_iter().map(|node| {
             let entity = entity.clone();
             let number = node.number;
@@ -236,7 +300,7 @@ fn render_relations(
                     node.title,
                     graph.work_status(number).label()
                 ),
-                ButtonTone::Quiet,
+                ButtonTone::Neutral,
                 true,
                 move |window, cx| {
                     entity.update(cx, |this, cx| {

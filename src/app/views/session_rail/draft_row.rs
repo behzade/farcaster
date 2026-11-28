@@ -1,10 +1,9 @@
-use std::time::{Duration, UNIX_EPOCH};
-
+use crate::app::ui::primitives::SelectionStyle as _;
 use crate::{app::session::status::run_status_label, runtime::RunStatus};
 use gpui::{
-    AnyElement, App, AppContext as _, CursorStyle, FontWeight, InteractiveElement as _,
-    IntoElement, ParentElement as _, RenderOnce, Role, StatefulInteractiveElement as _,
-    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _,
+    AnyElement, App, AppContext as _, CursorStyle, InteractiveElement as _, IntoElement,
+    ParentElement as _, RenderOnce, Role, StatefulInteractiveElement as _, Styled as _, WeakEntity,
+    Window, div,
 };
 
 use super::{
@@ -12,16 +11,13 @@ use super::{
     groups::SessionRailKind,
     hover::{draft_hover_details, session_tooltip_content},
     rows::{
-        archive_action, project_badge, project_label, relative_age, session_row_content,
-        session_row_height, session_row_trailing, session_status_icon,
+        archive_action, project_badge, project_label, session_row_content, session_row_height,
+        session_row_trailing, session_status_icon, session_title,
     },
 };
 use crate::{
     app::FarcasterApp,
-    app::ui::primitives::{
-        AppTooltip as _, DeleteButton, IndicatorEdge, ReorderPosition, ReorderTargetExt as _,
-        line_indicator,
-    },
+    app::ui::primitives::{AppTooltip as _, DeleteButton, ReorderPosition, ReorderTargetExt as _},
     app::ui::theme::theme,
     sessions::DraftSession,
 };
@@ -46,7 +42,6 @@ pub(super) struct DraftRowInput {
     pub(super) archived: bool,
     pub(super) drop_position: Option<ReorderPosition>,
     pub(super) compact: bool,
-    pub(super) shortcut: Option<u8>,
 }
 
 #[derive(IntoElement)]
@@ -81,13 +76,12 @@ impl RenderOnce for DraftRow {
                     archived,
                     drop_position,
                     compact,
-                    shortcut,
                 },
             entity,
         } = self;
+        let compact = compact && !archived;
         let is_draft = status == RunStatus::Draft;
         let status_text = run_status_label(status);
-        let age = relative_age(UNIX_EPOCH + Duration::from_millis(draft.created_ms));
         let id = draft.id.clone();
         let identity = format!("draft:{id}");
         let discard_id = id.clone();
@@ -135,24 +129,16 @@ impl RenderOnce for DraftRow {
                     .relative()
                     .flex()
                     .items_stretch()
-                    .px(theme().space.sm)
+                    .px(super::rail_inset())
                     .rounded(theme().radius)
                     .group(action_group.clone())
-                    .bg(if selected {
-                        theme().colors.highlight
-                    } else {
-                        theme().colors.panel
-                    })
+                    .bg(theme().colors.panel)
+                    .selection_style(selected)
                     .hover(|row| row.bg(theme().colors.highlight))
-                    .when(selected, |row| {
-                        row.child(line_indicator(
-                            IndicatorEdge::Leading,
+                    .focus(|row| {
+                        row.shadow(crate::app::ui::primitives::focus_outline(
                             theme().colors.indicator,
                         ))
-                    })
-                    .focus(|row| {
-                        row.border(theme().border)
-                            .border_color(theme().colors.indicator)
                     })
                     .cursor(CursorStyle::PointingHand)
                     .on_drag(drag, move |drag, _, _, cx| {
@@ -196,23 +182,7 @@ impl RenderOnce for DraftRow {
                     })
                     .child(session_row_content(
                         compact,
-                        div()
-                            .min_w_0()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_size(theme().type_scale.body_small)
-                            .font_weight(if selected {
-                                FontWeight::SEMIBOLD
-                            } else {
-                                FontWeight::NORMAL
-                            })
-                            .text_color(if archived && !selected {
-                                theme().colors.muted
-                            } else {
-                                theme().colors.text
-                            })
-                            .child(title)
-                            .into_any_element(),
+                        session_title(title, selected, archived).into_any_element(),
                         div()
                             .min_w_0()
                             .flex_1()
@@ -222,8 +192,6 @@ impl RenderOnce for DraftRow {
                         session_row_trailing(
                             draft.harness,
                             session_status_icon(&identity, (!is_draft).then_some(status)),
-                            age,
-                            shortcut,
                             (draft.submitted || archived).then(|| {
                                 archive_draft_action(
                                     &archive_id,

@@ -183,7 +183,7 @@ fn supervisor_for_family(
     let (_, configuration_rx) = mpsc::channel();
     (
         Supervisor {
-            account_usage: HashMap::new(),
+            accounts: crate::runtime::accounts::AccountService::new(None, false),
             host: crate::test_support::host(),
             process_command: AgentLaunchConfig::default(),
             command_rx,
@@ -201,10 +201,11 @@ fn supervisor_for_family(
             selected_session: None,
             generation: 0,
             latest: HashMap::new(),
-            catalog_sessions: sessions,
+            catalog_sessions: sessions.into(),
             catalog_generation: 7,
-            actor_paths: HashMap::new(),
+            actor_paths: Default::default(),
             failed_actor_shutdowns: HashMap::new(),
+            failed_draft_shutdowns: HashMap::new(),
             interacted: HashSet::new(),
             document_revisions: HashMap::new(),
             pending_extensions: HashMap::new(),
@@ -225,6 +226,38 @@ fn supervisor_for_family(
     )
 }
 
+fn attach_catalog(supervisor: &mut Supervisor, database: &Path) {
+    let actor = SessionRuntimeHandle::spawn(
+        supervisor.selected_project.clone(),
+        Default::default(),
+        false,
+        None,
+        thread::current(),
+        crate::test_support::host_at(database),
+    );
+    supervisor
+        .actors
+        .insert(supervisor.catalog_key.clone(), actor);
+}
+
+fn receive_archive_result(supervisor: &mut Supervisor) -> Result<(), String> {
+    let key = supervisor.catalog_key.clone();
+    loop {
+        let event = supervisor.actors[&key]
+            .events
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|error| error.to_string())?;
+        if matches!(event, RuntimeEvent::SessionArchiveResult { .. }) {
+            supervisor.handle_actor_event(key, event);
+            return Ok(());
+        }
+        assert!(
+            !matches!(event, RuntimeEvent::Sessions { .. }),
+            "archive reloaded the full catalog"
+        );
+    }
+}
+
 #[test]
 fn archive_intent_resolves_a_draft_bound_and_promoted_before_command_execution()
 -> Result<(), String> {
@@ -238,9 +271,16 @@ fn archive_intent_resolves_a_draft_bound_and_promoted_before_command_execution()
     );
     draft.submitted = true;
     draft.app_session_id = state.allocate_app_session_id(&draft)?;
-    let command = RuntimeCommand::SetAppSessionArchived {
-        app_session_id: crate::sessions::AppSessionId::new(draft.app_session_id).expect("identity"),
-        archived: true,
+    let target = ArchiveTarget::App(
+        crate::sessions::AppSessionId::new(draft.app_session_id).expect("identity"),
+    );
+    let command = RuntimeCommand::SetSessionArchived {
+        request: ArchiveRequest {
+            target,
+            archived: true,
+            sequence: Some(1),
+        },
+        draft_saved: None,
     };
     draft.session_path = Some(temp.path().join("bound.jsonl"));
     state.allocate_app_session_id(&draft)?;
@@ -248,9 +288,15 @@ fn archive_intent_resolves_a_draft_bound_and_promoted_before_command_execution()
     let sessions = state.cached_sessions("")?;
     let path = sessions[0].path.clone();
     let (mut supervisor, events) = supervisor_for_family(state, sessions);
-    assert!(supervisor.handle_session_family_command(&command));
+    attach_catalog(&mut supervisor, &database);
+    assert!(command_targets_catalog(&command));
+    supervisor.actors[&supervisor.catalog_key].send(command.clone());
+    receive_archive_result(&mut supervisor)?;
     assert!(archived(&database, &path)?);
     assert!(supervisor.catalog_sessions[0].archived);
+    assert!(
+        matches!(events.try_recv(), Ok(RuntimeEvent::SessionArchiveResult { rows: Ok(rows), .. }) if rows.len() == 1)
+    );
     assert!(events.try_iter().next().is_none());
 
     supervisor
@@ -258,10 +304,11 @@ fn archive_intent_resolves_a_draft_bound_and_promoted_before_command_execution()
         .as_ref()
         .expect("store")
         .with(|store| store.delete_session_state(&[path.clone()]))?;
-    assert!(supervisor.handle_session_family_command(&command));
+    supervisor.actors[&supervisor.catalog_key].send(command);
+    receive_archive_result(&mut supervisor)?;
     assert!(matches!(
         events.try_recv(),
-        Ok(RuntimeEvent::SessionsFailed { generation: 7, .. })
+        Ok(RuntimeEvent::SessionArchiveResult { rows: Err(_), .. })
     ));
     Ok(())
 }
@@ -322,7 +369,7 @@ fn stopping_for_move_keeps_family_unarchived_and_discards_only_its_queue() -> Re
     })?;
 
     farcaster_mcp_server::with_test_worker_pool(pool, || {
-        supervisor.stop_session_family_work(&root.path, false)?;
+        supervisor.stop_session_family_work(&root.path, None, false)?;
         supervisor.discard_family_queue(&root.path)?;
         assert!(!archived(&database, &root.path)?);
         let remaining = host_state.with(|store| store.queued_prompts())?;
@@ -372,7 +419,7 @@ fn failed_move_restores_selected_actor_and_command_route() -> Result<(), String>
     );
     supervisor
         .actor_paths
-        .insert(root.path.clone(), key.clone());
+        .insert(root.path.clone(), root.harness, key.clone());
     supervisor.selected = key.clone();
     supervisor.selected_session = Some(root.path.clone());
     let host_state = supervisor.host.state_store()?;
@@ -398,16 +445,22 @@ fn failed_move_restores_selected_actor_and_command_route() -> Result<(), String>
             },)
         );
         assert_eq!(supervisor.selected, key);
-        assert_eq!(supervisor.actor_paths.get(&root.path), Some(&key));
+        assert_eq!(
+            supervisor.actor_paths.get(&root.path, root.harness),
+            Some(&key)
+        );
         assert!(supervisor.actors.contains_key(&key));
         assert!(root.path.is_file());
         assert!(host_state.with(|store| store.queued_prompts())?.is_empty());
         let failure_events = events.try_iter().collect::<Vec<_>>();
-        assert!(failure_events.iter().any(|event| matches!(
-            event,
-            RuntimeEvent::SessionsFailed { message, .. }
-                if message.contains("resolve target project")
-        )));
+        assert!(
+            failure_events.iter().any(|event| matches!(
+                event,
+                RuntimeEvent::SessionsFailed { message, .. }
+                    if message.contains("resolve target project")
+            )),
+            "{failure_events:?}"
+        );
         assert!(
             failure_events
                 .iter()
@@ -418,10 +471,13 @@ fn failed_move_restores_selected_actor_and_command_route() -> Result<(), String>
         supervisor.command_rx = command_rx;
         commands
             .send(RuntimeCommand::SelectSession {
+                display_stamp: None,
                 path: root.path.clone(),
                 harness: root.harness,
                 session_id: root.id.clone(),
                 project: root.project.clone(),
+                key: None,
+                request: None,
             })
             .map_err(|error| error.to_string())?;
         assert!(supervisor.process_next_command());
@@ -594,20 +650,21 @@ fn supervisor_waits_for_pool_shutdown_before_archiving_and_leaves_other_families
     let release_close_gate = CloseGateGuard::block(&factory);
     let _parent = start_worker(&pool, temp.path(), "family-child", &root.path)?;
     let _other_parent = start_worker(&pool, temp.path(), "other-child", &unrelated.path)?;
-    let (supervisor, events) =
+    let (mut supervisor, events) =
         supervisor_for_family(state, vec![root.clone(), child, unrelated.clone()]);
 
+    attach_catalog(&mut supervisor, &database);
     farcaster_mcp_server::with_test_worker_pool(pool.clone(), || {
         let _release_close_gate = release_close_gate;
         let path = root.path.clone();
-        let handle = thread::spawn(move || {
-            let mut supervisor = supervisor;
-            assert!(
+        let handle =
+            thread::spawn(move || {
+                let mut supervisor = supervisor;
+                assert!(supervisor.handle_session_family_command(
+                    &RuntimeCommand::StopSessionFamily { path, key: None }
+                ));
                 supervisor
-                    .handle_session_family_command(&RuntimeCommand::StopSessionFamily { path })
-            );
-            supervisor
-        });
+            });
         wait_for(&factory.closes, 1);
         assert!(!archived(&database, &root.path)?);
         assert!(events.try_iter().all(|event| !matches!(
@@ -618,7 +675,8 @@ fn supervisor_waits_for_pool_shutdown_before_archiving_and_leaves_other_families
 
         *factory.close_gate.0.lock().map_err(|_| "close gate")? = false;
         factory.close_gate.1.notify_all();
-        let supervisor = handle.join().map_err(|_| "supervisor test panicked")?;
+        let mut supervisor = handle.join().map_err(|_| "supervisor test panicked")?;
+        receive_archive_result(&mut supervisor)?;
         assert!(archived(&database, &root.path)?);
         assert_eq!(factory.aborts.load(Ordering::SeqCst), 1);
         assert_eq!(factory.closes.load(Ordering::SeqCst), 1);
@@ -649,6 +707,75 @@ fn supervisor_waits_for_pool_shutdown_before_archiving_and_leaves_other_families
 }
 
 #[test]
+fn confirmed_stop_archives_only_the_persisted_record_at_a_shared_locator() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let pi = summary(temp.path(), "shared", None);
+    let mut codex = pi.clone();
+    codex.harness = Backend::Codex;
+    let mut state = StateStore::open_at(&database)?;
+    state.replace_sessions(&[pi, codex])?;
+    let mut rows = state.cached_sessions("")?;
+    assert_eq!(rows.len(), 2);
+    for row in &mut rows {
+        row.is_running = true;
+    }
+    let requested = rows[0].clone();
+    let other = rows[1].clone();
+    let pool = lifecycle_pool(temp.path(), Arc::new(LifecycleFactory::default()))?;
+    let (mut supervisor, events) = supervisor_for_family(state, rows);
+    attach_catalog(&mut supervisor, &database);
+
+    farcaster_mcp_server::with_test_worker_pool(pool, || {
+        assert!(
+            supervisor.handle_session_family_command(&RuntimeCommand::StopSessionFamily {
+                path: requested.path.clone(),
+                key: Some(requested.catalog_key()),
+            })
+        );
+        let before_archive = events.try_iter().collect::<Vec<_>>();
+        assert!(
+            before_archive
+                .iter()
+                .all(|event| !matches!(event, RuntimeEvent::SessionsFailed { .. })),
+            "{before_archive:?}"
+        );
+        assert!(
+            supervisor
+                .catalog_sessions
+                .by_key(&other.catalog_key())
+                .unwrap()
+                .is_running
+        );
+        assert!(
+            !supervisor
+                .catalog_sessions
+                .by_key(&requested.catalog_key())
+                .unwrap()
+                .is_running
+        );
+        receive_archive_result(&mut supervisor)?;
+        let state = StateStore::open_at(&database)?;
+        let saved = state.cached_sessions("")?;
+        assert!(
+            saved
+                .iter()
+                .find(|row| row.same_record(&requested))
+                .unwrap()
+                .archived
+        );
+        assert!(
+            !saved
+                .iter()
+                .find(|row| row.same_record(&other))
+                .unwrap()
+                .archived
+        );
+        Ok(())
+    })
+}
+
+#[test]
 fn supervisor_does_not_archive_or_report_stopped_when_pool_close_fails() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
@@ -664,6 +791,7 @@ fn supervisor_does_not_archive_or_report_stopped_when_pool_close_fails() -> Resu
     farcaster_mcp_server::with_test_worker_pool(pool, || {
         assert!(
             supervisor.handle_session_family_command(&RuntimeCommand::StopSessionFamily {
+                key: None,
                 path: root.path.clone(),
             })
         );
@@ -699,7 +827,7 @@ fn supervisor_does_not_archive_or_report_stopped_when_actor_close_fails() -> Res
     let join = thread::spawn(|| Err("actor transport close failed".to_owned()));
     supervisor
         .actor_paths
-        .insert(root.path.clone(), key.clone());
+        .insert(root.path.clone(), root.harness, key.clone());
     supervisor.actors.insert(
         key,
         SessionRuntimeHandle {
@@ -714,6 +842,7 @@ fn supervisor_does_not_archive_or_report_stopped_when_actor_close_fails() -> Res
     farcaster_mcp_server::with_test_worker_pool(pool, || {
         assert!(
             supervisor.handle_session_family_command(&RuntimeCommand::StopSessionFamily {
+                key: None,
                 path: root.path.clone(),
             })
         );
@@ -730,6 +859,7 @@ fn supervisor_does_not_archive_or_report_stopped_when_actor_close_fails() -> Res
         )));
         assert!(
             supervisor.handle_session_family_command(&RuntimeCommand::StopSessionFamily {
+                key: None,
                 path: root.path.clone(),
             })
         );
@@ -776,16 +906,18 @@ fn stale_catalog_identity_cannot_authorize_archive_after_bindings_already_merged
         prompt_id: None,
     });
     let (mut supervisor, _) = supervisor_for_family(state, vec![old.clone()]);
+    attach_catalog(&mut supervisor, &database);
     farcaster_mcp_server::with_test_worker_pool(pool.clone(), || {
         let error = supervisor
-            .stop_session_family_work(&old.path, true)
+            .stop_session_family_work(&old.path, None, true)
             .unwrap_err();
         assert!(error.contains("identity changed"), "{error}");
         assert!(!archived(&database, &old.path)?);
         assert_eq!(factory.aborts.load(Ordering::SeqCst), 0);
         assert_eq!(pool.snapshots()?[0].status, WorkerStatus::Running);
-        supervisor.catalog_sessions = vec![current];
-        supervisor.stop_session_family_work(&old.path, true)?;
+        supervisor.catalog_sessions = vec![current].into();
+        supervisor.stop_session_family_work(&old.path, None, true)?;
+        receive_archive_result(&mut supervisor)?;
         assert_eq!(pool.snapshots()?[0].status, WorkerStatus::Stopped);
         assert!(archived(&database, &old.path)?);
         Ok(())
@@ -814,7 +946,7 @@ fn merge_during_stop_releases_original_fence_before_retry() -> Result<(), String
         let _release_close_gate = release_close_gate;
         let path = old.path.clone();
         let stop = thread::spawn(move || {
-            let result = supervisor.stop_session_family_work(&path, true);
+            let result = supervisor.stop_session_family_work(&path, None, true);
             (supervisor, result)
         });
         wait_for(&factory.closes, 1);
@@ -841,8 +973,8 @@ fn merge_during_stop_releases_original_fence_before_retry() -> Result<(), String
         let (mut supervisor, result) = stop.join().map_err(|_| "stop panicked")?;
         assert!(result.unwrap_err().contains("identity changed"));
         assert!(!archived(&database, &old.path)?);
-        supervisor.catalog_sessions = vec![current];
-        supervisor.stop_session_family_work(&old.path, false)?;
+        supervisor.catalog_sessions = vec![current].into();
+        supervisor.stop_session_family_work(&old.path, None, false)?;
         let context = crate::agents::CallerRegistry::shared().resolve(parent.token())?;
         let child = pool.start(StartWorker {
             project: temp.path().into(),
@@ -860,4 +992,142 @@ fn merge_during_stop_releases_original_fence_before_retry() -> Result<(), String
         assert_eq!(child.status, WorkerStatus::Running);
         Ok(())
     })
+}
+
+#[test]
+fn known_pool_status_reaches_the_ui_without_reading_the_session_store() -> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = project.path().join("state.sqlite3");
+    let root = summary(project.path(), "root", None);
+    let child = summary(project.path(), "child", Some("root")).with_app_session_id(2);
+    let snapshot = crate::agents::WorkerSnapshot {
+        id: "worker".into(),
+        backend: child.harness,
+        project: child.project.clone(),
+        session_key: Some(child.key()),
+        session_locator: Some(child.id.clone()),
+        status: WorkerStatus::NeedsInput,
+        output: None,
+        error: None,
+        pending_input: None,
+    };
+    let workers = Arc::new(Mutex::new((0, vec![snapshot], false)));
+    let (mut owner, actor_events) =
+        crate::runtime::tests::owner_without_process(project.path().into());
+    owner.host = crate::test_support::host_with_idle_metrics(workers.clone()).0;
+    assert!(owner.state.is_none());
+    let (mut supervisor, ui_events) =
+        supervisor_for_family(StateStore::open_at(&database)?, vec![root, child.clone()]);
+    for (status, expected) in [
+        (
+            WorkerStatus::NeedsInput,
+            crate::agent_activity::AgentLifecycle::NeedsInput,
+        ),
+        (
+            WorkerStatus::Running,
+            crate::agent_activity::AgentLifecycle::Working,
+        ),
+        (
+            WorkerStatus::Failed,
+            crate::agent_activity::AgentLifecycle::Completed(
+                crate::agent_activity::AgentOutcome::Failed,
+            ),
+        ),
+    ] {
+        workers.lock().unwrap().1[0].status = status;
+        owner.apply_command(RuntimeCommand::RefreshWorkerStatus("worker".into()));
+        let next = actor_events.try_recv().map_err(|error| error.to_string())?;
+        supervisor.handle_actor_event(supervisor.catalog_key.clone(), next);
+        assert!(
+            matches!(ui_events.try_recv(), Ok(RuntimeEvent::AgentActivityUpdated { key, activity })
+            if key == child.activity_key() && activity.session_path == child.path && activity.lifecycle == expected)
+        );
+        assert!(ui_events.try_recv().is_err());
+    }
+    owner.state = Some(StateStore::open_at(&database)?.into());
+    workers.lock().unwrap().1[0].status = WorkerStatus::Idle;
+    owner.apply_command(RuntimeCommand::RefreshWorkerStatus("worker".into()));
+    assert!(matches!(
+        actor_events.try_recv(),
+        Ok(RuntimeEvent::Sessions { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn confirmed_unbound_draft_stops_its_actor_before_archive() -> Result<(), String> {
+    for fail in [false, true] {
+        let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
+        let database = temp.path().join("state.sqlite3");
+        let mut state = StateStore::open_at(&database)?;
+        let mut draft = sessions::DraftSession::with_id(
+            Some(Backend::Pi),
+            "unbound".into(),
+            temp.path().into(),
+        );
+        draft.submitted = true;
+        let id = state.save_draft_with_identity(draft.clone())?;
+        let pool = lifecycle_pool(temp.path(), Arc::new(LifecycleFactory::default()))?;
+        let (mut supervisor, events) =
+            supervisor_for_family(state, vec![summary(temp.path(), "unrelated", None)]);
+        attach_catalog(&mut supervisor, &database);
+        let (commands, rx) = mpsc::channel();
+        let join = thread::spawn(move || {
+            assert!(matches!(
+                rx.recv_timeout(Duration::from_secs(5)),
+                Ok(RuntimeCommand::Shutdown)
+            ));
+            if fail {
+                Err("draft close failed".into())
+            } else {
+                Ok(())
+            }
+        });
+        let actor = sessions::draft_target(&draft.id);
+        supervisor.actors.insert(
+            actor.clone(),
+            SessionRuntimeHandle {
+                commands,
+                signals: mpsc::channel().0,
+                events: mpsc::channel().1,
+                thread: join.thread().clone(),
+                join,
+            },
+        );
+        let command = RuntimeCommand::StopAndArchiveDraft {
+            draft: draft.id.clone(),
+            identity: DraftArchiveIdentity::Saved(id),
+        };
+        farcaster_mcp_server::with_test_worker_pool(pool, || -> Result<(), String> {
+            assert!(supervisor.handle_session_family_command(&command));
+            assert!(!supervisor.actors.contains_key(&actor));
+            if fail {
+                for retry in [false, true] {
+                    if retry {
+                        assert!(supervisor.handle_session_family_command(&command));
+                    }
+                    let result = events.try_iter().collect::<Vec<_>>();
+                    assert!(result.iter().any(|event| matches!(event, RuntimeEvent::SessionsFailed {message,..} if message.contains("draft close failed"))));
+                    assert!(!result.iter().any(|event| matches!(
+                        event,
+                        RuntimeEvent::SessionStatus {
+                            status: RunStatus::Stopped,
+                            ..
+                        }
+                    )));
+                }
+            } else {
+                receive_archive_result(&mut supervisor)?;
+                assert!(events.try_iter().any(|event| matches!(event, RuntimeEvent::SessionStatus {target,status:RunStatus::Stopped,..} if target == actor)));
+            }
+            let saved = StateStore::open_at(&database)?
+                .load_drafts()?
+                .into_iter()
+                .find(|row| row.id == draft.id)
+                .unwrap();
+            assert_eq!(saved.archived, !fail);
+            Ok(())
+        })?;
+    }
+    Ok(())
 }

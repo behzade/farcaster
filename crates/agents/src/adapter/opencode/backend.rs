@@ -15,6 +15,59 @@ use std::{
 pub(in crate::adapter) struct OpenCodeAdapter;
 
 impl BackendAdapter for OpenCodeAdapter {
+    fn account_capabilities(&self) -> crate::accounts::AccountCapabilities {
+        crate::accounts::AccountCapabilities {
+            discover: true,
+            ..Default::default()
+        }
+    }
+    fn read_accounts(
+        &self,
+        config: &AgentLaunchConfig,
+        project: &Path,
+    ) -> Result<crate::accounts::AccountDiscovery, String> {
+        super::accounts::read(config, project)
+    }
+    fn historical_worker_status(
+        &self,
+        path: &Path,
+        profile: Option<&crate::HarnessProfile>,
+    ) -> Option<crate::WorkerStatus> {
+        if profile.is_some() {
+            return None;
+        }
+        let id = super::super::main_session::external_session_locator(Backend::OpenCode, path)?;
+        let database = std::env::var_os("OPENCODE_DB")
+            .map(PathBuf::from)
+            .or_else(|| {
+                let root = std::env::var_os("XDG_DATA_HOME")
+                    .map(PathBuf::from)
+                    .or_else(|| {
+                        std::env::var_os("HOME")
+                            .map(|home| PathBuf::from(home).join(".local/share"))
+                    })?;
+                Some(root.join("opencode/opencode.db"))
+            })?;
+        let db = rusqlite::Connection::open_with_flags(
+            database,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .ok()?;
+        let outcome: String = db
+            .query_row(
+                "SELECT idle_outcome FROM session_v2
+                 WHERE id=?1 AND time_idle >= COALESCE(time_busy,0)",
+                [id],
+                |row| row.get(0),
+            )
+            .ok()?;
+        match outcome.as_str() {
+            "succeeded" => Some(crate::WorkerStatus::Idle),
+            "failed" => Some(crate::WorkerStatus::Failed),
+            "interrupted" => Some(crate::WorkerStatus::Stopped),
+            _ => None,
+        }
+    }
     fn descriptor(&self) -> AgentBackendDescriptor {
         super::descriptor()
     }
@@ -34,7 +87,7 @@ impl BackendAdapter for OpenCodeAdapter {
         let command = super::super::configuration_launch(config, Backend::OpenCode)?;
         super::load_configuration(&command, project).and_then(super::super::configuration_catalog)
     }
-    fn steering_boundary(&self) -> SteeringBoundary {
+    fn steering_boundary(&self, _config: &crate::AgentLaunchConfig) -> SteeringBoundary {
         SteeringBoundary::Held
     }
     fn spawn(

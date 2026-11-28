@@ -1,12 +1,15 @@
 use crate::agents::Backend;
 mod access_mode;
+mod accounts;
 pub mod catalog;
 mod command_queue;
 mod commands;
 mod documents;
+mod facts;
 mod history;
 mod idle;
 mod launch_context;
+mod live_transcript;
 mod notifications;
 mod pending_prompt;
 mod process;
@@ -21,7 +24,6 @@ mod status;
 
 pub use crate::agents::HarnessAccessMode;
 use access_mode::AccessModeChangeState;
-use history::annotate_history_presentations;
 use launch_context::{LaunchTarget, configuration_for_target};
 use notifications::interaction_notification;
 use pending_prompt::{PendingPrompt, PromptInput, PromptPhase};
@@ -31,14 +33,11 @@ use process::{can_send_prompt, conversation_mut, reset_snapshot_for_process};
 #[cfg(test)]
 use projection::stable_session_stats;
 use projection::{
-    historical_context_stats, update_account_usage_from_event, update_context_from_event,
-    update_session_goal_from_event, update_tokens_from_event,
+    historical_context_stats, update_context_from_event, update_session_goal_from_event,
+    update_tokens_from_event,
 };
 use session_loop::run;
-use status::{
-    failure_details, failure_summary, notification_target, run_status, semantic_status,
-    session_badge_status,
-};
+use status::{failure_details, failure_summary, notification_target, run_status, semantic_status};
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -59,14 +58,16 @@ use crate::{
         self, AgentLaunchConfig, SessionActivityKind, SessionCommand, SessionEvent, SessionLaunch,
         SessionOperation, SessionStart, SessionTransport,
     },
-    conversation::{ConversationState, TranscriptItem, annotate_prompt_presentations},
+    conversation::{ConversationState, TranscriptItem},
     protocol::{
         AgentMode, ExtensionUiRequest, ExtensionUiResponse, Model, PromptImage, PromptMode,
         SessionState, SlashCommand,
     },
     sessions::{self, LoadedHistory, SessionSummary, session_family_for_path},
 };
-use farcaster_storage::{SharedStateStore, StateStore};
+#[cfg(test)]
+use farcaster_storage::StateStore;
+use farcaster_storage::{SessionFacts, SessionOutcome, SharedStateStore};
 use session_controls::PendingSessionControls;
 use session_identity::HarnessConfigurationStore;
 pub use session_identity::SessionIdentity;
@@ -93,8 +94,8 @@ use supervisor::{
     target_command_needs_actor_message,
 };
 pub use types::{
-    ConfigurationStatus, RunStatus, RuntimeCommand, RuntimeEvent, RuntimeSignal, RuntimeSnapshot,
-    TaskSettings,
+    ArchiveRequest, ArchiveTarget, ConfigurationStatus, DraftArchiveIdentity, RunStatus,
+    RuntimeCommand, RuntimeEvent, RuntimeSignal, RuntimeSnapshot, SavedHistory, TaskSettings,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -102,6 +103,32 @@ enum SnapshotChange {
     None,
     Streaming,
     Immediate,
+}
+
+#[derive(Default)]
+struct BackendActivity {
+    turn: ActivityObservation,
+    compaction: ActivityObservation,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum ActivityObservation {
+    #[default]
+    Idle,
+    Sampled,
+    Started,
+}
+
+impl ActivityObservation {
+    fn is_active(self) -> bool {
+        self != Self::Idle
+    }
+
+    fn sample(&mut self, active: bool) {
+        if *self != Self::Started {
+            *self = if active { Self::Sampled } else { Self::Idle };
+        }
+    }
 }
 
 struct RuntimeOwner {
@@ -113,6 +140,7 @@ struct RuntimeOwner {
     process_command: AgentLaunchConfig,
     process: Option<Box<dyn SessionTransport>>,
     idle_retirement: idle::IdleRetirement,
+    live_transcript: Option<live_transcript::LiveTranscript>,
     snapshot: RuntimeSnapshot,
     owns_session_catalog: bool,
     session_generation: u64,
@@ -123,25 +151,35 @@ struct RuntimeOwner {
     title_generation: SessionTitleGeneration,
     transcript_changed_from: Option<usize>,
     event_tx: SessionEventSender,
-    history_tx: mpsc::Sender<HistoryResult>,
+    history_tx: mpsc::Sender<HistoryUpdate>,
     history_generation: u64,
     history_selection_generation: Option<u64>,
     document_refresh_generation: Option<u64>,
     pending_document_refresh: Option<(PathBuf, PathBuf)>,
     active_session: Option<PathBuf>,
+    unbound_prompt_draft: Option<String>,
     forked_from: Option<String>,
     parked_snapshot: Option<RuntimeSnapshot>,
     queued_prompts: VecDeque<crate::agents::QueuedPrompt>,
     saved_prompts: VecDeque<crate::agents::QueuedPrompt>,
+    backend_activity: BackendActivity,
     normal_prompt_in_flight: bool,
     pending_session_controls: PendingSessionControls,
     access_mode_changes: AccessModeChangeState,
     startup_state_loaded: bool,
     startup_history_loaded: bool,
-    /// Ignore empty transport defaults until resumed work or a usage report arrives.
     resumed_usage_pending: bool,
     state: Option<SharedStateStore>,
     session_query: String,
+}
+
+impl RuntimeOwner {
+    fn session_repository(&self) -> Result<&dyn farcaster_storage::SessionRepository, String> {
+        self.state
+            .as_ref()
+            .map(|store| store as &dyn farcaster_storage::SessionRepository)
+            .ok_or_else(|| "Session database is unavailable".to_owned())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -149,6 +187,7 @@ struct PendingQueuedPrompt {
     submission_id: String,
     target: String,
     outbox_id: i64,
+    backend_session_id: Option<String>,
     session: Option<PathBuf>,
     delivery_tracked: bool,
     result_emitted: bool,
@@ -164,10 +203,25 @@ struct PendingQueuedPrompt {
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum HistoryLoadKind {
     Selection,
+    DisplayedSelection,
     DocumentRefresh,
 }
 
+enum HistoryUpdate {
+    Saved {
+        complete: bool,
+        result: HistoryResult,
+        refreshing: bool,
+    },
+    Tail {
+        generation: u64,
+        page: agents::HistoryPage,
+    },
+    Finished(HistoryResult),
+}
+
 struct HistoryResult {
+    transcript_stamp: Option<farcaster_storage::TranscriptStamp>,
     generation: u64,
     path: PathBuf,
     project: PathBuf,

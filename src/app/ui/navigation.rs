@@ -177,15 +177,11 @@ impl FarcasterApp {
                         ) {
                             return false;
                         }
-                        // Run before GPUI buffers Escape as a sequence prefix.
                         if event.keystroke.key == "escape"
                             && !event.keystroke.modifiers.modified()
                             && escape_context.depth_of(&event.context_stack).is_some()
                         {
-                            this.runtime.signal(
-                                this.composer.sessions.current_target(),
-                                crate::runtime::RuntimeSignal::ApplySteering,
-                            );
+                            this.signal_composer(crate::runtime::RuntimeSignal::ApplySteering);
                         }
                         if this.navigation.chat.activation_focus != window.focused(cx) {
                             this.navigation.chat.activation.clear();
@@ -275,6 +271,9 @@ impl FarcasterApp {
         if self.workspace.send_to_chat.is_some() {
             self.close_send_to_chat(window, cx);
         }
+        if self.overlays.command_detail.is_some() {
+            self.close_command_detail(window, cx);
+        }
         if self.overlays.image_preview.is_some() {
             self.close_image_preview(window, cx);
         }
@@ -317,6 +316,9 @@ impl FarcasterApp {
     }
 
     fn scroll_transcript(&mut self, scroll: Scroll, window: &mut Window, cx: &mut Context<Self>) {
+        if self.lifecycle.pending_session_switch.is_some() || self.awaiting_history_rows(cx) {
+            return;
+        }
         let list = &self.views.transcript.read(cx).list;
         let distance = match scroll {
             Scroll::Start => {

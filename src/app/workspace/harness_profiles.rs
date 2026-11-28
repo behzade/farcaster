@@ -37,11 +37,29 @@ impl FarcasterApp {
     pub(in crate::app) fn choose_harness_profile_backend(
         &mut self,
         backend: Backend,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.settings.harness_profile_backend = backend;
         self.settings.harness_profile_error = None;
+        self.settings
+            .harness_profile_data_directory
+            .update(cx, |input, cx| {
+                input.set_placeholder(
+                    Self::harness_profile_directory_placeholder(backend),
+                    window,
+                    cx,
+                );
+            });
         cx.notify();
+    }
+
+    pub(in crate::app) fn harness_profile_directory_placeholder(backend: Backend) -> &'static str {
+        match crate::agents::profile_data_environment_key(backend) {
+            Some("CODEX_HOME") => "e.g. ~/.codex-profile",
+            Some("CLAUDE_CONFIG_DIR") => "e.g. ~/.claude-profile",
+            _ => "Optional data directory",
+        }
     }
 
     pub(in crate::app) fn add_harness_profile(

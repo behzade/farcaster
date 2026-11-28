@@ -214,7 +214,7 @@ fn pool(
     factory: Arc<FakeFactory>,
     project: &std::path::Path,
     maximum: usize,
-) -> Result<(WorkerPool, async_channel::Receiver<()>), String> {
+) -> Result<(WorkerPool, async_channel::Receiver<crate::WorkerPoolUpdate>), String> {
     let factory: Arc<dyn WorkerSessionFactory> = factory;
     let pool = WorkerPool::new(
         BTreeMap::from([(Backend::Pi, factory)]),
@@ -272,6 +272,46 @@ fn starts_with_an_initial_prompt_and_enforces_capacity() -> Result<(), String> {
         [WorkerSendMode::Prompt]
     );
     assert!(pool.start(request(project.path())).is_err());
+    Ok(())
+}
+
+#[test]
+fn pending_workers_do_not_block_new_starts() -> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let factory = Arc::new(FakeFactory::default());
+    let (pool, _) = pool(factory.clone(), project.path(), 1)?;
+    let parent = canonical_parent(project.path(), None);
+    let context = CallerRegistry::shared().resolve(parent.token())?;
+    let mut child = request(project.path());
+    child.parent_session = context.session;
+    child.parent_worker_id = Some(context.worker_id);
+    let (gate, changed) = &*factory.create_gate;
+    *gate.lock().map_err(|_| "create gate")? = true;
+    let pending_attempts = (0..2)
+        .map(|index| {
+            child.name = format!("child-{index}");
+            pool.queue_assigned(
+                child.clone(),
+                assignment(),
+                crate::PeerMessage {
+                    from: "parent".into(),
+                    message: "initial".into(),
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    *gate.lock().map_err(|_| "create gate")? = false;
+    changed.notify_all();
+
+    for attempt in pending_attempts {
+        let (_, created, pending) = attempt?;
+        assert!(created && pending);
+    }
+    let snapshots = pool.snapshots()?;
+    assert_eq!(snapshots.len(), 2);
+    for snapshot in &snapshots {
+        wait_for_worker_status(&pool, &snapshot.id, WorkerStatus::Running)?;
+    }
     Ok(())
 }
 
@@ -503,8 +543,8 @@ fn child_settlement_sends_one_final_message_per_turn() -> Result<(), String> {
     let parent_id = CallerRegistry::shared().resolve(parent.token())?.worker_id;
     let mut child_request = request(project.path());
     child_request.parent_worker_id = Some(parent_id);
-    pool.start(child_request)?;
-    wait_for_update(&updates)?;
+    let child = pool.start(child_request)?;
+    assert_eq!(wait_for_update(&updates)?, crate::WorkerPoolUpdate::Catalog);
     let events = factory.events.lock().map_err(|_| "events")?[0].clone();
     for (starts_turn, output, delivers) in [
         (false, "done", true),
@@ -516,13 +556,20 @@ fn child_settlement_sends_one_final_message_per_turn() -> Result<(), String> {
             events
                 .send(WorkerEvent::Started)
                 .map_err(|_| "start turn")?;
+            assert_eq!(
+                wait_for_update(&updates)?,
+                crate::WorkerPoolUpdate::Status(child.id.clone())
+            );
         }
         events
             .send(WorkerEvent::Settled {
                 output: output.into(),
             })
             .map_err(|_| "finish turn")?;
-        wait_for_update(&updates)?;
+        assert_eq!(
+            wait_for_update(&updates)?,
+            crate::WorkerPoolUpdate::Status(child.id.clone())
+        );
         if delivers {
             let report = parent.try_recv().ok_or("missing final message")?;
             assert_eq!(report.from, "implementation");
@@ -585,6 +632,7 @@ fn worker_parent_reports_and_inputs_follow_a_replacement_parent_process() -> Res
     );
 
     events.send(WorkerEvent::Started).map_err(|_| "start")?;
+    wait_for_update(&updates)?;
     events
         .send(WorkerEvent::NeedsInput(crate::WorkerInput {
             id: "approval".into(),
@@ -637,11 +685,13 @@ fn worker_parent_reports_and_inputs_follow_a_replacement_parent_process() -> Res
     Ok(())
 }
 
-fn wait_for_update(receiver: &async_channel::Receiver<()>) -> Result<(), String> {
+fn wait_for_update(
+    receiver: &async_channel::Receiver<crate::WorkerPoolUpdate>,
+) -> Result<crate::WorkerPoolUpdate, String> {
     let deadline = Instant::now() + Duration::from_secs(1);
     loop {
         match receiver.try_recv() {
-            Ok(()) => return Ok(()),
+            Ok(update) => return Ok(update),
             Err(async_channel::TryRecvError::Empty) if Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(5));
             }
@@ -876,7 +926,6 @@ fn child_questions_use_parent_messages_and_leave_no_user_dialog() -> Result<(), 
                 ],
             }))
             .map_err(|_| "question event")?;
-        // Settling proves the native question no longer pins the worker in NeedsInput.
         events
             .send(WorkerEvent::Settled {
                 output: String::new(),
@@ -1551,6 +1600,70 @@ fn stopping_a_family_expires_its_delivered_child_input() -> Result<(), String> {
 }
 
 #[test]
+fn delayed_setup_completion_cannot_complete_a_resumed_worker() -> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let factory = Arc::new(FakeFactory::default());
+    let (pool, _) = pool(factory.clone(), project.path(), 1)?;
+    let parent = canonical_parent(project.path(), None);
+    let context = CallerRegistry::shared().resolve(parent.token())?;
+    let mut child = request(project.path());
+    child.parent_session = context.session.clone();
+    child.parent_worker_id = Some(context.worker_id.clone());
+    let first = pool.start_assigned(child.clone(), Some(assignment()))?;
+    let old_completion = pool.delayed_setup_completion_for_test(&first.id)?;
+    factory.events.lock().map_err(|_| "events")?[0]
+        .send(WorkerEvent::SessionChanged {
+            locator: "/sessions/first-child.jsonl".into(),
+        })
+        .map_err(|_| "session change")?;
+    factory.events.lock().map_err(|_| "events")?[0]
+        .send(WorkerEvent::Settled {
+            output: "done".into(),
+        })
+        .map_err(|_| "settle")?;
+    wait_for_worker_status(&pool, &first.id, WorkerStatus::Idle)?;
+    child.name = "second".into();
+    let second = pool.start_assigned(child.clone(), Some(assignment()))?;
+    factory.events.lock().map_err(|_| "events")?[1]
+        .send(WorkerEvent::Settled {
+            output: "done".into(),
+        })
+        .map_err(|_| "settle")?;
+    wait_for_worker_status(&pool, &second.id, WorkerStatus::Idle)?;
+
+    let (gate, changed) = &*factory.create_gate;
+    *gate.lock().map_err(|_| "create gate")? = true;
+    let resumed = pool.resume_child(
+        &context,
+        "implementation",
+        "continue".into(),
+        None,
+        |_, _| Some(context.access_mode),
+    );
+    drop(old_completion);
+    child.name = "third".into();
+    let next = pool.queue_assigned(
+        child,
+        assignment(),
+        crate::PeerMessage {
+            from: "parent".into(),
+            message: "initial".into(),
+        },
+    );
+    *gate.lock().map_err(|_| "create gate")? = false;
+    changed.notify_all();
+
+    assert!(resumed?.is_some(), "the retired child must resume");
+    let (_, created, pending) = next?;
+    assert!(
+        created && pending,
+        "a pending resume must not look like failed cleanup"
+    );
+    wait_for_worker_status(&pool, &first.id, WorkerStatus::Running)?;
+    Ok(())
+}
+
+#[test]
 fn idle_processes_are_bounded_and_a_retired_child_resumes_its_session() -> Result<(), String> {
     let project = tempfile::tempdir().map_err(|error| error.to_string())?;
     let factory = Arc::new(FakeFactory::default());
@@ -2104,6 +2217,10 @@ fn restored_snapshot_reads_merged_child_binding_without_a_session_event() -> Res
             prompt_id: None,
         });
         let snapshot = pool.snapshots()?.remove(0);
+        assert_eq!(
+            pool.status_snapshot(&snapshot.id)?.as_ref(),
+            Some(&snapshot)
+        );
         assert_eq!(
             snapshot.session_key,
             AppSessionId::new(id).map(SessionKey::App)

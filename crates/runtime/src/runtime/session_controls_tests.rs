@@ -111,6 +111,7 @@ fn stopped_session_controls_stay_local_without_resuming() {
 
 fn refresh_stopped_history(owner: &mut RuntimeOwner) {
     owner.apply_history(HistoryResult {
+        transcript_stamp: None,
         generation: owner.history_generation,
         path: "/saved".into(),
         project: "/project".into(),

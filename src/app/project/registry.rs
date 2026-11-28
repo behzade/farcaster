@@ -32,7 +32,13 @@ pub(in crate::app) fn save_app_session_order(order: &[i64]) -> Result<(), String
 }
 
 pub(crate) fn most_recent() -> Option<PathBuf> {
-    load().ok()?.projects.into_iter().next()
+    let projects = load().ok()?.projects;
+    crate::app::persistence::open()
+        .and_then(|store| store.load_last_selected_project())
+        .ok()
+        .flatten()
+        .filter(|project| projects.contains(project))
+        .or_else(|| projects.into_iter().next())
 }
 
 fn legacy_registry_path() -> Result<PathBuf, String> {

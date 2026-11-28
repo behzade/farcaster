@@ -25,21 +25,44 @@ pub struct TaskSettings {
     pub access_mode: HarnessAccessMode,
 }
 
-/// Best-effort control of the current run. Safe to repeat as its state changes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RuntimeSignal {
     Abort,
     ApplySteering,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub enum ArchiveTarget {
+    Draft(String),
+    Native(crate::sessions::SessionTarget),
+    App(crate::sessions::AppSessionId),
+    Path(PathBuf),
+}
+
+#[derive(Clone, Debug)]
+pub struct ArchiveRequest {
+    pub target: ArchiveTarget,
+    pub archived: bool,
+    /// UI writes carry a sequence so a failed write cannot roll back a later click.
+    pub sequence: Option<u64>,
+}
+
+#[derive(Clone)]
+pub enum DraftArchiveIdentity {
+    Saved(crate::sessions::AppSessionId),
+    Pending(async_channel::Receiver<Result<crate::sessions::AppSessionId, String>>),
+}
+
 #[derive(Clone)]
 #[allow(dead_code)]
 pub enum RuntimeCommand {
+    RefreshAccounts,
     Prompt {
         submission_id: String,
         target: String,
         mode: PromptMode,
         message: String,
+        provisional_title: Option<String>,
         display_message: Option<String>,
         invocation: Option<String>,
         images: Vec<PromptImage>,
@@ -61,6 +84,11 @@ pub enum RuntimeCommand {
     },
     StopSessionFamily {
         path: PathBuf,
+        key: Option<crate::sessions::SessionKey>,
+    },
+    StopAndArchiveDraft {
+        draft: String,
+        identity: DraftArchiveIdentity,
     },
     StopAndDeleteSessionFamily {
         path: PathBuf,
@@ -96,6 +124,7 @@ pub enum RuntimeCommand {
         target_project: PathBuf,
     },
     NewSession {
+        request: Option<u64>,
         id: String,
         harness: Option<Backend>,
         profile_id: Option<String>,
@@ -121,17 +150,23 @@ pub enum RuntimeCommand {
         project: PathBuf,
     },
     ResumeDraft {
+        request: Option<u64>,
         id: String,
         harness: Option<Backend>,
         project: PathBuf,
     },
     SelectSession {
+        display_stamp: Option<farcaster_storage::TranscriptStamp>,
+        key: Option<crate::sessions::SessionKey>,
+        request: Option<u64>,
         path: PathBuf,
         harness: Backend,
         session_id: String,
         project: PathBuf,
     },
     RestartSession {
+        key: Option<crate::sessions::SessionKey>,
+        request: Option<u64>,
         path: PathBuf,
         harness: Backend,
         session_id: String,
@@ -164,15 +199,12 @@ pub enum RuntimeCommand {
         id: i64,
     },
     SetSessionArchived {
-        path: PathBuf,
-        archived: bool,
-    },
-    SetAppSessionArchived {
-        app_session_id: crate::sessions::AppSessionId,
-        archived: bool,
+        request: ArchiveRequest,
+        draft_saved: Option<async_channel::Receiver<Result<crate::sessions::AppSessionId, String>>>,
     },
     LoadSessions(String),
     RefreshSessions,
+    RefreshWorkerStatus(String),
     UpdateSessionMetadata(agents::SessionMetadata),
     PreviewImport {
         harness: Backend,
@@ -188,6 +220,9 @@ pub enum RuntimeCommand {
 
 #[derive(Clone, Debug)]
 pub enum RuntimeEvent {
+    SelectionRouted(u64),
+    SelectionRejected(u64),
+    AccountsChanged(Arc<agents::accounts::AccountsSnapshot>),
     SessionTarget(crate::sessions::SessionTarget),
     SystemNotification {
         title: String,
@@ -213,7 +248,10 @@ pub enum RuntimeEvent {
         generation: u64,
         sessions: Vec<SessionSummary>,
         all_sessions: Vec<SessionSummary>,
-        activities: Option<(HashMap<String, AgentActivity>, bool)>,
+        activities: Option<(
+            HashMap<crate::agent_activity::WorkerActivityKey, AgentActivity>,
+            bool,
+        )>,
     },
     SessionsFailed {
         generation: u64,
@@ -231,7 +269,24 @@ pub enum RuntimeEvent {
     RefreshCatalog,
     SessionMetadata(agents::SessionMetadata),
     SessionUpdated(SessionSummary),
-    AgentActivityUpdated(AgentActivity),
+    DraftPromptCommitted {
+        draft: String,
+        app_session_id: crate::sessions::AppSessionId,
+        provisional_title: Option<String>,
+    },
+    DraftIdentitySaved {
+        draft: String,
+        app_session_id: crate::sessions::AppSessionId,
+    },
+    SessionArchiveResult {
+        request: ArchiveRequest,
+        rows: Result<Vec<SessionSummary>, String>,
+    },
+    WorkerSnapshot(agents::WorkerSnapshot),
+    AgentActivityUpdated {
+        key: crate::agent_activity::WorkerActivityKey,
+        activity: AgentActivity,
+    },
     ExtensionUi {
         generation: u64,
         request: crate::protocol::ExtensionUiRequest,
@@ -249,6 +304,7 @@ pub enum RuntimeEvent {
     },
     SessionStatus {
         target: String,
+        record: Option<crate::agent_activity::SessionStatusRecord>,
         session: Option<PathBuf>,
         status: RunStatus,
     },
@@ -273,11 +329,19 @@ pub enum ConfigurationStatus {
     Failed(String),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SavedHistory {
+    Complete,
+    RefreshingPartial,
+    Partial,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RuntimeSnapshot {
     pub connected: bool,
-    /// A complete session document can remain ready without a running harness.
     pub document_ready: bool,
+    pub saved_history: Option<SavedHistory>,
+    pub transcript_stamp: Option<farcaster_storage::TranscriptStamp>,
     pub status: String,
     pub harness: Option<Backend>,
     pub profile_id: Option<String>,
@@ -288,11 +352,12 @@ pub struct RuntimeSnapshot {
     pub prefill_model: Option<Model>,
     pub pending_initial_model: bool,
     pub prefill_thinking_level: Option<String>,
+    pub observed_service_tier: Option<String>,
     pub prefill_service_tier: Option<String>,
     pub pending_initial_service_tier: bool,
     pub selected_session: Option<PathBuf>,
     pub conversation: Arc<ConversationState>,
-    /// Adds locally saved prompts and cancellation IDs to the backend queue for display.
+    pub history_tail: Option<Arc<crate::agents::HistoryPage<ConversationState>>>,
     pub prompt_queue: Option<Arc<crate::conversation::QueueState>>,
     pub models: Vec<Model>,
     pub thinking_levels: Vec<String>,
@@ -300,9 +365,8 @@ pub struct RuntimeSnapshot {
     pub modes: Vec<AgentMode>,
     pub selected_mode: Option<String>,
     pub session_goal: Option<crate::agents::SessionGoal>,
-    pub account_usage: crate::agents::AccountUsage,
-    /// Set only for backend reports, so cached sessions cannot replace newer account usage.
-    pub account_usage_observed_at: Option<Instant>,
+    pub last_outcome: Option<farcaster_storage::SessionOutcome>,
+    pub run_outcome: Option<farcaster_storage::SessionOutcome>,
     pub stats: Value,
     pub commands: Vec<SlashCommand>,
     pub stderr: String,
@@ -317,6 +381,33 @@ pub struct RuntimeSnapshot {
 }
 
 impl RuntimeSnapshot {
+    pub fn history_coverage(&self) -> Option<agents::HistoryCoverage> {
+        if !self.document_ready
+            && self.status == "Loading history"
+            && self.conversation.items.is_empty()
+        {
+            None
+        } else {
+            Some(match self.saved_history {
+                Some(SavedHistory::RefreshingPartial | SavedHistory::Partial) => {
+                    agents::HistoryCoverage::Suffix
+                }
+                _ => agents::HistoryCoverage::Complete,
+            })
+        }
+    }
+
+    pub(super) fn needs_saved_revision(
+        &self,
+        displayed: Option<farcaster_storage::TranscriptStamp>,
+    ) -> bool {
+        displayed.is_some()
+            && !self.connected
+            && !self.conversation.running
+            && self.document_ready
+            && self.transcript_stamp != displayed
+    }
+
     pub fn prompt_queue(&self) -> &crate::conversation::QueueState {
         self.prompt_queue
             .as_deref()

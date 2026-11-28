@@ -1,8 +1,8 @@
 use std::{path::Path, sync::Arc};
 
 use gpui::{
-    AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
+    AnyElement, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
 
 use crate::{
@@ -28,6 +28,11 @@ mod changed_files;
 mod tool_preview;
 use tool_preview::ToolPreview;
 
+#[path = "command_row.rs"]
+mod command_row;
+#[path = "tool_detail.rs"]
+mod tool_detail;
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_activity_group(
     font_scale: f32,
@@ -51,7 +56,7 @@ pub(super) fn render_activity_group(
     div()
         .id(("activity-group", key))
         .w_full()
-        .px(theme().size(18.0))
+        .px(crate::app::ui::grid::transcript_inset())
         .py(theme().size(2.0))
         .flex()
         .flex_col()
@@ -65,12 +70,16 @@ pub(super) fn render_activity_group(
             .font_family(UI_FONT_FAMILY)
             .text_size(theme().type_scale.body_small * font_scale)
             .line_height(theme().type_scale.line_body * font_scale)
-            .text_color(theme().colors.muted)
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(theme().colors.text)
             .child(div().min_w_0().flex_1().truncate().child(summary)),
         )
         .when(expanded, |group| {
             group.child(
                 disclosure_detail()
+                    .ml(crate::app::ui::grid::detail_indent()
+                        - crate::app::ui::grid::transcript_inset())
+                    .mr(-crate::app::ui::grid::transcript_inset())
                     .flex()
                     .flex_col()
                     .gap(theme().space.xs)
@@ -87,16 +96,60 @@ pub(super) fn render_activity_group(
                                 entity.clone(),
                             )
                         } else {
-                            render_tool(font_scale, index, item, child_expanded, entity.clone(), cx)
+                            render_tool_details(
+                                font_scale,
+                                index,
+                                item,
+                                child_expanded,
+                                entity.clone(),
+                                cx,
+                            )
                         }
                     })),
             )
         })
         .child(files)
+        .when(group_items().any(|item| item.has_attachments()), |group| {
+            group.child(
+                crate::app::views::transcript::attachments::render_group_attachments(
+                    key,
+                    group_items()
+                        .enumerate()
+                        .map(|(offset, item)| (start + offset, item.as_ref())),
+                    entity,
+                ),
+            )
+        })
         .into_any_element()
 }
 
 pub(super) fn render_tool(
+    font_scale: f32,
+    key: usize,
+    item: &TranscriptItem,
+    expanded: bool,
+    entity: WeakEntity<FarcasterApp>,
+    cx: &gpui::App,
+) -> AnyElement {
+    div()
+        .w_full()
+        .child(render_tool_details(
+            font_scale,
+            key,
+            item,
+            expanded,
+            entity.clone(),
+            cx,
+        ))
+        .when(item.has_attachments(), |row| {
+            row.child(div().px(crate::app::ui::grid::transcript_inset()).child(
+                crate::app::views::transcript::attachments::render_attachments(key, item, entity),
+            ))
+        })
+        .into_any_element()
+}
+
+fn render_tool_details(
     font_scale: f32,
     key: usize,
     item: &TranscriptItem,
@@ -116,6 +169,14 @@ pub(super) fn render_tool(
                 .as_ref()
                 .is_none_or(|details| details.metadata.targets.len() <= 1)
     });
+    if let Some(command) = item
+        .tool_details
+        .as_ref()
+        .filter(|details| details.metadata.category == Some(crate::agents::ToolCategory::Execute))
+        .and_then(|details| details.display_command())
+    {
+        return command_row::render(font_scale, key, &command, item, expanded, entity);
+    }
     let summary = tool_summary(item);
     let read_target = direct_read_target(item).map(str::to_owned);
     let opens_file = read_target.is_some();
@@ -133,7 +194,7 @@ pub(super) fn render_tool(
     div()
         .id(("tool-row", key))
         .w_full()
-        .px(theme().size(18.0))
+        .px(crate::app::ui::grid::transcript_inset())
         .py(theme().size(2.0))
         .flex()
         .flex_col()
@@ -141,17 +202,16 @@ pub(super) fn render_tool(
             tool_changes::title_row(("tool-title", key), title_label, move |window, cx| {
                 if let Some(path) = &read_target {
                     let _ = title_entity.update(cx, |this, cx| {
-                        this.open_file_editor_at_line(path.clone().into(), None, window, cx)
+                        this.open_transcript_file(path.clone().into(), None, window, cx)
                     });
                 } else {
                     toggle(window, cx);
                 }
             })
             .when(!opens_file, |row| row.aria_expanded(expanded))
-            .when(
-                status.is_some_and(|status| status != ToolStatus::Succeeded),
-                |row| row.child(status_slot(status)),
-            )
+            .child(status_slot(
+                status.filter(|status| *status != ToolStatus::Succeeded),
+            ))
             .when_some(presentation, |row, presentation| {
                 let label = tool_changes::file_label(
                     presentation.path(),
@@ -167,6 +227,7 @@ pub(super) fn render_tool(
                             .min_w_0()
                             .font_family(MONO_FONT_FAMILY)
                             .text_size(theme().type_scale.body_small * font_scale)
+                            .debug_selector(|| "tool-summary-text".into())
                             .child(label),
                     )
                 }
@@ -176,9 +237,10 @@ pub(super) fn render_tool(
                     div()
                         .flex_1()
                         .min_w_0()
-                        .truncate()
                         .text_size(theme().type_scale.body_small * font_scale)
+                        .truncate()
                         .text_color(theme().colors.muted)
+                        .debug_selector(|| "tool-summary-text".into())
                         .child(summary),
                 )
             }),
@@ -187,8 +249,6 @@ pub(super) fn render_tool(
             tool.child(
                 disclosure_detail()
                     .id(("tool-detail-scroll", key))
-                    .max_h(theme().layout.tool_max_height)
-                    .overflow_y_scroll()
                     .children(file_links(
                         font_scale,
                         key,
@@ -213,6 +273,15 @@ pub(super) fn tool_summary(item: &TranscriptItem) -> String {
         },
         |details| details.summary(),
     )
+}
+
+fn command_label(command: &str) -> String {
+    let mut chars = command.trim().chars();
+    let mut preview: String = chars.by_ref().take(512).collect();
+    if chars.next().is_some() {
+        preview.push('…');
+    }
+    preview
 }
 
 fn activity_header<'a>(items: impl Iterator<Item = &'a TranscriptItem>) -> String {
@@ -337,7 +406,17 @@ fn file_links(
                 diff_enabled,
                 move |diff, window, cx| {
                     let _ = entity.update(cx, |this, cx| {
-                        this.open_file_editor_with_diff(path.clone().into(), line, diff, window, cx)
+                        if diff {
+                            this.open_file_editor_with_diff(
+                                path.clone().into(),
+                                line,
+                                true,
+                                window,
+                                cx,
+                            );
+                        } else {
+                            this.open_transcript_file(path.clone().into(), line, window, cx);
+                        }
                     });
                 },
             )
@@ -459,13 +538,7 @@ fn file_targets(item: &TranscriptItem) -> impl Iterator<Item = &str> {
 }
 
 fn status_slot(status: Option<ToolStatus>) -> AnyElement {
-    div()
-        .w(theme().icons.control)
-        .h(theme().icons.control)
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
+    crate::app::ui::grid::icon_slot()
         .when_some(status, |slot, status| {
             slot.text_color(status.color())
                 .child(app_icon(status.icon(), AppIconSize::Inline))
@@ -478,14 +551,15 @@ fn expanded_tool_body(
     id: impl Into<gpui::ElementId>,
     item: &TranscriptItem,
 ) -> AnyElement {
-    selectable_text(font_scale, id, fenced_text(&tool_body_text(item)))
-        .font_family(MONO_FONT_FAMILY)
+    let text = tool_detail::markdown(item).unwrap_or_else(|| fenced_text(&tool_body_text(item)));
+    selectable_text(font_scale, id, text)
+        .style(
+            super::scaled_markdown_style(super::transcript_markdown_style(), font_scale)
+                .paragraph_gap(gpui::rems(0.5)),
+        )
         .text_size(theme().type_scale.body_small * font_scale)
-        .text_color(if item.is_error {
-            theme().colors.error
-        } else {
-            theme().colors.muted
-        })
+        .line_height(theme().type_scale.line_body * font_scale)
+        .text_color(theme().colors.text)
         .into_any_element()
 }
 

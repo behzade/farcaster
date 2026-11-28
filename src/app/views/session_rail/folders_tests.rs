@@ -366,7 +366,7 @@ fn flat_group_title_clicks_toggle_chats_and_counts_in_both_modes(cx: &mut gpui::
         cx,
         |cx, app, _, project| {
             cx.update(|_, cx| {
-                app.update(cx, |app, _| {
+                app.update(cx, |app, cx| {
                     app.sessions.drafts = [draft(3), draft(2)]
                         .into_iter()
                         .map(|item| {
@@ -380,6 +380,7 @@ fn flat_group_title_clicks_toggle_chats_and_counts_in_both_modes(cx: &mut gpui::
                         .folders
                         .create("A long folder title that will be clipped".into(), Some(3));
                     app.sessions.folders.assign(2, Some(1));
+                    app.notify_session_rail(cx);
                 })
             });
             for grouped in [false, true] {

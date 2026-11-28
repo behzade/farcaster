@@ -10,15 +10,6 @@ struct RowHeight {
     measured: bool,
 }
 
-impl RowHeight {
-    fn estimated(value: Pixels) -> Self {
-        Self {
-            value: value.max(theme().size(1.0)),
-            measured: false,
-        }
-    }
-}
-
 #[derive(Default)]
 pub(super) struct HeightIndex {
     rows: Vec<RowHeight>,
@@ -39,20 +30,20 @@ impl HeightIndex {
         old_range: Range<usize>,
         size_hints: impl IntoIterator<Item = Pixels>,
     ) -> usize {
-        let replacement = size_hints
-            .into_iter()
-            .map(RowHeight::estimated)
-            .collect::<Vec<_>>();
-        let replacement_len = replacement.len();
-        let appending =
-            !self.is_empty() && old_range.start == self.len() && old_range.end == self.len();
-        if appending {
+        let minimum = theme().size(1.0);
+        let replacement = size_hints.into_iter().map(|value| RowHeight {
+            value: value.max(minimum),
+            measured: false,
+        });
+        let previous_len = self.len();
+        let retained = previous_len - old_range.len();
+        if previous_len > 0 && old_range == (previous_len..previous_len) {
             self.extend(replacement);
         } else {
             self.rows.splice(old_range, replacement);
             self.rebuild();
         }
-        replacement_len
+        self.len() - retained
     }
 
     fn rebuild(&mut self) {

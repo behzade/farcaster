@@ -297,3 +297,20 @@ fn active_protocol_adapters_skip_warming_without_launching_a_process() {
         );
     }
 }
+
+#[test]
+fn local_revision_tracks_the_same_file_as_pi_import() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("example.jsonl");
+    std::fs::write(&path, PI_HEADER).unwrap();
+    let config = crate::AgentLaunchConfig::default();
+    let stamp = || local_history_revision(&config, Backend::Pi, &path, dir.path());
+    let first = stamp().unwrap();
+    let (_, imported) =
+        load_session_history_for_import(&config, Backend::Pi, &path, dir.path(), None).unwrap();
+    assert_eq!(imported.as_ref(), Some(&first));
+    std::fs::write(&path, format!("{PI_HEADER}\n")).unwrap();
+    assert_ne!(stamp().unwrap(), first);
+    std::fs::remove_file(&path).unwrap();
+    assert!(stamp().is_none());
+}

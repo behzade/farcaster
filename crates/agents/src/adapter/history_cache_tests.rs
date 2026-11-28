@@ -346,3 +346,123 @@ fn foreground_retries_after_a_warm_panic() {
 fn foreground_rechecks_freshness_after_waiting_for_a_warm() {
     concurrent_warm_then_select("changed");
 }
+
+#[test]
+fn a_selection_receives_the_page_before_a_joined_warm_finishes() {
+    use crate::{HistoryCoverage, HistoryPage};
+    use std::time::Duration;
+
+    let timeout = Duration::from_secs(5);
+    for page_ready_before_click in [false, true] {
+        let cache = HistoryCache::new();
+        let page = HistoryPage {
+            coverage: HistoryCoverage::Suffix,
+            content: vec![serde_json::json!({"role": "user", "content": "recent"})],
+        };
+        let (started, warming) = mpsc::channel();
+        let (checked, click) = mpsc::channel();
+        let (seen, finish) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let cache = &cache;
+            let expected = &page;
+            let warm = scope.spawn(move || {
+                cache.load_with_preview(
+                    "session",
+                    || Some(1),
+                    None,
+                    |publish| {
+                        if page_ready_before_click {
+                            publish(expected.clone());
+                            started.send(()).unwrap();
+                        } else {
+                            started.send(()).unwrap();
+                            click.recv_timeout(timeout).expect("foreground joined");
+                            publish(expected.clone());
+                        }
+                        finish
+                            .recv_timeout(timeout)
+                            .expect("foreground received page");
+                        Ok(history(&"x".repeat(MAX_MESSAGE_BYTES)))
+                    },
+                )
+            });
+            warming.recv_timeout(timeout).unwrap();
+            let mut received = Vec::new();
+            let selected = cache
+                .load_with_preview(
+                    "session",
+                    || {
+                        let _ = checked.send(());
+                        Some(1)
+                    },
+                    Some(&mut |page| {
+                        received.push(page);
+                        seen.send(()).unwrap();
+                    }),
+                    |_| panic!("selection started a second full read"),
+                )
+                .unwrap();
+            let warmed = warm.join().unwrap().unwrap();
+            assert_eq!(received.as_slice(), std::slice::from_ref(expected));
+            assert!(Arc::ptr_eq(&selected.messages, &warmed.messages));
+            assert!(cache.state.lock().unwrap().entries.is_empty());
+        });
+    }
+}
+
+#[test]
+fn selection_keeps_its_first_page_when_a_changed_file_requires_a_retry() {
+    use crate::{HistoryCoverage, HistoryPage};
+    use std::time::Duration;
+
+    let (_temp, path) = fixture();
+    let path = path.as_path();
+    let cache = FileCache::new();
+    let revision = || FileStamp::read(path);
+    let read = |publish: &mut dyn FnMut(HistoryPage)| {
+        let history = parse(path)?;
+        publish(HistoryPage {
+            content: history.messages.to_vec(),
+            coverage: HistoryCoverage::Complete,
+        });
+        Ok(history)
+    };
+    let (ready, page_ready) = mpsc::channel();
+    let (release, changed) = mpsc::channel();
+    let timeout = Duration::from_secs(5);
+    std::thread::scope(|scope| {
+        let cache = &cache;
+        let warm = scope.spawn(move || {
+            cache.load_with_preview(path.to_owned(), revision, None, |publish| {
+                let history = read(publish)?;
+                ready.send(()).unwrap();
+                changed
+                    .recv_timeout(timeout)
+                    .expect("selection changed the file");
+                Ok(history)
+            })
+        });
+        page_ready.recv_timeout(timeout).unwrap();
+        let mut pages = Vec::new();
+        let selected = cache
+            .load_with_preview(
+                path.to_owned(),
+                revision,
+                Some(&mut |page| {
+                    if pages.is_empty() {
+                        append(path);
+                        release.send(()).unwrap();
+                    }
+                    pages.push(page);
+                }),
+                read,
+            )
+            .unwrap();
+        let first = warm.join().unwrap().unwrap();
+        assert_eq!(first.messages.len(), 1);
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].content, *first.messages);
+        assert_eq!(selected.messages.len(), 2);
+        assert_eq!(selected.messages[1]["content"], "second");
+    });
+}

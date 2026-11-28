@@ -21,7 +21,7 @@ impl ComposerImage {
         let byte_len = bytes.len();
         Ok(Self {
             prompt,
-            preview: Arc::new(Image::from_bytes(format, bytes)),
+            preview: crate::app::ui::images::normalized(Arc::new(Image::from_bytes(format, bytes))),
             byte_len,
         })
     }
@@ -31,14 +31,14 @@ impl FarcasterApp {
     pub(crate) fn has_composer_images(&self) -> bool {
         self.composer
             .images
-            .get(self.composer.sessions.current_target())
+            .get(self.composer.sessions.current_buffer())
             .is_some_and(|images| !images.is_empty())
     }
 
     pub(crate) fn current_composer_images(&self) -> &[ComposerImage] {
         self.composer
             .images
-            .get(self.composer.sessions.current_target())
+            .get(self.composer.sessions.current_buffer())
             .map(Vec::as_slice)
             .unwrap_or_default()
     }
@@ -51,7 +51,7 @@ impl FarcasterApp {
         if images.is_empty() {
             return false;
         }
-        let target = self.composer.sessions.current_target().to_owned();
+        let target = self.composer.sessions.current_buffer().to_owned();
         self.composer
             .images
             .entry(target.clone())
@@ -63,7 +63,7 @@ impl FarcasterApp {
     }
 
     pub(crate) fn remove_composer_image(&mut self, index: usize, cx: &mut Context<Self>) {
-        let target = self.composer.sessions.current_target().to_owned();
+        let target = self.composer.sessions.current_buffer().to_owned();
         if let Some(images) = self.composer.images.get_mut(&target)
             && index < images.len()
         {

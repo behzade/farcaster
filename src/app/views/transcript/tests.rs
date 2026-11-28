@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use super::*;
+
 use crate::{
     app::ui::theme::theme,
     conversation::{self, TranscriptItem, TranscriptKind},
@@ -203,7 +204,6 @@ fn mixed_user_messages_highlight_only_recognized_invocation_tokens() {
 #[test]
 fn invocation_treatment_uses_distinct_skill_and_prompt_palettes() {
     assert_ne!(theme().colors.skill, theme().colors.accent);
-    assert_ne!(theme().colors.skill, theme().colors.success);
     let skill = invocation_transcript_markdown_style("<skill name=\"review\">body</skill>");
     assert_eq!(skill.inline_code.color, Some(theme().colors.skill.into()));
     assert_eq!(skill.inline_code.background_color, None);
@@ -217,18 +217,7 @@ fn invocation_treatment_uses_distinct_skill_and_prompt_palettes() {
 }
 
 #[test]
-fn markdown_inline_code_uses_the_reading_palette() {
-    let style = transcript_markdown_style();
-
-    assert_eq!(style.inline_code.color, Some(theme().colors.code.into()));
-    assert_eq!(
-        style.inline_code.background_color,
-        Some(theme().colors.panel.into())
-    );
-}
-
-#[test]
-fn commands_render_directly_until_multiple_calls_share_a_group() {
+fn failed_commands_share_activity_with_surrounding_calls() {
     use serde_json::json;
 
     let mut state = conversation::ConversationState::default();
@@ -248,49 +237,14 @@ fn commands_render_directly_until_multiple_calls_share_a_group() {
         }));
     }
     let rows = project_rows(&state.items);
-    assert_eq!(rows.len(), 3);
-    for index in 0..3 {
-        assert!(
-            matches!(rows[index], TranscriptRow::Item { index: actual, .. } if actual == index)
-        );
-    }
-    let previous = state.items.clone();
-    let mut completed = state.items[1].as_ref().clone();
-    completed.is_error = false;
-    Arc::make_mut(
-        completed
-            .tool_details
-            .as_mut()
-            .expect("test operation should succeed"),
-    )
-    .state = conversation::ToolExecutionState::Succeeded;
-    state.items.set(1, Arc::new(completed));
-    let grouped = update_rows_from(&rows, &previous, &state.items, Some(1));
-    assert_eq!(grouped, project_rows(&state.items));
+    assert_eq!(rows.len(), 1);
     assert!(matches!(
-        grouped[0],
-        TranscriptRow::ActivityGroup { len: 3, .. }
-    ));
-    assert_eq!(grouped.len(), 1);
-    assert!(resolved_expanded(
-        grouped[0],
-        &state.items,
-        &std::collections::HashMap::from([(0, true)])
-    ));
-}
-
-#[test]
-fn mixed_completed_tools_collapse_into_one_activity_row() {
-    let rows = project_rows(&[
-        item(TranscriptKind::User, "", "question"),
-        item(TranscriptKind::Tool, "Read", "Path: a"),
-        item(TranscriptKind::Tool, "Read", "Path: b"),
-        item(TranscriptKind::Tool, "Bash", "Command: true"),
-    ]);
-    assert_eq!(rows.len(), 2);
-    assert!(matches!(
-        &rows[1],
-        TranscriptRow::ActivityGroup { len: 3, .. }
+        rows[0],
+        TranscriptRow::ActivityGroup {
+            start: 0,
+            len: 3,
+            ..
+        }
     ));
 }
 
@@ -356,6 +310,73 @@ fn long_assistant_messages_become_independently_virtualized_rows() {
         })
         .collect::<String>();
     assert_eq!(reconstructed, text);
+}
+
+#[test]
+fn a_table_above_the_viewport_is_separate_from_a_medium_reply_tail() {
+    let mut table = String::from("| File | Result |\n|---|---|\n");
+    for row in 0..20 {
+        table.push_str(&format!("| report-{row} | {} |\n", "details ".repeat(20)));
+    }
+    let text = format!("{table}\nAll checks passed.");
+    assert!(text.len() < MARKDOWN_CHUNK_HARD_BYTES);
+    let mut presentation = crate::reviews::presentation::TranscriptPresentation::default();
+    presentation
+        .items
+        .push(item(TranscriptKind::Assistant, "", &text));
+    let markdown = [(
+        0,
+        crate::conversation::markdown_structure::MarkdownStructure::parse(&text).unwrap(),
+    )]
+    .into_iter()
+    .collect();
+    let rows = project_indexed_rows(&presentation, Some(&markdown));
+    let live = project_presentation_rows(&presentation);
+    assert!(rows.iter().eq(live.iter()));
+    assert_eq!(rows.len(), 2);
+    let TranscriptRow::MessageChunk { start, end, .. } = rows[0] else {
+        panic!("expected a table chunk");
+    };
+    assert_eq!(&text[start..end], format!("{table}\n"));
+    let TranscriptRow::MessageChunk { start, end, .. } = rows[1] else {
+        panic!("expected an independently laid out tail");
+    };
+    assert_eq!(&text[start..end], "All checks passed.");
+}
+
+#[test]
+fn a_medium_loose_list_keeps_its_continuation_and_sibling_items_together() {
+    let list = format!(
+        "- {}\n\n  continuation\n\n- second item",
+        "résultat ".repeat(245)
+    );
+    let rows = project_rows(&[item(TranscriptKind::Assistant, "", &list)]);
+    assert_eq!(rows.len(), 1);
+    assert!(matches!(rows[0], TranscriptRow::Item { .. }));
+
+    let text = format!("{list}\n\nSummary.");
+    let rows = project_rows(&[item(TranscriptKind::Assistant, "", &text)]);
+    assert_eq!(rows.len(), 2);
+    let TranscriptRow::MessageChunk { start, end, .. } = rows[0] else {
+        panic!("expected the complete list in one chunk");
+    };
+    assert_eq!(&text[start..end], format!("{list}\n\n"));
+}
+
+#[test]
+fn medium_markdown_keeps_document_wide_references_together() {
+    for (reference, definition) in [
+        ("See [the report][report].", "[report]: /report"),
+        ("See the result[^note].", "[^note]: Explanation"),
+    ] {
+        let text = format!(
+            "{reference} {}\n\nTail.\n\n{definition}",
+            "details ".repeat(300)
+        );
+        let rows = project_rows(&[item(TranscriptKind::Assistant, "", &text)]);
+        assert_eq!(rows.len(), 1);
+        assert!(matches!(rows[0], TranscriptRow::Item { .. }));
+    }
 }
 
 #[test]
@@ -639,7 +660,7 @@ fn completed_native_reads_and_searches_share_activity() {
 }
 
 #[test]
-fn failed_native_reads_remain_visible_with_details() {
+fn failed_native_reads_share_activity() {
     let mut state = conversation::ConversationState::default();
     for id in ["ok", "failed"] {
         state.reduce(&serde_json::json!({"type":"tool_execution_start", "toolCallId":id,
@@ -650,9 +671,15 @@ fn failed_native_reads_remain_visible_with_details() {
         );
     }
     let rows = project_rows(&state.items);
-    assert_eq!(rows.len(), 2);
-    assert!(matches!(rows[0], TranscriptRow::Item { index: 0, .. }));
-    assert!(matches!(rows[1], TranscriptRow::Item { index: 1, .. }));
+    assert_eq!(rows.len(), 1);
+    assert!(matches!(
+        rows[0],
+        TranscriptRow::ActivityGroup {
+            start: 0,
+            len: 2,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -739,7 +766,7 @@ fn tool_rows_are_collapsed_by_default_even_while_running_or_failed() {
     let items = vec![successful_mutation, running, failed];
     let rows = project_rows(&items);
 
-    assert_eq!(rows.len(), 2);
+    assert_eq!(rows.len(), 1);
     for row in rows.iter() {
         assert!(!expanded_by_default(*row, &items));
     }
@@ -851,7 +878,7 @@ fn transcript_copy_keeps_pasted_file_links() {
 }
 
 #[test]
-fn activity_groups_keep_thinking_inside_and_attention_outside() {
+fn activity_groups_include_thinking_failures_and_approvals() {
     use crate::conversation::{ToolReview, ToolReviewState};
     let mut running = item(TranscriptKind::Tool, "Bash", "Command: sleep 1");
     Arc::make_mut(&mut running).streaming = true;
@@ -873,19 +900,17 @@ fn activity_groups_keep_thinking_inside_and_attention_outside() {
         item(TranscriptKind::Tool, "Read", "Path: two"),
     ];
     let rows = project_rows(&items);
-    assert_eq!(rows.len(), 5);
+    assert_eq!(rows.len(), 3);
     assert!(matches!(
         rows[0],
         TranscriptRow::ActivityGroup {
             start: 0,
-            len: 4,
+            len: 6,
             ..
         }
     ));
-    for (row, index) in rows.iter().skip(1).take(3).zip(4..7) {
-        assert!(matches!(row, TranscriptRow::Item { index: actual, .. } if *actual == index));
-    }
-    assert!(matches!(rows[4], TranscriptRow::Item { index: 7, .. }));
+    assert!(matches!(rows[1], TranscriptRow::Item { index: 6, .. }));
+    assert!(matches!(rows[2], TranscriptRow::Item { index: 7, .. }));
 }
 
 #[test]
@@ -907,15 +932,17 @@ fn file_activity_never_crosses_a_message_or_session_notice() {
 }
 
 #[test]
-fn completing_a_tool_merges_activity_without_losing_disclosure_identity() {
+fn failed_tool_completion_keeps_activity_and_disclosure_identity() {
     let mut running = item(TranscriptKind::Tool, "Bash", "Command: opaque");
     Arc::make_mut(&mut running).streaming = true;
     let previous = vec![item(TranscriptKind::Thinking, "", "Working"), running];
     let previous_rows = project_rows(&previous);
     let mut items = previous.clone();
     Arc::make_mut(&mut items[1]).streaming = false;
+    Arc::make_mut(&mut items[1]).is_error = true;
     let rows = update_rows_from(&previous_rows, &previous, &items, Some(1));
     assert_eq!(rows, project_rows(&items));
+    assert!(rows[0].same_position(&previous_rows[0]));
     assert!(matches!(
         rows[0],
         TranscriptRow::ActivityGroup { len: 2, .. }
@@ -990,23 +1017,101 @@ fn selecting_an_activity_row_copies_every_call_and_thought_in_order() {
 }
 
 #[test]
-fn tool_completion_and_late_metadata_invalidate_the_actual_earlier_row() {
+fn tool_completion_metadata_and_approvals_refresh_the_existing_group() {
     use serde_json::json;
     let mut conversation = conversation::ConversationState::default();
     for id in ["first", "second"] {
         conversation.reduce(&json!({"type":"tool_execution_start", "toolCallId":id, "toolName":"bash", "args":{"command":"true"}}));
     }
-    let before = conversation.items.clone();
-    let before_rows = project_rows(&before);
-    let changed = conversation.reduce(&json!({"type":"tool_execution_end", "toolCallId":"first", "result":{"content":[]}, "isError":false}));
-    assert_eq!(changed, Some(0));
-    let rows = update_rows_from(&before_rows, &before, &conversation.items, changed);
-    assert_eq!(rows, project_rows(&conversation.items));
-    let changed = conversation.reduce(&json!({"type":"tool_metadata_changed", "toolCallId":"first", "toolMetadata":{"category":"execute","title":"Finished tests"}}));
-    assert_eq!(changed, Some(0));
-    let changed = conversation
-        .reduce(&json!({"type":"tool_review_changed", "toolCallId":"first", "state":"blocked"}));
-    assert_eq!(changed, Some(0));
-    let changed = conversation.reduce(&json!({"type":"message_end", "message":{"role":"toolResult", "toolCallId":"first", "content":[], "isError":false}}));
-    assert_eq!(changed, Some(0));
+    let mut rows = project_rows(&conversation.items);
+    let group = rows[0];
+    let disclosure = std::collections::HashMap::from([(group.disclosure_key(), true)]);
+    for event in [
+        json!({"type":"tool_execution_end", "toolCallId":"first", "result":{"content":[]}, "isError":false}),
+        json!({"type":"tool_metadata_changed", "toolCallId":"first", "toolMetadata":{"category":"execute","title":"Finished tests"}}),
+        json!({"type":"tool_review_changed", "toolCallId":"first", "state":"reviewing"}),
+        json!({"type":"tool_review_changed", "toolCallId":"first", "state":"blocked"}),
+        json!({"type":"tool_review_changed", "toolCallId":"first", "state":"approved"}),
+        json!({"type":"message_end", "message":{"role":"toolResult", "toolCallId":"first", "content":[], "isError":false}}),
+    ] {
+        let before = conversation.items.clone();
+        let previous_row = rows[0];
+        let changed = conversation.reduce(&event);
+        assert_eq!(changed, Some(0));
+        rows = update_rows_from(&rows, &before, &conversation.items, changed);
+        assert_eq!(rows, project_rows(&conversation.items));
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].same_position(&group));
+        assert_ne!(rows[0], previous_row);
+        assert!(resolved_expanded(rows[0], &conversation.items, &disclosure));
+    }
+}
+#[test]
+fn long_inline_images_and_distant_reference_definitions_survive_chunks() {
+    let inline = format!("![inline](data:image/png;base64,{})", "a".repeat(20_000));
+    let text = format!(
+        "{inline}\n\n![reference][picture]\n\n{}\n\n[picture]: /tmp/picture.png\n",
+        "some prose\n\n".repeat(1500)
+    );
+    let chunks = markdown_chunks(&text);
+    let rendered: Vec<_> = chunks
+        .iter()
+        .map(|chunk| markdown_chunk_text(&text, *chunk))
+        .collect();
+    assert!(rendered.iter().any(|chunk| chunk.contains(&inline)));
+    let reference = rendered
+        .iter()
+        .find(|chunk| chunk.contains("![reference][picture]"))
+        .unwrap();
+    let root = ::markdown::to_mdast(reference, &::markdown::ParseOptions::gfm()).unwrap();
+    assert!(format!("{root:?}").contains("ImageReference"));
+}
+
+#[test]
+fn html_presentation_actions_keep_the_entire_document() {
+    let text = format!(
+        "```html\n<!doctype html>\n{}\n<script>document.title='complete'</script>\n```",
+        "<p>slide</p>\n".repeat(1000)
+    );
+    let chunks = markdown_chunks(&text);
+    assert_eq!(chunks.len(), 1);
+    assert_eq!(markdown_chunk_text(&text, chunks[0]), text);
+}
+
+#[test]
+fn tool_images_share_activity_groups_and_refresh_on_arrival() {
+    let mut image_tool = item(TranscriptKind::Tool, "Generate", "");
+    Arc::make_mut(&mut image_tool).images = Arc::new(vec![Arc::new(
+        conversation::EncodedImage::new(vec![1, 2, 3], "image/png").unwrap(),
+    )]);
+    let mut items = PersistentVec::from_iter([
+        item(TranscriptKind::Thinking, "", "working"),
+        image_tool,
+        item(TranscriptKind::Tool, "Read", ""),
+    ]);
+    let rows = project_rows(&items);
+    assert_eq!(rows.len(), 1);
+    assert!(matches!(
+        rows[0],
+        TranscriptRow::ActivityGroup {
+            start: 0,
+            len: 3,
+            ..
+        }
+    ));
+    assert!(!resolved_expanded(rows[0], &items, &Default::default()));
+    assert!(estimated_row_height(rows[0], &items) > theme().size(100.0));
+
+    let previous = items.clone();
+    let mut changed = items[1].as_ref().clone();
+    let image = changed.images[0].clone();
+    Arc::make_mut(&mut changed.images).push(image);
+    items.set(1, Arc::new(changed));
+    let updated = update_rows_from(&rows, &previous, &items, Some(1));
+    assert_eq!(updated, project_rows(&items));
+    assert_eq!(updated[0].key(), rows[0].key());
+    assert_ne!(
+        updated[0], rows[0],
+        "an arriving image invalidates the group layout"
+    );
 }

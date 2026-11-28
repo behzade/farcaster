@@ -1,19 +1,18 @@
-use crate::app::ui::primitives::DropdownMenu as _;
 use crate::app::ui::primitives::Popover;
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, Styled as _, Transformation, WeakEntity, div, percentage,
+    Animation, AnimationExt as _, AnyElement, Div, FontWeight, InteractiveElement as _,
+    IntoElement as _, ParentElement as _, Styled as _, Transformation, WeakEntity, div, percentage,
     prelude::FluentBuilder as _,
 };
-use gpui_component::menu::PopupMenuItem;
 
-use super::separator;
 use crate::app::FarcasterApp;
 use crate::{
     agents::SandboxState,
     app::ui::assets::AppIcon,
-    app::ui::primitives::{AppIconSize, ButtonTone, app_icon, dropdown_content_button},
-    app::ui::theme::{MONO_FONT_FAMILY, theme},
+    app::ui::primitives::{
+        AppIconSize, ButtonTone, Dropdown, DropdownItem, app_icon, dropdown_content_button,
+    },
+    app::ui::theme::theme,
     runtime::{ConfigurationStatus, HarnessAccessMode},
 };
 
@@ -46,39 +45,44 @@ pub(in crate::app::views) fn render(
     let effort = identity.effort.unwrap_or("default");
     let shows_effort = !app.snapshot.available_thinking_levels().is_empty()
         || identity.effort.is_some_and(|effort| effort != "off");
-    let runtime_content = div()
+    let runtime_content = setting_content()
         .debug_selector(|| "composer-runtime-content".into())
-        .flex()
-        .items_center()
-        .font_family(MONO_FONT_FAMILY)
-        .text_size(theme().type_scale.body)
-        .child(div().text_color(theme().colors.muted).child(provider_label))
-        .child(runtime_slash())
-        .child(div().text_color(theme().colors.text).child(model_label))
+        .child(
+            div()
+                .font_weight(FontWeight::MEDIUM)
+                .child(model_label.clone()),
+        )
         .when(shows_effort, |content| {
-            content.child(runtime_slash()).child(
+            content.child(
                 div()
-                    .text_color(effort_color(effort))
+                    .text_color(theme().colors.muted)
                     .child(effort_label(effort)),
             )
         });
+    let runtime_label = if shows_effort {
+        format!(
+            "{provider_label} · {model_label} · {}",
+            effort_label(effort)
+        )
+    } else {
+        format!("{provider_label} · {model_label}")
+    };
     let runtime_entity = entity.clone();
     let content_entity = entity.clone();
+    let enabled = app.can_submit();
     let runtime = Popover::new("runtime-popover")
         .anchor(gpui::Anchor::BottomLeft)
         .appearance(false)
-        .open(app.workspace.runtime_picker.open)
+        .open(enabled && app.workspace.runtime_picker.open)
         .trigger(
             dropdown_content_button(
                 "select-runtime",
-                "Runtime",
+                runtime_label,
                 runtime_content,
-                ButtonTone::Neutral,
-                true,
+                ButtonTone::Quiet,
+                enabled,
             )
-            .when(app.editable_draft_harness().is_none(), |button| {
-                button.pl_0()
-            })
+            .px(theme().space.xs)
             .flex_none(),
         )
         .on_open_change(move |open, window, cx| {
@@ -92,39 +96,21 @@ pub(in crate::app::views) fn render(
         });
 
     div()
+        .debug_selector(|| "composer-runtime-controls".into())
         .flex_none()
         .flex()
         .items_center()
         .child(runtime)
         .when(app.snapshot.sandbox_controls_available(), |content| {
-            content.child(separator()).child(access_selector(
+            content.child(access_selector(
                 app.snapshot.access_mode,
                 app.snapshot.available_access_modes(),
                 app.snapshot.sandbox_state,
+                enabled,
                 entity,
             ))
         })
         .into_any_element()
-}
-
-fn runtime_slash() -> AnyElement {
-    div()
-        .px(theme().size(6.0))
-        .text_color(theme().colors.subtle)
-        .child("/")
-        .into_any_element()
-}
-
-fn effort_color(level: &str) -> gpui::Rgba {
-    match level.to_ascii_lowercase().as_str() {
-        "off" | "none" | "default" => theme().colors.subtle,
-        "minimal" => theme().colors.muted,
-        "low" => theme().colors.link,
-        "medium" => theme().colors.accent,
-        "high" => theme().colors.warning,
-        "xhigh" | "max" => theme().colors.error,
-        _ => theme().colors.accent,
-    }
 }
 
 fn effort_label(level: &str) -> String {
@@ -135,54 +121,67 @@ fn effort_label(level: &str) -> String {
     }
 }
 
+fn setting_content() -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(theme().space.xs)
+        .text_size(theme().type_scale.body)
+        .line_height(theme().type_scale.line_body)
+        .font_weight(FontWeight::NORMAL)
+        .text_color(theme().colors.text)
+}
+
 fn access_selector(
     selected: HarnessAccessMode,
     supported: Vec<HarnessAccessMode>,
     state: SandboxState,
+    enabled: bool,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
-    let content = div()
-        .flex()
-        .items_center()
-        .gap(theme().size(5.0))
+    let label = sandbox_state_label(state, selected);
+    let content = setting_content()
         .text_color(match state {
             SandboxState::Active(mode) => access_mode_color(mode),
+            SandboxState::Pending(_) | SandboxState::Checking => access_mode_color(selected),
             _ => theme().colors.muted,
         })
-        .child(app_icon(AppIcon::Shield, AppIconSize::Inline))
-        .child(sandbox_state_label(state, selected))
+        .child(app_icon(access_mode_icon(selected), AppIconSize::Control))
+        .child(label.strip_prefix("Sandbox: ").unwrap_or(label))
         .when(matches!(state, SandboxState::Pending(_)), |this| {
-            this.child(app_icon(AppIcon::Hourglass, AppIconSize::Inline))
+            this.child(app_icon(AppIcon::Hourglass, AppIconSize::Control))
         })
         .when(state == SandboxState::Checking, |this| {
             this.child(
-                app_icon(AppIcon::SpinnerGap, AppIconSize::Inline).with_animation(
+                app_icon(AppIcon::SpinnerGap, AppIconSize::Control).with_animation(
                     "sandbox-applying",
                     Animation::new(std::time::Duration::from_millis(800)).repeat(),
                     |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
                 ),
             )
         });
-    dropdown_content_button(
+    Dropdown::with_content(
         "harness-access",
         sandbox_state_tooltip(state, selected),
         content,
-        ButtonTone::Quiet,
-        supported.len() > 1,
+        supported
+            .iter()
+            .map(|&target| {
+                let entity = entity.clone();
+                DropdownItem::new(access_mode_label(target), move |_, cx| {
+                    let _ = entity.update(cx, |this, cx| this.set_access_mode(target, cx));
+                })
+                .icon(access_mode_icon(target))
+                .selected(target == selected)
+            })
+            .collect(),
     )
-    .dropdown_menu_with_anchor(gpui::Anchor::BottomLeft, move |mut menu, _, _| {
-        for &target in &supported {
-            let entity = entity.clone();
-            menu = menu.item(
-                PopupMenuItem::new(access_mode_label(target))
-                    .checked(target == selected)
-                    .on_click(move |_, _, cx| {
-                        let _ = entity.update(cx, |this, cx| this.set_access_mode(target, cx));
-                    }),
-            );
-        }
-        menu
-    })
+    .tone(ButtonTone::Quiet)
+    .px(theme().space.xs)
+    .auto_menu_width()
+    .anchor(gpui::Anchor::BottomLeft)
+    .accessibility_label(sandbox_state_tooltip(state, selected))
+    .disabled(!enabled || supported.len() < 2)
     .into_any_element()
 }
 
@@ -209,6 +208,14 @@ fn sandbox_state_tooltip(state: SandboxState, selected: HarnessAccessMode) -> St
     }
 }
 
+const fn access_mode_icon(mode: HarnessAccessMode) -> AppIcon {
+    match mode {
+        HarnessAccessMode::Sandboxed => AppIcon::Shield,
+        HarnessAccessMode::Auto => AppIcon::Shield,
+        HarnessAccessMode::Full => AppIcon::WarningCircle,
+    }
+}
+
 const fn access_mode_label(mode: HarnessAccessMode) -> &'static str {
     match mode {
         HarnessAccessMode::Full => "Sandbox: Off",
@@ -219,8 +226,7 @@ const fn access_mode_label(mode: HarnessAccessMode) -> &'static str {
 
 fn access_mode_color(mode: HarnessAccessMode) -> gpui::Rgba {
     match mode {
-        HarnessAccessMode::Sandboxed => theme().colors.muted,
-        HarnessAccessMode::Auto => theme().colors.muted,
+        HarnessAccessMode::Sandboxed | HarnessAccessMode::Auto => theme().colors.muted,
         HarnessAccessMode::Full => theme().colors.warning,
     }
 }

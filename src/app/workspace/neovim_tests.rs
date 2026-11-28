@@ -10,6 +10,86 @@ impl Drop for Server {
 }
 
 #[test]
+#[ignore = "requires a Neovim executable; checks real startup before user config"]
+fn embedded_startup_keeps_user_config_without_desktop_auto_sessions() {
+    let directory = tempfile::tempdir().expect("create state directory");
+    let init = directory.path().join("init.lua");
+    std::fs::write(
+        &init,
+        "vim.g.session_enabled_at_init = vim.g.auto_session_enabled ~= false\nvim.o.tabstop = 3\n",
+    )
+    .expect("write user config");
+    let script = directory.path().join("check.lua");
+    std::fs::write(
+        &script,
+        "assert(vim.o.tabstop == 3, 'user config must still load')\nassert(vim.g.session_enabled_at_init == false, 'session ownership must be set before user config')\nvim.cmd('qa!')\n",
+    )
+    .expect("write startup check");
+    let output = Command::new(nvim_executable())
+        .current_dir(directory.path())
+        .args(["--headless", "-i", "NONE", "-u"])
+        .arg(&init)
+        .args(["--cmd", &state_setup(directory.path()), "-l"])
+        .arg(&script)
+        .output()
+        .expect("run startup check");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+#[ignore = "requires a Neovim executable; checks terminal background updates"]
+fn embedded_background_follows_colorscheme_and_resets_transparency() {
+    let directory = tempfile::tempdir().expect("create test directory");
+    let setup = directory.path().join("background.lua");
+    std::fs::write(&setup, include_str!("neovim_background.lua")).expect("write background setup");
+    let script = directory.path().join("check.lua");
+    std::fs::write(
+        &script,
+        r#"
+local sent = {}
+vim.api.nvim_ui_send = function(value) table.insert(sent, value) end
+vim.api.nvim_set_hl(0, 'Normal', { bg = 0x123456 })
+vim.cmd('source background.lua')
+assert(vim.wait(1000, function() return #sent == 1 end))
+assert(sent[1] == '\027]11;#123456\027\\')
+vim.api.nvim_set_hl(0, 'Normal', { bg = 0xabcdef })
+vim.api.nvim_exec_autocmds('ColorScheme', {})
+assert(vim.wait(1000, function() return #sent == 2 end))
+assert(sent[2] == '\027]11;#abcdef\027\\')
+vim.api.nvim_exec_autocmds('ColorScheme', {})
+vim.wait(10)
+assert(#sent == 2, 'unchanged colors should not send another update')
+vim.api.nvim_ui_send = nil
+vim.api.nvim_chan_send = function(channel, value)
+  assert(channel == vim.v.stderr)
+  table.insert(sent, value)
+end
+vim.api.nvim_set_hl(0, 'Normal', {})
+vim.api.nvim_exec_autocmds('ColorScheme', {})
+assert(vim.wait(1000, function() return #sent == 3 end))
+assert(sent[3] == '\027]111\027\\', 'transparent Normal must restore the terminal default')
+vim.cmd('qa!')
+"#,
+    )
+    .expect("write background check");
+    let output = Command::new(nvim_executable())
+        .current_dir(directory.path())
+        .args(["--clean", "--headless", "-i", "NONE", "-l"])
+        .arg(&script)
+        .output()
+        .expect("run background check");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 #[ignore = "requires a Neovim executable; runs a real headless server"]
 fn code_capture_preserves_normal_visual_and_unsaved_buffer_state() -> Result<(), String> {
     let directory = tempfile::tempdir().map_err(|e| e.to_string())?;

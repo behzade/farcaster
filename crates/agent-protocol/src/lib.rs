@@ -12,6 +12,8 @@ mod effort;
 pub mod extensions;
 pub use effort::{effort_rank, model_efforts};
 mod tool;
+mod tool_output;
+pub use tool_output::normalize_tool_output;
 mod workers;
 
 pub use tool::{CommonTool, ToolCategory, ToolMetadata};
@@ -28,7 +30,6 @@ pub struct DiscoveredSession {
     pub title: String,
     pub first_user_message: String,
     pub timestamp: String,
-    /// Worker ownership; ordinary fork ancestry belongs in `forked_from`.
     pub parent_session: Option<String>,
     pub forked_from: Option<String>,
     pub modified: SystemTime,
@@ -51,6 +52,13 @@ pub struct DiscoveredUsage {
     pub cost_micros: u64,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheUsage {
+    pub read_tokens: u64,
+    pub prompt_tokens: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SessionMetadata {
     pub harness: Backend,
@@ -61,7 +69,6 @@ pub struct SessionMetadata {
     pub project: PathBuf,
     pub title: Option<String>,
     pub first_user_message: Option<String>,
-    /// Worker ownership; ordinary fork ancestry belongs in `forked_from`.
     pub parent_session: Option<String>,
     #[serde(default)]
     pub forked_from: Option<String>,
@@ -105,30 +112,6 @@ pub struct SessionGoal {
     pub time_used_seconds: u64,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AccountUsage {
-    #[serde(default)]
-    pub weekly: Option<AccountUsageWindow>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AccountUsageWindow {
-    pub remaining_percent: f64,
-    #[serde(default)]
-    pub resets_at: Option<i64>,
-}
-
-impl AccountUsageWindow {
-    pub fn from_used_percent(used_percent: f64, resets_at: Option<i64>) -> Option<Self> {
-        used_percent.is_finite().then(|| Self {
-            remaining_percent: (100.0 - used_percent).clamp(0.0, 100.0),
-            resets_at,
-        })
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QueuedPrompt {
     pub id: i64,
@@ -136,6 +119,7 @@ pub struct QueuedPrompt {
     pub target: String,
     pub harness: Backend,
     pub project: PathBuf,
+    pub backend_session_id: Option<String>,
     pub session: Option<PathBuf>,
     pub mode: PromptMode,
     pub message: String,
@@ -146,6 +130,7 @@ pub struct QueuedPrompt {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PromptPresentation {
+    pub submission_id: Option<String>,
     pub resolved_message: String,
     pub display_message: String,
     pub invocation: String,
@@ -172,7 +157,6 @@ pub enum SessionActivityKind {
     TurnEnded,
     SessionChanged,
     ServiceStatusChanged,
-    AccountUsageChanged,
     SessionGoalChanged,
     ChildSessionsChanged,
     Other(String),
@@ -202,7 +186,6 @@ impl SessionActivityKind {
             "turn_end" => Self::TurnEnded,
             "session_info_changed" => Self::SessionChanged,
             "service_status_changed" => Self::ServiceStatusChanged,
-            "account_usage_changed" => Self::AccountUsageChanged,
             "session_goal_changed" => Self::SessionGoalChanged,
             "child_sessions_changed" => Self::ChildSessionsChanged,
             other => Self::Other(other.to_owned()),
@@ -458,7 +441,7 @@ pub trait SessionTransport {
 
 #[derive(Clone, Debug)]
 pub enum SessionStart {
-    New,
+    New(Option<String>),
     Resume(PathBuf),
     Fork(PathBuf),
 }

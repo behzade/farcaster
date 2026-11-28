@@ -69,7 +69,14 @@ impl WorkerSessionFactory for ClaudeWorkerFactory {
             !launch.ephemeral,
             launch.service_tier.as_deref(),
         )?;
-        let (mut worker, _) = attach(process, caller, &id, launch.access_mode, None)?;
+        let (mut worker, _) = attach(
+            process,
+            caller,
+            &id,
+            launch.access_mode,
+            None,
+            super::accounts::source(&command, &launch.project).ok(),
+        )?;
         if let Some(model) = launch.model {
             worker.select_model(
                 launch.provider.as_deref().unwrap_or(BACKEND.as_str()),
@@ -109,7 +116,7 @@ pub fn spawn_main(
     launch: &SessionLaunch,
 ) -> Result<(Box<dyn WorkerSession>, String, MainSessionMetadata), String> {
     let (id, resume) = match &launch.start {
-        SessionStart::New => (uuid::Uuid::new_v4().to_string(), false),
+        SessionStart::New(_) => (uuid::Uuid::new_v4().to_string(), false),
         SessionStart::Resume(_) => (
             main_session::launch_session_locator(launch)
                 .ok_or("Claude resume requires a session id")?,
@@ -118,18 +125,7 @@ pub fn spawn_main(
         SessionStart::Fork(_) => return Err("Claude session fork is not supported".into()),
     };
     uuid::Uuid::parse_str(&id).map_err(|_| "Claude requires a UUID session id")?;
-    let caller = CallerRegistry::shared().issue_with_access(
-        &launch.project,
-        CallerProfile {
-            backend: BACKEND,
-            provider: None,
-            model: None,
-            effort: None,
-        },
-        launch.wake.clone(),
-        command.access_mode,
-    );
-    caller.set_harness_profile_id(command.profile_id.clone());
+    let caller = crate::core::CallerRegistry::shared().issue_main_session(command, launch);
     let process = Process::spawn(
         command,
         &launch.project,
@@ -141,7 +137,14 @@ pub fn spawn_main(
         launch.service_tier.as_deref(),
     )?;
     let path = main_session::caller_session_path(command, BACKEND, &id);
-    let (worker, mut metadata) = attach(process, caller, &id, command.access_mode, path)?;
+    let (worker, mut metadata) = attach(
+        process,
+        caller,
+        &id,
+        command.access_mode,
+        path,
+        super::accounts::source(command, &launch.project).ok(),
+    )?;
     metadata.service_tier = launch.service_tier.clone();
     Ok((Box::new(worker), id, metadata))
 }
@@ -211,6 +214,10 @@ fn initialize(
         modes.insert(0, json!({"id":permission_mode(access),"name":name}));
     }
     Ok(MainSessionMetadata {
+        account: super::accounts::identity(
+            &serde_json::to_value(response.account).expect("SDK account serializes"),
+            "anthropic",
+        ),
         models,
         efforts,
         commands,
@@ -225,10 +232,37 @@ fn attach(
     id: &str,
     access: HarnessAccessMode,
     locator: Option<std::path::PathBuf>,
+    account_source: Option<crate::accounts::AccountSource>,
 ) -> Result<(ClaudeSession, MainSessionMetadata), String> {
     let metadata = initialize(&mut process, access)?;
+    let account_source = account_source.map(crate::accounts::AccountSource::for_run);
     caller.bind_with_locator(id.to_owned(), locator);
+    if let Some(source) = account_source.clone() {
+        let mut identity = metadata.account.clone();
+        if let Some(identity) = &mut identity {
+            identity.authority = source.provider.clone();
+        }
+        crate::accounts::publish_account_event(crate::accounts::AccountEvent::Observed {
+            observation: crate::accounts::AccountObservation {
+                source,
+                auth: if identity.as_ref().is_some_and(|id| id.email.is_some()) {
+                    crate::accounts::AccountAuthState::SignedIn
+                } else {
+                    crate::accounts::AccountAuthState::Unknown
+                },
+                identity,
+                limits: Vec::new(),
+                complete_limits: false,
+                limits_failed: false,
+                observed_at: crate::accounts::account_now(),
+                capabilities: super::accounts::capabilities(),
+            },
+            run_id: Some(format!("claude:{id}")),
+            evidence: crate::accounts::AccountBindingEvidence::ObservedAtStartup,
+        });
+    }
     let worker = ClaudeSession {
+        account_source,
         process,
         caller,
         id: id.into(),
@@ -269,6 +303,7 @@ struct Interrupt {
 }
 
 struct ClaudeSession {
+    account_source: Option<crate::accounts::AccountSource>,
     process: Process,
     caller: CallerIdentity,
     id: String,
@@ -321,6 +356,7 @@ impl ClaudeSession {
             .collect::<Result<Vec<_>, _>>()?;
         let message_frame = prompt(&self.id, &message, inline_images)?;
         let delivery = WorkerActivity::InputDelivered {
+            source: None,
             submission_id: submission_id.map(str::to_owned),
             mode,
             message,
@@ -352,7 +388,7 @@ impl ClaudeSession {
         }
     }
 
-    fn deliver(&mut self, message: SDKUserMessage, deliveries: Vec<WorkerActivity>) {
+    fn deliver(&mut self, message: SDKUserMessage, mut deliveries: Vec<WorkerActivity>) {
         let active_uuid = match &message.uuid {
             Presence::Present(uuid) => uuid.clone(),
             Presence::Missing => {
@@ -363,6 +399,9 @@ impl ClaudeSession {
             }
         };
         self.active_uuid = Some(active_uuid.clone());
+        if let [delivery] = deliveries.as_mut_slice() {
+            delivery.link_delivered_input(&active_uuid, None);
+        }
         let deliveries = PromptBatch::from(deliveries);
         self.caller
             .begin_execution(deliveries.first_submission_id());
@@ -510,19 +549,17 @@ impl ClaudeSession {
         let request = &frame["request"];
         match string(request,"subtype") {
             "elicitation" => {
-                let prompt = super::super::mcp_confirmation::prompt(
+                let confirmation = super::super::mcp_confirmation::Confirmation::parse(
                     string(request, "mcp_server_name"),
-                    string(request, "message"),
-                    request["mode"].as_str().unwrap_or("form"),
-                    &request["requested_schema"],
-                    &request["_meta"],
+                    request,
                 );
-                match prompt {
-                    Ok(prompt) => {
+                match confirmation {
+                    Ok(confirmation) => {
+                        let options = confirmation.options();
                         self.permissions.insert(id.into(), request.clone());
                         self.events.pending.push_back(WorkerEvent::NeedsInput(WorkerInput {
-                            id: id.into(), prompt,
-                            options: vec!["Decline".into(), "Allow".into()], secret: false,
+                            id: id.into(), prompt: confirmation.prompt,
+                            options, secret: false,
                         }));
                         Ok(())
                     }
@@ -573,6 +610,24 @@ impl ClaudeSession {
         }
         if frame["type"] == "user" && frame["session_id"].as_str() == Some(self.id.as_str()) {
             self.receive_prompt(string(&frame, "uuid"));
+        }
+        if frame["type"] == "rate_limit_event"
+            && let Some(source) = self.account_source.clone()
+        {
+            crate::accounts::publish_account_event(crate::accounts::AccountEvent::LimitsObserved {
+                source,
+                limits: super::accounts::event_limits(
+                    &frame["rate_limit_info"],
+                    crate::accounts::account_now(),
+                ),
+            });
+        }
+        if frame["type"] == "auth_status"
+            && let Some(source) = self.account_source.clone()
+        {
+            crate::accounts::publish_account_event(
+                crate::accounts::AccountEvent::AuthInvalidated { source },
+            );
         }
         match string(&frame, "type") {
             "control_request" => self.control(&frame)?,
@@ -812,7 +867,11 @@ impl WorkerSession for ClaudeSession {
         if request["subtype"] == "elicitation" {
             self.reply(
                 &response.id,
-                super::super::mcp_confirmation::reply(accepted, response.cancel),
+                super::super::mcp_confirmation::Confirmation::parse(
+                    string(&request, "mcp_server_name"),
+                    &request,
+                )?
+                .reply(response.value.as_deref(), response.cancel),
             )?;
         } else {
             self.permission(&response.id, &request, accepted)?;
@@ -939,3 +998,13 @@ impl WorkerSession for ClaudeSession {
 #[cfg(test)]
 #[path = "worker_tests.rs"]
 mod tests;
+
+impl Drop for ClaudeSession {
+    fn drop(&mut self) {
+        if let Some(source) = self.account_source.take() {
+            crate::accounts::publish_account_event(crate::accounts::AccountEvent::Disconnected {
+                source,
+            });
+        }
+    }
+}

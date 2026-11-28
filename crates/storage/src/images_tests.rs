@@ -17,12 +17,12 @@ fn stored_images_keep_sha256_file_names() -> Result<(), Box<dyn std::error::Erro
         ),
     ] {
         let image = PromptImage::new(data.into(), "image/png".into());
-        let stored = store.store_prompt_images(&[image])?;
+        let (_, stored) = store.encode_prompt_images(&[image])?;
         assert_eq!(
             stored[0].path.as_ref().and_then(|path| path.file_name()),
             Some(std::ffi::OsStr::new(expected))
         );
-        assert_eq!(store.store_prompt_images(&stored)?, stored);
+        assert_eq!(store.encode_prompt_images(&stored)?.1, stored);
     }
     Ok(())
 }
@@ -121,8 +121,8 @@ fn corrupt_existing_image_is_not_reused() -> Result<(), Box<dyn std::error::Erro
     let directory = tempfile::tempdir()?;
     let store = StateStore::open_at(&directory.path().join("state.sqlite3"))?;
     let image = PromptImage::new("AQID".into(), "image/png".into());
-    let stored = store.store_prompt_images(std::slice::from_ref(&image))?;
-    assert_eq!(store.store_prompt_images(&stored)?, stored);
+    let (_, stored) = store.encode_prompt_images(std::slice::from_ref(&image))?;
+    assert_eq!(store.encode_prompt_images(&stored)?.1, stored);
     std::fs::write(
         stored[0]
             .path
@@ -132,13 +132,13 @@ fn corrupt_existing_image_is_not_reused() -> Result<(), Box<dyn std::error::Erro
     )?;
     assert!(
         store
-            .store_prompt_images(&[image])
+            .encode_prompt_images(&[image])
             .expect_err("invalid test input must fail")
             .contains("corrupt")
     );
     assert!(
         store
-            .store_prompt_images(&stored)
+            .encode_prompt_images(&stored)
             .expect_err("a changed stored reference must fail")
             .contains("corrupt")
     );
@@ -146,6 +146,6 @@ fn corrupt_existing_image_is_not_reused() -> Result<(), Box<dyn std::error::Erro
     std::fs::write(&imported, [1, 2, 3])?;
     let imported = PromptImage::from_file(imported, "image/png".into());
     std::fs::remove_file(stored[0].path.as_ref().unwrap())?;
-    assert_eq!(store.store_prompt_images(&[imported])?, stored);
+    assert_eq!(store.encode_prompt_images(&[imported])?.1, stored);
     Ok(())
 }

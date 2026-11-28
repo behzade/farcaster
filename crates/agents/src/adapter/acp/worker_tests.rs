@@ -877,6 +877,9 @@ fn inert_session() -> AcpWorkerSession {
         session_id: "one".into(),
         current_prompt: Some(AcpRequestId::Number(1)),
         current_inputs: PromptBatch::default(),
+        next_steer: None,
+        waiting_steers: VecDeque::new(),
+        current_is_steer: false,
         prompt_acks: PromptAcknowledgements::default(),
         queued_prompts: PromptQueue::default(),
         handoff: None,
@@ -887,7 +890,11 @@ fn inert_session() -> AcpWorkerSession {
         peer_messages: VecDeque::new(),
         events: VecDeque::new(),
         config_ids: ConfigIds::default(),
-        features: AcpFeatures { close: false },
+        features: AcpFeatures {
+            close: false,
+            embedded_context: false,
+            native_steer: false,
+        },
         caller_identity: None,
         pending_prompt_result: None,
         post_reply_frames: 0,
@@ -1030,7 +1037,6 @@ fn model_and_service_tier_are_sent_independently() {
                 .flush()
                 .expect("test operation should succeed");
         }
-        // Keep the peer open until the client has consumed the final response.
         finished
             .recv_timeout(Duration::from_secs(3))
             .expect("release ACP test peer");
@@ -2074,6 +2080,7 @@ fn acp_user_message_chunk_delivers_current_inputs_before_the_model_reply() {
     assert_eq!(
         session.poll(),
         Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            source: None,
             submission_id: Some("prompt".into()),
             mode: WorkerSendMode::Prompt,
             message: "work".into(),
@@ -2083,6 +2090,7 @@ fn acp_user_message_chunk_delivers_current_inputs_before_the_model_reply() {
     assert_eq!(
         session.poll(),
         Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            source: None,
             submission_id: Some("follow-up".into()),
             mode: WorkerSendMode::Queue,
             message: "follow-up with image".into(),
@@ -2285,6 +2293,7 @@ fn acp_user_message_chunk_accepts_empty_text_and_non_text_content() {
         assert_eq!(
             session.poll(),
             Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                source: None,
                 submission_id: Some("prompt".into()),
                 mode: WorkerSendMode::Prompt,
                 message: "work".into(),
@@ -2591,16 +2600,19 @@ fn mcp_confirmation_is_shown_and_keeps_the_request_pending() {
             id: AcpRequestId::Number(2),
             method: "elicitation/create".into(),
             params: json!({"sessionId":"one","mode":"form","message":"Allow desktop access?",
-            "requestedSchema":{"type":"object","properties":{}}}),
+            "requestedSchema":{"type":"object","properties":{}}, "_meta":{"persist":["session","always"]}}),
         }]));
     let Some(WorkerEvent::NeedsInput(input)) = session.poll() else {
         panic!("missing MCP prompt")
     };
     assert!(input.prompt.contains("Allow desktop access?"));
-    assert_eq!(input.options, ["Decline", "Allow"]);
+    assert_eq!(
+        input.options,
+        ["Decline", "Allow for this session", "Always allow"]
+    );
     assert!(matches!(
         session.pending_inputs[&input.id].kind,
-        PendingInputKind::McpConfirmation
+        PendingInputKind::McpConfirmation(_)
     ));
     assert_eq!(session.poll_prompt_ack(), Some(("prompt".into(), Ok(()))));
 }
@@ -2723,7 +2735,8 @@ fn natural_completion_batches_all_pending_inputs_with_original_receipts() {
             session.poll(),
             Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
                 submission_id: Some(submission_id), mode, message, images,
-            })) if submission_id == id && mode == expected_mode
+            ..
+        })) if submission_id == id && mode == expected_mode
                 && message == "same" && images == vec![image.clone()]
         ));
         assert_eq!(session.poll_prompt_ack(), Some((id.into(), Ok(()))));
@@ -2746,4 +2759,358 @@ fn session_mcp_servers_use_the_host_endpoint() {
             })]
         );
     });
+}
+
+#[cfg(unix)]
+#[test]
+fn latest_agy_completion_settles_even_if_the_old_reply_is_late() {
+    let mut session = inert_session();
+    let original = AcpRequestId::Number(847);
+    session.current_prompt = Some(original.clone());
+    session.features.native_steer = true;
+    session.acknowledge_current_prompt_started();
+    session
+        .submit_prompt(
+            "later".into(),
+            "follow up".into(),
+            WorkerSendMode::Queue,
+            vec![],
+        )
+        .expect("queue");
+    session
+        .submit_prompt(
+            "redirect".into(),
+            "change direction".into(),
+            WorkerSendMode::Steer,
+            vec![],
+        )
+        .expect("steer");
+    assert_eq!(session.queued_prompts.len(), 1);
+    let steer = session.next_steer.as_ref().unwrap().0.clone();
+    assert_ne!(original, steer);
+    session
+        .connection
+        .restore_queued(VecDeque::from([AcpInbound::Response {
+            id: steer,
+            result: json!({"stopReason":"end_turn"}),
+        }]));
+    assert!(
+        matches!(session.poll(),Some(WorkerEvent::Activity(WorkerActivity::InputDelivered{submission_id:Some(id),..})) if id=="redirect")
+    );
+    assert_eq!(session.poll_prompt_ack(), Some(("redirect".into(), Ok(()))));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
+    assert_eq!(session.current_inputs.first_submission_id(), Some("later"));
+    session.connection.restore_queued(
+        [AcpInbound::Error {
+            id: original,
+            rejection: "late error".into(),
+        }]
+        .into(),
+    );
+    assert!(session.poll().is_none());
+    assert_eq!(session.current_inputs.first_submission_id(), Some("later"));
+}
+
+#[test]
+fn close_accepts_the_advertised_object_and_legacy_boolean() {
+    for (cap, expected) in [
+        (json!({}), true),
+        (json!(true), true),
+        (json!(false), false),
+        (Value::Null, false),
+    ] {
+        assert_eq!(
+            AcpFeatures::from_initialize(
+                &json!({"agentCapabilities":{"sessionCapabilities":{"close":cap}}})
+            )
+            .close,
+            expected
+        );
+    }
+}
+
+#[test]
+fn context_updates_do_not_ack_a_prompt_or_inflate_token_usage() {
+    let update = json!({"sessionUpdate":"usage_update","used":192,"size":1024});
+    let usage = usage_update(&update).expect("context usage");
+    assert_eq!(usage.context_used, Some(192));
+    assert_eq!(usage.context_window, 1024);
+    assert_eq!(usage.session.total(), 0);
+    assert!(!AcpWorkerSession::update_proves_prompt_execution(
+        &json!({"update":update})
+    ));
+}
+
+#[test]
+fn pasted_attachments_use_the_submitted_bytes_only_for_capable_clients() {
+    let input = PendingPrompt { mode: WorkerSendMode::Prompt,submission_id:None,images:vec![],message:"Read these\n\nPasted text files:\n- [a](</project/file one>)\n- [b](</project/b>)\n\n--- BEGIN PASTED FILE a ---\nfirst\n--- END PASTED FILE a ---\n\n--- BEGIN PASTED FILE b ---\nsecond\n--- END PASTED FILE b ---".into()};
+    let blocks = prompt_content(std::slice::from_ref(&input), true).expect("prompt");
+    assert_eq!(blocks[0]["text"], "Read these");
+    assert_eq!(
+        blocks[1]["resource"],
+        json!({"uri":"file:///project/file%20one","mimeType":"text/plain","text":"first"})
+    );
+    assert_eq!(blocks[2]["resource"]["text"], "second");
+    assert_eq!(
+        prompt_content(std::slice::from_ref(&input), false).expect("prompt")[0]["text"],
+        input.message
+    );
+}
+
+#[test]
+fn acp_forms_preserve_field_keys_choice_values_and_cancellation() {
+    let params = json!({"message":"Choose a destination","requestedSchema":{"type":"object","properties":{"city":{"type":"string","oneOf":[{"const":"nyc","title":"New York"}]},"notes":{"type":"string"},"book":{"type":"boolean"}},"required":["city","book"]}});
+    let form = super::super::elicitation::Form::parse("1".into(), &params).expect("form");
+    let mut response = crate::QuestionResponse {
+        id: "1".into(),
+        cancelled: false,
+        answers: [
+            ("city".into(), vec!["New York".into()]),
+            ("book".into(), vec!["No".into()]),
+        ]
+        .into(),
+    };
+    assert_eq!(
+        form.reply(&response).expect("valid reply"),
+        json!({"action":"accept","content":{"city":"nyc","book":false}})
+    );
+    response.answers.remove("city");
+    assert!(form.reply(&response).is_err());
+    response.cancelled = true;
+    assert_eq!(
+        form.reply(&response).expect("cancel"),
+        json!({"action":"cancel"})
+    );
+}
+
+#[test]
+fn multi_select_forms_return_native_values_and_enforce_the_selection_limit() {
+    let form = super::super::elicitation::Form::parse("1".into(),&json!({"message":"Choose regions","requestedSchema":{"type":"object","required":["regions"],"properties":{"regions":{"type":"array","minItems":1,"maxItems":1,"items":{"anyOf":[{"const":"na","title":"North America"},{"const":"eu","title":"Europe"}]}}}}})).expect("multi-select");
+    let mut response = crate::QuestionResponse {
+        id: "1".into(),
+        cancelled: false,
+        answers: form
+            .request
+            .questions
+            .iter()
+            .map(|q| (q.id.clone(), vec!["No".into()]))
+            .collect(),
+    };
+    assert!(form.reply(&response).is_err());
+    for (index, q) in form.request.questions.iter().enumerate() {
+        response.answers.insert(q.id.clone(), vec!["Yes".into()]);
+        if index == 0 {
+            assert_eq!(
+                form.reply(&response).expect("valid selection")["content"]["regions"],
+                json!(["na"])
+            );
+        }
+    }
+    assert!(form.reply(&response).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn immediate_native_steers_reach_agy_in_order_and_precede_their_answers() {
+    let mut session = inert_session();
+    session.current_prompt = Some(AcpRequestId::Number(850));
+    session.features.native_steer = true;
+    track_inert_submission(&mut session, "initial");
+    for text in ["1", "2", "3", "4", "what"] {
+        session
+            .submit_prompt(text.into(), text.into(), WorkerSendMode::Steer, vec![])
+            .unwrap();
+    }
+    assert!(session.next_steer.is_none());
+
+    session
+        .submit_prompt(
+            "later".into(),
+            "follow up".into(),
+            WorkerSendMode::Queue,
+            vec![],
+        )
+        .unwrap();
+    let mut inputs = ["initial", "1", "2", "3", "4", "what"]
+        .into_iter()
+        .peekable();
+    while let Some(current) = inputs.next() {
+        let next = inputs.peek().copied();
+        let id = session.current_prompt.clone().unwrap();
+        session
+            .connection
+            .restore_queued([agent_message_chunk(current)].into());
+        assert!(matches!(session.poll(), Some(WorkerEvent::Activity(
+            WorkerActivity::InputDelivered {submission_id: Some(delivered), ..}
+        )) if delivered == current));
+        assert!(matches!(session.poll(), Some(WorkerEvent::Activity(
+            WorkerActivity::TextDelta {delta, ..}
+        )) if delta == current));
+        assert!(session.poll().is_none());
+        assert_eq!(
+            session
+                .next_steer
+                .as_ref()
+                .and_then(|(_, inputs)| inputs.first_submission_id()),
+            next
+        );
+        assert_eq!(session.poll_prompt_ack(), Some((current.into(), Ok(()))));
+        session.connection.restore_queued(
+            [AcpInbound::Response {
+                id,
+                result: json!({"stopReason":"end_turn"}),
+            }]
+            .into(),
+        );
+        match next {
+            Some(next) => {
+                assert!(
+                    session.poll().is_none(),
+                    "the handoff must keep the run active"
+                );
+                assert_eq!(session.current_inputs.first_submission_id(), Some(next));
+            }
+            None => assert!(
+                matches!(session.poll(), Some(WorkerEvent::Settled { output }) if output == "initial1234what")
+            ),
+        }
+    }
+    assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
+    assert_eq!(session.current_inputs.first_submission_id(), Some("later"));
+}
+
+#[cfg(unix)]
+#[test]
+fn agy_rejection_and_abort_preserve_which_steers_reached_the_server() {
+    let mut session = inert_session();
+    let original = AcpRequestId::Number(851);
+    session.current_prompt = Some(original.clone());
+    session.features.native_steer = true;
+    session.acknowledge_current_prompt_started();
+    for text in ["one", "two", "three"] {
+        session
+            .submit_prompt(text.into(), text.into(), WorkerSendMode::Steer, vec![])
+            .unwrap();
+    }
+    let rejected = session.next_steer.as_ref().unwrap().0.clone();
+    session.connection.restore_queued(
+        [AcpInbound::Error {
+            id: rejected,
+            rejection: "denied".into(),
+        }]
+        .into(),
+    );
+    assert!(session.poll().is_none());
+    assert!(matches!(session.poll_prompt_ack(), Some((id, Err(_))) if id == "one"));
+    let (id, batch) = session.next_steer.as_ref().unwrap();
+    let two = id.clone();
+    assert_eq!(batch.first_submission_id(), Some("two"));
+    session.abort().unwrap();
+    assert!(matches!(session.poll_prompt_ack(), Some((id, Err(_))) if id == "three"));
+    assert!(session.waiting_steers.is_empty());
+    session.connection.restore_queued(
+        [AcpInbound::Response {
+            id: original,
+            result: json!({"stopReason":"end_turn"}),
+        }]
+        .into(),
+    );
+    assert!(session.poll().is_none());
+    assert_eq!(
+        session.cancel_deadline.as_ref().map(|(id, _)| id),
+        Some(&two)
+    );
+    session.connection.restore_queued(
+        [AcpInbound::Response {
+            id: two,
+            result: json!({"stopReason":"cancelled"}),
+        }]
+        .into(),
+    );
+    assert!(
+        matches!(session.poll(), Some(WorkerEvent::PromptDeliveryUnknown {submission_id, ..}) if submission_id == "two")
+    );
+    assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
+    assert!(session.poll_prompt_ack().is_none());
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "requires signed-in agy acp and network; runs a scratch echo conversation"]
+fn live_agy_steers_preserve_backend_order_and_settle() -> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let config = AgentLaunchConfig {
+        program: "agy".into(),
+        access_mode: HarnessAccessMode::Sandboxed,
+        ..Default::default()
+    };
+    let profile = &super::super::super::antigravity::PROFILE;
+    let (mut session, _, _) = spawn_session(
+        &config,
+        profile,
+        project.path(),
+        None,
+        None,
+        Some(thread::current()),
+    )?;
+    let initial = "Echo each input in order. Use no tools. Reply with only the words I send.";
+    let expected = [initial, "1", "2", "3", "4", "what"];
+    for (index, text) in expected.iter().enumerate() {
+        let mode = if index == 0 {
+            WorkerSendMode::Prompt
+        } else {
+            WorkerSendMode::Steer
+        };
+        session.submit_prompt(text.to_string(), text.to_string(), mode, vec![])?;
+    }
+    let mut delivered = Vec::new();
+    let mut output = String::new();
+    let deadline = Instant::now() + Duration::from_secs(180);
+    loop {
+        assert!(
+            Instant::now() < deadline,
+            "agy did not finish; delivered {delivered:?}"
+        );
+        match session.poll() {
+            Some(WorkerEvent::Activity(WorkerActivity::InputDelivered { message, .. })) => {
+                delivered.push(message)
+            }
+            Some(WorkerEvent::Activity(WorkerActivity::TextDelta { delta, .. })) => {
+                output.push_str(&delta.to_lowercase());
+                if output.contains("what") {
+                    assert_eq!(delivered.last().map(String::as_str), Some("what"));
+                }
+            }
+            Some(WorkerEvent::Settled { .. }) if session.current_prompt.is_none() => break,
+            Some(WorkerEvent::Failed(error) | WorkerEvent::PromptDeliveryUnknown { error, .. }) => {
+                return Err(error);
+            }
+            Some(_) => {}
+            None => thread::park_timeout(Duration::from_millis(30)),
+        }
+    }
+    assert_eq!(delivered, expected);
+    assert!(output.contains("what"), "missing final echo: {output}");
+    session.connection.request_blocking(
+        "session/load",
+        json!({"sessionId":session.session_id, "cwd":project.path(), "mcpServers":[]}),
+    )?;
+    let replay = session.connection.drain_queued()?;
+    let users: Vec<_> = replay
+        .iter()
+        .filter_map(|event| {
+            let AcpInbound::Notification { method, params } = event else {
+                return None;
+            };
+            let update = &params["update"];
+            if method == "session/update" && update["sessionUpdate"] == "user_message_chunk" {
+                update.pointer("/content/text").and_then(Value::as_str)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(users, expected);
+    session.close()
 }

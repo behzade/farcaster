@@ -1,4 +1,9 @@
-use crate::app::ui::primitives::AppTooltip as _;
+use crate::app::ui::{
+    assets::AppIcon,
+    primitives::{
+        AppIconSize, AppTooltip as _, ButtonPressExt as _, ButtonTone, icon_button_with_size,
+    },
+};
 use gpui::{
     AnyElement, App, ElementId, InteractiveElement as _, IntoElement as _, ParentElement as _,
     Styled as _, WeakEntity, div,
@@ -13,6 +18,21 @@ use super::super::{
     attachments::{format_bytes, image_card, open_card},
 };
 use crate::app::ui::theme::theme;
+
+pub(super) fn attach_button(entity: WeakEntity<FarcasterApp>) -> AnyElement {
+    icon_button_with_size(
+        "composer-attach",
+        AppIcon::Paperclip,
+        "Attach image or text",
+        AppIconSize::Control,
+        ButtonTone::Quiet,
+        move |window, cx| {
+            let _ = entity.update(cx, |app, cx| app.choose_composer_attachments(window, cx));
+        },
+    )
+    .debug_selector(|| "composer-attach".into())
+    .into_any_element()
+}
 
 pub(in crate::app::views) fn render(
     app: &FarcasterApp,
@@ -30,7 +50,8 @@ pub(in crate::app::views) fn render(
             .py(theme().space.sm)
             .flex()
             .flex_wrap()
-            .gap(theme().space.xs)
+            .items_start()
+            .gap(theme().space.sm)
             .children(images.iter().enumerate().map(|(index, image)| {
                 let remove = entity.clone();
                 image_card(
@@ -38,12 +59,16 @@ pub(in crate::app::views) fn render(
                     image.preview.clone(),
                     index,
                     images.len(),
+                    Some(images.iter().map(|image| image.preview.clone()).collect()),
                     entity.clone(),
                 )
+                .pr(theme().size(24.0))
+                .group(format!("composer-image-{index}"))
                 .debug_selector(|| "composer-attachment-card".into())
                 .child(remove_button(
                     ("remove-composer-image", index),
                     "Remove image",
+                    format!("composer-image-{index}"),
                     move |cx| {
                         let _ = remove.update(cx, |this, cx| this.remove_composer_image(index, cx));
                     },
@@ -54,7 +79,11 @@ pub(in crate::app::views) fn render(
                 let remove = entity.clone();
                 open_card(
                     ("composer-paste", index),
-                    "Pasted text".into(),
+                    if paste.file_name().starts_with("pasted-text-") {
+                        "Pasted text".into()
+                    } else {
+                        paste.file_name().into()
+                    },
                     format!(
                         "{} lines · {}",
                         paste.line_count,
@@ -66,10 +95,13 @@ pub(in crate::app::views) fn render(
                             open.update(cx, |this, cx| this.open_composer_paste(index, window, cx));
                     },
                 )
+                .pr(theme().size(24.0))
+                .group(format!("composer-paste-{index}"))
                 .debug_selector(|| "composer-attachment-card".into())
                 .child(remove_button(
                     ("remove-composer-paste", index),
                     "Remove pasted text",
+                    format!("composer-paste-{index}"),
                     move |cx| {
                         let _ = remove.update(cx, |this, cx| this.remove_composer_paste(index, cx));
                     },
@@ -82,6 +114,7 @@ pub(in crate::app::views) fn render(
 fn remove_button(
     id: impl Into<ElementId>,
     tooltip: &'static str,
+    group: String,
     remove: impl Fn(&mut App) + 'static,
 ) -> Button {
     Button::new(id)
@@ -89,7 +122,14 @@ fn remove_button(
         .app_tooltip(tooltip)
         .with_size(Size::XSmall)
         .ghost()
-        .on_click(move |_, _, cx| {
+        .absolute()
+        .top_0()
+        .right_0()
+        .opacity(0.0)
+        .group_hover(group, |button| button.opacity(1.0))
+        .focus_visible(|button| button.opacity(1.0))
+        .accessibility_label(tooltip)
+        .on_press(true, move |_, cx| {
             cx.stop_propagation();
             remove(cx);
         })

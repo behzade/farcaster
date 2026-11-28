@@ -13,6 +13,7 @@ fn submission_uses_caller_project_and_returns_validated_artifact() {
         session_locator: None,
         harness_profile_id: None,
         app_session_id: None,
+        prompt_draft: None,
         backend: Backend::Pi,
         provider: None,
         model: None,

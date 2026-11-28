@@ -11,49 +11,88 @@ pub(crate) fn tail_reserve(viewport_height: Pixels) -> Pixels {
     ))
 }
 
+struct RowHeightHints {
+    line: f32,
+    padding: f32,
+    compact: Pixels,
+    attachment: Pixels,
+    image: Pixels,
+}
+
+impl RowHeightHints {
+    fn from_theme() -> Self {
+        let theme = theme();
+        Self {
+            line: f32::from(theme.size(20.0)),
+            padding: f32::from(theme.size(36.0)),
+            compact: theme.size(24.0),
+            attachment: theme.size(60.0),
+            image: theme.size(140.0),
+        }
+    }
+
+    fn estimate(
+        &self,
+        row: TranscriptRow,
+        items: &(impl Indexed<Arc<TranscriptItem>> + ?Sized),
+    ) -> Pixels {
+        let first = row.item_start();
+        let item = items.get(first).expect("transcript row item should exist");
+        let text = match row {
+            TranscriptRow::MessageChunk { start, end, .. } => Some(&item.text[start..end]),
+            TranscriptRow::StreamChunk { chunk, .. } => Some(
+                item.stream_chunks
+                    .get(chunk)
+                    .map_or(item.text.as_str(), |chunk| chunk.as_ref()),
+            ),
+            TranscriptRow::Item { .. }
+                if matches!(
+                    item.kind,
+                    TranscriptKind::User | TranscriptKind::Assistant | TranscriptKind::Custom
+                ) && item.invocation.is_none() =>
+            {
+                Some(item.text.as_str())
+            }
+            _ => None,
+        };
+        if let Some(text) = text {
+            let visual_lines = text
+                .lines()
+                .map(|line| line.chars().count().max(1).div_ceil(88))
+                .sum::<usize>()
+                .clamp(1, 320);
+            let height = px((visual_lines as f32).mul_add(self.line, self.padding));
+            return if item.has_attachments() {
+                height + self.attachment
+            } else {
+                height
+            };
+        }
+
+        let mut has_files = false;
+        for item in std::iter::once(item).chain(
+            (first + 1..row.item_end())
+                .map(|index| items.get(index).expect("transcript row item should exist")),
+        ) {
+            if !item.images.is_empty() {
+                return self.compact + self.image;
+            }
+            has_files |= !item.files.is_empty();
+        }
+        if has_files {
+            self.compact + self.attachment
+        } else {
+            self.compact
+        }
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn estimated_row_height(
     row: TranscriptRow,
     items: &(impl Indexed<Arc<TranscriptItem>> + ?Sized),
 ) -> Pixels {
-    let item = |index| items.get(index).expect("transcript row item should exist");
-    let text = match row {
-        TranscriptRow::MessageChunk {
-            index, start, end, ..
-        } => Some(&item(index).text[start..end]),
-        TranscriptRow::StreamChunk { index, chunk, .. } => Some(
-            item(index)
-                .stream_chunks
-                .get(chunk)
-                .map_or(item(index).text.as_str(), |chunk| chunk.as_ref()),
-        ),
-        TranscriptRow::Item { index, .. }
-            if matches!(
-                item(index).kind,
-                TranscriptKind::User | TranscriptKind::Assistant | TranscriptKind::Custom
-            ) && item(index).invocation.is_none() =>
-        {
-            Some(item(index).text.as_str())
-        }
-        TranscriptRow::Item { .. }
-        | TranscriptRow::ActivityGroup { .. }
-        | TranscriptRow::Review { .. } => None,
-    };
-    let Some(text) = text else {
-        return theme().size(24.0);
-    };
-
-    let visual_lines = text
-        .lines()
-        .map(|line| line.chars().count().max(1).div_ceil(88))
-        .sum::<usize>()
-        .max(1);
-    px((visual_lines.min(320) as f32)
-        .mul_add(f32::from(theme().size(20.0)), f32::from(theme().size(36.0))))
-        + if !item(row.item_start()).has_attachments() {
-            px(0.0)
-        } else {
-            theme().size(60.0)
-        }
+    RowHeightHints::from_theme().estimate(row, items)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -92,6 +131,17 @@ pub(crate) enum TranscriptRow {
 }
 
 impl TranscriptRow {
+    pub(crate) fn at_item(mut self, item: usize) -> Self {
+        match &mut self {
+            Self::Item { index, .. }
+            | Self::Review { index, .. }
+            | Self::MessageChunk { index, .. }
+            | Self::StreamChunk { index, .. } => *index = item,
+            Self::ActivityGroup { start, .. } => *start = item,
+        }
+        self
+    }
+
     pub(crate) fn key(&self) -> usize {
         self.item_start()
     }
@@ -187,17 +237,32 @@ pub(crate) fn project_rows(
     items: &(impl Indexed<Arc<TranscriptItem>> + ?Sized),
 ) -> PersistentVec<TranscriptRow> {
     review_layout::arrange(project_rows_from(items, 0), items, None, &[])
+        .into_iter()
+        .collect()
 }
 
 pub(crate) fn project_presentation_rows(
     presentation: &crate::reviews::presentation::TranscriptPresentation,
 ) -> PersistentVec<TranscriptRow> {
+    project_indexed_rows(presentation, None)
+}
+
+pub(crate) fn project_indexed_rows(
+    presentation: &crate::reviews::presentation::TranscriptPresentation,
+    markdown: Option<&conversation::markdown_structure::MarkdownIndex>,
+) -> PersistentVec<TranscriptRow> {
     review_layout::arrange(
-        project_rows_from(&presentation.items, 0),
+        project_item_rows(
+            0..presentation.items.len(),
+            presentation.items.iter(),
+            markdown,
+        ),
         &presentation.items,
         presentation.active_start,
         &presentation.completed_runs,
     )
+    .into_iter()
+    .collect()
 }
 
 #[cfg(test)]
@@ -232,6 +297,9 @@ pub(crate) fn update_presentation_rows(
             rows: None,
             unchanged_prefix_rows: previous_rows.len(),
         };
+    }
+    if previous_rows.is_empty() && !next.items.is_empty() {
+        return TranscriptRowUpdate::replace(project_presentation_rows(next));
     }
     let changed_from = if previous.active_start != next.active_start
         || previous.completed_runs != next.completed_runs
@@ -297,6 +365,13 @@ pub(crate) struct TranscriptRowUpdate {
 }
 
 impl TranscriptRowUpdate {
+    pub(crate) fn unchanged() -> Self {
+        Self {
+            rows: None,
+            unchanged_prefix_rows: 0,
+        }
+    }
+
     pub(crate) fn replace(rows: PersistentVec<TranscriptRow>) -> Self {
         Self {
             rows: Some(rows),
@@ -371,7 +446,7 @@ fn update_rows_with_run(
             completed_runs,
         );
         let mut rows = previous_rows.clone();
-        rows.splice(keep..rows.len(), tail.iter().copied());
+        rows.splice(keep..rows.len(), tail);
         return TranscriptRowUpdate {
             rows: Some(rows),
             unchanged_prefix_rows: keep,
@@ -411,7 +486,7 @@ fn update_rows_with_run(
             completed_runs,
         );
         let mut rows = previous_rows.clone();
-        rows.splice(keep..rows.len(), tail.iter().copied());
+        rows.splice(keep..rows.len(), tail);
         let prefix = previous_rows
             .iter()
             .zip(rows.iter())
@@ -468,7 +543,7 @@ fn update_rows_with_run(
 
     let projected = project_rows_from(items, project_from);
     let mut rows = previous_rows.clone();
-    rows.splice(keep_rows..previous_rows.len(), projected.iter().copied());
+    rows.splice(keep_rows..previous_rows.len(), projected);
     TranscriptRowUpdate {
         rows: Some(rows),
         unchanged_prefix_rows: keep_rows,
@@ -509,12 +584,13 @@ fn sync_transcript_list(
                 .map(|row| (row, offset.offset_in_item))
         });
         let new_start = old_range.start;
+        let hints = RowHeightHints::from_theme();
         list.splice_with_size_hints(
             old_range,
             next.iter()
                 .skip(new_start)
                 .take(new_count)
-                .map(|row| estimated_row_height(*row, items)),
+                .map(|row| hints.estimate(*row, items)),
         );
         if let Some(Some((anchored_row, offset_in_item))) = anchor
             && let Some(item_ix) = next.position(|row| row.same_position(&anchored_row))
@@ -589,41 +665,51 @@ fn matching_item_prefix_from(
 
 fn project_rows_from(
     items: &(impl Indexed<Arc<TranscriptItem>> + ?Sized),
-    mut index: usize,
-) -> PersistentVec<TranscriptRow> {
-    crate::app::infrastructure::performance::count_transcript_projections(
-        items.len().saturating_sub(index),
-    );
-    let mut rows = PersistentVec::default();
-    while index < items.len() {
-        let item = items
-            .get(index)
-            .expect("projected transcript item should exist");
+    start: usize,
+) -> Vec<TranscriptRow> {
+    let indices = start..items.len();
+    project_item_rows(
+        indices.clone(),
+        indices.map(|index| {
+            items
+                .get(index)
+                .expect("projected transcript item should exist")
+        }),
+        None,
+    )
+}
+
+fn project_item_rows<'a>(
+    indices: std::ops::Range<usize>,
+    items: impl Iterator<Item = &'a Arc<TranscriptItem>>,
+    markdown: Option<&conversation::markdown_structure::MarkdownIndex>,
+) -> Vec<TranscriptRow> {
+    crate::app::infrastructure::performance::count_transcript_projections(indices.len());
+    let mut rows = Vec::new();
+    let mut items = indices.zip(items).peekable();
+    while let Some((index, item)) = items.next() {
+        let revision = Arc::as_ptr(item) as usize;
         if review_artifact::from_item(item).is_some() {
             rows.push(TranscriptRow::Review {
                 index,
-                revision: item_revision(items, index..index + 1),
+                revision,
                 working: false,
             });
-            index += 1;
             continue;
         }
-        if is_groupable_activity(item) {
-            let start = index;
-            let mut end = start;
-            while items
-                .get(end)
-                .is_some_and(|next| is_groupable_activity(next))
-            {
-                end += 1;
+        if matches!(item.kind, TranscriptKind::Tool | TranscriptKind::Thinking) {
+            let mut revision = revision;
+            let mut len = 1;
+            while let Some((_, next)) = items.next_if(|(_, next)| is_groupable_activity(next)) {
+                revision = revision.rotate_left(5) ^ Arc::as_ptr(next) as usize;
+                len += 1;
             }
-            if end - start > 1 {
+            if len > 1 {
                 rows.push(TranscriptRow::ActivityGroup {
-                    start,
-                    len: end - start,
-                    revision: item_revision(items, start..end),
+                    start: index,
+                    len,
+                    revision,
                 });
-                index = end;
                 continue;
             }
         }
@@ -644,10 +730,12 @@ fn project_rows_from(
             }));
         } else if matches!(item.kind, TranscriptKind::User | TranscriptKind::Assistant)
             && item.invocation.is_none()
-            && (markdown_needs_chunks(&item.text)
-                || (item.streaming && item.text.len() > MARKDOWN_CHUNK_TARGET_BYTES))
+            && let Some(chunks) = projected_markdown_chunks(
+                &item.text,
+                item.streaming,
+                markdown.and_then(|m| m.get(&index)),
+            )
         {
-            let chunks = markdown_chunks(&item.text);
             let last_block = chunks.len().saturating_sub(1);
             rows.extend(chunks.into_iter().enumerate().map(|(block, chunk)| {
                 TranscriptRow::MessageChunk {
@@ -655,33 +743,21 @@ fn project_rows_from(
                     start: chunk.start,
                     end: chunk.end,
                     block,
-                    revision: text_revision(&markdown_chunk_text(&item.text, chunk)),
+                    revision: text_revision(&chunk_text_with_structure(
+                        &item.text,
+                        chunk,
+                        markdown.and_then(|m| m.get(&index)),
+                    )),
                     first: block == 0,
                     last: block == last_block,
                     fence: chunk.fence,
                 }
             }));
         } else {
-            rows.push(TranscriptRow::Item {
-                index,
-                revision: item_revision(items, index..index + 1),
-            });
+            rows.push(TranscriptRow::Item { index, revision });
         }
-        index += 1;
     }
     rows
-}
-
-fn item_revision(
-    items: &(impl Indexed<Arc<TranscriptItem>> + ?Sized),
-    range: std::ops::Range<usize>,
-) -> usize {
-    range.fold(0, |revision, index| {
-        let item = items
-            .get(index)
-            .expect("revision transcript item should exist");
-        revision.rotate_left(5) ^ Arc::as_ptr(item) as usize
-    })
 }
 
 fn text_revision(text: &str) -> usize {
@@ -691,17 +767,6 @@ fn text_revision(text: &str) -> usize {
 }
 
 fn is_groupable_activity(item: &TranscriptItem) -> bool {
-    use conversation::{ToolExecutionState, ToolReviewState};
     matches!(item.kind, TranscriptKind::Tool | TranscriptKind::Thinking)
         && review_artifact::from_item(item).is_none()
-        && !item.tool_review.as_ref().is_some_and(|review| {
-            matches!(
-                review.state,
-                ToolReviewState::Reviewing | ToolReviewState::Blocked
-            )
-        })
-        && !matches!(
-            item.tool_execution_state(),
-            Some(ToolExecutionState::Failed)
-        )
 }

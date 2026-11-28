@@ -71,7 +71,7 @@ pub(crate) fn run(
     project: PathBuf,
     agent_launch: crate::agents::AgentLaunchConfig,
     workgraph_updates: async_channel::Receiver<()>,
-    worker_updates: async_channel::Receiver<()>,
+    worker_updates: async_channel::Receiver<crate::agents::WorkerPoolUpdate>,
     notice_board: crate::app::mcp_server::NoticeBoard,
 ) -> Result<(), LaunchError> {
     let launch_timing = StartupTiming::always("launch.until_window_open");
@@ -121,6 +121,7 @@ pub(crate) fn run(
                 ("io.github.behzade.farcaster", "Farcaster")
             };
             cx.set_app_identity(app_id, app_name);
+            cx.set_http_client(std::sync::Arc::new(super::image_http::ImageHttpClient));
             let components_timing = StartupTiming::always("launch.init_components");
             gpui_component::init(cx);
             crate::app::ui::primitives::init_tooltips(cx);
@@ -199,12 +200,15 @@ pub(crate) fn run(
                 )
             });
             drop(placement_timing);
-            let owned_window = !isolation::is_isolated() || cfg!(target_os = "linux");
             let window_options = WindowOptions {
-                window_bounds: Some(window_bounds),
+                window_bounds: Some(initial_window_bounds(
+                    window_bounds,
+                    isolation::is_isolated(),
+                )),
                 display_id,
-                focus: owned_window,
-                show: owned_window,
+                focus: !isolation::is_isolated(),
+                show: true,
+                inactive_frame_interval: None,
                 titlebar: Some(TitlebarOptions {
                     title: Some(isolation::window_title("Farcaster").into()),
                     appears_transparent: cfg!(target_os = "macos"),
@@ -243,17 +247,43 @@ pub(crate) fn run(
                     )
                 });
                 let root = cx.new(|cx| gpui_component::Root::new(launch, window, cx));
-                window.on_next_frame(move |_, _| drop(first_frame_timing));
+                window.on_next_frame(move |window, _| {
+                    drop(first_frame_timing);
+                    if isolation::is_isolated() {
+                        zlog::info!(
+                            "isolated window ready bounds={:?} visibility={:?} active={}",
+                            window.bounds(),
+                            window.visibility(),
+                            window.is_window_active(),
+                        );
+                    }
+                });
                 root
             });
             drop(open_window_timing);
+            #[cfg(target_os = "macos")]
+            if isolation::is_isolated()
+                && let Ok(handle) = result.as_ref()
+            {
+                use crate::app::views::native_overlay::native::NativeHost;
+
+                let handle: gpui::AnyWindowHandle = (*handle).into();
+                let _ = handle.update(cx, |_, window, cx| match NativeHost::prepare_accessibility(
+                    window,
+                ) {
+                    Ok(()) => window.draw(cx).clear(cx),
+                    Err(error) => {
+                        zlog::warn!("Isolated accessibility: {error}");
+                    }
+                });
+            }
             if let Err(error) = result {
                 *failure_in_app.borrow_mut() =
                     Some(LaunchError::NativeWindow(format!("{error:#}")));
                 quit_after_start(cx);
                 return;
             }
-            if owned_window {
+            if !isolation::is_isolated() {
                 cx.activate(true);
             }
             drop(launch_timing);
@@ -290,8 +320,6 @@ fn install_linux_desktop_identity_at(
     appimage: Option<PathBuf>,
     data_dirs: &[PathBuf],
 ) {
-    // Native packages install their own launcher, which may use a runtime
-    // wrapper. Only AppImages need to register the running executable.
     let Some(executable) = appimage else {
         remove_legacy_native_desktop_entry(data_home, data_dirs);
         return;
@@ -336,8 +364,6 @@ fn remove_legacy_native_desktop_entry(data_home: &Path, data_dirs: &[PathBuf]) {
     }) else {
         return;
     };
-    // Only recognize native package locations. An AppImage or a custom
-    // launcher may use the same generated template and must stay intact.
     let Some(prefix) = executable
         .strip_suffix("/lib/farcaster/farcaster")
         .or_else(|| executable.strip_suffix("/bin/farcaster"))
@@ -354,7 +380,6 @@ fn remove_legacy_native_desktop_entry(data_home: &Path, data_dirs: &[PathBuf]) {
     if !native_package || contents != linux_desktop_entry(executable, &icon) {
         return;
     }
-    // Leave the entry alone until a distinct packaged launcher can replace it.
     let user_entry = fs::canonicalize(&entry).ok();
     if !data_dirs.iter().any(|directory| {
         let packaged = directory.join(ENTRY);
@@ -410,6 +435,13 @@ pub(crate) fn observe_window_placement<T: 'static>(
         });
         *pending.borrow_mut() = Some(task);
     })
+}
+
+fn initial_window_bounds(bounds: WindowBounds, isolated: bool) -> WindowBounds {
+    match bounds {
+        WindowBounds::Fullscreen(frame) if isolated => WindowBounds::Windowed(frame),
+        bounds => bounds,
+    }
 }
 
 fn restored_window(cx: &App) -> Option<(WindowBounds, Option<DisplayId>)> {

@@ -47,7 +47,6 @@ pub struct SessionState {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Model {
-    /// Backend-owned request metadata. The catalog preserves it without interpreting it.
     #[serde(
         default,
         rename = "adapterData",

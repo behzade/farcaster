@@ -6,11 +6,20 @@ pub(super) fn resolve_session_profile(
     locator: &Path,
     explicit: Option<&str>,
 ) -> Result<Option<String>, String> {
+    resolve_harness_profile(connection, locator, None, explicit)
+}
+
+pub(super) fn resolve_harness_profile(
+    connection: &Connection,
+    locator: &Path,
+    harness: Option<&str>,
+    explicit: Option<&str>,
+) -> Result<Option<String>, String> {
     let mut statement = connection
-        .prepare("SELECT DISTINCT profile_id FROM sessions WHERE locator=?1")
+        .prepare("SELECT DISTINCT profile_id FROM sessions WHERE locator=?1 AND (?2 IS NULL OR harness=?2)")
         .map_err(|error| format!("prepare session profile: {error}"))?;
     let profiles = statement
-        .query_map([locator.to_string_lossy()], |row| {
+        .query_map(params![locator.to_string_lossy(), harness], |row| {
             row.get::<_, Option<String>>(0)
         })
         .map_err(|error| format!("read session profile: {error}"))?
@@ -59,23 +68,43 @@ pub(super) fn bind_locator(
     let Some((draft_session_id, harness, draft_profile)) = draft_row else {
         return Ok(());
     };
-    let profile_id = resolve_session_profile(transaction, locator, draft_profile.as_deref())?;
-    let locator = locator.to_string_lossy();
+    let profile_id = resolve_harness_profile(
+        transaction,
+        locator,
+        Some(&harness),
+        draft_profile.as_deref(),
+    )?;
     let existing: Option<i64> = transaction
         .query_row(
             "SELECT id FROM sessions WHERE harness=?1 AND locator=?2",
-            params![harness, locator.as_ref()],
+            params![harness, locator.to_string_lossy()],
             |row| row.get(0),
         )
         .optional()
         .map_err(|error| error.to_string())?;
+    attach_draft_locator(
+        transaction,
+        draft_session_id,
+        existing,
+        profile_id.as_deref(),
+        locator,
+    )
+}
+
+pub(super) fn attach_draft_locator(
+    transaction: &Transaction<'_>,
+    draft_session_id: i64,
+    existing: Option<i64>,
+    profile_id: Option<&str>,
+    locator: &Path,
+) -> Result<(), String> {
     if let Some(existing) = existing.filter(|existing| *existing != draft_session_id) {
         merge_session(transaction, draft_session_id, existing)?;
     }
     transaction
         .execute(
             "UPDATE sessions SET locator=?2, profile_id=?3 WHERE id=?1",
-            params![draft_session_id, locator.as_ref(), profile_id],
+            params![draft_session_id, locator.to_string_lossy(), profile_id],
         )
         .map(|_| ())
         .map_err(|error| error.to_string())
@@ -102,6 +131,8 @@ pub(super) fn clear_fork_parent(tx: &Transaction<'_>, id: i64) -> Result<(), Str
 
 pub(super) fn merge_session(tx: &Transaction<'_>, keep: i64, other: i64) -> Result<(), String> {
     super::workgraph_identity::merge(tx, keep, other)?;
+    super::conversation_store::merge(tx, keep, other)
+        .map_err(|e| format!("merge stored transcript: {e}"))?;
     let offset: i64 = tx
         .query_row(
             "SELECT COALESCE(MAX(seq), 0) FROM session_events WHERE session_id=?1",
@@ -196,10 +227,11 @@ pub(super) fn merge_session(tx: &Transaction<'_>, keep: i64, other: i64) -> Resu
         "INSERT INTO session_models SELECT ?1, provider, model, effort, service_tier
            FROM session_models WHERE session_id=?2
          ON CONFLICT(session_id) DO NOTHING",
-        "INSERT INTO worker_families(child_id, execution_json, routing_json)
-         SELECT ?1, execution_json, routing_json FROM worker_families WHERE child_id=?2
+        "INSERT INTO worker_families(child_id, execution_json, routing_json, last_status)
+         SELECT ?1, execution_json, routing_json, last_status FROM worker_families WHERE child_id=?2
          ON CONFLICT(child_id) DO UPDATE SET
-           routing_json=COALESCE(worker_families.routing_json, excluded.routing_json)",
+           routing_json=COALESCE(worker_families.routing_json, excluded.routing_json),
+           last_status=COALESCE(worker_families.last_status, excluded.last_status)",
         "UPDATE session_ops SET session_id=?1 WHERE session_id=?2",
         "UPDATE session_turns SET session_id=?1 WHERE session_id=?2",
         "UPDATE session_reviews SET session_id=?1 WHERE session_id=?2",
@@ -349,7 +381,7 @@ pub(super) fn ensure_locator_session(
         locator_root.join(harness.as_str()).join(encoded)
     };
     let locator = crate::sessions::normalize_session_path(&locator);
-    let profile_id = resolve_session_profile(transaction, &locator, None)?;
+    let profile_id = resolve_harness_profile(transaction, &locator, Some(harness.as_str()), None)?;
     let locator_text = locator.to_string_lossy();
     let mut statement = transaction
         .prepare(
@@ -469,27 +501,28 @@ fn target_locator(target: &str, session_path: Option<&Path>) -> Option<PathBuf> 
 
 pub(super) fn create_target_session(
     tx: &Transaction<'_>,
-    target: &str,
-    harness: Backend,
-    project: &Path,
-    session_path: Option<&Path>,
+    submission: &crate::PromptSubmission<'_>,
 ) -> Result<i64, String> {
+    let target = submission.target;
     let client_key = crate::sessions::draft_id(target).filter(|key| !key.is_empty());
-    let locator = target_locator(target, session_path);
+    let locator = target_locator(target, submission.session);
     if client_key.is_none() && locator.is_none() {
         return Err(format!("invalid session target: {target}"));
     }
     let now = u64_to_i64(now_ms());
-    let project_id = ensure_project(tx, project, now)?;
+    let project_id = ensure_project(tx, submission.project, now)?;
     tx.execute(
-        "INSERT INTO sessions(project_id,harness,locator,client_key,modified_ms,created_ms)
-         VALUES(?1,?2,?3,?4,?5,?5)",
+        "INSERT INTO sessions(project_id,harness,locator,client_key,modified_ms,created_ms,submitted,profile_id,title)
+         VALUES(?1,?2,?3,?4,?5,?5,?6,?7,COALESCE(?8,''))",
         params![
             project_id,
-            harness.as_str(),
+            submission.harness.as_str(),
             locator.as_ref().map(|path| path.to_string_lossy()),
             client_key,
-            now
+            now,
+            client_key.is_some(),
+            client_key.and(submission.profile_id),
+            client_key.and(submission.provisional_title),
         ],
     )
     .map_err(|error| format!("create prompt session: {error}"))?;

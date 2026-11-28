@@ -1,11 +1,9 @@
 #[gpui::test]
-fn floating_notices_survive_sidebar_collapse_and_expire_into_history(
-    cx: &mut gpui::TestAppContext,
-) {
+fn floating_notices_survive_sidebar_hiding_and_expire(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
         concat!(
             module_path!(),
-            "::floating_notices_survive_sidebar_collapse_and_expire_into_history"
+            "::floating_notices_survive_sidebar_hiding_and_expire"
         ),
         cx,
         |cx, app, _, _| {
@@ -20,28 +18,23 @@ fn floating_notices_survive_sidebar_collapse_and_expire_into_history(
                 });
             });
             for hidden in [false, true] {
-                for collapsed in [false, true] {
-                    cx.update(|window, cx| {
-                        app.update(cx, |app, cx| {
-                            app.workspace.session_rail_hidden = hidden;
-                            app.views.notification_panel.set_collapsed(collapsed);
-                            cx.notify();
-                        });
-                        window.draw(cx).clear(cx);
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| {
+                        app.workspace.session_rail_hidden = hidden;
+                        cx.notify();
                     });
-                    assert!(
-                        cx.debug_bounds("floating-notices").is_some(),
-                        "hidden={hidden}, collapsed={collapsed}"
-                    );
-                }
+                    window.draw(cx).clear(cx);
+                });
+                assert!(
+                    cx.debug_bounds("floating-notices").is_some(),
+                    "hidden={hidden}"
+                );
             }
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
                     let state = &mut app.extensions.active;
                     let notice = state.notifications[0].clone();
                     assert!(state.remove_notification(&notice.id, notice.expires_at));
-                    assert_eq!(state.notification_history.len(), 1);
-                    assert_eq!(state.notification_history[0].message, "A test warning");
                     cx.notify();
                 });
                 window.draw(cx).clear(cx);
@@ -94,7 +87,6 @@ fn completion_notices_follow_focus_and_open_the_target_session(cx: &mut gpui::Te
                     let snapshot = Arc::make_mut(&mut app.snapshot);
                     snapshot.project = project.into();
                     snapshot.selected_session = Some(current.clone());
-                    app.views.notification_panel.set_collapsed(true);
                 });
             });
             let emit = |cx: &mut gpui::VisualTestContext, path: &std::path::Path| {

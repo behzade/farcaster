@@ -3,7 +3,6 @@ use std::time::SystemTime;
 
 use super::*;
 use crate::{
-    agent_activity::{AgentActivity, AgentLifecycle},
     app::session::lifecycle::current_close_target,
     conversation::{TranscriptItem, TranscriptKind},
     sessions::UsageSummary,
@@ -113,22 +112,23 @@ fn session_catalog_changes_invalidate_only_the_regions_that_render_them() {
             String::new(),
         )
     };
-    let current = vec![session(SystemTime::UNIX_EPOCH, UsageSummary::default())];
-    let touched = vec![session(SystemTime::now(), UsageSummary::default())];
+    let current: sessions::SessionCatalog =
+        vec![session(SystemTime::UNIX_EPOCH, UsageSummary::default())].into();
+    let touched = vec![session(SystemTime::now(), UsageSummary::default())].into();
 
     let selected = Some(std::path::Path::new("/root.jsonl"));
     assert!(!run_panel_sessions_changed(&current, &touched, selected));
-    let mut creation_changed = current.clone();
+    let mut creation_changed: sessions::SessionCatalog = current.to_vec().into();
     creation_changed[0].created_at = Some(SystemTime::UNIX_EPOCH);
     assert!(run_panel_sessions_changed(
         &current,
         &creation_changed,
         selected
     ));
-    let mut identified = current.clone();
+    let mut identified: sessions::SessionCatalog = current.to_vec().into();
     identified[0].model = Some(("openai".into(), "gpt-5.6-terra".into()));
     assert!(run_panel_sessions_changed(&current, &identified, selected));
-    let mut effort_changed = identified.clone();
+    let mut effort_changed: sessions::SessionCatalog = identified.to_vec().into();
     effort_changed[0].thinking_level = Some("xhigh".into());
     assert!(run_panel_sessions_changed(
         &identified,
@@ -145,7 +145,8 @@ fn session_catalog_changes_invalidate_only_the_regions_that_render_them() {
             cost_micros: 1,
             ..UsageSummary::default()
         },
-    )];
+    )]
+    .into();
     assert!(!run_panel_sessions_changed(&current, &changed, selected));
     assert!(composer_usage_sessions_changed(
         &current, &changed, selected,
@@ -168,7 +169,7 @@ fn switching_between_active_sessions_does_not_invalidate_archived_sessions() {
     };
 
     assert!(!inactive_session_rail_snapshot_changed(
-        &SessionRootIndex::new(&sessions),
+        &sessions.into(),
         &previous,
         &next,
     ));
@@ -178,7 +179,7 @@ fn switching_between_active_sessions_does_not_invalidate_archived_sessions() {
         session_summary("second", None, true),
     ];
     assert!(inactive_session_rail_snapshot_changed(
-        &SessionRootIndex::new(&archived_sessions),
+        &archived_sessions.into(),
         &previous,
         &next,
     ));
@@ -187,31 +188,28 @@ fn switching_between_active_sessions_does_not_invalidate_archived_sessions() {
 #[test]
 fn active_session_discovery_does_not_invalidate_archived_sessions() {
     let archived = session_summary("archived", None, true);
-    let current = vec![archived.clone()];
-    let with_active = vec![session_summary("active", None, false), archived.clone()];
+    let current = vec![archived.clone()].into();
+    let with_active = vec![session_summary("active", None, false), archived.clone()].into();
 
-    assert!(!inactive_session_catalog_changed(
-        &current,
-        &current,
-        &with_active,
-        &with_active,
-    ));
+    assert_eq!(
+        archive_catalog_change(&current, &current, &with_active, &with_active),
+        ArchiveChange::Unchanged
+    );
     let mut renamed = archived;
     renamed.title = "Renamed".into();
-    assert!(inactive_session_catalog_changed(
-        &current,
-        &current,
-        &[renamed],
-        &current,
-    ));
+    assert_eq!(
+        archive_catalog_change(&current, &current, &vec![renamed].into(), &current),
+        ArchiveChange::Repaint
+    );
 }
 
 #[test]
 fn status_events_invalidate_only_visible_active_rows() {
-    let sessions = vec![
+    let sessions: crate::sessions::SessionCatalog = vec![
         session_summary("active", None, false),
         session_summary("archived", None, true),
-    ];
+    ]
+    .into();
     let drafts = [sessions::DraftSession::with_id(
         Some(Backend::Pi),
         "draft".into(),
@@ -248,74 +246,9 @@ fn selecting_a_subagent_does_not_invalidate_the_session_rail() {
     };
 
     assert!(!session_rail_snapshot_changed(
-        &SessionRootIndex::new(&sessions),
+        &sessions.into(),
         &previous,
         &next
-    ));
-}
-
-fn activity(id: &str, text: &str) -> AgentActivity {
-    AgentActivity {
-        session_id: id.into(),
-        session_path: PathBuf::from(format!("/{id}.jsonl")),
-        role: String::new(),
-        activity: text.into(),
-        lifecycle: AgentLifecycle::Working,
-        explicit_outcome: false,
-        current_tool: None,
-        recent_tool: None,
-        tool_call_count: 0,
-        limited: false,
-        usage: UsageSummary::default(),
-        started: SystemTime::UNIX_EPOCH,
-        ended: None,
-        elapsed: None,
-    }
-}
-
-#[test]
-fn run_panel_ignores_activity_changes_outside_the_selected_tree() {
-    let sessions = vec![
-        session_summary("root", None, false),
-        session_summary("child", Some("root"), false),
-        session_summary("other", None, false),
-    ];
-    let current = HashMap::from([
-        (
-            crate::agent_activity::agent_activity_key(std::path::Path::new("/child.jsonl")),
-            activity("child", "working"),
-        ),
-        (
-            crate::agent_activity::agent_activity_key(std::path::Path::new("/other.jsonl")),
-            activity("other", "working"),
-        ),
-    ]);
-    let unrelated = HashMap::from([(
-        crate::agent_activity::agent_activity_key(std::path::Path::new("/other.jsonl")),
-        activity("other", "changed"),
-    )]);
-    let visible = HashMap::from([(
-        crate::agent_activity::agent_activity_key(std::path::Path::new("/child.jsonl")),
-        activity("child", "changed"),
-    )]);
-
-    assert!(!run_panel_activities_changed(
-        &current,
-        Some(&(unrelated, false)),
-        &sessions,
-        Some(std::path::Path::new("/root.jsonl")),
-    ));
-    assert!(run_panel_activities_changed(
-        &current,
-        Some(&(visible, false)),
-        &sessions,
-        Some(std::path::Path::new("/root.jsonl")),
-    ));
-    assert!(run_panel_activities_changed(
-        &current,
-        Some(&(HashMap::new(), true)),
-        &sessions,
-        Some(std::path::Path::new("/root.jsonl")),
     ));
 }
 
@@ -331,7 +264,38 @@ fn transcript_only_snapshot_changes_do_not_invalidate_other_regions() {
         .push(Arc::new(item("stream update")));
 
     assert!(!composer_snapshot_changed(&previous, &next));
-    assert!(!run_panel_snapshot_changed(&previous, &next));
+    assert!(!run_panel_snapshot_changed(
+        &Default::default(),
+        &previous,
+        &next
+    ));
+}
+
+#[test]
+fn run_panel_repaints_when_native_metadata_changes_the_lone_row_match() {
+    let row = session_summary("owner", None, false);
+    let unloaded = RuntimeSnapshot {
+        selected_session: Some(row.path.clone()),
+        harness: Some(row.harness),
+        project: row.project.clone(),
+        ..Default::default()
+    };
+    let catalog = vec![row].into();
+    let loaded = |id: &str| RuntimeSnapshot {
+        session: Some(
+            serde_json::from_value(serde_json::json!({
+                "sessionId": id, "isStreaming": false, "isCompacting": false,
+                "autoCompactionEnabled": false, "messageCount": 0, "pendingMessageCount": 0
+            }))
+            .unwrap(),
+        ),
+        ..unloaded.clone()
+    };
+    let owner = loaded("owner");
+    let other = loaded("other");
+    assert!(!run_panel_snapshot_changed(&catalog, &unloaded, &owner));
+    assert!(run_panel_snapshot_changed(&catalog, &unloaded, &other));
+    assert!(run_panel_snapshot_changed(&catalog, &other, &owner));
 }
 
 #[test]
@@ -449,6 +413,8 @@ fn composer_and_run_panel_track_their_rendered_snapshot_inputs() {
     let previous = RuntimeSnapshot::default();
     let mut composer_status = previous.clone();
     composer_status.status = "Working".into();
+    let mut compacting = previous.clone();
+    Arc::make_mut(&mut compacting.conversation).compacting = true;
     let mut composer_usage = previous.clone();
     Arc::make_mut(&mut composer_usage.conversation).average_cache_hit_rate = Some(0.5);
     let mut composer_context = previous.clone();
@@ -462,17 +428,20 @@ fn composer_and_run_panel_track_their_rendered_snapshot_inputs() {
     }));
     let mut run_panel = previous.clone();
     run_panel.selected_session = Some(PathBuf::from("/root.jsonl"));
+    let catalog = sessions::SessionCatalog::default();
+    let panel_changed = |next| run_panel_snapshot_changed(&catalog, &previous, next);
 
     assert!(!composer_snapshot_changed(&previous, &composer_status));
-    assert!(!run_panel_snapshot_changed(&previous, &composer_status));
+    assert!(!panel_changed(&composer_status));
+    assert!(composer_snapshot_changed(&previous, &compacting));
     assert!(composer_snapshot_changed(&previous, &composer_usage));
-    assert!(!run_panel_snapshot_changed(&previous, &composer_usage));
+    assert!(!panel_changed(&composer_usage));
     assert!(composer_snapshot_changed(&previous, &composer_context));
-    assert!(!run_panel_snapshot_changed(&previous, &composer_context));
+    assert!(!panel_changed(&composer_context));
     assert!(composer_snapshot_changed(&previous, &composer_queue));
-    assert!(!run_panel_snapshot_changed(&previous, &composer_queue));
+    assert!(!panel_changed(&composer_queue));
     assert!(composer_snapshot_changed(&previous, &run_panel));
-    assert!(run_panel_snapshot_changed(&previous, &run_panel));
+    assert!(panel_changed(&run_panel));
 }
 
 #[test]
@@ -554,8 +523,7 @@ fn rail_selection_distinguishes_profile_copies_of_one_native_session() {
         selected_session: Some(second.path.clone()),
         ..RuntimeSnapshot::default()
     };
-    let sessions = [first, second];
-    let roots = SessionRootIndex::new(&sessions);
+    let roots = vec![first, second].into();
     assert!(session_rail_snapshot_changed(&roots, &previous, &next));
     assert!(inactive_session_rail_snapshot_changed(
         &roots, &previous, &next
@@ -568,8 +536,8 @@ fn binding_identity_refreshes_worker_labels_and_graph_views() {
     let mut bound = session.clone();
     bound.app_session_id = 42;
     assert!(run_panel_sessions_changed(
-        &[session.clone()],
-        &[bound.clone()],
+        &vec![session.clone()].into(),
+        &vec![bound.clone()].into(),
         Some(&session.path)
     ));
     assert!(session_identities_changed(
@@ -597,11 +565,12 @@ fn archived_child_count_changes_invalidate_tooltips() {
     second.app_session_id = 2;
     let mut child = session_summary("child", Some("first"), false);
     child.parent_app_session_id = Some(1);
-    let roots = [first.clone(), second.clone()];
-    let before = [first.clone(), second.clone(), child.clone()];
+    let roots = vec![first.clone(), second.clone()].into();
+    let before = vec![first.clone(), second.clone(), child.clone()].into();
     child.parent_app_session_id = Some(2);
-    let after = [first, second, child];
-    assert!(inactive_session_catalog_changed(
-        &roots, &before, &roots, &after
-    ));
+    let after = vec![first, second, child].into();
+    assert_eq!(
+        archive_catalog_change(&roots, &before, &roots, &after),
+        ArchiveChange::Repaint
+    );
 }

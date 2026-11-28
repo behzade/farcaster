@@ -30,6 +30,18 @@ pub fn set_test_project_environment(project: &Path, environment: Environment) {
         );
 }
 
+#[cfg(not(test))]
+pub(super) fn cached_environment(project: &Path) -> Option<Environment> {
+    let key = project.canonicalize().ok()?;
+    SHELL_ENVIRONMENTS
+        .get()?
+        .try_lock()
+        .ok()?
+        .get(&key)
+        .cloned()
+        .map(with_project_path_handoff)
+}
+
 pub fn project_shell_environment(project: &Path) -> Result<Option<Environment>, String> {
     #[cfg(test)]
     {

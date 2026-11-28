@@ -11,6 +11,8 @@ pub(in crate::app) mod drafts;
 mod expiries;
 pub(in crate::app) mod import;
 pub(in crate::app) mod lifecycle;
+#[cfg(test)]
+mod local_display_tests;
 mod remembered;
 pub(in crate::app) mod remembered_transcript;
 pub(in crate::app) mod state_writer;
@@ -19,3 +21,5 @@ pub(in crate::app) mod status;
 #[path = "switch_perf_tests.rs"]
 mod switch_perf_tests;
 mod titles;
+
+pub(in crate::app) const REFRESHING_SESSION_DETAILS: &str = "Refreshing session details…";

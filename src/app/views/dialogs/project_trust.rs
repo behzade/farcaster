@@ -39,19 +39,11 @@ pub(in crate::app::views) fn render(
         && crate::agents::project_trust_description(app.snapshot.harness).is_some())
     .then_some(app.snapshot.harness)
     .flatten();
-    let decision = match backend {
-        Some(backend) => crate::agents::saved_project_trust(backend, project),
-        None => crate::app::project::trust::saved_decision(project),
-    };
-    let saved = match decision {
-        Ok(Some((path, trusted))) => format!(
-            "Saved decision: {} ({})",
-            if trusted { "trusted" } else { "untrusted" },
-            path.display()
-        ),
-        Ok(None) => "Saved decision: none".into(),
-        Err(error) => format!("Saved decision unavailable: {error}"),
-    };
+    let saved = app
+        .project
+        .trust_display
+        .clone()
+        .unwrap_or_else(|| "Checking saved decision…".into());
     modal(
         "project-trust",
         title,
@@ -90,7 +82,7 @@ pub(in crate::app::views) fn render(
                     .flex()
                     .flex_col()
                     .gap(theme().space.md)
-                    .p(theme().space.md)
+                    .p(crate::app::ui::grid::dialog_inset())
                     .child(
                         div()
                             .font_family(MONO_FONT_FAMILY)

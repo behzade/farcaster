@@ -75,3 +75,41 @@ fn unsent_images_and_text_files_survive_database_reopen() -> Result<(), Box<dyn 
     );
     Ok(())
 }
+
+#[gpui::test]
+fn removing_an_attached_text_file_preserves_the_original(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::removing_an_attached_text_file_preserves_the_original"
+        ),
+        cx,
+        |cx, app, _, project| {
+            let original = project.join("example.rs");
+            std::fs::write(&original, "let value = 1;\n").unwrap();
+            let LoadedAttachment::Text(paste) = load_attachment(original.clone()).unwrap() else {
+                panic!("text attachment");
+            };
+            assert_ne!(paste.path, original);
+            assert_eq!(paste.file_name(), "example.rs");
+            let attached = paste.path.clone();
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    let target = app.composer.sessions.current_target().to_owned();
+                    app.composer
+                        .pastes
+                        .entry(target.clone())
+                        .or_default()
+                        .push(paste);
+                    app.save_composer_attachments(&target);
+                    app.remove_composer_paste(0, cx);
+                })
+            });
+            assert!(!attached.exists());
+            assert_eq!(
+                std::fs::read_to_string(original).unwrap(),
+                "let value = 1;\n"
+            );
+        },
+    );
+}

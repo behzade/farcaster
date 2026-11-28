@@ -330,6 +330,7 @@ impl TranscriptItem {
                     result: result.cloned(),
                     metadata: details.metadata.clone(),
                     state: details.state,
+                    viewport: None,
                 })
             }),
             tool_review: self.tool_review.clone(),
@@ -343,12 +344,21 @@ pub(super) fn apply_tool_result(
     result: &Value,
     message: bool,
 ) -> TranscriptItem {
+    let normalized = super::attachments::content_blocks(result)
+        .map(farcaster_agent_protocol::normalize_tool_output)
+        .and_then(|blocks| match blocks {
+            Cow::Owned(blocks) => Some(serde_json::json!({"content": blocks})),
+            Cow::Borrowed(_) => None,
+        });
+    let content = normalized.as_ref().unwrap_or(result);
     let output = if message {
-        message_text(result).into_owned()
+        message_text(content).into_owned()
     } else {
-        result_text(result)
+        result_text(content)
     };
     let mut item = item.with_tool_output(output, Some(result));
+    item.images = super::history::content_images(content);
+    item.files = Arc::new(super::attachments::result_files(content));
     item.finish_tool(
         result
             .get("isError")
@@ -391,18 +401,29 @@ pub fn display_tool_name(name: &str) -> String {
 }
 
 fn result_text(value: &Value) -> String {
-    value
-        .get("content")
-        .and_then(Value::as_array)
-        .map(|blocks| {
-            blocks
-                .iter()
-                .filter_map(|block| block.get("text").and_then(Value::as_str))
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
-        .filter(|text| !text.is_empty())
-        .unwrap_or_else(|| readable_json(value))
+    if let Some(blocks) = super::attachments::content_blocks(value) {
+        let content_blocks = blocks
+            .iter()
+            .all(|block| block.get("type").and_then(Value::as_str).is_some());
+        if !content_blocks {
+            return readable_json(value);
+        }
+        return blocks
+            .iter()
+            .filter_map(|block| match block.get("type").and_then(Value::as_str) {
+                Some("image" | "resource_link") => None,
+                _ => Some(
+                    block
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| readable_json(block)),
+                ),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+    readable_json(value)
 }
 
 fn readable_json(value: &Value) -> String {

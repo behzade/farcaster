@@ -242,9 +242,9 @@ fn installed_endpoint_stays_reserved_before_start_and_after_failed_reinstall() {
     assert!(TcpListener::bind(address).is_err());
 
     let project = tempfile::tempdir().expect("project");
-    let store = Arc::new(Mutex::new(
+    let store = crate::storage::SharedStateStore::new(
         crate::storage::StateStore::open_at(&project.path().join("state.db")).expect("state"),
-    ));
+    );
     let (factories, backend) =
         crate::agents::worker_factories(crate::agents::AgentLaunchConfig::default());
     let workers = crate::agents::WorkerPool::new(factories, backend, project.path().to_owned(), 1)

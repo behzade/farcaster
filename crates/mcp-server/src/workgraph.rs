@@ -285,7 +285,6 @@ pub(super) fn patch_store(
     let EditResult::Tasks(snapshot) = result else {
         return Err("work graph returned an unexpected edit result".into());
     };
-    // CreateTasks appends nodes with increasing numbers, including when extending a plan.
     let mut tasks = snapshot
         .nodes
         .iter()

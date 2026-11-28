@@ -157,13 +157,6 @@ fn notification_window_preserves_owner_focus_and_expires_after_the_last_notice(
                 cx.update(|window, cx| {
                     assert!(app.read(cx).overlays.notices.window.is_none());
                     assert_eq!(window.focused(cx), Some(focus.clone()));
-                    assert!(
-                        !app.read(cx)
-                            .extensions
-                            .active
-                            .notification_history
-                            .is_empty()
-                    );
                 });
             }
         },

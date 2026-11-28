@@ -163,3 +163,153 @@ fn display_text_compares_visible_content_without_transport_or_outer_whitespace()
     assert_eq!(preview, "review: first…");
     assert_eq!(body, "review: first\nsecond");
 }
+
+#[gpui::test]
+fn queue_actions_follow_the_selected_session_snapshot(cx: &mut gpui::TestAppContext) {
+    use crate::{
+        agents::Backend,
+        conversation::SavedPrompt,
+        runtime::{HarnessAccessMode, RuntimeEvent, RuntimeSignal, RuntimeSnapshot},
+        sessions::{SessionSummary, session_buffer, session_target},
+    };
+    use std::sync::Arc;
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::queue_actions_follow_the_selected_session_snapshot"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            crate::app::project::trust::apply(project, crate::projects::TrustChoice::TrustProject)
+                .unwrap();
+            let path = project.join("shared-locator");
+            let first = SessionSummary::from_cached_for_harness(
+                "first".into(),
+                Backend::Pi,
+                path.clone(),
+                project.into(),
+                "First".into(),
+                String::new(),
+                String::new(),
+                None,
+                std::time::UNIX_EPOCH,
+                0,
+                Default::default(),
+                false,
+                false,
+                String::new(),
+            )
+            .with_app_session_id(1);
+            let mut second = first.clone().with_app_session_id(2);
+            second.harness = Backend::Codex;
+            second.id = "second".into();
+
+            let snapshot = |row: &SessionSummary| {
+                Arc::new(RuntimeSnapshot {
+                    harness: Some(row.harness),
+                    selected_session: Some(path.clone()),
+                    project: project.into(),
+                    prompt_queue: Some(Arc::new(QueueState {
+                        saved: vec![SavedPrompt {
+                            id: row.app_session_id,
+                            target: session_target(&path),
+                            text: row.id.clone(),
+                            image_count: 0,
+                            sendable: true,
+                        }],
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                })
+            };
+            let remove = |app_state: &FarcasterApp| {
+                let (view, handler) = app_state
+                    .composer_queue(app.downgrade())
+                    .expect("visible queue");
+                let row = &view.groups[0].rows[0];
+                let action = row
+                    .details
+                    .as_ref()
+                    .unwrap()
+                    .actions
+                    .iter()
+                    .find(|action| action.label == "Remove")
+                    .unwrap()
+                    .clone();
+                (handler, action)
+            };
+            let (old_handler, old_action) = cx.update(|window, cx| {
+                app.update(cx, |state, cx| {
+                    let rows = vec![first.clone(), second.clone()];
+                    state.sessions.all = rows.clone().into();
+                    state.sessions.visible = rows.into();
+                    state.sessions.selected_draft = None;
+                    state.switch_composer_target(session_buffer(first.harness, &path), window, cx);
+                    state.snapshot = snapshot(&first);
+                    let old = remove(state);
+                    state.select_rail_session(second.catalog_key(), window, cx);
+                    assert!(state.composer_queue(app.downgrade()).is_none());
+                    state.set_access_mode(HarnessAccessMode::Full, cx);
+                    state.signal_composer(RuntimeSignal::Abort);
+                    old
+                })
+            });
+            cx.update(|_, cx| old_handler(&old_action, cx));
+            cx.run_until_parked();
+            let mut request = None;
+            for command in std::iter::from_fn(|| runtime.try_recv_command()) {
+                match command {
+                    RuntimeCommand::SelectSession {
+                        request: sequence,
+                        key,
+                        ..
+                    } if key == Some(second.catalog_key()) => request = sequence,
+                    RuntimeCommand::RemoveSaved { .. } | RuntimeCommand::SetAccessMode(_) => {
+                        panic!("stale action dispatched before routing")
+                    }
+                    _ => {}
+                }
+            }
+            assert!(runtime.try_recv_signal().is_none());
+            runtime.send_event(RuntimeEvent::SelectionRouted(
+                request.expect("selection dispatched"),
+            ));
+            cx.update(|_, cx| {
+                app.update(cx, |state, cx| {
+                    state.drain_runtime(cx);
+                    assert!(state.composer_queue(app.downgrade()).is_none());
+                    state.signal_composer(RuntimeSignal::Abort);
+                    assert!(runtime.try_recv_signal().is_none());
+                    runtime.send_event(RuntimeEvent::Snapshot {
+                        generation: state.runtime_generation + 1,
+                        snapshot: snapshot(&second),
+                    });
+                    state.drain_runtime(cx);
+                    state.set_access_mode(HarnessAccessMode::Full, cx);
+                    state.signal_composer(RuntimeSignal::Abort);
+                    assert_eq!(
+                        runtime.try_recv_signal(),
+                        Some((session_buffer(second.harness, &path), RuntimeSignal::Abort))
+                    );
+                    assert!(std::iter::from_fn(|| runtime.try_recv_command()).any(
+                        |command| matches!(
+                            command,
+                            RuntimeCommand::SetAccessMode(HarnessAccessMode::Full)
+                        )
+                    ));
+                });
+                let (new_handler, new_action) = remove(app.read(cx));
+                old_handler(&old_action, cx);
+                new_handler(&new_action, cx);
+            });
+            let removed: Vec<_> = std::iter::from_fn(|| runtime.try_recv_command())
+                .filter_map(|command| match command {
+                    RuntimeCommand::RemoveSaved { target, id } => Some((target, id)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(removed, [(session_target(&path), second.app_session_id)]);
+        },
+    );
+}

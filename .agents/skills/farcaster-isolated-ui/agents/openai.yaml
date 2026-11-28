@@ -1,0 +1,4 @@
+interface:
+  display_name: "Farcaster Isolated UI"
+  short_description: "Build, inspect, and review isolated Farcaster UI"
+  default_prompt: "Use $farcaster-isolated-ui to inspect this UI change in Farcaster Isolated and prepare a matched before/after review."

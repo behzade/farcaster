@@ -54,6 +54,10 @@ impl RuntimeHost for AppRuntimeHost {
         super::mcp_server::finish_session_family_worker_stop(project, sessions)
     }
 
+    fn worker_status_snapshot(&self, id: &str) -> Result<Option<WorkerSnapshot>, String> {
+        super::mcp_server::worker_status_snapshot(id)
+    }
+
     fn worker_snapshots(&self) -> Result<Vec<WorkerSnapshot>, String> {
         super::mcp_server::worker_snapshots()
     }

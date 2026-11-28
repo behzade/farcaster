@@ -39,10 +39,8 @@ pub(in crate::app::views) fn render(
                         .flex()
                         .items_center()
                         .justify_between()
-                        .px(theme().space.md)
+                        .px(crate::app::ui::grid::dialog_inset())
                         .py(theme().space.sm)
-                        .border_b(theme().border)
-                        .border_color(theme().colors.border)
                         .child(
                             div()
                                 .flex()
@@ -75,30 +73,12 @@ pub(in crate::app::views) fn render(
                         .id("worker-notices-list")
                         .max_h(theme().size(520.0))
                         .overflow_y_scroll()
-                        .when(notices.is_empty(), |body| {
-                            body.child(
-                                div()
-                                    .p(theme().space.md)
-                                    .text_color(theme().colors.subtle)
-                                    .child("No active coordination notices."),
-                            )
-                        })
                         .children(
                             notices
                                 .into_iter()
                                 .enumerate()
                                 .map(|(index, notice)| render_notice(index, notice)),
                         ),
-                )
-                .child(
-                    div()
-                        .px(theme().space.md)
-                        .py(theme().space.sm)
-                        .border_t(theme().border)
-                        .border_color(theme().colors.border)
-                        .text_size(theme().type_scale.caption)
-                        .text_color(theme().colors.subtle)
-                        .child("Notices expire after 15 minutes"),
                 )
         },
     )
@@ -107,10 +87,8 @@ pub(in crate::app::views) fn render(
 fn render_notice(index: usize, notice: NoticeView) -> impl IntoElement {
     div()
         .id(("worker-notice", index))
-        .px(theme().space.md)
-        .py(theme().space.sm)
-        .border_b(theme().border)
-        .border_color(theme().colors.surface)
+        .px(crate::app::ui::grid::dialog_inset())
+        .py(theme().space.md)
         .flex()
         .flex_col()
         .gap(theme().space.xs)
@@ -145,7 +123,7 @@ fn render_notice(index: usize, notice: NoticeView) -> impl IntoElement {
                     div()
                         .px(theme().size(6.0))
                         .py(theme().size(2.0))
-                        .rounded(theme().radius)
+                        .rounded(theme().size(4.0))
                         .bg(theme().colors.surface)
                         .text_size(theme().type_scale.caption)
                         .text_color(theme().colors.muted)

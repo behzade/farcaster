@@ -1,14 +1,23 @@
 use super::*;
 
 pub(super) fn semantic_status(snapshot: &RuntimeSnapshot) -> RunStatus {
-    if snapshot.history_preview {
-        return if snapshot.selected_session.is_none() {
-            RunStatus::Draft
-        } else {
-            RunStatus::Done
-        };
+    if snapshot.history_preview && snapshot.selected_session.is_none() {
+        return RunStatus::Draft;
     }
-    session_badge_status(&snapshot.conversation)
+    let status = session_badge_status(&snapshot.conversation);
+    if matches!(
+        status,
+        RunStatus::Working | RunStatus::Compacting | RunStatus::Retrying
+    ) {
+        return status;
+    }
+    match snapshot.last_outcome {
+        Some(SessionOutcome::Done) => RunStatus::Done,
+        Some(SessionOutcome::Failed) => RunStatus::Failed,
+        Some(SessionOutcome::Stopped) => RunStatus::Stopped,
+        None if snapshot.history_preview => RunStatus::Done,
+        None => status,
+    }
 }
 
 pub(super) fn failure_details(error: &str) -> String {

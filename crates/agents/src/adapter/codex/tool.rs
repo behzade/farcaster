@@ -48,7 +48,29 @@ pub(super) fn is_tool_kind(kind: &str) -> bool {
 pub(super) fn call(item: &Value, kind: &str) -> (String, Value) {
     match kind {
         "fileChange" => {
-            let changes = item.get("changes").cloned().unwrap_or_else(|| json!([]));
+            let mut changes = item.get("changes").cloned().unwrap_or_else(|| json!([]));
+            for change in changes.as_array_mut().into_iter().flatten() {
+                if change.pointer("/kind/type").and_then(Value::as_str) != Some("add") {
+                    continue;
+                }
+                let Some(content) = change.get("diff").and_then(Value::as_str) else {
+                    continue;
+                };
+                // Codex puts full file content in `diff` for additions.
+                let lines = content.split_terminator('\n');
+                let count = lines.clone().count();
+                let start = usize::from(count > 0);
+                let mut diff = format!("@@ -0,0 +{start},{count} @@\n");
+                for line in lines {
+                    diff.push('+');
+                    diff.push_str(line);
+                    diff.push('\n');
+                }
+                if !content.is_empty() && !content.ends_with('\n') {
+                    diff.push_str("\\ No newline at end of file\n");
+                }
+                change["diff"] = Value::String(diff);
+            }
             let path = changes
                 .as_array()
                 .and_then(|changes| changes.first())
@@ -158,6 +180,13 @@ pub(super) fn metadata(item: &Value, kind: &str) -> ToolMetadata {
     let targets = match kind {
         "fileChange" => paths(item.get("changes")),
         "commandExecution" => paths(item.get("commandActions")),
+        "imageGeneration" => item
+            .get("savedPath")
+            .and_then(Value::as_str)
+            .filter(|path| !path.is_empty())
+            .map(str::to_owned)
+            .into_iter()
+            .collect(),
         "imageView" => item
             .get("path")
             .and_then(Value::as_str)
@@ -178,8 +207,32 @@ pub(super) fn metadata(item: &Value, kind: &str) -> ToolMetadata {
         category: Some(category),
         title,
         targets,
-        native: Some(item.clone()),
+        native: Some(call_metadata(item, kind)),
     }
+}
+
+fn call_metadata(item: &Value, kind: &str) -> Value {
+    if kind != "mcpToolCall" {
+        return item.clone();
+    }
+    let Some(fields) = item.as_object() else {
+        return item.clone();
+    };
+    let mut native = serde_json::Map::new();
+    for (key, value) in fields {
+        match key.as_str() {
+            "error" if !value.is_null() => {}
+            "result" if value.is_object() => {
+                if let Some(content) = value.get("content") {
+                    native.insert(key.clone(), json!({"content":content}));
+                }
+            }
+            _ => {
+                native.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    Value::Object(native)
 }
 
 fn paths(items: Option<&Value>) -> Vec<String> {
@@ -289,6 +342,187 @@ pub(super) fn web_search_query(item: &Value) -> Option<&str> {
                 .into_iter()
                 .find_map(|field| action.get(field).and_then(Value::as_str))
         })
+}
+
+pub(super) fn completion(item: &Value, kind: &str) -> (Value, bool) {
+    let failed = item
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| matches!(status, "failed" | "declined"))
+        || item["success"] == false
+        || item.pointer("/result/isError").and_then(Value::as_bool) == Some(true);
+    let result = if kind == "imageGeneration" {
+        Value::Array(image_output(item))
+    } else if kind == "mcpToolCall" && item.pointer("/result/content").is_some_and(Value::is_array)
+    {
+        Value::Array(mcp_output(item))
+    } else if let Some(parts) = item["contentItems"].as_array() {
+        Value::Array(parts.iter().map(dynamic_output_block).collect())
+    } else if let Some(content) = item.pointer("/result/content").and_then(Value::as_array) {
+        Value::Array(content.clone())
+    } else if failed
+        && let Some(error) = item
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .or_else(|| item.get("error").and_then(Value::as_str))
+    {
+        json!([{"type": "text", "text": error}])
+    } else if let Some(output) = item.get("aggregatedOutput").and_then(Value::as_str) {
+        json!([{"type": "text", "text": output}])
+    } else if let Some(output) = item
+        .get("result")
+        .filter(|value| !value.is_null())
+        .or_else(|| item.get("output").filter(|value| !value.is_null()))
+    {
+        json!([{
+            "type": "text",
+            "text": output.as_str().map(str::to_owned).unwrap_or_else(|| output.to_string()),
+        }])
+    } else if kind == "commandExecution" && item.get("aggregatedOutput").is_none_or(Value::is_null)
+    {
+        json!([{"type": "text", "text": ""}])
+    } else if kind == "webSearch" {
+        json!([{"type": "text", "text": web_search_query(item).unwrap_or_default()}])
+    } else if kind == "fileChange" && !failed {
+        json!([{"type": "text", "text": "Applied patch"}])
+    } else if kind == "imageView" {
+        json!([{
+            "type": "text",
+            "text": item.get("path").and_then(Value::as_str).unwrap_or_default(),
+        }])
+    } else if kind == "sleep" {
+        json!([{
+            "type": "text",
+            "text": format!("Waited {}", wait_duration(item)),
+        }])
+    } else if kind == "subAgentActivity" {
+        json!([{"type": "text", "text": subagent_summary(item)}])
+    } else if kind == "collabAgentToolCall" {
+        json!([{
+            "type": "text",
+            "text": item
+                .get("agentsStates")
+                .map(Value::to_string)
+                .unwrap_or_else(|| item.get("status").map(Value::to_string).unwrap_or_default()),
+        }])
+    } else {
+        zlog::warn!("Codex {kind} completion has no displayable result");
+        json!([])
+    };
+    let mut details = serde_json::Map::new();
+    for key in ["exitCode", "durationMs"] {
+        if let Some(value) = item.get(key).filter(|value| !value.is_null())
+            && !(key == "durationMs" && kind == "sleep")
+        {
+            details.insert(key.into(), value.clone());
+        }
+    }
+    if kind == "mcpToolCall" {
+        let mut native = serde_json::Map::new();
+        if let Some(result) = item["result"].as_object() {
+            let fields: serde_json::Map<_, _> = result
+                .iter()
+                .filter(|(field, _)| field.as_str() != "content")
+                .map(|(field, value)| (field.clone(), value.clone()))
+                .collect();
+            if !fields.is_empty() {
+                native.insert("result".into(), Value::Object(fields));
+            }
+        }
+        if let Some(error) = item.get("error").filter(|error| !error.is_null()) {
+            native.insert("error".into(), error.clone());
+        }
+        if !native.is_empty() {
+            details.insert("native".into(), Value::Object(native));
+        }
+    }
+    if details.is_empty() {
+        (result, failed)
+    } else {
+        (json!({"content": result, "details": details}), failed)
+    }
+}
+
+fn dynamic_output_block(block: &Value) -> Value {
+    match block["type"].as_str() {
+        Some("inputText") if block["text"].is_string() => {
+            json!({"type":"text","text":block["text"]})
+        }
+        Some("inputImage") => block["imageUrl"]
+            .as_str()
+            .and_then(|url| url.strip_prefix("data:")?.split_once(";base64,"))
+            .filter(|(mime, _)| mime.starts_with("image/"))
+            .map(|(mime, data)| json!({"type":"image", "mimeType":mime, "data":data}))
+            .unwrap_or_else(|| block.clone()),
+        _ => block.clone(),
+    }
+}
+
+pub(super) fn mcp_output(item: &Value) -> Vec<Value> {
+    item.pointer("/result/content")
+        .and_then(Value::as_array)
+        .map(|blocks| farcaster_agent_protocol::normalize_tool_output(blocks).into_owned())
+        .unwrap_or_default()
+}
+
+pub(super) fn image_output(item: &Value) -> Vec<Value> {
+    use base64::Engine as _;
+    let mut blocks = Vec::new();
+    let saved = item
+        .get("savedPath")
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty());
+    let inline = item
+        .get("result")
+        .and_then(Value::as_str)
+        .filter(|data| !data.is_empty());
+    let bytes = inline
+        .and_then(|data| {
+            let data = data
+                .strip_prefix("data:")
+                .and_then(|s| s.split_once(";base64,").map(|(_, data)| data))
+                .unwrap_or(data);
+            (data.len() <= 45 * 1024 * 1024)
+                .then(|| base64::engine::general_purpose::STANDARD.decode(data).ok())
+                .flatten()
+        })
+        .or_else(|| {
+            saved.and_then(|path| {
+                (std::fs::metadata(path).ok()?.len() <= 32 * 1024 * 1024)
+                    .then(|| std::fs::read(path).ok())
+                    .flatten()
+            })
+        });
+    if let Some(bytes) = bytes {
+        let mime = if bytes.starts_with(b"\x89PNG") {
+            Some("image/png")
+        } else if bytes.starts_with(b"\xff\xd8\xff") {
+            Some("image/jpeg")
+        } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+            Some("image/webp")
+        } else {
+            None
+        };
+        if let Some(mime) = mime {
+            blocks.push(json!({"type":"image", "mimeType":mime, "data":base64::engine::general_purpose::STANDARD.encode(bytes)}));
+        }
+    }
+    if let Some(path) = saved {
+        blocks.push(json!({"type":"resource_link", "name":std::path::Path::new(path).file_name().unwrap_or_default().to_string_lossy(), "uri":path}));
+    }
+    if blocks.is_empty() {
+        let text = if let Some(failure) = item.get("failure").filter(|v| !v.is_null()) {
+            format!("Image generation failed: {failure}")
+        } else if let Some(id) = item.get("fileId").and_then(Value::as_str) {
+            format!(
+                "Generated image {id} is stored by the provider, but no local file or image bytes are available."
+            )
+        } else {
+            "Image generation returned no previewable image.".to_owned()
+        };
+        blocks.push(json!({"type":"text", "text":text}));
+    }
+    blocks
 }
 
 #[cfg(test)]

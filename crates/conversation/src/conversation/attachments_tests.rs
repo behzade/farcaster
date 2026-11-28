@@ -43,3 +43,16 @@ fn pasted_summary_finds_markers_across_fragment_boundaries() {
         }
     }
 }
+
+#[test]
+fn embedded_file_resources_keep_their_attachment_path() {
+    assert_eq!(
+        result_files(
+            &serde_json::json!({"content":[{"type":"resource","resource":{"uri":"file:///project/file%20one.txt","mimeType":"text/plain","text":"submitted bytes"}}]})
+        ),
+        vec![FileAttachment {
+            name: "file one.txt".into(),
+            path: "/project/file one.txt".into()
+        }]
+    );
+}

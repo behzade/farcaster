@@ -2,6 +2,107 @@ use super::*;
 use crate::agents::Backend;
 
 #[test]
+fn prompt_submission_saves_the_draft_before_a_late_writer_save()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let database = root.path().join("state.sqlite3");
+    let repo = SharedStateStore::open_at(&database)?;
+    let mut writer = StateStore::open_at(&database)?;
+    let old_project = root.path().join("previous-project");
+    let mut stale = DraftSession::fresh(Some(Backend::Pi), old_project.clone());
+    stale.profile_id = Some("old profile".into());
+    let target = sessions::draft_target(&stale.id);
+    let image = PromptImage::new("YWJj".into(), "image/png".into());
+    let images = [image.clone()];
+    let submit = |harness| PromptSubmission {
+        target: &target,
+        harness,
+        project: root.path(),
+        session: None,
+        profile_id: Some("profile"),
+        provisional_title: Some("Composer title"),
+        mode: PromptMode::Normal,
+        message: "expanded prompt",
+        display_message: Some("visible prompt"),
+        invocation: Some("/command"),
+        images: &images,
+    };
+    writer.connection.execute_batch(
+        "CREATE TRIGGER reject_outbox BEFORE INSERT ON outbox BEGIN SELECT RAISE(ABORT,'reject enqueue'); END",
+    )?;
+    assert!(repo.submit_prompt(submit(Backend::Codex)).is_err());
+    assert!(writer.load_drafts()?.is_empty());
+    writer
+        .connection
+        .execute_batch("DROP TRIGGER reject_outbox")?;
+
+    let allocated = writer.save_draft_with_identity(stale.clone())?;
+    let queued = repo.submit_prompt(submit(Backend::Codex))?;
+    assert_eq!(queued.app_session_id, allocated);
+    assert!(queued.bound_session.is_none());
+    assert!(queued.images[0].path.is_some());
+    assert_eq!(queued.images[0].clone().into_inline()?, image);
+    stale.title = Some("Old draft title".into());
+
+    assert_eq!(
+        writer.save_draft_with_identity(stale.clone())?,
+        queued.app_session_id
+    );
+    stale.app_session_id = queued.app_session_id.get();
+    writer.save_session_changes(&SessionStateChanges {
+        drafts: [(stale.id.clone(), Some(stale.clone()))].into(),
+        ..Default::default()
+    })?;
+    let draft = writer.load_drafts()?.remove(0);
+    assert!(draft.submitted);
+    assert_eq!(draft.app_session_id, queued.app_session_id.get());
+    assert_eq!(draft.harness, Some(Backend::Codex));
+    assert_eq!(draft.project, sessions::normalize_session_path(root.path()));
+    assert_eq!(draft.profile_id.as_deref(), Some("profile"));
+    assert_eq!(draft.title.as_deref(), Some("Composer title"));
+    assert!(draft.session_path.is_none());
+
+    let path = sessions::normalize_session_path(&root.path().join("registered"));
+    writer.connection.execute(
+        "UPDATE sessions SET locator=?1, backend_id='native' WHERE id=?2",
+        params![path.to_string_lossy(), draft.app_session_id],
+    )?;
+    for mismatch in [
+        submit(Backend::Pi),
+        PromptSubmission {
+            project: &old_project,
+            ..submit(Backend::Codex)
+        },
+        PromptSubmission {
+            profile_id: None,
+            ..submit(Backend::Codex)
+        },
+    ] {
+        assert!(repo.submit_prompt(mismatch).is_err());
+    }
+    assert_eq!(writer.queued_prompts()?.len(), 1);
+    let retry = repo.submit_prompt(submit(Backend::Codex))?;
+    assert_eq!(retry.app_session_id, queued.app_session_id);
+    assert_eq!(
+        retry.bound_session,
+        Some(sessions::SessionTarget {
+            harness: Backend::Codex,
+            path: path.clone(),
+            id: "native".into(),
+        })
+    );
+    let recovered = writer.queued_prompts()?.remove(0);
+    assert_eq!(recovered.id, queued.outbox_id);
+    assert_eq!(recovered.project, draft.project);
+    assert_eq!(recovered.harness, Backend::Codex);
+    assert_eq!(recovered.session, Some(path));
+    assert_eq!(recovered.backend_session_id.as_deref(), Some("native"));
+    assert_eq!(recovered.images, queued.images);
+    assert_eq!(recovered.display_message.as_deref(), Some("visible prompt"));
+    Ok(())
+}
+
+#[test]
 fn accepted_receipt_stays_pending_and_is_idempotent() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     let database = temp.path().join("state.sqlite3");
@@ -276,10 +377,12 @@ fn every_delivery_path_preserves_expanded_prompt_after_restart_and_repeated_comp
             path.complete(&mut store, id, &session)?;
             drop(store);
             let mut store = StateStore::open_at(&database)?;
+            assert!(!store.can_display_history_tail(&session)?);
             let presentations = store.prompt_presentations(&session)?;
             assert_eq!(
                 presentations,
                 vec![PromptPresentation {
+                    submission_id: Some("expanded-receipt".into()),
                     resolved_message: "Expanded instructions that should stay collapsed".into(),
                     display_message: "$prompt:commit".into(),
                     invocation: "commit".into(),
@@ -470,5 +573,90 @@ fn late_receipt_resolves_accepted_history_without_an_outbox_row()
         |row| row.get(0),
     )?;
     assert_eq!(receipts, 1);
+    Ok(())
+}
+
+#[test]
+fn transcript_prompt_overlay_scopes_deliveries_and_presentations_to_the_owner()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let repository = SharedStateStore::open_at(&root.path().join("state.sqlite3"))?;
+    let path = root.path().join("shared");
+    let session = |harness| TranscriptSession {
+        harness,
+        path: &path,
+        project: root.path(),
+        profile_id: None,
+    };
+    let image = PromptImage::new("YWJj".into(), "image/png".into());
+    for (harness, display) in [(Backend::Pi, "$pi"), (Backend::Codex, "$codex")] {
+        repository.with(|store| {
+            let id = store.enqueue_prompt_with_presentation(
+                "session:shared",
+                harness,
+                root.path(),
+                Some(&path),
+                PromptMode::FollowUp,
+                "same input",
+                Some(display),
+                Some(display),
+                std::slice::from_ref(&image),
+            )?;
+            store.record_prompt_dispatch(id, "shared-receipt")?;
+            store.record_prompt_acceptance(
+                id,
+                "session:shared",
+                Some(&path),
+                "shared-receipt",
+                true,
+            )
+        })?;
+    }
+    let evidence = sessions::PromptDeliveryReconciliation {
+        delivered: vec!["shared-receipt".into()],
+        pending: vec![],
+        absence_is_not_delivered: true,
+    };
+    repository.with(|store| store.record_prompt_receipt_delivered("shared-receipt", None))?;
+    assert_eq!(repository.with(|store| store.queued_prompts())?.len(), 2);
+    let pi = repository.transcript_prompt_overlay(session(Backend::Pi), Some(&evidence))?;
+    assert!(pi.accepted.is_empty());
+    assert_eq!(pi.presentations[0].display_message, "$pi");
+    assert_eq!(
+        pi.presentations[0].submission_id.as_deref(),
+        Some("shared-receipt")
+    );
+    repository.with(|store| {
+        store.connection.execute(
+            "UPDATE session_events SET body=json_remove(body,'$.submissionId') WHERE json_extract(body,'$.type')='prompt_presentation'",
+            [],
+        ).map_err(|error|error.to_string())?;
+        Ok(())
+    })?;
+    assert_eq!(
+        repository
+            .transcript_prompt_overlay(session(Backend::Pi), None)?
+            .presentations,
+        pi.presentations
+    );
+    let codex = repository.transcript_prompt_overlay(session(Backend::Codex), None)?;
+    assert!(codex.presentations.is_empty());
+    assert_eq!(codex.accepted.len(), 1);
+    assert_eq!(codex.accepted[0]["content"][1]["data"], image.data);
+    let wrong = TranscriptSession {
+        profile_id: Some("different"),
+        ..session(Backend::Codex)
+    };
+    assert!(
+        repository
+            .transcript_prompt_overlay(wrong, Some(&evidence))?
+            .accepted
+            .is_empty()
+    );
+    assert!(repository.can_display_transcript_tail(wrong)?);
+    assert!(!repository.can_display_transcript_tail(session(Backend::Codex))?);
+    let pending = repository.with(|store| store.queued_prompts())?;
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].harness, Backend::Codex);
     Ok(())
 }

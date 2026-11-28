@@ -35,6 +35,7 @@ impl PromptInput {
 
     pub(super) fn into_activity(self) -> WorkerActivity {
         WorkerActivity::InputDelivered {
+            source: None,
             submission_id: self.submission_id,
             mode: self.mode,
             message: self.message,

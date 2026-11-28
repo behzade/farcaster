@@ -24,10 +24,11 @@ fn session(id: &str, timestamp: &str, parent: Option<&str>) -> SessionSummary {
 }
 
 fn worker_ids(sessions: &[SessionSummary]) -> Vec<String> {
+    let catalog = crate::sessions::SessionCatalog::from(sessions.to_vec());
     ordered_worker_rows(
-        &crate::sessions::SessionCatalog::from(sessions.to_vec()),
+        &catalog,
         &Default::default(),
-        Some(Path::new("/project/root")),
+        catalog.by_path(Path::new("/project/root")),
     )
     .into_iter()
     .map(|(_, _, session, _)| session.id.clone())

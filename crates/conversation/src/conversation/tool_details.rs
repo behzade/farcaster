@@ -1,11 +1,14 @@
-use std::{io::Write, sync::Arc};
+use std::{borrow::Cow, io::Write, sync::Arc};
 
 use serde_json::Value;
 
 use super::{TranscriptItem, display_tool_name};
 use farcaster_agent_protocol::{CommonTool, ToolCategory, ToolMetadata};
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[path = "command_display.rs"]
+mod command_display;
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ToolExecutionState {
     #[default]
     Pending,
@@ -14,13 +17,15 @@ pub enum ToolExecutionState {
     Failed,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct ToolDetails {
     pub name: String,
     pub arguments: Value,
     pub result: Option<Value>,
     pub metadata: ToolMetadata,
     pub state: ToolExecutionState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) viewport: Option<super::viewport::ToolPreview>,
 }
 
 impl ToolDetails {
@@ -57,14 +62,18 @@ impl ToolDetails {
             result: None,
             metadata,
             state: ToolExecutionState::Pending,
+            viewport: None,
         }
     }
 
     pub fn summary(&self) -> String {
+        if let Some(viewport) = &self.viewport {
+            return viewport.summary.clone();
+        }
         if self.metadata.category == Some(ToolCategory::Execute)
-            && let Some(command) = self.command_preview()
+            && let Some(command) = self.display_command()
         {
-            return short_summary(command);
+            return short_summary(&command);
         }
         if let Some(title) = self
             .metadata
@@ -101,6 +110,10 @@ impl ToolDetails {
             .get("command")
             .and_then(Value::as_str)
             .filter(|command| !command.trim().is_empty())
+    }
+
+    pub fn display_command(&self) -> Option<Cow<'_, str>> {
+        self.command_preview().map(command_display::display)
     }
 
     pub fn inspection_text(&self) -> String {

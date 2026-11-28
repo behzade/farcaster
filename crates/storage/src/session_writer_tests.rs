@@ -1,4 +1,5 @@
 use super::*;
+use crate::{Backend, StateStore, sessions};
 
 fn fixture() -> (tempfile::TempDir, SharedStateStore, DraftSession) {
     let temp = tempfile::tempdir().expect("fixture");
@@ -10,6 +11,71 @@ fn fixture() -> (tempfile::TempDir, SharedStateStore, DraftSession) {
     );
     draft.app_session_id = store.allocate_app_session_id(&draft).expect("draft");
     (temp, SharedStateStore::new(store), draft)
+}
+
+#[test]
+fn selected_sessions_survive_reopen_and_keep_projects_separate() {
+    let (temp, store, first) = fixture();
+    let other_project = temp.path().join("other");
+    let mut second =
+        DraftSession::with_id(Some(Backend::Pi), "second".into(), other_project.clone());
+    second.app_session_id = store
+        .with(|store| store.allocate_app_session_id(&second))
+        .unwrap();
+    let worker_store = store.clone();
+    let (writer, _) = SessionStateWriter::spawn(move || Ok(worker_store.clone()));
+    writer
+        .save_selected_session(first.project.clone(), Some(first.app_session_id))
+        .unwrap();
+    writer
+        .save_selected_session(other_project.clone(), Some(second.app_session_id))
+        .unwrap();
+    futures::executor::block_on(writer.flush()).unwrap();
+    let reopened = StateStore::open_at(&temp.path().join("state.sqlite3")).unwrap();
+    assert_eq!(
+        reopened.load_selected_session(&first.project).unwrap(),
+        Some(first.app_session_id)
+    );
+    assert_eq!(
+        reopened.load_selected_session(&other_project).unwrap(),
+        Some(second.app_session_id)
+    );
+    assert_eq!(
+        reopened.load_last_selected_project().unwrap(),
+        Some(sessions::normalize_session_path(&other_project))
+    );
+
+    writer
+        .save_selected_session(other_project.clone(), Some(second.app_session_id))
+        .unwrap();
+    writer
+        .save_selected_session(first.project.clone(), Some(first.app_session_id))
+        .unwrap();
+    futures::executor::block_on(writer.flush()).unwrap();
+    assert_eq!(
+        reopened.load_last_selected_project().unwrap(),
+        Some(sessions::normalize_session_path(&first.project)),
+        "command order must win over the per-project map's key order"
+    );
+
+    writer
+        .save_selected_session(first.project.clone(), None)
+        .unwrap();
+    futures::executor::block_on(writer.flush()).unwrap();
+    assert_eq!(
+        reopened.load_selected_session(&first.project).unwrap(),
+        None
+    );
+    assert_eq!(
+        reopened.load_selected_session(&other_project).unwrap(),
+        Some(second.app_session_id)
+    );
+
+    store.with(|store| store.remove_draft(&second.id)).unwrap();
+    assert_eq!(
+        reopened.load_selected_session(&other_project).unwrap(),
+        None
+    );
 }
 
 #[test]

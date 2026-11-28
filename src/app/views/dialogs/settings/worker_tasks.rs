@@ -1,14 +1,12 @@
 use super::*;
 use crate::app::ui::primitives::DropdownMenu as _;
 use crate::app::{
-    ui::primitives::dropdown_content_button,
+    ui::primitives::{Dropdown, DropdownItem},
     workspace::worker_tasks::{
         WorkerModelEdit, WorkerProfileEdit, WorkerRouteChoice, WorkerRouteTarget, model_efforts,
     },
 };
-use gpui_component::{
-    Disableable as _, Selectable as _, button::ButtonCustomVariant, menu::PopupMenuItem,
-};
+use gpui_component::{Disableable as _, button::ButtonCustomVariant, menu::PopupMenuItem};
 
 pub(super) fn render(
     app: &FarcasterApp,
@@ -42,7 +40,8 @@ pub(super) fn render(
     }
     let editing = editor.edit.is_some();
     let reload = entity.clone();
-    div().debug_selector(|| "settings-workers".into())
+    div()
+        .debug_selector(|| "settings-workers".into())
         .flex()
         .flex_col()
         .gap(theme().space.md)
@@ -53,24 +52,12 @@ pub(super) fn render(
                 .justify_between()
                 .gap(theme().space.md)
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(theme().space.xs)
-                        .child(
-                            div()
-                                .text_size(theme().type_scale.reading)
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .child("Worker profiles"),
-                        )
-                        .child(
-                            div()
-                                .text_size(theme().type_scale.body_small)
-                                .text_color(theme().colors.muted)
-                                .child(
-                                    "Choose one model and an active worker limit for each profile. An empty profile asks when first used.",
-                                ),
-                        ),
+                    div().flex().flex_col().gap(theme().space.xs).child(
+                        div()
+                            .text_size(theme().type_scale.reading)
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child("Worker profiles"),
+                    ),
                 )
                 .child(settings_action(
                     "worker-reload-choices",
@@ -87,7 +74,6 @@ pub(super) fn render(
                 .flex()
                 .gap(theme().space.md)
                 .child(profile_rail(app, entity.clone(), cx))
-                .child(div().w(theme().size(1.0)).bg(theme().colors.surface).flex_none())
                 .child(profile_detail(app, entity)),
         )
         .into_any_element()
@@ -117,10 +103,8 @@ fn profile_button(
         .child(div().w_full().truncate().child(label))
         .selected(selected)
         .toggled(selected)
-        .when(selected, |button| {
-            button.text_color(theme().colors.indicator)
-        })
-        .on_click(move |_, window, cx| on_press(window, cx))
+        .selection_style(selected)
+        .on_press(enabled, on_press)
 }
 
 fn profile_rail(
@@ -184,24 +168,20 @@ fn profile_rail(
         .gap(theme().space.sm)
         .child(rail)
         .child(
-            div()
-                .border_t_1()
-                .border_color(theme().colors.surface)
-                .pt(theme().space.xs)
-                .child(
-                    profile_button(
-                        "worker-profile-add",
-                        "Add profile",
-                        false,
-                        !editing && !editor.has_draft(),
-                        cx,
-                        move |window, cx| {
-                            let _ = entity
-                                .update(cx, |this, cx| this.edit_worker_profile(None, window, cx));
-                        },
-                    )
-                    .icon(AppIcon::Plus),
-                ),
+            div().pt(theme().space.xs).child(
+                profile_button(
+                    "worker-profile-add",
+                    "Add profile",
+                    false,
+                    !editing && !editor.has_draft(),
+                    cx,
+                    move |window, cx| {
+                        let _ = entity
+                            .update(cx, |this, cx| this.edit_worker_profile(None, window, cx));
+                    },
+                )
+                .icon(AppIcon::Plus),
+            ),
         )
         .into_any_element()
 }
@@ -220,19 +200,12 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
     {
         detail = detail.child(edit_form(edit, entity.clone()));
     } else if editor.inherit_selected {
-        detail = detail
-            .child(
-                div()
-                    .text_size(theme().type_scale.body)
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .child("Same as caller"),
-            )
-            .child(
-                div()
-                    .text_size(theme().type_scale.body_small)
-                    .text_color(theme().colors.muted)
-                    .child("Uses the caller's harness, provider, model, and effort."),
-            );
+        detail = detail.child(
+            div()
+                .text_size(theme().type_scale.body)
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .child("Same as caller"),
+        );
         let limit = entity.clone();
         let toggle = entity.clone();
         detail = detail.child(
@@ -242,7 +215,7 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
                 .child(button(
                     "inherit-limit",
                     format!("Limit: {} active", editor.inherit_limit),
-                    ButtonTone::Quiet,
+                    ButtonTone::Neutral,
                     !editing,
                     move |window, cx| {
                         let _ =
@@ -256,7 +229,7 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
                     } else {
                         "Enable"
                     },
-                    ButtonTone::Quiet,
+                    ButtonTone::Neutral,
                     !editing,
                     move |_, cx| {
                         let _ = toggle.update(cx, |this, cx| this.toggle_worker_profile(None, cx));
@@ -335,7 +308,7 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
         detail = detail.child(div().flex().child(button(
             "worker-profile-limit",
             format!("Limit: {} active", profile.limit),
-            ButtonTone::Quiet,
+            ButtonTone::Neutral,
             !editing,
             move |window, cx| {
                 let _ = limit.update(cx, |this, cx| {
@@ -349,25 +322,32 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
                 profile: selected,
                 model: 0,
             };
-            detail = detail.child(model_card()
-                .child(div().font_weight(gpui::FontWeight::MEDIUM).child("Model"))
-                .child(
-                    div()
-                        .text_size(theme().type_scale.body_small)
-                        .text_color(theme().colors.muted)
-                        .child("No model selected. The first worker request will ask you to choose one."),
-                )
-                .child(div().flex().child(settings_action(
-                    "worker-model-add-empty",
-                    "Choose model",
-                    AppIcon::Plus,
-                    !editing,
-                    move |_, cx| {
-                        let _ = add.update(cx, |this, cx| {
-                            this.edit_worker_models(target, WorkerModelEdit::Add, cx)
-                        });
-                    },
-                ))));
+            detail = detail.child(
+                model_card()
+                    .child(div().font_weight(gpui::FontWeight::MEDIUM).child("Model"))
+                    .child(
+                        div()
+                            .text_size(theme().type_scale.body_small)
+                            .text_color(theme().colors.muted)
+                            .child("Asks for a model on first use."),
+                    )
+                    .child(
+                        div().flex().child(
+                            button(
+                                "worker-model-add-empty",
+                                "Choose model",
+                                ButtonTone::Neutral,
+                                !editing,
+                                move |_, cx| {
+                                    let _ = add.update(cx, |this, cx| {
+                                        this.edit_worker_models(target, WorkerModelEdit::Add, cx)
+                                    });
+                                },
+                            )
+                            .shadow(crate::app::ui::primitives::control_shadow()),
+                        ),
+                    ),
+            );
         } else if let Some(model) = profile.models.first() {
             let target = WorkerRouteTarget {
                 profile: selected,
@@ -375,9 +355,12 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
             };
             detail = detail.child(route(app, entity.clone(), target));
             if model.validate().is_err() {
-                detail = detail.child(div().text_size(theme().type_scale.caption)
-                    .text_color(theme().colors.muted)
-                    .child("Not saved yet. Choose a provider and model; saved settings are unchanged."));
+                detail = detail.child(
+                    div()
+                        .text_size(theme().type_scale.caption)
+                        .text_color(theme().colors.muted)
+                        .child("Unsaved model. Choose a provider and model."),
+                );
             }
             if let Some(edit @ WorkerProfileEdit::Custom { target: edited, .. }) = &editor.edit
                 && *edited == target
@@ -385,13 +368,6 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
                 detail = detail.child(edit_form(edit, entity.clone()));
             }
         }
-    } else {
-        detail = detail.child(
-            div()
-                .py(theme().space.md)
-                .text_color(theme().colors.muted)
-                .child("Add a custom profile, or use Same as caller."),
-        );
     }
     if let Some(error) = &editor.error {
         detail = detail.child(feedback(
@@ -448,7 +424,7 @@ fn route(
         .filter(|model| model.provider == route.provider)
         .map(|model| {
             (
-                model_label(model),
+                crate::agents::model_display_name(route.harness, model),
                 model.id == route.model,
                 WorkerRouteChoice::Model {
                     provider: model.provider.clone(),
@@ -462,7 +438,7 @@ fn route(
         .iter()
         .find(|model| model.provider == route.provider && model.id == route.model);
     let model_label = selected_model
-        .map(model_label)
+        .map(|model| crate::agents::model_display_name(route.harness, model))
         .unwrap_or_else(|| selected(&route.model, "Select model"));
     let efforts = std::iter::once(String::new())
         .chain(model_efforts(&catalog, selected_model).iter().cloned())
@@ -504,17 +480,20 @@ fn route(
                         .flex()
                         .items_center()
                         .gap(theme().space.xs)
-                        .child(settings_action(
-                            "worker-model-clear",
-                            "Clear model",
-                            AppIcon::Eraser,
-                            enabled,
-                            move |_, cx| {
-                                let _ = clear.update(cx, |this, cx| {
-                                    this.edit_worker_models(target, WorkerModelEdit::Remove, cx)
-                                });
-                            },
-                        ))
+                        .child(
+                            button(
+                                "worker-model-clear",
+                                "Clear model",
+                                ButtonTone::Neutral,
+                                enabled,
+                                move |_, cx| {
+                                    let _ = clear.update(cx, |this, cx| {
+                                        this.edit_worker_models(target, WorkerModelEdit::Remove, cx)
+                                    });
+                                },
+                            )
+                            .shadow(crate::app::ui::primitives::control_shadow()),
+                        )
                         .child(
                             actions_button(
                                 ("worker-route-actions", target.model),
@@ -601,16 +580,18 @@ fn route(
                 ),
         );
     if catalog.models.is_empty() {
-        row = row.child(div().text_size(theme().type_scale.caption).text_color(theme().colors.subtle)
-            .child("No catalog yet. Open a session with this harness, then reload choices, or use custom IDs."));
+        row = row.child(
+            div()
+                .text_size(theme().type_scale.caption)
+                .text_color(theme().colors.subtle)
+                .child("No models loaded. Open a session and reload choices, or enter custom IDs."),
+        );
     } else if !route.model.is_empty() && selected_model.is_none() {
         row = row.child(
             div()
                 .text_size(theme().type_scale.caption)
                 .text_color(theme().colors.subtle)
-                .child(
-                    "This model is not in the saved catalog. Worker creation will ask you to choose again. Reload choices or choose a listed model.",
-                ),
+                .child("Model absent from catalog. Reload choices or choose a listed model."),
         );
     }
     row.into_any_element()
@@ -622,8 +603,8 @@ fn model_card() -> gpui::Div {
         .flex_col()
         .gap(theme().space.sm)
         .p(theme().size(12.0))
-        .border_1()
-        .border_color(theme().colors.surface)
+        .rounded(theme().size(6.0))
+        .bg(theme().colors.surface)
 }
 
 fn route_menu(
@@ -655,34 +636,37 @@ fn route_menu(
                 .child(field),
         )
         .child(
-            dropdown_content_button(
+            Dropdown::new(
                 (id, target.model),
-                format!("{}: {label}", id.trim_start_matches("worker-")),
-                div().flex_1().min_w_0().truncate().child(label),
-                ButtonTone::Neutral,
-                enabled && !choices.is_empty(),
-            )
-            .w_full()
-            .dropdown_menu_with_anchor(gpui::Anchor::TopLeft, move |menu, _, _| {
-                choices.iter().fold(
-                    menu.min_w(theme().size(180.0))
-                        .max_h(theme().size(320.0))
-                        .scrollable(true),
-                    |menu, (label, checked, choice)| {
+                label.clone(),
+                choices
+                    .into_iter()
+                    .map(|(label, checked, choice)| {
                         let entity = entity.clone();
-                        let choice = choice.clone();
-                        menu.item(
-                            PopupMenuItem::new(label.clone())
-                                .checked(*checked)
-                                .on_click(move |_, _, cx| {
-                                    let _ = entity.update(cx, |this, cx| {
-                                        this.select_worker_route(target, choice.clone(), cx)
-                                    });
-                                }),
-                        )
-                    },
-                )
-            }),
+                        let icon = match &choice {
+                            WorkerRouteChoice::Harness(harness) => {
+                                Some(AppIcon::for_harness(*harness))
+                            }
+                            _ => None,
+                        };
+                        let item = DropdownItem::new(label, move |_, cx| {
+                            let _ = entity.update(cx, |this, cx| {
+                                this.select_worker_route(target, choice.clone(), cx)
+                            });
+                        })
+                        .selected(checked);
+                        if let Some(icon) = icon {
+                            item.icon(icon)
+                        } else {
+                            item
+                        }
+                    })
+                    .collect(),
+            )
+            .accessibility_label(format!("{field}: {label}"))
+            .shadow(crate::app::ui::primitives::control_shadow())
+            .disabled(!enabled)
+            .w_full(),
         )
         .into_any_element()
 }
@@ -717,7 +701,7 @@ fn edit_form(edit: &WorkerProfileEdit, entity: WeakEntity<FarcasterApp>) -> AnyE
                     div()
                         .text_size(theme().type_scale.caption)
                         .text_color(theme().colors.muted)
-                        .child("Use letters, numbers, '-' or '_'."),
+                        .child("Letters, numbers, '-' or '_'."),
                 );
         }
         WorkerProfileEdit::Limit { input, .. } => {
@@ -726,13 +710,36 @@ fn edit_form(edit: &WorkerProfileEdit, entity: WeakEntity<FarcasterApp>) -> AnyE
                 .child(Input::new(input));
         }
         WorkerProfileEdit::Custom { inputs, .. } => {
-            form = form.child(div().child("Custom IDs"))
-                .child(div().text_size(theme().type_scale.caption).text_color(theme().colors.muted).child("Use exact IDs for models not listed by the harness. Leave effort and service tier blank for their defaults."))
-                .child(div().flex().gap(theme().space.sm).children(["Provider ID", "Model ID", "Effort", "Service tier"].into_iter().zip(inputs).map(|(label, input)| {
-                    div().flex_1().min_w_0().flex().flex_col().gap(theme().space.xs)
-                        .child(div().text_size(theme().type_scale.caption).text_color(theme().colors.muted).child(label))
-                        .child(Input::new(input))
-                })));
+            form = form
+                .child(div().child("Custom IDs"))
+                .child(
+                    div()
+                        .text_size(theme().type_scale.caption)
+                        .text_color(theme().colors.muted)
+                        .child("Exact model IDs. Blank effort and service tier use defaults."),
+                )
+                .child(
+                    div().flex().gap(theme().space.sm).children(
+                        ["Provider ID", "Model ID", "Effort", "Service tier"]
+                            .into_iter()
+                            .zip(inputs)
+                            .map(|(label, input)| {
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(theme().space.xs)
+                                    .child(
+                                        div()
+                                            .text_size(theme().type_scale.caption)
+                                            .text_color(theme().colors.muted)
+                                            .child(label),
+                                    )
+                                    .child(Input::new(input))
+                            }),
+                    ),
+                );
         }
     };
     form.child(
@@ -775,8 +782,4 @@ fn selected(value: &str, placeholder: &str) -> String {
     } else {
         value.into()
     }
-}
-
-fn model_label(model: &crate::protocol::Model) -> String {
-    selected(&model.name, &model.id)
 }

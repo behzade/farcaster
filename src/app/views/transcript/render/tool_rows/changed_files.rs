@@ -1,10 +1,7 @@
 use std::{collections::BTreeMap, path::Path};
 
 use super::*;
-use crate::app::ui::{
-    change_tree::{self, ChangeTreeState, TreeRow},
-    file_icons::file_icon,
-};
+use crate::app::ui::change_tree::{self, ChangeTreeState, TreeRow};
 use crate::app::views::transcript::net_changes::{Edit, NetChanges, unified_edits};
 
 struct ChangedFile {
@@ -137,11 +134,14 @@ pub(super) fn render(
         home.as_deref(),
     );
     let project = project.unwrap_or_default();
+    let columns = crate::app::ui::primitives::DiffColumns::for_counts(
+        files.iter().filter_map(|file| file.counts),
+    );
     let expand = entity
         .upgrade()
         .is_some_and(|entity| entity.read(cx).settings.expand_transcript_folders);
     let default_state = ChangeTreeState::with_default(&project, expand);
-    let rows = change_tree::rows(
+    let (prefix, rows) = change_tree::grouped_rows(
         files
             .iter()
             .enumerate()
@@ -156,6 +156,9 @@ pub(super) fn render(
         .w_full()
         .flex()
         .flex_col()
+        .when(!prefix.as_os_str().is_empty(), |list| {
+            list.child(crate::app::ui::primitives::change_path_prefix(&prefix))
+        })
         .children(rows.into_iter().map(|row| {
             match row {
                 TreeRow::Folder {
@@ -163,8 +166,8 @@ pub(super) fn render(
                     label,
                     depth,
                     open,
-                    count,
                     counts,
+                    ..
                 } => {
                     let entity = entity.clone();
                     let project = project.clone();
@@ -182,37 +185,43 @@ pub(super) fn render(
                         },
                     )
                     .aria_expanded(open)
+                    .mt(theme().space.xs)
                     .h(theme().size(22.0))
-                    .pl(px(depth as f32 * 12.0))
-                    .text_size(theme().type_scale.body_small)
+                    .pl(crate::app::ui::grid::tree_indent(depth))
+                    .text_size(theme().type_scale.caption)
                     .text_color(theme().colors.muted)
-                    .child(app_icon(
+                    .child(crate::app::ui::grid::icon_slot().child(app_icon(
                         if open {
                             AppIcon::CaretDown
                         } else {
                             AppIcon::CaretRight
                         },
                         AppIconSize::Inline,
-                    ))
-                    .child(div().min_w_0().text_ellipsis().child(label))
+                    )))
+                    .child(crate::app::ui::primitives::change_group_label(label))
                     .when(!open, |row| {
-                        row.child(crate::app::ui::primitives::folder_change_summary(
-                            count, counts,
+                        row.children(crate::app::ui::primitives::diff_count_columns(
+                            counts, false, columns,
                         ))
                     })
                     .into_any_element()
                 }
-                TreeRow::File { index, depth } => div()
+                TreeRow::File { index, .. } => div()
                     .w_full()
-                    .pl(px(depth as f32 * 12.0))
-                    .child(file_row(key, &files[index], entity.clone()))
+                    .pl(crate::app::ui::grid::detail_indent())
+                    .child(file_row(key, &files[index], columns, entity.clone()))
                     .into_any_element(),
             }
         }))
         .into_any_element()
 }
 
-fn file_row(key: usize, file: &ChangedFile, entity: WeakEntity<FarcasterApp>) -> AnyElement {
+fn file_row(
+    key: usize,
+    file: &ChangedFile,
+    columns: crate::app::ui::primitives::DiffColumns,
+    entity: WeakEntity<FarcasterApp>,
+) -> AnyElement {
     let label = Path::new(&file.label)
         .file_name()
         .unwrap_or_default()
@@ -232,17 +241,21 @@ fn file_row(key: usize, file: &ChangedFile, entity: WeakEntity<FarcasterApp>) ->
     )
     .h(theme().size(22.0))
     .text_size(theme().type_scale.body_small)
-    .child(file_icon(Path::new(&file.path)))
     .child(
         div()
             .min_w_0()
+            .flex_1()
             .overflow_hidden()
             .whitespace_nowrap()
             .text_ellipsis()
             .text_color(theme().colors.text)
             .child(label),
     )
-    .children(tool_changes::change_counts(file.counts.unwrap_or_default()))
+    .children(crate::app::ui::primitives::diff_count_columns(
+        file.counts,
+        false,
+        columns,
+    ))
     .into_any_element()
 }
 

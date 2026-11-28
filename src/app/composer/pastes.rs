@@ -49,7 +49,7 @@ impl FarcasterApp {
     pub(crate) fn current_composer_pastes(&self) -> &[ComposerPaste] {
         self.composer
             .pastes
-            .get(self.composer.sessions.current_target())
+            .get(self.composer.sessions.current_buffer())
             .map(Vec::as_slice)
             .unwrap_or_default()
     }
@@ -64,7 +64,7 @@ impl FarcasterApp {
         let Some(paste) = store_long_paste(&text).ok().flatten() else {
             return false;
         };
-        let target = self.composer.sessions.current_target().to_owned();
+        let target = self.composer.sessions.current_buffer().to_owned();
         self.composer
             .pastes
             .entry(target.clone())
@@ -76,7 +76,7 @@ impl FarcasterApp {
     }
 
     pub(crate) fn remove_composer_paste(&mut self, index: usize, cx: &mut Context<Self>) {
-        let target = self.composer.sessions.current_target().to_owned();
+        let target = self.composer.sessions.current_buffer().to_owned();
         if let Some(pastes) = self.composer.pastes.get_mut(&target)
             && index < pastes.len()
         {
@@ -250,6 +250,22 @@ fn unique_paste_name() -> String {
         .as_nanos();
     let sequence = PASTE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     format!("pasted-text-{timestamp}-{sequence}.txt")
+}
+
+pub(super) fn store_attachment(source: &Path, content: String) -> Result<ComposerPaste, String> {
+    let directory = paste_directory()?.join(uuid::Uuid::new_v4().to_string());
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("create attachment directory: {error}"))?;
+    let path = directory.join(source.file_name().ok_or("File has no name")?);
+    let mut file =
+        open_private_file(&path).map_err(|error| format!("create attachment: {error}"))?;
+    file.write_all(content.as_bytes())
+        .map_err(|error| format!("write attachment: {error}"))?;
+    Ok(ComposerPaste {
+        path,
+        line_count: content.lines().count().max(1),
+        content,
+    })
 }
 
 #[cfg(test)]

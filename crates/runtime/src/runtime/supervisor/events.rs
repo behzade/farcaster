@@ -3,52 +3,6 @@ use crate::agents::Backend;
 use std::path::Path;
 
 impl Supervisor {
-    pub(super) fn restore_account_usage(&self, snapshot: &mut RuntimeSnapshot) {
-        let Some(harness) = snapshot.harness else {
-            return;
-        };
-        if let Some((observed_at, usage)) = self
-            .account_usage
-            .get(&(harness, snapshot.profile_id.clone()))
-        {
-            snapshot.account_usage.clone_from(usage);
-            snapshot.account_usage_observed_at = Some(*observed_at);
-        }
-    }
-
-    fn reconcile_account_usage(&mut self, source: &str, snapshot: &mut RuntimeSnapshot) {
-        let Some(harness) = snapshot.harness else {
-            return;
-        };
-        let scope = (harness, snapshot.profile_id.clone());
-        if let Some(observed_at) = snapshot.account_usage_observed_at
-            && self
-                .account_usage
-                .get(&scope)
-                .is_none_or(|(previous, _)| observed_at > *previous)
-        {
-            self.account_usage
-                .insert(scope.clone(), (observed_at, snapshot.account_usage.clone()));
-            for (key, resident) in &mut self.latest {
-                if key != source
-                    && resident.harness == Some(harness)
-                    && resident.profile_id == scope.1
-                {
-                    let updated = Arc::make_mut(resident);
-                    updated.account_usage.clone_from(&snapshot.account_usage);
-                    updated.account_usage_observed_at = Some(observed_at);
-                    if key == &self.selected {
-                        let _ = self.event_tx.send(RuntimeEvent::Snapshot {
-                            generation: self.generation,
-                            snapshot: resident.clone(),
-                        });
-                    }
-                }
-            }
-        }
-        self.restore_account_usage(snapshot);
-    }
-
     pub(super) fn drain_configuration_updates(&mut self) {
         while let Ok((harness, profile_id, project, result)) = self.configuration_rx.try_recv() {
             match result {
@@ -138,7 +92,7 @@ impl Supervisor {
         }
     }
 
-    fn handle_actor_event(&mut self, key: String, event: RuntimeEvent) {
+    pub(super) fn handle_actor_event(&mut self, key: String, event: RuntimeEvent) {
         match event {
             RuntimeEvent::SessionMetadata(metadata) => {
                 if let Some(catalog) = self.actors.get(&self.catalog_key) {
@@ -146,34 +100,84 @@ impl Supervisor {
                 }
             }
             RuntimeEvent::SessionUpdated(mut session) => {
-                if let Some(running) = self.live_catalog_running_for(&session.path) {
+                if let Some(running) = self.live_catalog_running_for(
+                    &session,
+                    self.catalog_sessions
+                        .at_path(&session.path)
+                        .any(|row| !row.same_record(&session)),
+                    &self.catalog_sessions,
+                ) {
                     session.is_running = running;
                 }
-                let changed = if let Some(previous) = self
-                    .catalog_sessions
-                    .iter_mut()
-                    .find(|s| s.path == session.path)
-                {
-                    if *previous == session {
-                        false
-                    } else {
-                        *previous = session.clone();
-                        true
-                    }
-                } else {
-                    self.catalog_sessions.push(session.clone());
-                    true
-                };
-                if changed {
+                if self.catalog_sessions.upsert_in_place(session.clone()) {
                     let _ = self.event_tx.send(RuntimeEvent::SessionUpdated(session));
                 }
             }
-            RuntimeEvent::AgentActivityUpdated(activity) => {
+            RuntimeEvent::SessionArchiveResult { request, rows } => {
+                if let Ok(rows) = &rows {
+                    let requested_path = match &request.target {
+                        ArchiveTarget::Native(target) => Some(target.path.as_path()),
+                        ArchiveTarget::Path(path) => Some(path.as_path()),
+                        ArchiveTarget::App(_) | ArchiveTarget::Draft(_) => None,
+                    };
+                    for row in rows {
+                        let index = self
+                            .catalog_sessions
+                            .apply_archive_result(row, requested_path, request.archived)
+                            .unwrap_or_else(|| {
+                                let mut session = row.clone();
+                                if let Some(running) = self.live_catalog_running_for(
+                                    &session,
+                                    self.catalog_sessions.by_path(&session.path).is_some(),
+                                    &self.catalog_sessions,
+                                ) {
+                                    session.is_running = running;
+                                }
+                                self.catalog_sessions.push(session.clone());
+                                let _ = self.event_tx.send(RuntimeEvent::SessionUpdated(session));
+                                self.catalog_sessions.len() - 1
+                            });
+                        reconcile_live_session_documents(
+                            std::slice::from_ref(&self.catalog_sessions[index]),
+                            &self.catalog_sessions,
+                            &self.interacted,
+                            &self.selected,
+                            &mut self.actors,
+                            &mut self.latest,
+                            &mut self.last_touch,
+                            &mut self.document_revisions,
+                            &mut self.actor_paths,
+                            &self.process_command,
+                            &self.supervisor_thread,
+                            &self.host,
+                        );
+                    }
+                }
                 let _ = self
                     .event_tx
-                    .send(RuntimeEvent::AgentActivityUpdated(activity));
+                    .send(RuntimeEvent::SessionArchiveResult { request, rows });
             }
-            event @ (RuntimeEvent::SystemNotification { .. }
+            RuntimeEvent::WorkerSnapshot(snapshot) => {
+                if let Some(session) =
+                    catalog::session_for_worker_snapshot(&self.catalog_sessions, &snapshot)
+                {
+                    let activity = AgentActivity::from_worker_status(
+                        session,
+                        snapshot.status,
+                        snapshot.output.is_some(),
+                    );
+                    let _ = self.event_tx.send(RuntimeEvent::AgentActivityUpdated {
+                        key: session.activity_key(),
+                        activity,
+                    });
+                } else if let Some(catalog) = self.actors.get(&self.catalog_key) {
+                    catalog.send(RuntimeCommand::RefreshSessions);
+                }
+            }
+            event @ (RuntimeEvent::AgentActivityUpdated { .. }
+            | RuntimeEvent::DraftPromptCommitted { .. }
+            | RuntimeEvent::DraftIdentitySaved { .. }
+            | RuntimeEvent::SystemNotification { .. }
             | RuntimeEvent::TurnCompletedNotification { .. }) => {
                 let _ = self.event_tx.send(event);
             }
@@ -218,7 +222,6 @@ impl Supervisor {
                 let identity_changed = self
                     .configurations
                     .reconcile_snapshot(Arc::make_mut(&mut snapshot), adopts_identity);
-                self.reconcile_account_usage(&key, Arc::make_mut(&mut snapshot));
                 if identity_changed {
                     persist_configurations(self.catalog_state.as_ref(), &self.configurations);
                 }
@@ -240,35 +243,37 @@ impl Supervisor {
                     }
                 }
                 if let Some(running) = live_catalog_running(&snapshot)
-                    && let Some(path) = snapshot.live_session.as_ref()
-                    && let Some(session) = self
-                        .catalog_sessions
-                        .iter_mut()
-                        .find(|session| &session.path == path)
-                    && session.is_running != running
+                    && let Some(path) = snapshot.live_session.as_deref()
+                    && let Some(record) = resident_status_record(
+                        &self.published_statuses,
+                        &self.catalog_sessions,
+                        &key,
+                        Some(&snapshot),
+                        Some(path),
+                    )
+                    && let Some(session) =
+                        self.catalog_sessions.set_record_running(&record, running)
                 {
-                    session.is_running = running;
                     let _ = self
                         .event_tx
                         .send(RuntimeEvent::SessionUpdated(session.clone()));
                 }
                 let status = session_status(&self.needs_input, &key, &snapshot);
-                publish_session_status_if_changed(
+                publish_resident_status(
                     &self.event_tx,
                     &mut self.published_statuses,
+                    &self.catalog_sessions,
                     &key,
-                    snapshot
-                        .live_session
-                        .clone()
-                        .or_else(|| snapshot.selected_session.clone()),
+                    Some(&snapshot),
                     status,
                 );
                 if let Some(path) = snapshot
                     .live_session
                     .clone()
                     .or_else(|| snapshot.selected_session.clone())
+                    && let Some(harness) = snapshot.harness
                 {
-                    self.actor_paths.insert(path, key.clone());
+                    self.actor_paths.insert(path, harness, key.clone());
                 }
                 self.latest.insert(key.clone(), snapshot.clone());
                 if key == self.selected {
@@ -296,14 +301,12 @@ impl Supervisor {
                 }
                 if let Some(snapshot) = self.latest.get(&key) {
                     let status = session_status(&self.needs_input, &key, snapshot);
-                    publish_session_status_if_changed(
+                    publish_resident_status(
                         &self.event_tx,
                         &mut self.published_statuses,
+                        &self.catalog_sessions,
                         &key,
-                        snapshot
-                            .live_session
-                            .clone()
-                            .or_else(|| snapshot.selected_session.clone()),
+                        Some(snapshot),
                         status,
                     );
                 }
@@ -345,17 +348,12 @@ impl Supervisor {
                     if request.is_blocking() {
                         self.needs_input.insert(key.clone());
                     }
-                    let session = self.latest.get(&key).and_then(|snapshot| {
-                        snapshot
-                            .live_session
-                            .clone()
-                            .or_else(|| snapshot.selected_session.clone())
-                    });
-                    publish_session_status_if_changed(
+                    publish_resident_status(
                         &self.event_tx,
                         &mut self.published_statuses,
+                        &self.catalog_sessions,
                         &key,
-                        session,
+                        self.latest.get(&key).map(AsRef::as_ref),
                         self.latest
                             .get(&key)
                             .map(|snapshot| session_status(&self.needs_input, &key, snapshot))
@@ -414,21 +412,26 @@ impl Supervisor {
                         ..
                     } = &mut event
                 {
-                    let running: HashSet<_> = self
-                        .catalog_sessions
-                        .iter()
-                        .filter(|session| session.is_running)
-                        .map(|session| &session.path)
-                        .collect();
-                    for session in all_sessions.iter_mut().chain(sessions.iter_mut()) {
-                        session.is_running = self
-                            .live_catalog_running_for(&session.path)
-                            .unwrap_or_else(|| running.contains(&session.path));
+                    let mut next = sessions::SessionCatalog::from(all_sessions.clone());
+                    for row in all_sessions.iter_mut().chain(sessions.iter_mut()) {
+                        let shared = next.has_shared_path(&row.path);
+                        let running = self
+                            .live_catalog_running_for(row, shared, &next)
+                            .unwrap_or_else(|| {
+                                SessionStatusRecord::for_row(row)
+                                    .resolve(&self.catalog_sessions)
+                                    .is_some_and(|previous| previous.is_running)
+                            });
+                        if row.is_running != running {
+                            next.set_record_running(&SessionStatusRecord::for_row(row), running);
+                            row.is_running = running;
+                        }
                     }
                     self.catalog_generation = *next_generation;
-                    self.catalog_sessions.clone_from(all_sessions);
+                    self.catalog_sessions = next;
                     reconcile_live_session_documents(
                         all_sessions,
+                        &self.catalog_sessions,
                         &self.interacted,
                         &self.selected,
                         &mut self.actors,
@@ -453,21 +456,48 @@ impl Supervisor {
                 }
             }
             RuntimeEvent::Stopped
+            | RuntimeEvent::SelectionRouted(_)
+            | RuntimeEvent::SelectionRejected(_)
             | RuntimeEvent::SessionTarget(_)
             | RuntimeEvent::SessionMoved { .. }
             | RuntimeEvent::SessionDeleted { .. }
             | RuntimeEvent::SessionStatus { .. }
             | RuntimeEvent::SessionReset { .. }
+            | RuntimeEvent::AccountsChanged(_)
             | RuntimeEvent::HistoryReset { .. } => {}
         }
     }
 
-    fn live_catalog_running_for(&self, path: &Path) -> Option<bool> {
-        self.actor_paths
-            .get(path)
-            .and_then(|key| self.latest.get(key))
-            .filter(|snapshot| snapshot.live_session.as_deref() == Some(path))
-            .and_then(|snapshot| live_catalog_running(snapshot))
+    fn live_catalog_running_for(
+        &self,
+        row: &SessionSummary,
+        shared: bool,
+        catalog: &sessions::SessionCatalog,
+    ) -> Option<bool> {
+        let path = &row.path;
+        let snapshot = if shared {
+            self.latest.iter().find_map(|(actor, snapshot)| {
+                if snapshot.live_session.as_ref() != Some(path) {
+                    return None;
+                }
+                let record = resident_status_record(
+                    &self.published_statuses,
+                    catalog,
+                    actor,
+                    Some(snapshot),
+                    Some(path),
+                )?;
+                record.matches(row).then_some(snapshot)
+            })
+        } else {
+            self.actor_paths
+                .get(path, row.harness)
+                .and_then(|key| self.latest.get(key))
+                .filter(|snapshot| {
+                    snapshot.live_session.as_ref() == Some(path) && snapshot.matches_lone_row(row)
+                })
+        }?;
+        live_catalog_running(snapshot)
     }
 }
 

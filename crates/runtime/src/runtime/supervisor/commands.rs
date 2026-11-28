@@ -2,6 +2,51 @@ use super::*;
 use crate::agents::Backend;
 
 impl Supervisor {
+    fn routed_actor_key(&self, command: &RuntimeCommand, requested: &str) -> String {
+        if let RuntimeCommand::SelectSession {
+            key,
+            path,
+            project,
+            harness,
+            session_id,
+            ..
+        }
+        | RuntimeCommand::RestartSession {
+            key,
+            path,
+            project,
+            harness,
+            session_id,
+            ..
+        } = command
+        {
+            if self.catalog_sessions.has_shared_path(path) {
+                let matches = |row: &SessionSummary| {
+                    row.path == *path
+                        && row.harness == *harness
+                        && row.project == *project
+                        && row.id == *session_id
+                };
+                let row = match key {
+                    Some(key) => self.catalog_sessions.by_key(key).filter(|row| matches(row)),
+                    None => self.catalog_sessions.at_path(path).find(|row| matches(row)),
+                };
+                if let Some(row) = row {
+                    return documents::catalog_actor_key(
+                        row,
+                        &self.catalog_sessions,
+                        &self.actor_paths,
+                        &self.latest,
+                    );
+                }
+                if let Some(key) = key {
+                    return documents::record_actor_key(key);
+                }
+            }
+        }
+        actor_key_for_command(command, requested, &self.actor_paths, &self.latest)
+    }
+
     fn send_to_session(&mut self, command: RuntimeCommand) {
         let RuntimeCommand::SendToSession {
             submission_id,
@@ -17,7 +62,7 @@ impl Supervisor {
             let config = match configuration_for_target(
                 &self.process_command,
                 self.catalog_state.as_ref(),
-                LaunchTarget::Session(&session.path),
+                LaunchTarget::Session(&session.path, Some(session.harness)),
             ) {
                 Ok(config) => config,
                 Err(error) => {
@@ -31,18 +76,21 @@ impl Supervisor {
                     return;
                 }
             };
-            let access_mode = saved_access_mode(self.catalog_state.as_ref(), &session.path);
+            let access_mode = saved_access_mode(
+                self.catalog_state.as_ref(),
+                &session.path,
+                Some(session.harness),
+            );
             let select = RuntimeCommand::SelectSession {
+                display_stamp: None,
                 path: session.path.clone(),
                 harness: session.harness,
                 session_id: session.id.clone(),
                 project: project.clone(),
+                key: None,
+                request: None,
             };
-            let key = self
-                .actor_paths
-                .get(&session.path)
-                .cloned()
-                .unwrap_or_else(|| actor_key_for_command(&select, target, &self.latest));
+            let key = self.routed_actor_key(&select, target);
             let resident = self.latest.get(&key);
             let actor = self.actors.entry(key.clone()).or_insert_with(|| {
                 SessionRuntimeHandle::spawn(
@@ -63,7 +111,8 @@ impl Supervisor {
                     config.profile_id.as_deref(),
                 );
             }
-            self.actor_paths.insert(session.path.clone(), key.clone());
+            self.actor_paths
+                .insert(session.path.clone(), session.harness, key.clone());
             key
         } else {
             target.clone()
@@ -120,6 +169,7 @@ impl Supervisor {
             submission_id,
             target: key.clone(),
             mode: PromptMode::Normal,
+            provisional_title: crate::sessions::provisional_session_title(&message),
             message,
             display_message: None,
             invocation: None,
@@ -213,7 +263,7 @@ impl Supervisor {
                             .find_map(|(path, key)| (key == target).then_some(path.as_path()))
                     })
                     .or_else(|| crate::sessions::session_path(target))
-                    .map(LaunchTarget::Session)
+                    .map(|p| LaunchTarget::Session(p, Some(harness)))
                     .or_else(|| crate::sessions::draft_id(target).map(LaunchTarget::Draft))
             })
             .ok_or_else(|| format!("Missing launch target: {target}"))?;
@@ -246,13 +296,33 @@ impl Supervisor {
         });
     }
 
+    fn signal_actor(&self, target: &str) -> Option<&SessionRuntimeHandle> {
+        if let Some((harness, address)) = sessions::composer_buffer_parts(target) {
+            let path = sessions::session_path(address)?;
+            let matches = |snapshot: &Arc<RuntimeSnapshot>| {
+                snapshot.harness == Some(harness)
+                    && (snapshot.selected_session.as_deref() == Some(path)
+                        || snapshot.live_session.as_deref() == Some(path))
+            };
+            if self.latest.get(&self.selected).is_some_and(matches) {
+                return self.actors.get(&self.selected);
+            }
+            let mut owners = self.latest.iter().filter(|(_, snapshot)| matches(snapshot));
+            let (key, _) = owners.next()?;
+            if owners.next().is_some() {
+                return None;
+            }
+            return self.actors.get(key);
+        }
+        let key = sessions::session_path(target)
+            .and_then(|path| self.actor_paths.last_at(path))
+            .map_or(target, String::as_str);
+        self.actors.get(key)
+    }
+
     fn drain_signals(&self) {
         for (target, signal) in self.signal_rx.try_iter() {
-            let key = target
-                .strip_prefix("session:")
-                .and_then(|path| self.actor_paths.get(std::path::Path::new(path)))
-                .unwrap_or(&target);
-            if let Some(actor) = self.actors.get(key) {
+            if let Some(actor) = self.signal_actor(&target) {
                 actor.signal(signal);
             }
         }
@@ -265,7 +335,12 @@ impl Supervisor {
         ) {
             Ok(RuntimeCommand::Shutdown) => false,
             Ok(command) => {
+                if matches!(command, RuntimeCommand::RefreshAccounts) {
+                    self.accounts.refresh();
+                    return true;
+                }
                 if matches!(command, RuntimeCommand::SystemWake) {
+                    self.accounts.invalidate();
                     for actor in self.actors.values() {
                         actor.send(command.clone());
                     }
@@ -305,17 +380,12 @@ impl Supervisor {
                             self.needs_input.remove(&self.selected);
                         }
                     }
-                    let session = self.latest.get(&self.selected).and_then(|snapshot| {
-                        snapshot
-                            .live_session
-                            .clone()
-                            .or_else(|| snapshot.selected_session.clone())
-                    });
-                    publish_session_status_if_changed(
+                    publish_resident_status(
                         &self.event_tx,
                         &mut self.published_statuses,
+                        &self.catalog_sessions,
                         &self.selected,
-                        session,
+                        self.latest.get(&self.selected).map(AsRef::as_ref),
                         if self.needs_input.contains(&self.selected) {
                             RunStatus::NeedsInput
                         } else if agents::is_child_input_id(id)
@@ -354,8 +424,9 @@ impl Supervisor {
                     if snapshot.live_session.is_none()
                         && let Some(session) = snapshot.selected_session.as_deref()
                         && let Some(state) = self.catalog_state.as_ref()
-                        && let Err(error) =
-                            state.with(|store| store.set_session_access_mode(session, *mode))
+                        && let Err(error) = state.with(|store| {
+                            store.set_session_access_mode_for_backend(session, Some(harness), *mode)
+                        })
                     {
                         zlog::error!("Save session access mode: {error}");
                     }
@@ -388,14 +459,13 @@ impl Supervisor {
                 if let Some((requested_key, project, harness)) = next {
                     let _selection_timing = is_view_only_selection(&command)
                         .then(|| self.host.timer(RuntimeMetric::RuntimeRoute));
-                    let key = match &command {
-                        RuntimeCommand::SelectSession { path, .. }
-                        | RuntimeCommand::RestartSession { path, .. } => {
-                            self.actor_paths.get(path).cloned().unwrap_or_else(|| {
-                                actor_key_for_command(&command, &requested_key, &self.latest)
-                            })
-                        }
-                        _ => actor_key_for_command(&command, &requested_key, &self.latest),
+                    let key = self.routed_actor_key(&command, &requested_key);
+                    let sequence = match &command {
+                        RuntimeCommand::NewSession { request, .. }
+                        | RuntimeCommand::ResumeDraft { request, .. }
+                        | RuntimeCommand::SelectSession { request, .. }
+                        | RuntimeCommand::RestartSession { request, .. } => *request,
+                        _ => None,
                     };
                     let profile_id = match configuration_for_target(
                         &self.process_command,
@@ -404,10 +474,25 @@ impl Supervisor {
                     ) {
                         Ok(config) => config.profile_id,
                         Err(error) => {
+                            if let Some(sequence) = sequence {
+                                let _ = self
+                                    .event_tx
+                                    .send(RuntimeEvent::SelectionRejected(sequence));
+                            }
                             self.report_configuration_error(error);
                             return true;
                         }
                     };
+                    if matches!(
+                        &command,
+                        RuntimeCommand::NewSession { .. } | RuntimeCommand::ResumeDraft { .. }
+                    ) && self.latest.get(&key).is_some_and(|snapshot| {
+                        snapshot.harness != harness
+                            || snapshot.project != project
+                            || snapshot.profile_id != profile_id
+                    }) {
+                        self.latest.remove(&key);
+                    }
                     if let Some(harness) = harness {
                         self.request_configuration(
                             harness,
@@ -431,6 +516,9 @@ impl Supervisor {
                             });
                         }
                     }
+                    if let Some(sequence) = sequence {
+                        let _ = self.event_tx.send(RuntimeEvent::SelectionRouted(sequence));
+                    }
                     let next_selected_session = match &command {
                         RuntimeCommand::SelectSession { path, .. }
                         | RuntimeCommand::RestartSession { path, .. } => Some(path.clone()),
@@ -438,19 +526,21 @@ impl Supervisor {
                     };
                     self.selected_project = project.clone();
                     self.selected_session = next_selected_session;
-                    let resident_snapshot = self.latest.get(&key).cloned();
+                    let resident_snapshot = self.latest.get(&key).filter(|snapshot| {
+                        !matches!(&command, RuntimeCommand::SelectSession { display_stamp, .. } if snapshot.needs_saved_revision(*display_stamp))
+                    }).cloned();
                     let access_mode = match &command {
                         RuntimeCommand::ForkSession { path, .. }
                         | RuntimeCommand::SelectSession { path, .. }
                         | RuntimeCommand::RestartSession { path, .. } => {
-                            saved_access_mode(self.catalog_state.as_ref(), path)
+                            saved_access_mode(self.catalog_state.as_ref(), path, harness)
                         }
                         _ => None,
                     };
-                    if let RuntimeCommand::SelectSession { path, .. }
-                    | RuntimeCommand::RestartSession { path, .. } = &command
+                    if let RuntimeCommand::SelectSession { path, harness, .. }
+                    | RuntimeCommand::RestartSession { path, harness, .. } = &command
                     {
-                        self.actor_paths.insert(path.clone(), key.clone());
+                        self.actor_paths.insert(path.clone(), *harness, key.clone());
                     }
                     let actor = self.actors.entry(key.clone()).or_insert_with(|| {
                         SessionRuntimeHandle::spawn(
@@ -475,10 +565,7 @@ impl Supervisor {
                         if snapshot.profile_id != profile_id {
                             let snapshot = Arc::make_mut(&mut snapshot);
                             snapshot.profile_id = profile_id;
-                            snapshot.account_usage = Default::default();
-                            snapshot.account_usage_observed_at = None;
                         }
-                        self.restore_account_usage(Arc::make_mut(&mut snapshot));
                         self.configurations
                             .refresh_snapshot_catalog(Arc::make_mut(&mut snapshot));
                         if let Some(mode) = access_mode {
@@ -517,7 +604,20 @@ impl Supervisor {
                     } else {
                         &self.selected
                     };
-                    if let Some(actor) = self.actors.get(target) {
+                    if let RuntimeCommand::SetSessionArchived { request, .. } = &command {
+                        let request = request.clone();
+                        if let Err(message) = self
+                            .actors
+                            .get(target)
+                            .ok_or_else(|| "Session catalog is unavailable".to_owned())
+                            .and_then(|actor| actor.try_send(command))
+                        {
+                            let _ = self.event_tx.send(RuntimeEvent::SessionArchiveResult {
+                                request,
+                                rows: Err(message),
+                            });
+                        }
+                    } else if let Some(actor) = self.actors.get(target) {
                         actor.send(command);
                     }
                 }
@@ -525,7 +625,7 @@ impl Supervisor {
             }
             Err(mpsc::TryRecvError::Empty) => {
                 self.drain_signals();
-                thread::park();
+                thread::park_timeout(Duration::from_secs(30));
                 true
             }
             Err(mpsc::TryRecvError::Disconnected) => false,

@@ -1,6 +1,32 @@
 use super::*;
 use crate::agents::Backend;
 
+#[test]
+fn session_metadata_waits_for_a_concurrent_writer_before_reading_its_profile()
+-> Result<(), Box<dyn std::error::Error>> {
+    thread_local! {
+        static BLOCKER: std::cell::RefCell<Option<rusqlite::Connection>> = const { std::cell::RefCell::new(None) };
+    }
+    let dir = tempfile::tempdir()?;
+    let db = dir.path().join("state.sqlite3");
+    let mut store = StateStore::open_at(&db)?;
+    let mut update = metadata("busy");
+    let original = store.update_session_metadata(&update)?;
+    let other = rusqlite::Connection::open(&db)?;
+    other.execute_batch("BEGIN IMMEDIATE; UPDATE projects SET added_ms=added_ms+1")?;
+    BLOCKER.set(Some(other));
+    store.connection.busy_handler(Some(|_| {
+        BLOCKER
+            .take()
+            .is_some_and(|writer| writer.execute_batch("COMMIT").is_ok())
+    }))?;
+    update.title = Some("Updated".into());
+    let saved = store.update_session_metadata(&update)?;
+    assert_eq!(saved.app_session_id, original.app_session_id);
+    assert_eq!(saved.title, "Updated");
+    Ok(())
+}
+
 #[cfg(unix)]
 use std::{fs, os::unix::fs::symlink};
 
@@ -54,7 +80,6 @@ fn detaching_discovered_forks_preserves_archive_visibility()
             )?;
             drop(store);
             let mut store = StateStore::open_at(&database)?;
-            // No native evidence: migration must retain these links until discovery verifies them.
             let stale = store.cached_sessions("")?;
             assert!(
                 stale
@@ -96,7 +121,6 @@ fn detaching_discovered_forks_preserves_archive_visibility()
                 let worker = cached.iter().find(|s| s.id == id).expect("session");
                 assert_eq!(worker.parent_app_session_id, Some(source.app_session_id));
             }
-            // Once independent, a stale parent must not change archive visibility again.
             store.connection.execute_batch(
                 "UPDATE sessions SET archived_at=NULL WHERE backend_id='fork';
                  UPDATE sessions SET archived_at=789 WHERE backend_id='source';",
@@ -132,7 +156,6 @@ fn fork_ancestry_stays_separate_after_stale_discovery_and_reopen() -> Result<(),
     fork_update.parent_session = None;
     fork_update.forked_from = Some(source.id.clone());
     store.update_session_metadata(&fork_update)?;
-    // An old catalog response must not restore the mistaken family link.
     store.index_sessions(std::slice::from_ref(&stale_fork), false)?;
     assert!(
         store
@@ -149,7 +172,6 @@ fn fork_ancestry_stays_separate_after_stale_discovery_and_reopen() -> Result<(),
             .iter()
             .all(|s| s.parent_session.is_none())
     );
-    // Binding a duplicate record must not restore its stale parent either.
     let tx = store.connection.transaction().map_err(|e| e.to_string())?;
     tx.execute(
         "UPDATE sessions SET archived_at=123 WHERE backend_id='source'",
@@ -595,6 +617,39 @@ fn metadata_readback_failure_rolls_back_the_update() -> Result<(), String> {
     assert_eq!(restored.len(), 1);
     assert_eq!(restored[0].title, original.title);
     assert_eq!(restored[0].message_count, original.message_count);
+    Ok(())
+}
+
+#[test]
+fn exact_metadata_match_preserves_a_separate_legacy_record()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    let mut update = metadata("active");
+    update.project = temp.path().canonicalize()?;
+    update.path = update.project.join("active.jsonl");
+    let active = store.update_session_metadata(&update)?.app_session_id;
+    let mut other = update.clone();
+    other.id = "older".into();
+    other.path = update.project.join("older.jsonl");
+    let older = store.update_session_metadata(&other)?.app_session_id;
+    let legacy = update.project.join("missing/../active.jsonl");
+    store.connection.execute(
+        "UPDATE sessions SET locator=?1 WHERE id=?2",
+        params![legacy.to_string_lossy(), older],
+    )?;
+    update.title = Some("Updated".into());
+    assert_eq!(
+        store.update_session_metadata(&update)?.app_session_id,
+        active
+    );
+    let (title, locator): (String, String) = store.connection.query_row(
+        "SELECT title,locator FROM sessions WHERE id=?1",
+        [older],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(title, other.title.unwrap());
+    assert_eq!(locator, legacy.to_string_lossy());
     Ok(())
 }
 

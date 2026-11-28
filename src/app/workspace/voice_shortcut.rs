@@ -58,7 +58,6 @@ impl ModifierShortcut {
         }
     }
 
-    // Commit on release so a following key can still form Ctrl+Alt+V, etc.
     fn capture(&mut self) -> Option<&'static str> {
         if let Some(key) = self.capture {
             let required = modifier_binding(key).unwrap();
@@ -117,7 +116,6 @@ impl FarcasterApp {
         self.settings
             .voice_shortcut
             .as_deref()
-            // Retire the old modifier-only binding on every platform.
             .filter(|key| *key != "right-shift")
             .unwrap_or(DEFAULT_SHORTCUT)
     }
@@ -153,7 +151,12 @@ impl FarcasterApp {
         let state = &mut self.workspace.voice.modifier_shortcut;
         let previous = state.modifiers;
         state.modifiers = held;
-        if !held.modified() && state.keys.is_empty() {
+        // Key-up can be missing for Command shortcuts or have a different
+        // character after Shift changes. Do not carry stale keys into a new chord.
+        if !held.modified() || (cfg!(target_os = "macos") && previous.platform && !held.platform) {
+            state.keys.clear();
+        }
+        if !held.modified() {
             state.capture_blocked = false;
         }
         if self.workspace.voice.capturing_shortcut {

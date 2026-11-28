@@ -1,5 +1,4 @@
 use super::*;
-use gpui_component::Selectable as _;
 
 pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
     let profiles = app.settings.harness_profiles.list().unwrap_or_default();
@@ -12,14 +11,17 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
     };
     let mut content = div().flex().flex_col().gap(theme().space.sm).child(
         div()
+            .w_full()
             .flex()
             .items_center()
             .justify_between()
             .gap(theme().space.sm)
-            .child(setting_label(
-                "Harness profiles",
-                "Run another command with a supported harness protocol.",
-            ))
+            .child(
+                div()
+                    .text_size(theme().type_scale.reading)
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .child("Harness profiles"),
+            )
             .child(
                 settings_control(
                     "toggle-harness-profile-form",
@@ -28,10 +30,16 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
                 )
                 .debug_selector(|| "toggle-harness-profile-form".into())
                 .aria_expanded(adding)
+                .w_auto()
+                .px(theme().space.sm)
+                .gap(theme().space.xs)
+                .bg(theme().colors.surface)
+                .text_color(theme().colors.text)
                 .child(app_icon(
                     if adding { AppIcon::X } else { AppIcon::Plus },
-                    AppIconSize::Control,
+                    AppIconSize::Inline,
                 ))
+                .child(if adding { "Close form" } else { "Add profile" })
                 .on_click(move |_, window, cx| {
                     let _ = toggle.update(cx, |this, cx| {
                         this.settings.adding_harness_profile = !adding;
@@ -40,7 +48,11 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
                     });
                 }),
             ),
+    ).child(
+        div().text_size(theme().type_scale.body_small).text_color(theme().colors.muted)
+            .child("Separate commands and data directories for agent connections. Worker profiles choose the model and effort.")
     );
+    let empty = profiles.is_empty();
     let mut list = div()
         .id("harness-profile-list")
         .max_h(theme().size(180.0))
@@ -97,7 +109,15 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
                 )),
         );
     }
-    content = content.child(list);
+    content = content
+        .when(empty && !adding, |content| {
+            content.child(
+                div()
+                    .text_color(theme().colors.muted)
+                    .child("No connection profiles yet."),
+            )
+        })
+        .when(!empty, |content| content.child(list));
     if adding {
         content = content.child(add_form(app, entity));
     }
@@ -124,36 +144,59 @@ fn add_form(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement 
             button(
                 format!("profile-backend-{backend}"),
                 crate::agents::backend_display_name(backend),
-                ButtonTone::Quiet,
+                ButtonTone::Neutral,
                 true,
-                move |_, cx| {
+                move |window, cx| {
                     let _ = select.update(cx, |this, cx| {
-                        this.choose_harness_profile_backend(backend, cx)
+                        this.choose_harness_profile_backend(backend, window, cx)
                     });
                 },
             )
+            .shadow(crate::app::ui::primitives::control_shadow())
             .selected(selected)
             .toggled(selected)
-            .when(selected, |button| {
-                button.text_color(theme().colors.indicator)
-            }),
+            .selection_style(selected),
         );
     }
-    div().debug_selector(|| "harness-profile-form".into())
-        .flex().flex_col().gap(theme().space.sm)
-        .p(theme().space.sm).border_1().border_color(theme().colors.surface)
-        .child(setting_label("Add profile", "Choose the protocol spoken by the command. Set its data directory if it stores sessions elsewhere."))
+    div()
+        .debug_selector(|| "harness-profile-form".into())
+        .flex()
+        .flex_col()
+        .gap(theme().space.sm)
+        .p(theme().space.md)
+        .rounded(theme().size(6.0))
+        .bg(theme().colors.surface)
+        .child(setting_label("Add profile", ""))
         .child(backends)
-        .child(div().flex().gap(theme().space.sm)
-            .child(field("Name", &app.settings.harness_profile_name))
-            .child(field("Command or absolute path", &app.settings.harness_profile_executable)))
-        .when(crate::agents::profile_data_environment_key(app.settings.harness_profile_backend).is_some(), |form| {
-            form.child(field("Data directory (optional)", &app.settings.harness_profile_data_directory))
-        })
-        .child(div().flex().justify_end().child(settings_action("add-harness-profile", "Add harness profile", AppIcon::Check, true,
+        .child(
+            div()
+                .flex()
+                .gap(theme().space.sm)
+                .child(field("Name", &app.settings.harness_profile_name))
+                .child(field(
+                    "Command or absolute path",
+                    &app.settings.harness_profile_executable,
+                )),
+        )
+        .when(
+            crate::agents::profile_data_environment_key(app.settings.harness_profile_backend)
+                .is_some(),
+            |form| {
+                form.child(field(
+                    "Data directory (optional)",
+                    &app.settings.harness_profile_data_directory,
+                ))
+            },
+        )
+        .child(div().flex().justify_end().child(button(
+            "add-harness-profile",
+            "Add profile",
+            ButtonTone::Accent,
+            true,
             move |window, cx| {
                 let _ = entity.update(cx, |this, cx| this.add_harness_profile(window, cx));
-            })))
+            },
+        )))
         .into_any_element()
 }
 

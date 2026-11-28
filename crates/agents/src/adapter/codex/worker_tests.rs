@@ -1,5 +1,5 @@
 use super::*;
-use crate::{AccountUsage, AccountUsageWindow, Backend};
+use crate::Backend;
 
 #[test]
 fn main_and_child_launches_share_service_tier_settings() {
@@ -50,7 +50,7 @@ done
             start: match kind {
                 "fork" => crate::SessionStart::Fork(source),
                 "resume" => crate::SessionStart::Resume(source),
-                _ => crate::SessionStart::New,
+                _ => crate::SessionStart::New(None),
             },
             wake: None,
             service_tier: None,
@@ -224,7 +224,7 @@ fn delivered_inputs_preserve_images() {
                 content.insert(0, json!({"type":"text", "text":text}));
             }
             let item = json!({
-                "type":"userMessage", "clientId":format!("{prefix}1"),
+                "type":"userMessage", "id":"user-1", "clientId":format!("{prefix}1"),
                 "content":content,
             });
             for method in ["item/started", "item/completed"] {
@@ -238,6 +238,10 @@ fn delivered_inputs_preserve_images() {
             assert_eq!(
                 session.poll(),
                 Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                    source: Some(crate::MessageSource {
+                        id: "user-1".into(),
+                        turn_id: None
+                    }),
                     submission_id: None,
                     mode,
                     message: text.unwrap_or_default().into(),
@@ -562,7 +566,9 @@ fn patch_updates_refresh_changes_and_targets_without_starting_another_tool() {
         panic!("expected patch metadata update");
     };
     assert_eq!(id, "patch-1");
-    assert_eq!(args["changes"], changes);
+    let mut projected = changes.clone();
+    projected[1]["diff"] = json!("@@ -0,0 +1,1 @@\n++added\n\\ No newline at end of file\n");
+    assert_eq!(args["changes"], projected);
     assert_eq!(metadata.targets, ["/project/a.rs", "/project/b.rs"]);
     assert_eq!(metadata.category, Some(crate::ToolCategory::Change));
     assert_eq!(session.poll(), None);
@@ -699,7 +705,8 @@ fn mcp_confirmation_request() -> CodexInbound {
         params: json!({"threadId":"thread-1", "turnId":"turn-1", "serverName":"node_repl",
             "mode":"form", "message":"Allow Computer Use to use Farcaster?",
             "requestedSchema":{"type":"object","properties":{}},
-            "_meta":{"tool_name":"get_app_state","tool_params":{"app":"io.github.behzade.farcaster.dev"}}}),
+            "_meta":{"persist":["session","always"],"tool_name":"get_app_state","tool_params":{"app":"io.github.behzade.farcaster.dev"},
+                "tool_params_display":[{"name":"app","display_name":"App","value":"Farcaster"}]}}),
     }
 }
 
@@ -707,11 +714,17 @@ fn mcp_confirmation_request() -> CodexInbound {
 fn mcp_confirmation_waits_for_a_user_choice_and_preserves_native_replies() {
     use std::io::BufRead as _;
     let (mut session, mut sent) = writable_test_session();
-    for (value, cancel, action) in [
-        (Some("Allow"), false, "accept"),
-        (Some("Decline"), false, "decline"),
-        (Some("Allow"), true, "cancel"),
-        (None, false, "decline"),
+    for (value, cancel, action, persistence) in [
+        (
+            Some("Allow for this session"),
+            false,
+            "accept",
+            Some("session"),
+        ),
+        (Some("Always allow"), false, "accept", Some("always")),
+        (Some("Decline"), false, "decline", None),
+        (Some("Always allow"), true, "cancel", None),
+        (None, false, "decline", None),
     ] {
         session
             .queued_inbound
@@ -724,7 +737,11 @@ fn mcp_confirmation_waits_for_a_user_choice_and_preserves_native_replies() {
                 .prompt
                 .contains("Allow Computer Use to use Farcaster?")
         );
-        assert!(input.prompt.contains("io.github.behzade.farcaster.dev"));
+        assert!(input.prompt.contains("App: Farcaster"));
+        assert_eq!(
+            input.options,
+            ["Decline", "Allow for this session", "Always allow"]
+        );
         assert_eq!(session.pending_inputs.len(), 1);
         session
             .respond(WorkerInputResponse {
@@ -736,12 +753,13 @@ fn mcp_confirmation_waits_for_a_user_choice_and_preserves_native_replies() {
         let mut line = String::new();
         sent.read_line(&mut line).expect("native reply");
         let reply: Value = serde_json::from_str(&line).expect("JSON reply");
-        assert_eq!(
-            reply,
-            json!({"id":"mcp-approval","result":{
-                "action":action,"content":if action == "accept" { json!({}) } else { Value::Null }
-            }})
-        );
+        let mut expected = json!({"id":"mcp-approval","result":{
+            "action":action,"content":if action == "accept" { json!({}) } else { Value::Null }
+        }});
+        if let Some(persistence) = persistence {
+            expected["result"]["_meta"] = json!({"persist":persistence});
+        }
+        assert_eq!(reply, expected);
         assert!(session.pending_inputs.is_empty());
         assert!(matches!(
             session.poll(),
@@ -875,6 +893,8 @@ fn test_session() -> CodexWorkerSession {
     );
     let (_sender, incoming) = mpsc::channel();
     CodexWorkerSession {
+        account_source: None,
+        account_generation: 0,
         caller_identity,
         child: std::process::Command::new("true")
             .spawn()
@@ -1417,6 +1437,20 @@ fn assert_deferred_interrupt(start: CodexInbound) {
 }
 
 #[test]
+fn confirmed_start_precedes_a_failed_deferred_interrupt() {
+    let (mut session, _reader) = writable_test_session();
+    session.send("work".into(), WorkerSendMode::Prompt).unwrap();
+    session.abort().unwrap();
+    session.writer.take();
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(1),
+        result: json!({"turn": {"id": "turn-1", "status": "inProgress"}}),
+    }));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Failed(_))));
+}
+
+#[test]
 fn abort_before_turn_id_interrupts_after_start_response() {
     assert_deferred_interrupt(CodexInbound::Response {
         id: CodexRequestId::Number(1),
@@ -1628,18 +1662,67 @@ fn idle_abort_cleans_native_terminals_before_accepting_another_turn() {
 }
 
 #[test]
+fn queued_codex_reply_finishes_on_the_wake_that_delivered_it() {
+    use crate::{SessionEvent, SessionTransport};
+
+    let mut worker = test_session();
+    worker.begin_turn("turn-1");
+    let mut item = json!({"threadId":"thread-1", "turnId":"turn-1",
+        "item":{"type":"agentMessage","id":"reply","text":""}});
+    let started = item.clone();
+    item["item"]["text"] = json!("Finished the task");
+    for (method, params) in [
+        ("item/started", started),
+        ("item/completed", item),
+        (
+            "turn/completed",
+            json!({"threadId":"thread-1",
+            "turn":{"id":"turn-1","status":"completed"}}),
+        ),
+    ] {
+        worker
+            .queued_inbound
+            .push_back(Ok(CodexInbound::Notification {
+                method: method.into(),
+                params,
+            }));
+    }
+
+    let mut transport = main_session::WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "thread-1".into(),
+        Box::new(worker),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let mut conversation = crate::conversation::ConversationState::default();
+    // The runtime ends its drain on the first empty poll.
+    while let Some(event) = transport.poll() {
+        if let SessionEvent::Activity(event) = event {
+            conversation.reduce(event.value());
+        }
+    }
+    assert!(
+        conversation
+            .items
+            .iter()
+            .any(|item| item.text == "Finished the task")
+    );
+    assert!(conversation.settled);
+    assert!(!conversation.running);
+}
+
+#[test]
 fn answer_before_reasoning_uses_a_separate_content_slot() {
     let mut session = test_session();
 
     for turn_id in ["turn-1", "turn-2"] {
-        assert!(session.begin_turn(turn_id));
-        assert!(!session.begin_turn(turn_id));
-        assert!(matches!(
-            session.poll(),
-            Some(WorkerEvent::Activity(WorkerActivity::ThinkingStarted {
-                content_index: 0
-            }))
-        ));
+        session.begin_turn(turn_id);
+        session.begin_turn(turn_id);
+        assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
+        assert!(session.poll().is_none(), "turn start alone has no content");
         for (method, delta, index) in [
             ("item/agentMessage/delta", "The answer", 1),
             ("item/reasoning/summaryTextDelta", "A thought", 0),
@@ -1691,6 +1774,11 @@ fn answer_before_reasoning_uses_a_separate_content_slot() {
         }
         assert!(matches!(
             session.poll(),
+            Some(WorkerEvent::Activity(WorkerActivity::AssistantItem { source, .. }))
+                if source.id == "final" && source.turn_id.as_deref() == Some(turn_id)
+        ));
+        assert!(matches!(
+            session.poll(),
             Some(WorkerEvent::Settled { output }) if output == "Final answer"
         ));
     }
@@ -1709,26 +1797,6 @@ fn maps_codex_telemetry() {
             error: None,
             failure_reason: None,
         })
-    );
-
-    let limits = json!({
-        "primary": {
-            "usedPercent": 40,
-            "windowDurationMins": 10_080,
-            "resetsAt": 1_788_766_092
-        }
-    });
-    assert_eq!(
-        codex_telemetry(
-            CodexMethod::AccountRateLimitsUpdated,
-            &json!({"rateLimits": limits.clone()}),
-        ),
-        Some(WorkerActivity::AccountUsageChanged(AccountUsage {
-            weekly: Some(AccountUsageWindow {
-                remaining_percent: 60.0,
-                resets_at: Some(1_788_766_092),
-            }),
-        }))
     );
 }
 
@@ -1800,6 +1868,110 @@ fn completed_tools_publish_late_metadata() {
 }
 
 #[test]
+fn approval_reviews_do_not_create_or_restart_tool_execution() {
+    use crate::adapter::main_session::{MainSessionMetadata, WorkerSessionTransport};
+    use crate::conversation::{ConversationState, ToolExecutionState};
+    use crate::{SessionEvent, SessionTransport};
+
+    for native_status in [None, Some("inProgress"), Some("completed"), Some("failed")] {
+        for review_status in ["approved", "denied", "aborted", "timedOut"] {
+            let mut session = test_session();
+            let mut notifications = Vec::new();
+            if let Some(status) = native_status {
+                notifications.push((
+                    "item/started",
+                    json!({"item": {
+                        "type":"commandExecution", "id":"tool-1",
+                        "command":"cargo check", "cwd":"/project", "status":"inProgress"
+                    }}),
+                ));
+                if status != "inProgress" {
+                    notifications.push((
+                        "item/completed",
+                        json!({"item": {
+                            "type":"commandExecution", "id":"tool-1",
+                            "command":"cargo check", "cwd":"/project", "status":status,
+                            "aggregatedOutput":"done"
+                        }}),
+                    ));
+                }
+            }
+            let action = json!({"type":"writeStdin", "processId":"process-1", "chars":""});
+            notifications.extend([
+                (
+                    "item/autoApprovalReview/started",
+                    json!({
+                        "targetItemId":"tool-1", "action":action,
+                        "review":{"status":"inProgress"}
+                    }),
+                ),
+                (
+                    "item/autoApprovalReview/completed",
+                    json!({
+                        "targetItemId":"tool-1", "action":action,
+                        "review":{"status":review_status}
+                    }),
+                ),
+                ("item/agentMessage/delta", json!({"delta":"Moving on"})),
+            ]);
+            for (method, mut params) in notifications {
+                params["threadId"] = json!("thread-1");
+                session
+                    .queued_inbound
+                    .push_back(Ok(CodexInbound::Notification {
+                        method: method.into(),
+                        params,
+                    }));
+            }
+            let mut transport = WorkerSessionTransport::new(
+                std::path::Path::new("/locators"),
+                Backend::Codex,
+                "thread-1".into(),
+                Box::new(session),
+                MainSessionMetadata::default(),
+                None,
+            )
+            .expect("transport");
+            let mut conversation = ConversationState::default();
+            while let Some(event) = transport.poll() {
+                if let SessionEvent::Activity(activity) = event {
+                    conversation.reduce(activity.value());
+                }
+            }
+            let tools = conversation
+                .items
+                .iter()
+                .filter(|item| item.tool_call_id.is_some())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                tools.len(),
+                usize::from(native_status.is_some()),
+                "{native_status:?}, {review_status}"
+            );
+            if let Some(status) = native_status {
+                assert_eq!(
+                    tools[0].tool_execution_state(),
+                    Some(match status {
+                        "inProgress" => ToolExecutionState::Running,
+                        "failed" => ToolExecutionState::Failed,
+                        _ => ToolExecutionState::Succeeded,
+                    }),
+                    "{native_status:?}, {review_status}"
+                );
+                assert_eq!(
+                    tools[0].tool_details.as_ref().expect("details").name,
+                    "bash"
+                );
+                assert_eq!(
+                    tools[0].tool_output,
+                    if status == "inProgress" { "" } else { "done" }
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn automatic_approval_review_targets_the_reviewed_tool() {
     let started = json!({
         "targetItemId":"exec-1",
@@ -1811,19 +1983,11 @@ fn automatic_approval_review_targets_the_reviewed_tool() {
     });
     assert_eq!(
         codex_tool_review_started(&started),
-        Some((
-            WorkerActivity::ToolStarted {
-                id: "exec-1".into(),
-                name: "bash".into(),
-                args: json!({"command":"git add logo.svg", "cwd":"/project"}),
-                metadata: tool::metadata(&started["action"], "command"),
-            },
-            WorkerActivity::ToolReviewChanged {
-                id: "exec-1".into(),
-                state: ToolReviewState::Reviewing,
-                detail: None,
-            },
-        ))
+        Some(WorkerActivity::ToolReviewChanged {
+            id: "exec-1".into(),
+            state: ToolReviewState::Reviewing,
+            detail: None,
+        })
     );
 
     let completed = json!({
@@ -1837,39 +2001,29 @@ fn automatic_approval_review_targets_the_reviewed_tool() {
     });
     assert_eq!(
         codex_tool_review_completed(&completed),
-        Some((
-            WorkerActivity::ToolReviewChanged {
-                id: "exec-1".into(),
-                state: ToolReviewState::Approved,
-                detail: Some(
-                    "Risk: low\nAuthorization: high\nThe command only stages the requested file."
-                        .into()
-                ),
-            },
-            None,
-        ))
+        Some(WorkerActivity::ToolReviewChanged {
+            id: "exec-1".into(),
+            state: ToolReviewState::Approved,
+            detail: Some(
+                "Risk: low\nAuthorization: high\nThe command only stages the requested file."
+                    .into()
+            ),
+        })
     );
 }
 
 #[test]
-fn denied_automatic_approval_review_ends_the_pending_tool() {
+fn denied_automatic_approval_review_does_not_end_tool_execution() {
     assert_eq!(
         codex_tool_review_completed(&json!({
             "targetItemId":"exec-1",
             "review":{"status":"denied", "rationale":"Too broad"}
         })),
-        Some((
-            WorkerActivity::ToolReviewChanged {
-                id: "exec-1".into(),
-                state: ToolReviewState::Blocked,
-                detail: Some("Too broad".into()),
-            },
-            Some(WorkerActivity::ToolFinished {
-                id: "exec-1".into(),
-                result: json!([]),
-                is_error: true,
-            }),
-        ))
+        Some(WorkerActivity::ToolReviewChanged {
+            id: "exec-1".into(),
+            state: ToolReviewState::Blocked,
+            detail: Some("Too broad".into()),
+        })
     );
 }
 
@@ -2875,6 +3029,7 @@ fn native_queue_delivery_correlates_duplicate_text_before_other_rejection() {
             mode: WorkerSendMode::Queue,
             message,
             images,
+            ..
         })) if images.is_empty() && submission_id == "second-submission" && message == "same text"
     ));
     assert_eq!(
@@ -3087,15 +3242,8 @@ fn apply_steering_claims_all_queued_inputs_and_fans_out_batch_delivery() {
         id: CodexRequestId::Number(7),
         result: json!({"turn":{"id":"turn-2","status":"inProgress"}}),
     }));
-    let _ = session.poll();
-    assert!(matches!(session.poll_prompt_ack(), Some((id, Ok(()))) if id == "steer-1"));
-    assert!(matches!(
-        session.poll(),
-        Some(WorkerEvent::Activity(
-            WorkerActivity::ThinkingStarted { .. }
-        ))
-    ));
     assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
+    assert!(matches!(session.poll_prompt_ack(), Some((id, Ok(()))) if id == "steer-1"));
     session
         .queued_inbound
         .push_back(Ok(CodexInbound::Notification {
@@ -3397,12 +3545,6 @@ fn assert_second_abort_cancels_auto_started_queue(abort_before_delete_reply: boo
         }));
     assert!(matches!(
         session.poll(),
-        Some(WorkerEvent::Activity(
-            WorkerActivity::ThinkingStarted { .. }
-        ))
-    ));
-    assert!(matches!(
-        session.poll(),
         Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
             submission_id: Some(submission_id),
             ..
@@ -3423,12 +3565,8 @@ fn assert_second_abort_cancels_auto_started_queue(abort_before_delete_reply: boo
 }
 
 #[test]
-fn second_abort_before_failed_delete_cancels_exact_auto_started_queue() {
+fn second_abort_cancels_the_auto_started_queue_before_or_after_the_delete_reply() {
     assert_second_abort_cancels_auto_started_queue(true);
-}
-
-#[test]
-fn second_abort_after_failed_delete_cancels_exact_auto_started_queue() {
     assert_second_abort_cancels_auto_started_queue(false);
 }
 
@@ -3496,17 +3634,12 @@ fn normal_prompt_delivery_uses_backend_client_id_and_original_submission_id() {
         }));
     assert!(matches!(
         session.poll(),
-        Some(WorkerEvent::Activity(
-            WorkerActivity::ThinkingStarted { .. }
-        ))
-    ));
-    assert!(matches!(
-        session.poll(),
         Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
             submission_id: Some(submission_id),
             mode: WorkerSendMode::Prompt,
             message,
             images,
+            ..
         })) if images.is_empty() && submission_id == "normal-1" && message == "new work"
     ));
 }
@@ -3983,4 +4116,103 @@ fn terminal_error_is_kept_for_failed_turn_without_entering_retry() {
         Some("Selected model is at capacity")
     );
     session.close().expect("close fixture");
+}
+
+#[test]
+fn completed_nested_mcp_call_exposes_serialized_images() {
+    let content = json!([
+        {"type":"text","text":"Screenshot"},
+        {"type":"image","data":"iVBORw0KGgo=","mimeType":"image/png"}
+    ]);
+    assert_eq!(
+        codex_tool_end(&json!({"item": {
+            "id":"nested", "type":"mcpToolCall", "status":"completed",
+            "result":{"content":[{"type":"text","text":json!({"content":content,"isError":false}).to_string()}]}
+        }})),
+        Some(WorkerActivity::ToolFinished {
+            id: "nested".into(),
+            result: content,
+            is_error: false
+        })
+    );
+}
+
+#[test]
+fn native_quota_notifications_publish_account_facts_and_ignore_old_read_responses() {
+    use crate::accounts::{AccountEvent, AccountSource, subscribe_accounts};
+    let events = subscribe_accounts(std::thread::current());
+    let mut session = test_session();
+    let source = AccountSource {
+        backend: Backend::Codex,
+        profile_id: None,
+        context: "/project".into(),
+        provider: "openai".into(),
+        credential_source: uuid::Uuid::new_v4().to_string(),
+        incarnation: Some("worker".into()),
+    };
+    session.account_source = Some(source.clone());
+    session.account_generation = 2;
+    session
+        .pending
+        .insert(CodexRequestId::Number(50), PendingRequest::AccountLimits(1));
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(50),
+        result: json!({"rateLimits":{"secondary":{"usedPercent":90}}}),
+    }));
+    session.queued_inbound.push_back(Ok(CodexInbound::Notification {
+        method: "account/rateLimits/updated".into(),
+        params: json!({"rateLimits":{"secondary":{"usedPercent":42,"windowDurationMins":10080}}}),
+    }));
+    let _ = session.poll();
+    let reports: Vec<_> = events
+        .try_iter()
+        .filter_map(|event| match event {
+            AccountEvent::LimitsObserved {
+                source: observed,
+                limits,
+            } if observed == source => Some(limits),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0][0].remaining_percent, Some(58.));
+    assert_eq!(reports[0][0].duration_seconds, Some(604800));
+}
+
+#[test]
+fn native_command_completion_emits_exit_code_duration_and_output() {
+    let completion = codex_tool_end(&json!({"item":{
+        "id":"run","type":"commandExecution","command":"command","status":"failed",
+        "durationMs":37,"exitCode":4,"aggregatedOutput":"diagnostic"
+    }}));
+    let Some(WorkerActivity::ToolFinished {
+        id,
+        result,
+        is_error,
+    }) = completion
+    else {
+        panic!("missing tool completion")
+    };
+    assert_eq!(id, "run");
+    assert!(is_error);
+    assert_eq!(result["details"], json!({"exitCode":4,"durationMs":37}));
+    assert_eq!(result["content"][0]["text"], "diagnostic");
+}
+
+#[test]
+fn live_mcp_result_preserves_structured_content_and_native_error() {
+    let structured = json!({"id":123});
+    let error = json!({"message":"warning","code":27,"data":["first"]});
+    let Some(WorkerActivity::ToolFinished { result, .. }) = codex_tool_end(&json!({"item":{
+        "type":"mcpToolCall","id":"mcp","status":"failed","result":{
+            "content":[{"type":"text","text":"partial"}],"structuredContent":structured},"error":error
+    }})) else {
+        panic!("missing live MCP result")
+    };
+    assert_eq!(
+        result["details"]["native"]["result"]["structuredContent"],
+        structured
+    );
+    assert_eq!(result["details"]["native"]["error"], error);
+    assert_eq!(result["content"][0]["text"], "partial");
 }

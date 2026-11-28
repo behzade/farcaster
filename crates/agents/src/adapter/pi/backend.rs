@@ -4,8 +4,8 @@ use super::super::{
     queued_session::SteeringBoundary,
 };
 use crate::{
-    AgentLaunchConfig, ConfigurationCatalog, SessionLaunch, SessionStart, SessionTransport,
-    WorkerSessionFactory, contract::AgentBackendDescriptor,
+    AgentLaunchConfig, ConfigurationCatalog, SessionLaunch, SessionTransport, WorkerSessionFactory,
+    contract::AgentBackendDescriptor,
 };
 use farcaster_projects::{AppliedTrust, StartupTrust, TrustChoice};
 use farcaster_sessions::{LoadedHistory, SessionSummary, SessionTransfer, TransferMember};
@@ -19,6 +19,19 @@ pub(in crate::adapter) struct PiAdapter;
 static HISTORY: HistoryCache<PathBuf, FileStamp, LoadedHistory> = HistoryCache::new();
 
 impl BackendAdapter for PiAdapter {
+    fn account_capabilities(&self) -> crate::accounts::AccountCapabilities {
+        crate::accounts::AccountCapabilities {
+            discover: true,
+            ..Default::default()
+        }
+    }
+    fn read_accounts(
+        &self,
+        config: &AgentLaunchConfig,
+        project: &Path,
+    ) -> Result<crate::accounts::AccountDiscovery, String> {
+        super::accounts::read(config, project)
+    }
     fn descriptor(&self) -> AgentBackendDescriptor {
         super::descriptor()
     }
@@ -35,7 +48,7 @@ impl BackendAdapter for PiAdapter {
     ) -> Result<ConfigurationCatalog, String> {
         load_configuration(config, project)
     }
-    fn steering_boundary(&self) -> SteeringBoundary {
+    fn steering_boundary(&self, _config: &crate::AgentLaunchConfig) -> SteeringBoundary {
         SteeringBoundary::Held
     }
     fn supports_auto_title_generation(&self) -> bool {
@@ -132,26 +145,8 @@ impl BackendAdapter for PiAdapter {
         config: &AgentLaunchConfig,
         launch: SessionLaunch,
     ) -> Result<Box<dyn SessionTransport>, String> {
-        let process = match &launch.start {
-            SessionStart::New => super::PiRpcProcess::spawn_with_optional_waker(
-                config,
-                &launch.project,
-                None,
-                launch.wake,
-            ),
-            SessionStart::Resume(session) => super::PiRpcProcess::spawn_with_optional_waker(
-                config,
-                &launch.project,
-                Some(session),
-                launch.wake,
-            ),
-            SessionStart::Fork(source) => super::PiRpcProcess::spawn_fork_with_optional_waker(
-                config,
-                &launch.project,
-                source,
-                launch.wake,
-            ),
-        }?;
+        let process =
+            super::PiRpcProcess::spawn_main(config, launch, crate::core::CallerRegistry::shared())?;
         Ok(Box::new(process))
     }
     fn rename_session(
@@ -164,16 +159,30 @@ impl BackendAdapter for PiAdapter {
     ) -> Result<(), String> {
         super::PiRpcProcess::rename_session(config, project, session, name)
     }
+    fn local_history_revision(
+        &self,
+        _config: &AgentLaunchConfig,
+        path: &Path,
+        _project: &Path,
+    ) -> Option<serde_json::Value> {
+        FileStamp::local_revision(path)
+    }
+
     fn supports_history_warming(&self) -> bool {
         true
     }
 
     fn load_history(&self, path: &Path, _project: &Path) -> Result<LoadedHistory, String> {
-        HISTORY.load(
-            path.to_path_buf(),
-            || FileStamp::read(path),
-            || super::session_files::load_history(path),
-        )
+        cached_history(path, None)
+    }
+    fn load_history_with_preview(
+        &self,
+        _config: &AgentLaunchConfig,
+        path: &Path,
+        _project: &Path,
+        preview: &mut dyn FnMut(crate::HistoryPage),
+    ) -> Result<LoadedHistory, String> {
+        cached_history(path, Some(preview))
     }
     fn discover_sessions(
         &self,
@@ -181,6 +190,13 @@ impl BackendAdapter for PiAdapter {
         query: &str,
     ) -> Result<Vec<SessionSummary>, String> {
         super::session_files::discover(query).map(|result| result.sessions)
+    }
+    fn historical_worker_status(
+        &self,
+        path: &Path,
+        _profile: Option<&crate::HarnessProfile>,
+    ) -> Option<crate::WorkerStatus> {
+        super::session_files::worker_status(path)
     }
     fn fork_source(&self, path: &Path, _profile: Option<&crate::HarnessProfile>) -> Option<String> {
         super::session_files::fork_source(path)
@@ -210,6 +226,18 @@ impl BackendAdapter for PiAdapter {
     fn delete_session(&self, _id: &str, path: &Path) -> Result<Option<PathBuf>, String> {
         Ok(Some(path.to_owned()))
     }
+}
+
+fn cached_history(
+    path: &Path,
+    preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
+) -> Result<LoadedHistory, String> {
+    HISTORY.load_with_preview(
+        path.to_path_buf(),
+        || FileStamp::read(path),
+        preview,
+        |publish| super::session_files::load_history_with_preview(path, publish),
+    )
 }
 
 fn load_configuration(

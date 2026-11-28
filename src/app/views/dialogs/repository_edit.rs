@@ -69,7 +69,7 @@ pub(in crate::app::views) fn render(
         |surface| {
             surface.w(theme().size(480.0)).child(
                 div()
-                    .p(theme().space.md)
+                    .p(crate::app::ui::grid::dialog_inset())
                     .flex()
                     .flex_col()
                     .gap(theme().space.sm)

@@ -2,9 +2,6 @@ use std::{borrow::Cow, fmt::Write as _, ops::Range};
 
 use markdown::mdast::Node;
 
-// User messages keep Markdown formatting, but source line breaks and raw HTML
-// (including code such as Vec<T>) must remain visible. Only change prose nodes;
-// code fences, inline code, links, and existing hard breaks keep their syntax.
 pub(super) fn markdown(source: &str) -> Cow<'_, str> {
     let Ok(root) = markdown::to_mdast(source, &markdown::ParseOptions::gfm()) else {
         return Cow::Borrowed(source);

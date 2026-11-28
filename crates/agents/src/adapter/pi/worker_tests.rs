@@ -100,6 +100,7 @@ fn worker_process_correlates_images_and_applies_all_queue_modes()
             mode,
             message,
             images,
+            ..
         })) = worker.poll()
         {
             assert_eq!(images, vec![image.clone()]);

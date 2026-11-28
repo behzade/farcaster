@@ -137,6 +137,28 @@ pub fn load_session_history(
     for_backend(harness).load_history(path, project)
 }
 
+pub fn local_history_revision(
+    config: &crate::AgentLaunchConfig,
+    harness: Backend,
+    path: &Path,
+    project: &Path,
+) -> Option<serde_json::Value> {
+    profile_history_adapter(config, harness, path)
+        .ok()?
+        .local_history_revision(config, path, project)
+}
+
+pub fn load_session_history_for_import(
+    config: &crate::AgentLaunchConfig,
+    harness: Backend,
+    path: &Path,
+    project: &Path,
+    preview: Option<&mut dyn FnMut(crate::HistoryPage)>,
+) -> Result<(LoadedHistory, Option<serde_json::Value>), String> {
+    profile_history_adapter(config, harness, path)?
+        .load_history_for_import(config, path, project, preview)
+}
+
 pub fn load_session_history_for_profile(
     config: &crate::AgentLaunchConfig,
     harness: Backend,
@@ -144,6 +166,29 @@ pub fn load_session_history_for_profile(
     project: &Path,
 ) -> Result<LoadedHistory, String> {
     profile_history_adapter(config, harness, path)?.load_history_for_profile(config, path, project)
+}
+
+pub fn load_session_history_with_preview(
+    config: &crate::AgentLaunchConfig,
+    harness: Backend,
+    path: &Path,
+    project: &Path,
+    preview: &mut dyn FnMut(Vec<serde_json::Value>),
+) -> Result<LoadedHistory, String> {
+    load_session_history_with_page(config, harness, path, project, &mut |page| {
+        preview(page.content)
+    })
+}
+
+pub fn load_session_history_with_page(
+    config: &crate::AgentLaunchConfig,
+    harness: Backend,
+    path: &Path,
+    project: &Path,
+    preview: &mut dyn FnMut(crate::HistoryPage),
+) -> Result<LoadedHistory, String> {
+    profile_history_adapter(config, harness, path)?
+        .load_history_with_preview(config, path, project, preview)
 }
 
 fn profile_history_adapter(
@@ -186,6 +231,14 @@ pub fn discover_sessions_for_profile(
     config.validate_profile_backend(harness)?;
     let root = config.locator_root();
     for_backend(harness).discover_sessions_for_profile(config, root.as_deref(), query)
+}
+
+pub fn historical_worker_status(
+    harness: Backend,
+    path: &Path,
+    profile: Option<&crate::HarnessProfile>,
+) -> Option<crate::WorkerStatus> {
+    for_backend(harness).historical_worker_status(path, profile)
 }
 
 pub fn session_fork_source(

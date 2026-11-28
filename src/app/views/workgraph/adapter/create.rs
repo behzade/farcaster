@@ -58,6 +58,9 @@ impl WorkGraphBoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.editing {
+            return;
+        }
         let title = self.create_title.read(cx).value().trim().to_owned();
         let detail = self.create_detail.read(cx).value().trim().to_owned();
         let has_plan = matches!(&self.state, PlanLoadState::Ready(data) if !self.showing_plans(data) && data.snapshot.is_some());
@@ -96,7 +99,7 @@ impl WorkGraphBoardView {
                         .collect::<Vec<_>>();
                     (plan, after, files)
                 }),
-            PlanLoadState::Loading | PlanLoadState::Failed(_) => return,
+            PlanLoadState::Failed(_) => return,
         };
         let edit = cx.background_spawn(async move {
             store?.with(|store| {
@@ -109,10 +112,11 @@ impl WorkGraphBoardView {
                 })
             })
         });
-        self.state = PlanLoadState::Loading;
+        self.editing = true;
         self.refresh = Some(cx.spawn(async move |weak, cx| {
             let result = edit.await;
             let _ = weak.update(cx, |this, cx| {
+                this.editing = false;
                 this.create_stage = CreateStage::Closed;
                 match result {
                     Ok((data, number)) => {

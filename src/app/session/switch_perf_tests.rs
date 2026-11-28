@@ -21,9 +21,88 @@ use crate::{
 };
 
 const SWITCH_MESSAGES: usize = 2_000;
-const SWITCH_POLL: Duration = Duration::from_millis(2);
-const SWITCH_TIMEOUT: Duration = Duration::from_secs(15);
+pub(super) const SWITCH_POLL: Duration = Duration::from_millis(2);
+pub(super) const SWITCH_TIMEOUT: Duration = Duration::from_secs(15);
 const SUMMARY_WINDOW: Duration = Duration::from_millis(1_400);
+
+#[gpui::test]
+fn session_actions_draw_before_runtime_acknowledgment(cx: &mut gpui::TestAppContext) {
+    use crate::sessions::SessionSummary;
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::session_actions_draw_before_runtime_acknowledgment"
+        ),
+        cx,
+        |cx, app, _, project| {
+            let rows: Vec<_> = (1..=2_716)
+                .map(|id| {
+                    let title = format!("Chat {id}");
+                    SessionSummary::from_cached(
+                        id.to_string(),
+                        project.join(id.to_string()),
+                        project.into(),
+                        title,
+                        String::new(),
+                        String::new(),
+                        None,
+                        std::time::UNIX_EPOCH,
+                        1,
+                        Default::default(),
+                        id > 120,
+                        false,
+                        String::new(),
+                    )
+                    .with_app_session_id(id)
+                })
+                .collect();
+            let target = rows[1].catalog_key();
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    std::sync::Arc::make_mut(&mut app.snapshot).selected_session =
+                        Some(rows[0].path.clone());
+                    app.sessions.visible = rows.clone().into();
+                    app.sessions.all = rows.into();
+                    app.sessions.selected_draft = None;
+                    app.sessions.archived_expanded = true;
+                    app.notify_session_rail(cx);
+                })
+            });
+            cx.simulate_resize(gpui::size(gpui::px(1600.), gpui::px(900.)));
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            for action in ["switch", "archive", "new"] {
+                let start = Instant::now();
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| match action {
+                        "switch" => app.select_rail_session(target.clone(), window, cx),
+                        "archive" => app.request_rail_archive(target.clone(), true, window, cx),
+                        "new" => app.new_session(project.into(), window, cx),
+                        _ => unreachable!(),
+                    });
+                });
+                let handler = start.elapsed();
+                cx.update(|window, cx| window.draw(cx).clear(cx));
+                let drawn = start.elapsed();
+                cx.update(|_, cx| {
+                    let app = app.read(cx);
+                    match action {
+                        "switch" => {
+                            assert_eq!(app.selected_rail_root().unwrap().catalog_key(), target)
+                        }
+                        "archive" => {
+                            assert!(app.sessions.visible.by_key(&target).unwrap().archived)
+                        }
+                        "new" => assert!(app.sessions.selected_draft.is_some()),
+                        _ => unreachable!(),
+                    }
+                });
+                eprintln!(
+                    "sidebar {action} with 2716 sessions: handler {handler:?}, through test-window draw {drawn:?}"
+                );
+            }
+        },
+    );
+}
 
 fn write_session_file(directory: &Path, name: &str, messages: usize) -> PathBuf {
     let mut body = format!("{{\"type\":\"session\",\"id\":\"{name}\",\"cwd\":\".\"}}\n");
@@ -92,6 +171,7 @@ fn wait_for_items(
 ) {
     let deadline = Instant::now() + SWITCH_TIMEOUT;
     loop {
+        cx.run_until_parked();
         let applied = cx.update(|window, cx| {
             app.update(cx, |app, cx| app.drain_runtime(cx));
             window.draw(cx).clear(cx);
@@ -151,6 +231,134 @@ fn switch_to(
     });
     wait_for_items(cx, app, path, items);
     started.elapsed()
+}
+
+#[gpui::test]
+fn saved_transcript_reopens_offline_and_keeps_painted_rows_after_refresh(
+    cx: &mut gpui::TestAppContext,
+) {
+    use crate::storage::{SessionRepository as _, TranscriptSession};
+
+    const SAVED: usize = 24;
+    const APPENDED: usize = 12;
+    let executor = cx.background_executor.clone();
+    crate::app::test_support::with_runtime_app(
+        concat!(
+            module_path!(),
+            "::saved_transcript_reopens_offline_and_keeps_painted_rows_after_refresh"
+        ),
+        cx,
+        |project| {
+            let project = project.canonicalize().unwrap();
+            let path = write_session_file(&project, "saved", SAVED);
+            let history =
+                crate::agents::load_session_history(Backend::Pi, &path, &project).unwrap();
+            let store = crate::app::persistence::shared().unwrap();
+            let session = TranscriptSession {
+                harness: Backend::Pi,
+                path: &path,
+                project: &project,
+                profile_id: None,
+            };
+            assert!(
+                store
+                    .replace_transcript(session, 0, &history.messages, &serde_json::json!({}))
+                    .unwrap()
+            );
+            drop(store);
+            fs::remove_file(path).unwrap();
+            RuntimeHandle::spawn(
+                project.clone(),
+                crate::sessions::DraftSession::with_id(None, "start".into(), project),
+                None,
+                AgentLaunchConfig::default(),
+                crate::app::runtime_host::host(executor.clone()),
+            )
+        },
+        |cx, app, project| {
+            let project = project.canonicalize().unwrap();
+            let path = project.join("saved.jsonl");
+            trust::apply(&project, TrustChoice::TrustProject).unwrap();
+            cx.simulate_resize(gpui::size(gpui::px(1600.), gpui::px(900.)));
+            switch_to(cx, app, &path, &project, SAVED);
+            let selectors = [
+                "transcript-row-21",
+                "transcript-row-22",
+                "transcript-row-23",
+            ];
+            let deadline = Instant::now() + SWITCH_TIMEOUT;
+            let original = loop {
+                cx.run_until_parked();
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                    window.draw(cx).clear(cx);
+                });
+                let origins = selectors.map(|key| cx.debug_bounds(key).map(|bounds| bounds.origin));
+                if origins.last().unwrap().is_some() {
+                    break origins;
+                }
+                if Instant::now() >= deadline {
+                    cx.update(|_, cx| {
+                        let app = app.read(cx);
+                        let view = app.views.transcript.read(cx);
+                        panic!("saved tail did not paint: rows={} status={} selected_draft={:?} pending={:?} following={} height={:?} top={:?} painted={:?}",
+                            view.rows.len(), app.snapshot.status, app.sessions.selected_draft, app.lifecycle.pending_session_switch.as_ref().map(|(p,_)| p), view.following,
+                            view.list.viewport_height(), view.list.logical_scroll_top(), view.list.painted_history_top());
+                    });
+                }
+                thread::sleep(SWITCH_POLL);
+            };
+            assert!(
+                original.iter().flatten().count() >= 2,
+                "only one row visible: {original:?}"
+            );
+            cx.update(|_, cx| {
+                let snapshot = &app.read(cx).snapshot;
+                assert!(snapshot.saved_history.is_some());
+                assert!(
+                    snapshot.conversation.items[SAVED - 1]
+                        .text
+                        .starts_with("23 ")
+                );
+            });
+
+            write_session_file(&project, "saved", SAVED + APPENDED);
+            refresh_document(cx, app, &path, &project);
+            let deadline = Instant::now() + SWITCH_TIMEOUT;
+            let mut settled = 0;
+            while settled < 8 {
+                assert!(
+                    Instant::now() < deadline,
+                    "updated native history never arrived"
+                );
+                cx.run_until_parked();
+                let updated = cx.update(|window, cx| {
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                    window.draw(cx).clear(cx);
+                    let snapshot = &app.read(cx).snapshot;
+                    snapshot.document_ready
+                        && snapshot.saved_history.is_none()
+                        && snapshot.conversation.items.len() == SAVED + APPENDED
+                });
+                let origins = selectors.map(|key| cx.debug_bounds(key).map(|bounds| bounds.origin));
+                assert_eq!(
+                    origins, original,
+                    "saved rows shifted during external refresh"
+                );
+                assert!(cx.debug_bounds("transcript-row-35").is_none());
+                settled += usize::from(updated);
+                thread::sleep(SWITCH_POLL);
+            }
+            cx.update(|window, cx| {
+                let view = app.read(cx).views.transcript.read(cx);
+                assert!(!view.following);
+                assert_eq!(view.unseen, APPENDED);
+                app.update(cx, |app, cx| app.jump_to_latest(cx));
+                window.draw(cx).clear(cx);
+            });
+            assert!(cx.debug_bounds("transcript-row-35").is_some());
+        },
+    );
 }
 
 fn refresh_document(
@@ -335,4 +543,900 @@ fn hover_prefetch_and_cold_selection_load_the_same_transcript(cx: &mut gpui::Tes
 
 fn millis(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1_000.0
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[gpui::test]
+fn hovering_a_cursor_session_does_not_start_its_profile(cx: &mut gpui::TestAppContext) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::hovering_a_cursor_session_does_not_start_its_profile"
+        ),
+        cx,
+        |cx, app, _, project| {
+            let target = project.join("other-project");
+            fs::create_dir(&target).unwrap();
+            crate::agents::set_test_project_environment(
+                &target,
+                vec![("CURSOR_API_KEY".into(), "fixture".into())],
+            );
+            let executable = project.join("cursor-history-fixture");
+            fs::write(
+                &executable,
+                "#!/bin/sh\n: > history-bridge-started\nexit 1\n",
+            )
+            .unwrap();
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+            let profile = crate::agents::HarnessProfile {
+                id: "11111111-1111-4111-8111-111111111111".into(),
+                name: "Cursor fixture".into(),
+                backend: Backend::Cursor,
+                executable,
+                data_directory: Some(project.to_owned()),
+            };
+            let path = project
+                .join("profiles")
+                .join(&profile.id)
+                .join(Backend::Cursor.as_str())
+                .join("thread");
+            let config = cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    let config = AgentLaunchConfig {
+                        profiles: app.settings.harness_profiles.clone(),
+                        profile_id: Some(profile.id.clone()),
+                        ..Default::default()
+                    };
+                    config.profiles.replace(vec![profile]).unwrap();
+                    app.prefetch_session(Backend::Cursor, path.clone(), target.clone(), cx);
+                    config
+                })
+            });
+            cx.run_until_parked();
+            let marker = target.join("history-bridge-started");
+            assert!(!marker.exists());
+            let _ = crate::agents::load_session_history_for_profile(
+                &config,
+                Backend::Cursor,
+                &path,
+                &target,
+            );
+            assert!(marker.is_file());
+        },
+    );
+}
+
+#[cfg(unix)]
+#[gpui::test]
+fn cold_codex_selection_paints_rows_at_their_final_positions(cx: &mut gpui::TestAppContext) {
+    cold_codex_frame_check(
+        cx,
+        concat!(
+            module_path!(),
+            "::cold_codex_selection_paints_rows_at_their_final_positions"
+        ),
+        30,
+    );
+}
+
+#[cfg(unix)]
+#[gpui::test]
+fn cold_codex_short_chat_paints_rows_at_their_final_positions(cx: &mut gpui::TestAppContext) {
+    cold_codex_frame_check(
+        cx,
+        concat!(
+            module_path!(),
+            "::cold_codex_short_chat_paints_rows_at_their_final_positions"
+        ),
+        1,
+    );
+}
+
+#[cfg(unix)]
+fn cold_codex_frame_check(cx: &mut gpui::TestAppContext, name: &str, turn_count: usize) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    const PROFILE: &str = "11111111-1111-4111-8111-111111111111";
+    let executor = cx.background_executor.clone();
+    let complete = turn_count <= 8;
+    crate::app::test_support::with_runtime_app(
+        name,
+        cx,
+        |project| {
+            crate::agents::set_test_project_environment(
+                project,
+                vec![("PATH".into(), "/usr/bin:/bin".into())],
+            );
+            let executable = project.join("codex-fixture");
+            fs::write(
+                &executable,
+                include_str!("../../../tests/fixtures/cold-codex-history.sh"),
+            )
+            .unwrap();
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+            let turns: Vec<_> = (0..turn_count).map(|n| serde_json::json!({"id":format!("turn-{n}"),"itemsView":"full","status":"completed","items":[
+                {"type":"userMessage","id":format!("q-{n}"),"content":[{"type":"text","text":format!("Question {n}")}]},
+                {"type":"agentMessage","id":format!("a-{n}"),"text":format!("**Answer {n}**\n\n{}", "Wrapped words in this answer. ".repeat(20))}
+            ]})).collect();
+            let page: Vec<_> = turns.iter().rev().take(8).collect();
+            fs::write(
+                project.join("recent-turns.json"),
+                serde_json::json!({"data":page,"nextCursor":(!complete).then_some("older")})
+                    .to_string(),
+            )
+            .unwrap();
+            fs::write(
+                project.join("full-thread.json"),
+                serde_json::json!({"thread":{"turns":turns}}).to_string(),
+            )
+            .unwrap();
+            let rollout = project.join("rollout.jsonl");
+            fs::write(&rollout, "").unwrap();
+            let history_db =
+                rusqlite::Connection::open(project.join("thread_history_1.sqlite")).unwrap();
+            history_db.execute_batch("CREATE TABLE thread_turns(thread_id TEXT);
+                INSERT INTO thread_turns VALUES ('thread');
+                CREATE TABLE thread_history_projection_state(thread_id TEXT PRIMARY KEY, next_rollout_byte_offset INTEGER, next_rollout_ordinal INTEGER);
+                INSERT INTO thread_history_projection_state VALUES ('thread',0,30);").unwrap();
+            let db = rusqlite::Connection::open(project.join("state_5.sqlite")).unwrap();
+            db.execute_batch("CREATE TABLE threads(id TEXT PRIMARY KEY, rollout_path TEXT, history_mode TEXT, model_provider TEXT, model TEXT, reasoning_effort TEXT)").unwrap();
+            db.execute(
+                "INSERT INTO threads VALUES ('thread', ?1, 'paginated', 'openai', 'fixture', NULL)",
+                [rollout.to_str().unwrap()],
+            )
+            .unwrap();
+            let config = AgentLaunchConfig::default();
+            config
+                .profiles
+                .replace(vec![crate::agents::HarnessProfile {
+                    id: PROFILE.into(),
+                    name: "Fixture".into(),
+                    backend: Backend::Codex,
+                    executable,
+                    data_directory: Some(project.to_owned()),
+                }])
+                .unwrap();
+            RuntimeHandle::spawn(
+                project.to_owned(),
+                crate::sessions::DraftSession::with_id(
+                    None,
+                    "cold-history-test".into(),
+                    project.into(),
+                ),
+                None,
+                config,
+                crate::app::runtime_host::host(executor.clone()),
+            )
+        },
+        |cx, app, project| {
+            let project = project.canonicalize().unwrap();
+            trust::apply(&project, TrustChoice::TrustProject).unwrap();
+            let path = project
+                .join("profiles")
+                .join(PROFILE)
+                .join(Backend::Codex.as_str())
+                .join("thread");
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let row = crate::sessions::SessionSummary::from_cached_for_harness(
+                "thread".into(),
+                Backend::Codex,
+                path.clone(),
+                project.clone(),
+                "Saved chat".into(),
+                "Original question".into(),
+                String::new(),
+                None,
+                std::time::UNIX_EPOCH,
+                2,
+                Default::default(),
+                false,
+                false,
+                String::new(),
+            )
+            .with_app_session_id(17);
+            let key = row.catalog_key();
+            let mut source = row.clone().with_app_session_id(16);
+            source.id = "source".into();
+            source.path.set_file_name("source");
+            let source_path = source.path.clone();
+            let source_key = source.catalog_key();
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions.all = vec![source.clone(), row.clone()].into();
+                    app.sessions.visible = vec![source, row.clone()].into();
+                    app.select_rail_session(source_key, window, cx);
+                })
+            });
+            wait_for_items(cx, app, &source_path, 1);
+            assert!(cx.debug_bounds("transcript-row-0").is_some());
+            let started = Instant::now();
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions.all.upsert_by_recency(row.clone());
+                    app.sessions.visible.upsert_by_recency(row);
+                    app.select_rail_session(key, window, cx);
+                    assert!(app.lifecycle.pending_session_switch.is_some());
+                });
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            assert!(cx.debug_bounds("transcript-loading").is_some());
+            assert!(cx.debug_bounds("transcript-row-0").is_none());
+            let deadline = started + SWITCH_TIMEOUT;
+            let short = ["transcript-row-0", "transcript-row-1"];
+            let partial = [
+                "transcript-row-10",
+                "transcript-row-11",
+                "transcript-row-12",
+                "transcript-row-13",
+                "transcript-row-14",
+                "transcript-row-15",
+            ];
+            let full = [
+                "transcript-row-54",
+                "transcript-row-55",
+                "transcript-row-56",
+                "transcript-row-57",
+                "transcript-row-58",
+                "transcript-row-59",
+            ];
+            let partial_rows = if complete {
+                short.as_slice()
+            } else {
+                partial.as_slice()
+            };
+            let full_rows = if complete {
+                short.as_slice()
+            } else {
+                full.as_slice()
+            };
+            let mut frames = Vec::new();
+            loop {
+                cx.run_until_parked();
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                    window.draw(cx).clear(cx);
+                });
+                if !complete {
+                    assert!(cx.debug_bounds("transcript-row-0").is_none());
+                }
+                let rows: Vec<_> = partial_rows
+                    .iter()
+                    .map(|key| cx.debug_bounds(key))
+                    .collect();
+                if rows.iter().any(Option::is_some) {
+                    cx.update(|_, cx| {
+                        let snapshot = &app.read(cx).snapshot;
+                        assert!(!snapshot.document_ready);
+                        let items = &snapshot.history_tail.as_ref().unwrap().content.items;
+                        assert_eq!(items.len(), turn_count.min(8) * 2);
+                        assert_eq!(
+                            items[items.len() - 2].text,
+                            format!("Question {}", turn_count - 1)
+                        );
+                        assert!(
+                            items[items.len() - 1]
+                                .text
+                                .contains(&format!("Answer {}", turn_count - 1))
+                        );
+                    });
+                    frames.push(rows);
+                }
+                if !frames.is_empty() && project.join("reading-history").exists() {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "no readable messages while full history was blocked"
+                );
+                thread::sleep(SWITCH_POLL);
+            }
+            let first_readable = started.elapsed();
+            assert!(project.join("requested-preview").exists());
+            assert!(cx.debug_bounds("transcript-loading").is_none());
+            fs::write(project.join("release-full-read"), "").unwrap();
+            let mut ready_frames = 0;
+            while ready_frames < 8 {
+                assert!(Instant::now() < deadline, "cold history did not settle");
+                cx.run_until_parked();
+                let ready = cx.update(|window, cx| {
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                    window.draw(cx).clear(cx);
+                    let snapshot = &app.read(cx).snapshot;
+                    snapshot.selected_session.as_ref() == Some(&path) && snapshot.document_ready
+                });
+                assert!(
+                    complete || cx.debug_bounds("transcript-row-0").is_none(),
+                    "painted the top of a long history"
+                );
+                let selectors = if ready { full_rows } else { partial_rows };
+                frames.push(selectors.iter().map(|key| cx.debug_bounds(key)).collect());
+                ready_frames += usize::from(ready);
+                thread::sleep(SWITCH_POLL);
+            }
+            let settled = frames.last().expect("visible history");
+            assert!(
+                settled.iter().flatten().count() >= 2 && settled.last().unwrap().is_some(),
+                "expected visible tail rows, got {settled:?}"
+            );
+            assert!(cx.debug_bounds("transcript-loading").is_none());
+            for frame in &frames {
+                assert_eq!(frame, settled, "a transcript row shifted during cold open");
+            }
+            eprintln!(
+                "Cold open: first readable rows in {first_readable:?} with full history blocked; {} frames, {} visible tail rows, zero pixel displacement",
+                frames.len(),
+                settled.iter().flatten().count()
+            );
+        },
+    );
+}
+
+fn report_saved_history_storage(stage: &str) {
+    let path = crate::app::persistence::state_path().unwrap();
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let busy: i64 = db
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(busy, 0, "checkpoint the isolated benchmark database");
+    let items: i64 = db
+        .query_row("SELECT COUNT(*) FROM transcript_messages", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let images = path.parent().unwrap().join("images");
+    let image_bytes: u64 = images
+        .read_dir()
+        .into_iter()
+        .flatten()
+        .map(|entry| entry.unwrap().metadata().unwrap().len())
+        .sum();
+    eprintln!(
+        "Real history storage: {stage}, sqlite_bytes={}, image_bytes={image_bytes}, transcript_items={items}",
+        path.metadata().unwrap().len()
+    );
+}
+
+#[gpui::test]
+#[ignore = "requires FARCASTER_TEST_CODEX_THREAD, FARCASTER_TEST_CODEX_HOME and FARCASTER_TEST_CODEX_PROGRAM"]
+fn cold_saved_codex_chat_draws_recent_rows_before_full_read(cx: &mut gpui::TestAppContext) {
+    const PROFILE: &str = "11111111-1111-4111-8111-111111111111";
+    let thread = std::env::var("FARCASTER_TEST_CODEX_THREAD").unwrap();
+    let full_only = std::env::var_os("FARCASTER_TEST_FULL_HISTORY_ONLY").is_some();
+    let reopen_saved = std::env::var_os("FARCASTER_TEST_REOPEN_SAVED").is_some();
+    let executor = cx.background_executor.clone();
+    crate::app::test_support::with_runtime_app(
+        concat!(
+            module_path!(),
+            "::cold_saved_codex_chat_draws_recent_rows_before_full_read"
+        ),
+        cx,
+        |project| {
+            if reopen_saved {
+                crate::app::persistence::initialize()
+                    .expect("initialize production shared session repository");
+            }
+            let mut environment = vec![("PATH".into(), "/usr/bin:/bin".into())];
+            if full_only {
+                environment.push((
+                    "CODEX_SQLITE_HOME".into(),
+                    std::env::var_os("FARCASTER_TEST_CODEX_HOME").unwrap(),
+                ));
+            }
+            crate::agents::set_test_project_environment(project, environment);
+            let config = AgentLaunchConfig::default();
+            config
+                .profiles
+                .replace(vec![crate::agents::HarnessProfile {
+                    id: PROFILE.into(),
+                    name: "Local history".into(),
+                    backend: Backend::Codex,
+                    executable: std::env::var_os("FARCASTER_TEST_CODEX_PROGRAM")
+                        .unwrap()
+                        .into(),
+                    data_directory: Some(
+                        std::env::var_os("FARCASTER_TEST_CODEX_HOME")
+                            .unwrap()
+                            .into(),
+                    ),
+                }])
+                .unwrap();
+            if reopen_saved {
+                use crate::storage::{SessionRepository as _, TranscriptSession};
+
+                let project = project.canonicalize().unwrap();
+                let path = project
+                    .join("profiles")
+                    .join(PROFILE)
+                    .join(Backend::Codex.as_str())
+                    .join(&thread);
+                let session = TranscriptSession {
+                    harness: Backend::Codex,
+                    path: &path,
+                    project: &project,
+                    profile_id: Some(PROFILE),
+                };
+                let profile = AgentLaunchConfig {
+                    profile_id: Some(PROFILE.into()),
+                    ..config.clone()
+                };
+                let (history, revision) = crate::agents::load_session_history_for_import(
+                    &profile,
+                    Backend::Codex,
+                    &path,
+                    &project,
+                    None,
+                )
+                .expect("import real Codex history before the timed reopen");
+                let metadata = serde_json::json!({
+                    "sourceRevision": revision, "model": history.model,
+                    "thinkingLevel": history.thinking_level, "pendingQuestion": history.pending_question,
+                });
+                let store = crate::app::persistence::shared().unwrap();
+                report_saved_history_storage("before import");
+                assert!(
+                    store
+                        .replace_transcript(session, 0, &history.messages, &metadata)
+                        .unwrap()
+                );
+                report_saved_history_storage("after import");
+                let source_path = write_session_file(&project, "benchmark-source", 2);
+                let source =
+                    crate::agents::load_session_history(Backend::Pi, &source_path, &project)
+                        .unwrap();
+                assert!(
+                    store
+                        .replace_transcript(
+                            TranscriptSession {
+                                harness: Backend::Pi,
+                                path: &source_path,
+                                project: &project,
+                                profile_id: None
+                            },
+                            0,
+                            &source.messages,
+                            &serde_json::json!({})
+                        )
+                        .unwrap()
+                );
+            }
+            RuntimeHandle::spawn(
+                project.into(),
+                crate::sessions::DraftSession::with_id(None, "start".into(), project.into()),
+                None,
+                config,
+                crate::app::runtime_host::host(executor.clone()),
+            )
+        },
+        |cx, app, project| {
+            let project = project.canonicalize().unwrap();
+            trust::apply(&project, TrustChoice::TrustProject).unwrap();
+            let path = project
+                .join("profiles")
+                .join(PROFILE)
+                .join(Backend::Codex.as_str())
+                .join(&thread);
+            let row = crate::sessions::SessionSummary::from_cached_for_harness(
+                thread.clone(),
+                Backend::Codex,
+                path.clone(),
+                project.clone(),
+                "Saved chat".into(),
+                String::new(),
+                String::new(),
+                None,
+                std::time::UNIX_EPOCH,
+                1,
+                Default::default(),
+                false,
+                false,
+                String::new(),
+            )
+            .with_app_session_id(17);
+            let row = if reopen_saved {
+                crate::app::persistence::open()
+                    .unwrap()
+                    .cached_sessions("")
+                    .unwrap()
+                    .into_iter()
+                    .find(|saved| saved.harness == row.harness && saved.path == path)
+                    .expect("saved catalog record")
+            } else {
+                row
+            };
+            let source = reopen_saved.then(|| {
+                let row = crate::app::persistence::open()
+                    .unwrap()
+                    .cached_sessions("")
+                    .unwrap()
+                    .into_iter()
+                    .find(|r| {
+                        r.harness == Backend::Pi && r.path == project.join("benchmark-source.jsonl")
+                    })
+                    .expect("saved source chat");
+                assert!(row.has_local_transcript);
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| {
+                        app.sessions.all.upsert_by_recency(row.clone());
+                        app.sessions.visible.upsert_by_recency(row.clone());
+                        app.select_rail_session(row.catalog_key(), window, cx);
+                    });
+                });
+                wait_for_items(cx, app, &row.path, 2);
+                let bounds = cx
+                    .debug_bounds("transcript-row-1")
+                    .expect("populated source drew its last row");
+                (row, bounds)
+            });
+            let key = row.catalog_key();
+            cx.update(|_, cx| {
+                app.update(cx, |app, _| {
+                    for row in source
+                        .iter()
+                        .map(|(row, _)| row)
+                        .chain(std::iter::once(&row))
+                    {
+                        app.sessions.all.upsert_by_recency(row.clone());
+                        app.sessions.visible.upsert_by_recency(row.clone());
+                    }
+                })
+            });
+            let mut clicked = Some(key);
+            let mut first_draw = None;
+            let mut loading_draws = 0;
+            let mut prior_draws = 0;
+            let mut last_unreadable = source.as_ref().map(|_| (Duration::ZERO, true));
+            let mut prior_time = Duration::ZERO;
+            let mut loading_time = Duration::ZERO;
+            let mut pending_draws = 0;
+            let started = Instant::now();
+            let mut first = None;
+            let mut page_rows = 0;
+            let mut full_paint = None;
+            let mut ready_frames = 0;
+            let mut selectors = std::collections::HashMap::new();
+            loop {
+                assert!(
+                    started.elapsed() < SWITCH_TIMEOUT,
+                    "live history did not arrive"
+                );
+                if clicked.is_none() {
+                    cx.run_until_parked();
+                }
+                let (ready, count, before_route, prior) = cx.update(|window, cx| {
+                    if let Some(key) = clicked.take() {
+                        app.update(cx, |app, cx| {
+                            app.select_rail_session(key, window, cx);
+                            if reopen_saved && let Some(trace) = &app.lifecycle.switch_paint {
+                                trace.record_geometry();
+                            }
+                        });
+                    } else {
+                        app.update(cx, |app, cx| app.drain_runtime(cx));
+                    }
+                    window.draw(cx).clear(cx);
+                    let app = app.read(cx);
+                    let snapshot = &app.snapshot;
+                    let view = app.views.transcript.read(cx);
+                    if let Some((source, _)) = &source
+                        && app.sidebar_session_path() == Some(&source.path)
+                    {
+                        assert_eq!(app.selected_rail_root().unwrap().path, source.path);
+                        assert_eq!(
+                            app.composer.sessions.current_buffer(),
+                            crate::sessions::session_buffer(source.harness, &source.path)
+                        );
+                        assert_eq!(snapshot.selected_session.as_ref(), Some(&source.path));
+                        assert_eq!(snapshot.conversation.items.len(), 2);
+                        return (false, 0, false, true);
+                    }
+                    let local_rows = view.local_display_row_count(app);
+                    if local_rows > 0 {
+                        return (
+                            false,
+                            local_rows,
+                            app.lifecycle.awaiting_switch_route.is_some(),
+                            false,
+                        );
+                    }
+                    if snapshot.selected_session.as_ref() != Some(&path) {
+                        return (
+                            false,
+                            0,
+                            app.lifecycle.awaiting_switch_route.is_some(),
+                            false,
+                        );
+                    }
+                    if snapshot.document_ready {
+                        if reopen_saved {
+                            assert!(
+                                snapshot.saved_history.is_some(),
+                                "timed open bypassed SQLite"
+                            );
+                        }
+                        return (true, view.rows.len(), false, false);
+                    }
+                    (false, view.history_tail_row_count(), false, false)
+                });
+                let drawn = started.elapsed();
+                first_draw.get_or_insert(drawn);
+                if let Some((previous, was_prior)) = last_unreadable.take() {
+                    if was_prior {
+                        prior_time += drawn - previous
+                    } else {
+                        loading_time += drawn - previous
+                    }
+                }
+                if prior {
+                    let (_, initial) = source.as_ref().unwrap();
+                    assert!(first.is_none(), "destination reverted to source");
+                    assert!(
+                        cx.debug_bounds("transcript-loading").is_none(),
+                        "spinner replaced the prior chat"
+                    );
+                    assert_eq!(cx.debug_bounds("transcript-row-1"), Some(*initial));
+                    prior_draws += 1;
+                    last_unreadable = Some((drawn, true));
+                    continue;
+                }
+                pending_draws += usize::from(before_route);
+                if !ready {
+                    page_rows = page_rows.max(count);
+                }
+                let mut readable = false;
+                if count > 0 {
+                    let bounds: Vec<_> = (0..count.min(24))
+                        .map(|offset| {
+                            let index = count - 1 - offset;
+                            let key = selectors.entry(index).or_insert_with(|| {
+                                Box::leak(format!("transcript-row-{index}").into_boxed_str())
+                                    as &'static str
+                            });
+                            cx.debug_bounds(key)
+                        })
+                        .take_while(Option::is_some)
+                        .flatten()
+                        .collect();
+                    if !bounds.is_empty() {
+                        readable = true;
+                        let (when, initial, first_before_route) = first.get_or_insert_with(|| {
+                            if !reopen_saved {
+                                assert_eq!(ready, full_only, "unexpected first paint ({page_rows} provisional rows, {count} final rows)");
+                            }
+                            (started.elapsed(), bounds.clone(), before_route)
+                        });
+                        assert!(
+                            bounds.starts_with(initial),
+                            "visible tail shifted on actual history: {initial:?} -> {bounds:?}"
+                        );
+                        if ready {
+                            let full = full_paint.get_or_insert_with(|| started.elapsed());
+                            ready_frames += 1;
+                            if ready_frames == 8 {
+                                eprintln!(
+                                    "Real cold open: saved={reopen_saved}, first readable {when:?}, before route ACK={first_before_route}, full {full:?}, first draw {:?}, prior visible at {prior_draws} sample(s) (sample upper bound {prior_time:?}), loading {loading_time:?} ({loading_draws} sampled draws), {pending_draws} pending route draws, {} visible rows at identical bounds",
+                                    first_draw.unwrap(),
+                                    initial.len()
+                                );
+                                if reopen_saved {
+                                    if crate::app::infrastructure::performance::tracing_every_operation() {
+                                        let ((painted, early), frames) = cx.update(|_, cx| {
+                                            let trace = app.read(cx).lifecycle.switch_paint.as_ref().unwrap();
+                                            (trace.result().expect("actual first row paint"), trace.assert_stable_frames())
+                                        });
+                                        assert!(painted <= *when, "actual paint after sampled frame");
+                                        eprintln!("Real first transcript paint: {painted:?}, before route ACK={early}, {frames} actual GPUI paints with identical row bounds");
+                                    }
+                                    report_saved_history_storage("after reopen");
+                                }
+                                break;
+                            }
+                        }
+                    } else {
+                        assert!(!ready, "full transcript has no visible tail");
+                    }
+                }
+                if !readable {
+                    assert!(
+                        first.is_none(),
+                        "readable rows disappeared during session open"
+                    );
+                    let loading = cx.debug_bounds("transcript-loading").is_some();
+                    assert!(
+                        loading,
+                        "blank transcript without readable rows or loading state"
+                    );
+                    assert!(!reopen_saved, "saved chat flashed a loading frame");
+                    loading_draws += 1;
+                    last_unreadable = Some((drawn, false));
+                }
+                thread::sleep(SWITCH_POLL);
+            }
+        },
+    );
+}
+
+#[gpui::test]
+fn resuming_a_draft_keeps_late_editor_text_out_of_its_input(cx: &mut gpui::TestAppContext) {
+    use crate::{protocol::ExtensionUiRequest, runtime::RuntimeEvent, sessions::DraftSession};
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::resuming_a_draft_keeps_late_editor_text_out_of_its_input"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            trust::apply(project, TrustChoice::TrustProject).unwrap();
+            let draft =
+                DraftSession::new(Some(Backend::Codex), "resume".into(), 42, project.into(), 0);
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let id = draft.id.clone();
+                    app.sessions.drafts.push(draft);
+                    app.resume_draft(id, project.into(), window, cx);
+                    app.composer
+                        .input
+                        .update(cx, |input, cx| input.set_value("draft text", window, cx));
+                    runtime.send_event(RuntimeEvent::ExtensionUi {
+                        generation: app.runtime_generation,
+                        request: ExtensionUiRequest::SetEditorText {
+                            id: "previous".into(),
+                            text: "previous actor's text".into(),
+                        },
+                        system_notification_target: None,
+                    });
+                    app.drain_runtime(cx);
+                    assert!(app.lifecycle.pending_session_switch.is_none());
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.run_until_parked();
+            let request = std::iter::from_fn(|| runtime.try_recv_command())
+                .find_map(|command| match command {
+                    RuntimeCommand::ResumeDraft { request, .. } => request,
+                    _ => None,
+                })
+                .expect("resume dispatched");
+            runtime.send_event(RuntimeEvent::SelectionRouted(request));
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| app.drain_runtime(cx));
+                window.draw(cx).clear(cx);
+            });
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                let app = app.read(cx);
+                assert_eq!(app.composer.input.read(cx).value().as_ref(), "draft text");
+                assert!(app.awaiting_selection_snapshot());
+            });
+            let path = project.join("materialized");
+            let row = crate::sessions::SessionSummary::from_cached_for_harness(
+                "native".into(),
+                Backend::Codex,
+                path.clone(),
+                project.into(),
+                "Resumed draft".into(),
+                String::new(),
+                String::new(),
+                None,
+                std::time::UNIX_EPOCH,
+                1,
+                Default::default(),
+                false,
+                false,
+                String::new(),
+            )
+            .with_app_session_id(42);
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions
+                        .submitted_drafts
+                        .insert("resume".into(), Some(path.clone()));
+                    runtime.send_event(RuntimeEvent::SessionUpdated(row));
+                    app.drain_runtime(cx);
+                    assert!(app.sessions.selected_draft.is_none());
+                    assert!(app.awaiting_selection_snapshot());
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    assert_eq!(app.composer.input.read(cx).value().as_ref(), "draft text");
+                    runtime.send_event(RuntimeEvent::Snapshot {
+                        generation: app.runtime_generation + 1,
+                        snapshot: std::sync::Arc::new(crate::runtime::RuntimeSnapshot {
+                            harness: Some(Backend::Codex),
+                            selected_session: Some(path),
+                            project: project.into(),
+                            document_ready: true,
+                            ..Default::default()
+                        }),
+                    });
+                    app.drain_runtime(cx);
+                    assert!(!app.awaiting_selection_snapshot());
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                assert_eq!(
+                    app.read(cx).composer.input.read(cx).value().as_ref(),
+                    "draft text"
+                );
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn late_editor_text_cannot_replace_input_for_the_session_being_opened(
+    cx: &mut gpui::TestAppContext,
+) {
+    use crate::{
+        protocol::ExtensionUiRequest,
+        runtime::RuntimeEvent,
+        sessions::{ComposerSnapshot, session_target},
+    };
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::late_editor_text_cannot_replace_input_for_the_session_being_opened"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let requested = project.join("requested");
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.switch_composer_target(session_target(&requested), window, cx);
+                    app.apply_composer_snapshot(
+                        ComposerSnapshot::new("new input".into(), 9, 9..9),
+                        window,
+                        cx,
+                    );
+                    app.lifecycle.pending_session_switch = Some((
+                        requested.clone(),
+                        crate::app::infrastructure::performance::Timing::new("switch.test"),
+                    ));
+                    runtime.send_event(RuntimeEvent::ExtensionUi {
+                        generation: app.runtime_generation,
+                        request: ExtensionUiRequest::SetEditorText {
+                            id: "old".into(),
+                            text: "old extension".into(),
+                        },
+                        system_notification_target: None,
+                    });
+                    app.drain_runtime(cx);
+                })
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    assert_eq!(app.composer.input.read(cx).value().as_ref(), "new input");
+                    assert!(app.extensions.pending_editor_text.is_some());
+                    runtime.send_event(RuntimeEvent::Snapshot {
+                        generation: app.runtime_generation + 1,
+                        snapshot: std::sync::Arc::new(crate::runtime::RuntimeSnapshot {
+                            selected_session: Some(requested.clone()),
+                            project: project.into(),
+                            document_ready: true,
+                            status: "Ready".into(),
+                            ..Default::default()
+                        }),
+                    });
+                    app.drain_runtime(cx);
+                })
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                let app = app.read(cx);
+                assert!(app.extensions.pending_editor_text.is_none());
+                assert_eq!(app.composer.input.read(cx).value().as_ref(), "new input");
+            });
+        },
+    );
 }

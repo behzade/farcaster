@@ -68,6 +68,28 @@ fn cached_relationships_preserve_profile_identity_orphans_and_cycles() {
 }
 
 #[test]
+fn archive_root_count_tracks_writes_metadata_and_reparenting() {
+    let root = session("root", "/root", None).with_app_session_id(1);
+    let mut child = session("child", "/child", Some("root")).with_app_session_id(2);
+    child.archived = true;
+    let mut catalog = SessionCatalog::from(vec![root.clone(), child.clone()]);
+    assert_eq!(catalog.archived_root_count(), 0);
+    let initial_builds = catalog.relationship_build_count();
+    assert!(catalog.set_row_archived(&root.target(), 1, true));
+    assert_eq!(catalog.archived_root_count(), 1);
+    assert!(catalog.apply_archive_result(&root, None, true).is_some());
+    assert_eq!(catalog.archived_root_count(), 1);
+    catalog.upsert_by_recency(root);
+    assert_eq!(catalog.archived_root_count(), 0);
+    assert_eq!(catalog.relationship_build_count(), initial_builds);
+    child.parent_session = None;
+    catalog.upsert_by_recency(child.clone());
+    assert_eq!(catalog.archived_root_count(), 1);
+    assert!(catalog.apply_archive_result(&child, None, false).is_some());
+    assert_eq!(catalog.archived_root_count(), 0);
+}
+
+#[test]
 fn mutation_rebuilds_relationships_and_returns_current_metadata() {
     let mut catalog = SessionCatalog::from(vec![
         session("root", "/root", None),
@@ -154,4 +176,108 @@ fn ancestor_queries_exclude_self_in_cycles_and_invalidate_after_mutation() {
     assert!(catalog.ancestors(&catalog[0]).is_empty());
     assert_eq!(catalog.child_count(&catalog[1]), 0);
     assert_eq!(catalog.ancestors(&catalog[1]), [&catalog[0]]);
+}
+
+#[test]
+fn saved_worker_profile_tracks_both_archive_flags_by_record_id() {
+    let parent = session("parent", "/shared", None).with_app_session_id(1);
+    let mut child = session("child", "/child", None).with_app_session_id(2);
+    child.parent_app_session_id = Some(1);
+    child.worker_profile = Some("reviewer".into());
+    let mut other = session("other", "/shared", None).with_app_session_id(3);
+    other.archived = true;
+    let mut catalog = SessionCatalog::from(vec![parent, child, other]);
+    assert_eq!(catalog.active_worker_profile(2), Some("reviewer"));
+    catalog[0].archived = true;
+    assert_eq!(catalog.active_worker_profile(2), None);
+    catalog[0].archived = false;
+    catalog[1].archived = true;
+    assert_eq!(catalog.active_worker_profile(2), None);
+    catalog[1].archived = false;
+    assert_eq!(catalog.active_worker_profile(2), Some("reviewer"));
+}
+
+#[test]
+fn archive_and_stop_keep_warm_relationships_and_unrelated_rows() {
+    let root = session("root", "/root", None).with_app_session_id(10);
+    let mut child = session("child", "/child", Some("root")).with_app_session_id(11);
+    child.is_running = true;
+    let mut catalog = SessionCatalog::from(vec![root, child]);
+    assert_eq!(
+        catalog
+            .running()
+            .map(|row| row.app_session_id)
+            .collect::<Vec<_>>(),
+        [11]
+    );
+    assert_eq!(catalog.by_app_id(11).unwrap().path, Path::new("/child"));
+    assert!(catalog.set_row_archived(&catalog[0].target(), 10, true));
+    assert!(catalog.relationships.get().is_some());
+    catalog.mark_stopped(Path::new("/child"));
+    assert!(catalog.relationships.get().is_some());
+    assert!(
+        catalog
+            .root_for_path(Some(Path::new("/child")))
+            .unwrap()
+            .archived
+    );
+    assert!(!catalog.by_app_id(11).unwrap().archived);
+    assert!(!catalog.by_app_id(11).unwrap().is_running);
+    assert!(catalog.running().next().is_none());
+    catalog[0].is_running = true;
+    assert_eq!(catalog.running().next(), Some(&catalog[0]));
+    assert!(!catalog.set_row_archived(&catalog[0].target(), 77, false));
+    assert!(catalog.by_app_id(10).unwrap().archived);
+}
+
+#[cfg(unix)]
+#[test]
+fn archive_receipt_reconciles_only_the_requested_legacy_placeholder() {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().canonicalize().unwrap();
+    let alias = project.join("alias");
+    std::os::unix::fs::symlink(&project, &alias).unwrap();
+    let placeholder = |name: &str| {
+        let path = alias.join(name);
+        let mut row = session(path.to_str().unwrap(), path.to_str().unwrap(), None);
+        row.project = alias.clone();
+        row
+    };
+    let requested = placeholder("first");
+    let other = placeholder("second");
+    let mut metadata = requested.clone().with_app_session_id(81);
+    metadata.project = project.clone();
+    metadata.path = project.join("first");
+    metadata.id = "native-id".into();
+    metadata.title = "Current title".into();
+    let mut receipt = metadata.clone();
+    receipt.title = "Older title".into();
+    receipt.archived = true;
+
+    let mut catalog = SessionCatalog::from(vec![requested.clone(), other.clone()]);
+    assert!(catalog.upsert_in_place(metadata.clone()));
+    assert_eq!(catalog.len(), 3);
+    let i = catalog
+        .apply_archive_result(&receipt, Some(&requested.path), true)
+        .unwrap();
+    metadata.archived = true;
+    assert_eq!(catalog[i], metadata);
+    assert_eq!(catalog.len(), 2);
+    assert_eq!(catalog.by_app_id(81), Some(&metadata));
+    assert_eq!(catalog.by_path(&other.path), Some(&other));
+    assert!(catalog.by_path(&requested.path).is_none());
+}
+
+#[test]
+fn cached_counts_and_ancestors_distinguish_stored_rows_with_the_same_locator() {
+    let first = session("first", "/shared", None).with_app_session_id(1);
+    let second = session("second", "/shared", None).with_app_session_id(2);
+    let mut child = session("child", "/child", None).with_app_session_id(3);
+    child.parent_app_session_id = Some(1);
+    let catalog = SessionCatalog::from(vec![first, second, child]);
+    assert_eq!(catalog.child_count(&catalog[0]), 1);
+    assert_eq!(catalog.child_count(&catalog[1]), 0);
+    assert_eq!(catalog.ancestors(&catalog[2]), [&catalog[0]]);
+    let absent = catalog[0].clone().with_app_session_id(99);
+    assert_eq!(catalog.child_count(&absent), 0);
 }

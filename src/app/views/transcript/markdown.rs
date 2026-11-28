@@ -3,6 +3,9 @@ use std::{borrow::Cow, cell::RefCell, collections::HashMap, hash::Hash, rc::Rc};
 use gpui::{AppContext as _, Entity};
 use gpui_component::text::TextViewState;
 
+use super::render::{MarkdownChunk, chunk_text_with_structure};
+use crate::conversation::markdown_structure::MarkdownIndex;
+
 mod user_message;
 
 const MAX_CACHED_MARKDOWN_ROWS: usize = 256;
@@ -90,18 +93,39 @@ impl<K: Copy + Eq + Hash, V: Clone> RecentCache<K, V> {
 
 #[derive(Clone)]
 pub(crate) struct TranscriptMarkdownCache {
-    states: Rc<RefCell<RecentCache<(MarkdownStateKey, bool), Entity<TextViewState>>>>,
+    document: Rc<DocumentMarkdown>,
+}
+
+struct DocumentMarkdown {
+    index: std::sync::Arc<MarkdownIndex>,
+    states: RefCell<RecentCache<(MarkdownStateKey, bool), Entity<TextViewState>>>,
 }
 
 impl Default for TranscriptMarkdownCache {
     fn default() -> Self {
-        Self {
-            states: Rc::new(RefCell::new(RecentCache::new(MAX_CACHED_MARKDOWN_ROWS))),
-        }
+        Self::with_index(Default::default())
     }
 }
 
 impl TranscriptMarkdownCache {
+    pub(in crate::app) fn with_index(index: std::sync::Arc<MarkdownIndex>) -> Self {
+        Self {
+            document: Rc::new(DocumentMarkdown {
+                index,
+                states: RefCell::new(RecentCache::new(MAX_CACHED_MARKDOWN_ROWS)),
+            }),
+        }
+    }
+
+    pub(super) fn chunk_text<'a>(
+        &self,
+        item: usize,
+        source: &'a str,
+        chunk: MarkdownChunk,
+    ) -> Cow<'a, str> {
+        chunk_text_with_structure(source, chunk, self.document.index.get(&item))
+    }
+
     pub(crate) fn state(
         &self,
         key: MarkdownStateKey,
@@ -119,27 +143,172 @@ impl TranscriptMarkdownCache {
         user_message: bool,
         cx: &mut gpui::App,
     ) -> Entity<TextViewState> {
-        let (state, hit) = self
-            .states
-            .borrow_mut()
-            .get_or_insert_with((key, user_message), || {
-                let text = text();
-                let _timing = crate::app::infrastructure::performance::OperationTiming::new(
-                    crate::app::infrastructure::performance::OperationKind::MarkdownParse,
-                    text.len(),
-                );
-                let rendered = if user_message {
-                    user_message::markdown(&text)
-                } else {
-                    Cow::Borrowed(text.as_ref())
-                };
-                cx.new(|cx| TextViewState::markdown(&rendered, cx))
-            });
+        let (state, hit) =
+            self.document
+                .states
+                .borrow_mut()
+                .get_or_insert_with((key, user_message), || {
+                    let text = text();
+                    let _timing = crate::app::infrastructure::performance::OperationTiming::new(
+                        crate::app::infrastructure::performance::OperationKind::MarkdownParse,
+                        text.len(),
+                    );
+                    let rendered = if user_message {
+                        user_message::markdown(&text)
+                    } else {
+                        Cow::Borrowed(text.as_ref())
+                    };
+                    let rendered = clickable_images(&rendered);
+                    cx.new(|cx| TextViewState::markdown(&rendered, cx))
+                });
         if hit {
             crate::app::infrastructure::performance::count_markdown_cache_hit();
         }
         state
     }
+}
+
+pub(super) fn clickable_images(source: &str) -> Cow<'_, str> {
+    use markdown::mdast::Node;
+    fn definitions(node: &Node, urls: &mut HashMap<String, String>) {
+        if let Node::Definition(definition) = node {
+            urls.entry(definition.identifier.clone())
+                .or_insert_with(|| definition.url.clone());
+        }
+        if let Some(children) = node.children() {
+            for child in children {
+                definitions(child, urls);
+            }
+        }
+    }
+    fn visit(
+        node: &Node,
+        in_link: bool,
+        allow_image_blocks: bool,
+        source: &str,
+        urls: &HashMap<String, String>,
+        edits: &mut Vec<(std::ops::Range<usize>, String)>,
+    ) {
+        let image_line = allow_image_blocks
+            && (matches!(node, Node::Image(_) | Node::ImageReference(_)) && !in_link
+                || matches!(node, Node::Link(link) if link.children.len() == 1 && matches!(link.children[0], Node::Image(_) | Node::ImageReference(_)))
+                || matches!(node, Node::LinkReference(link) if link.children.len() == 1 && matches!(link.children[0], Node::Image(_) | Node::ImageReference(_))));
+        if image_line && let Some(position) = node.position() {
+            let start = position.start.offset;
+            let end = position.end.offset;
+            let before = source[..start].rsplit('\n').next().unwrap_or_default();
+            let after = source[end..].split('\n').next().unwrap_or_default();
+            if before.trim().is_empty() && after.trim().is_empty() {
+                edits.push((start..start, "\n\n\u{200b}".into()));
+                edits.push((end..end, "\n\n".into()));
+            }
+        }
+        let url = match node {
+            Node::Image(image) => Some(image.url.as_str()),
+            Node::ImageReference(image) => urls.get(&image.identifier).map(String::as_str),
+            _ => None,
+        };
+        if let Some(url) = url
+            && let Some(position) = node.position()
+        {
+            let range = position.start.offset..position.end.offset;
+            fn attr(value: &str) -> String {
+                value
+                    .replace('&', "&amp;")
+                    .replace('"', "&quot;")
+                    .replace('<', "&lt;")
+                    .replace('>', "&gt;")
+            }
+            let (alt, title) = match node {
+                Node::Image(image) => (image.alt.as_str(), image.title.as_deref()),
+                Node::ImageReference(image) => (image.alt.as_str(), None),
+                _ => unreachable!(),
+            };
+            let title = title
+                .map(|title| format!(" title=\"{}\"", attr(title)))
+                .unwrap_or_default();
+            let bounds = crate::app::workspace::files::image_preview_dimensions(url)
+                .map(|(width, height)| {
+                    let scale = (320.0 / f64::from(width))
+                        .min(480.0 / f64::from(height))
+                        .min(1.0);
+                    format!(
+                        "width=\"{}\" height=\"{}\"",
+                        (f64::from(width) * scale).round().max(1.0) as u32,
+                        (f64::from(height) * scale).round().max(1.0) as u32
+                    )
+                })
+                .unwrap_or_else(|| "width=\"320\"".into());
+            let image = format!(
+                "<img src=\"{}\" alt=\"{}\" {bounds}{title}>",
+                attr(url),
+                attr(alt)
+            );
+            edits.push((
+                range.clone(),
+                if in_link {
+                    image
+                } else {
+                    format!("[{image}](<{}>)", url.replace('>', "%3E"))
+                },
+            ));
+            return;
+        }
+        let link = match node {
+            Node::Link(link) => Some(link.url.as_str()),
+            Node::LinkReference(link) => urls.get(&link.identifier).map(String::as_str),
+            _ => None,
+        };
+        if let Some(url) = link
+            && let Some((path, None)) =
+                crate::app::workspace::files::local_file_target(url, std::path::Path::new("/"))
+            && crate::app::attachment::resolve(crate::app::attachment::AttachmentSource::File(
+                &path,
+            ))
+            .source
+            .is_some()
+            && let Some(position) = node.position()
+        {
+            let end = position.end.offset;
+            let base = url.split('#').next().unwrap_or(url);
+            edits.push((
+                end..end,
+                format!(" · [Edit source](<{}#L1>)", base.replace('>', "%3E")),
+            ));
+        }
+        if let Some(children) = node.children() {
+            for child in children {
+                visit(
+                    child,
+                    in_link || link.is_some(),
+                    allow_image_blocks
+                        && !matches!(node, Node::List(_) | Node::Blockquote(_) | Node::Table(_)),
+                    source,
+                    urls,
+                    edits,
+                );
+            }
+        }
+    }
+    if !source.contains('[') {
+        return Cow::Borrowed(source);
+    }
+    let Ok(root) = markdown::to_mdast(source, &markdown::ParseOptions::gfm()) else {
+        return Cow::Borrowed(source);
+    };
+    let mut urls = HashMap::new();
+    definitions(&root, &mut urls);
+    let mut edits = Vec::new();
+    visit(&root, false, true, source, &urls, &mut edits);
+    if edits.is_empty() {
+        return Cow::Borrowed(source);
+    }
+    edits.sort_by_key(|(range, _)| (range.start, range.end));
+    let mut out = source.to_owned();
+    for (range, replacement) in edits.into_iter().rev() {
+        out.replace_range(range, &replacement);
+    }
+    Cow::Owned(out)
 }
 
 #[cfg(test)]

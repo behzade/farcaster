@@ -1,6 +1,20 @@
 use super::*;
 
 impl ConversationState {
+    pub fn settle_run(&mut self) -> Option<usize> {
+        let changed = self
+            .compacting
+            .then(|| self.compaction_notice(CompactionState::Interrupted, None));
+        self.running = false;
+        if let Some(start) = self.run_started_at.take() {
+            self.completed_runs.push(start..self.items.len());
+        }
+        self.settled = true;
+        self.retrying = false;
+        self.compacting = false;
+        changed
+    }
+
     #[allow(dead_code)]
     pub fn reduce(&mut self, event: &Value) -> Option<usize> {
         self.reduce_with_projection(event, true).0
@@ -60,6 +74,7 @@ impl ConversationState {
             .and_then(|id| self.tools.get(id).copied().or_else(|| self.tool_index(id)));
         let mut incremental_content_changed = true;
         let mut queue_changed = false;
+        let mut compaction_changed = None;
         match kind {
             "agent_start" => {
                 self.begin_run();
@@ -70,15 +85,7 @@ impl ConversationState {
                     self.retrying = true;
                 }
             }
-            "agent_settled" => {
-                self.running = false;
-                if let Some(start) = self.run_started_at.take() {
-                    self.completed_runs.push(start..self.items.len());
-                }
-                self.settled = true;
-                self.retrying = false;
-                self.compacting = false;
-            }
+            "agent_settled" => compaction_changed = self.settle_run(),
             "message_start" => self.start_message(event.get("message")),
             "message_update" => {
                 incremental_content_changed =
@@ -108,39 +115,35 @@ impl ConversationState {
                     }
                 }
             }
-            "compaction_start" => {
-                self.compacting = true;
-                self.notice(format!(
-                    "Compacting context ({})",
-                    text_field(event, "reason")
-                ));
-            }
+            "compaction_start" => self.compacting = true,
             "compaction_end" => {
                 self.compacting = false;
-                let message = if event.get("aborted").and_then(Value::as_bool) == Some(true) {
-                    "Compaction aborted".to_owned()
-                } else if let Some(error) = event.get("errorMessage").and_then(Value::as_str) {
-                    format!("Compaction failed: {error}")
+                let error = event
+                    .get("errorMessage")
+                    .and_then(Value::as_str)
+                    .filter(|error| !error.trim().is_empty());
+                let status = if event.get("aborted").and_then(Value::as_bool) == Some(true) {
+                    Some(CompactionState::Aborted)
                 } else {
-                    "Context compacted".to_owned()
+                    error.map(|_| CompactionState::Failed)
                 };
-                self.notice(message);
+                compaction_changed = status.map(|status| self.compaction_notice(status, error));
             }
             "auto_retry_start"
             | "summarization_retry_scheduled"
             | "summarization_retry_attempt_start" => {
                 self.retrying = true;
-                self.notice(retry_notice(event));
+                self.push_notice(TranscriptKind::Notice, "Run", retry_notice(event));
             }
             "auto_retry_end" | "summarization_retry_finished" => {
                 self.retrying = false;
-                self.notice(retry_notice(event));
+                self.push_notice(TranscriptKind::Notice, "Run", retry_notice(event));
             }
             "extension_error" => self.push_extension_error(text_field(event, "error")),
             "turn_start" | "turn_end" => {}
             unknown => self.diagnostic(format!("Unknown RPC event: {unknown}")),
         }
-        let changed_from = match kind {
+        let changed_from = compaction_changed.or_else(|| match kind {
             "message_start" => Some(previous_len.saturating_sub(1)),
             "message_update" if incremental_content_changed => previous_live_start,
             "message_update" => None,
@@ -156,16 +159,14 @@ impl ConversationState {
             | "tool_execution_end"
             | "tool_metadata_changed"
             | "tool_review_changed" => affected_tool.or(Some(previous_len)),
-            "compaction_start"
-            | "compaction_end"
-            | "auto_retry_start"
+            "auto_retry_start"
             | "auto_retry_end"
             | "summarization_retry_scheduled"
             | "summarization_retry_attempt_start"
             | "summarization_retry_finished"
             | "extension_error" => Some(previous_len),
             _ => None,
-        };
+        });
         let state_changed = queue_changed || previous_state != state(self);
         (changed_from, state_changed)
     }
@@ -444,16 +445,25 @@ impl ConversationState {
         })));
     }
 
-    fn notice(&mut self, text: String) {
+    fn compaction_notice(&mut self, status: CompactionState, error: Option<&str>) -> usize {
+        let text = match error {
+            Some(error) => format!("{}: {error}", status.label()),
+            None => status.label().to_owned(),
+        };
+        self.push_notice(TranscriptKind::Compaction(status), "Context", text)
+    }
+
+    fn push_notice(&mut self, kind: TranscriptKind, label: &str, text: String) -> usize {
+        let index = self.items.len();
         self.items.push(Arc::new(TranscriptItem {
-            kind: TranscriptKind::Notice,
-            label: "Run".into(),
+            is_error: kind == TranscriptKind::Compaction(CompactionState::Failed),
+            kind,
+            label: label.into(),
             text,
             images: Arc::default(),
             files: Arc::default(),
             stream_chunks: Arc::default(),
             streaming: false,
-            is_error: false,
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
@@ -461,6 +471,7 @@ impl ConversationState {
             tool_review: None,
             invocation: None,
         }));
+        index
     }
 
     fn diagnostic(&mut self, text: String) {
@@ -500,6 +511,17 @@ fn append_delta(partial: &mut PartialContent, delta: &Value) -> bool {
 
 fn freeze_stream_chunks(partial: &mut PartialContent) {
     while partial.value.len() > STREAM_TAIL_MAX_BYTES {
+        if partial.kind == PartialKind::Text
+            && (partial.value.contains("![")
+                || partial.value.contains("](")
+                || partial.value.contains("][")
+                || partial
+                    .value
+                    .lines()
+                    .any(|line| line.trim_start().starts_with('[')))
+        {
+            break;
+        }
         let mut split = STREAM_CHUNK_BYTES.min(partial.value.len());
         while !partial.value.is_char_boundary(split) {
             split -= 1;

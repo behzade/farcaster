@@ -30,6 +30,68 @@ pub(super) fn replacement_effort(model: &Model, current: Option<&str>) -> Option
 }
 
 impl RuntimeSnapshot {
+    pub fn catalog_row_at<'a>(
+        &self,
+        catalog: &'a crate::sessions::SessionCatalog,
+        path: &std::path::Path,
+    ) -> Option<&'a crate::sessions::SessionSummary> {
+        if catalog.has_shared_path(path) {
+            let mut rows = catalog
+                .at_path(path)
+                .filter(|row| self.matches_session_row(row));
+            let row = rows.next()?;
+            rows.next().is_none().then_some(row)
+        } else {
+            catalog
+                .by_path(path)
+                .filter(|row| self.matches_lone_row(row))
+        }
+    }
+
+    pub fn matches_catalog_row(
+        &self,
+        catalog: &crate::sessions::SessionCatalog,
+        row: &crate::sessions::SessionSummary,
+    ) -> bool {
+        if !catalog.has_shared_path(&row.path) {
+            return self.matches_lone_row(row);
+        }
+        self.catalog_row_at(catalog, &row.path)
+            .is_some_and(|selected| selected.same_record(row) && selected.id == row.id)
+    }
+
+    pub(super) fn matches_lone_row(&self, row: &crate::sessions::SessionSummary) -> bool {
+        if self.harness.is_some_and(|harness| harness != row.harness) {
+            return false;
+        }
+        if self.live_session.as_ref() == Some(&row.path)
+            && self
+                .selected_session
+                .as_ref()
+                .is_some_and(|path| path != &row.path)
+        {
+            return true;
+        }
+        // The stored key is (harness, locator). The same project can be opened
+        // through a symlink, so its spelling cannot disqualify a unique row.
+        (self.profile_id.is_none() || row.profile_id.is_none() || self.profile_id == row.profile_id)
+            && self.session.as_ref().is_none_or(|state| {
+                state.session_id.is_empty()
+                    || row.id == row.path.to_string_lossy()
+                    || state.session_id == row.id
+            })
+    }
+
+    pub fn matches_session_row(&self, row: &crate::sessions::SessionSummary) -> bool {
+        self.harness == Some(row.harness)
+            && self.project == row.project
+            && self.profile_id == row.profile_id
+            && self
+                .session
+                .as_ref()
+                .is_none_or(|state| state.session_id.is_empty() || state.session_id == row.id)
+    }
+
     pub fn available_access_modes(&self) -> Vec<crate::agents::HarnessAccessMode> {
         crate::agents::available_access_modes(
             self.harness,

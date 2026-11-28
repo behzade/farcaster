@@ -7,11 +7,181 @@ use std::{
 use gpui::{Context, IntoElement as _, Render, WeakEntity};
 
 use super::super::{FarcasterApp, transcript};
-use crate::utility::persistent_vec::PersistentVec;
+use crate::{
+    agents::{HistoryCoverage, HistoryPage},
+    conversation::{ConversationState, TranscriptKind, markdown_structure::MarkdownIndex},
+    reviews::presentation::TranscriptPresentation,
+    utility::persistent_vec::PersistentVec,
+};
 
+#[path = "transcript_local.rs"]
+mod local;
 #[path = "transcript_reading.rs"]
 mod reading;
+#[path = "transcript_resident.rs"]
+mod resident;
+use local::LocalTranscript;
+pub(in crate::app) use local::{DisplayQuery, DisplayRead};
 use reading::{ReadingAnchor, ReadingState};
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum HistoryDisplay {
+    Waiting,
+    Document,
+    PositionUnavailable,
+}
+
+struct HistoryTail {
+    disclosures: HashMap<usize, bool>,
+    trees: HashMap<usize, crate::app::ui::change_tree::ChangeTreeState>,
+    unseen: usize,
+    list: transcript::list::TranscriptListState,
+    rows: Arc<PersistentVec<transcript::TranscriptRow>>,
+    presentation: Arc<TranscriptPresentation>,
+    markdown: transcript::markdown::TranscriptMarkdownCache,
+}
+
+pub(in crate::app) struct PreparedPage {
+    stamp: Option<crate::storage::TranscriptStamp>,
+    full: bool,
+    coverage: HistoryCoverage,
+    rows: PersistentVec<transcript::TranscriptRow>,
+    presentation: Arc<TranscriptPresentation>,
+    markdown: Arc<MarkdownIndex>,
+    loading_boundary: Option<usize>,
+}
+
+fn suffix_boundary(
+    presentation: &TranscriptPresentation,
+    rows: &PersistentVec<transcript::TranscriptRow>,
+) -> usize {
+    if let Some(user) = presentation
+        .items
+        .position(|item| item.kind == TranscriptKind::User)
+    {
+        return rows.position(|row| row.key() == user).unwrap_or(rows.len());
+    }
+    let last_reply = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| presentation.items[row.key()].kind == TranscriptKind::Assistant)
+        .last();
+    if let Some((last_chunk, reply)) = last_reply {
+        return if last_chunk + 1 == rows.len() {
+            rows.position(|row| row.key() == reply.key())
+                .unwrap_or(last_chunk)
+        } else {
+            last_chunk + 1
+        };
+    }
+    usize::from(
+        presentation.items.first().is_some_and(|item| {
+            matches!(item.kind, TranscriptKind::Tool | TranscriptKind::Thinking)
+        }),
+    )
+}
+
+impl PreparedPage {
+    fn from_store(stored: crate::storage::StoredViewport, project: &Path) -> Option<Self> {
+        if stored.full_document {
+            let mut presentation = TranscriptPresentation::from(&stored.content);
+            for (index, item) in stored.content.items.iter().enumerate() {
+                let hydrated = crate::reviews::artifact::hydrated_row(item, project);
+                if !Arc::ptr_eq(item, &hydrated) {
+                    presentation.items.set(index, hydrated);
+                }
+            }
+            let rows = transcript::project_presentation_rows(&presentation);
+            let loading_boundary = (stored.coverage == HistoryCoverage::Suffix)
+                .then(|| suffix_boundary(&presentation, &rows));
+            return Some(Self {
+                stamp: Some(stored.stamp),
+                full: true,
+                coverage: stored.coverage,
+                rows,
+                presentation: Arc::new(presentation),
+                markdown: Arc::default(),
+                loading_boundary,
+            });
+        }
+        let mut prepared = Self::new(
+            &HistoryPage {
+                content: stored.content,
+                coverage: stored.coverage,
+            },
+            project,
+            stored.markdown,
+        )?;
+        prepared.stamp = Some(stored.stamp);
+        Some(prepared)
+    }
+
+    fn new(
+        page: &HistoryPage<ConversationState>,
+        project: &Path,
+        markdown: MarkdownIndex,
+    ) -> Option<Self> {
+        let source = &page.content;
+        let presentation = Arc::new(TranscriptPresentation::from(source));
+        let projected = transcript::project_indexed_rows(&presentation, Some(&markdown));
+        if projected.is_empty()
+            || projected
+                .iter()
+                .any(|row| matches!(row, transcript::TranscriptRow::Review { .. }))
+            || source
+                .items
+                .iter()
+                .any(|item| crate::reviews::artifact::hydration_result(item, project).is_some())
+        {
+            return None;
+        }
+        let loading_boundary = (page.coverage == HistoryCoverage::Suffix)
+            .then(|| suffix_boundary(&presentation, &projected));
+        Some(Self {
+            stamp: None,
+            full: false,
+            coverage: page.coverage,
+            rows: projected,
+            presentation,
+            markdown: markdown.into(),
+            loading_boundary,
+        })
+    }
+}
+
+impl HistoryTail {
+    fn new(page: &HistoryPage<ConversationState>, project: &Path) -> Option<Self> {
+        PreparedPage::new(page, project, MarkdownIndex::new()).map(Self::from_prepared)
+    }
+
+    fn from_prepared(prepared: PreparedPage) -> Self {
+        let PreparedPage {
+            stamp: _,
+            full: _,
+            coverage: _,
+            rows: projected,
+            presentation,
+            markdown,
+            loading_boundary,
+        } = prepared;
+        let list = transcript::list::TranscriptListState::new_history_tail(loading_boundary);
+        let mut rows = Arc::default();
+        transcript::TranscriptRowUpdate::replace(projected).apply(
+            &list,
+            &mut rows,
+            &presentation.items,
+        );
+        Self {
+            disclosures: Default::default(),
+            trees: Default::default(),
+            unseen: 0,
+            list,
+            rows,
+            presentation,
+            markdown: transcript::markdown::TranscriptMarkdownCache::with_index(markdown),
+        }
+    }
+}
 
 pub(crate) struct TranscriptView {
     app: WeakEntity<FarcasterApp>,
@@ -25,11 +195,53 @@ pub(crate) struct TranscriptView {
     pub(crate) file_trees: HashMap<usize, crate::app::ui::change_tree::ChangeTreeState>,
     pub(crate) last_count: usize,
     session: Option<PathBuf>,
-    reading: HashMap<PathBuf, ReadingState>,
+    record: Option<crate::sessions::SessionKey>,
+    reading: HashMap<(PathBuf, Option<crate::sessions::SessionKey>), ReadingState>,
+    coverage: Option<HistoryCoverage>,
     pending_reading_anchor: Option<ReadingAnchor>,
+    history_tail: Option<HistoryTail>,
+    local: Option<LocalTranscript>,
+    resident: resident::ResidentTranscripts,
 }
 
 impl TranscriptView {
+    pub(in crate::app) fn set_refreshing_prefix(
+        &self,
+        presentation: &TranscriptPresentation,
+        refreshing: bool,
+    ) {
+        self.list
+            .set_loading_boundary(refreshing.then(|| suffix_boundary(presentation, &self.rows)));
+    }
+
+    fn history_display(&self, snapshot: &crate::runtime::RuntimeSnapshot) -> HistoryDisplay {
+        use crate::runtime::SavedHistory;
+        match snapshot.history_coverage() {
+            None => HistoryDisplay::Waiting,
+            Some(HistoryCoverage::Suffix)
+                if self.session.as_ref().is_some_and(|path| {
+                    self.reading
+                        .get(&(path.clone(), self.record.clone()))
+                        .is_some_and(|saved| !saved.allows_history_tail())
+                }) =>
+            {
+                if snapshot.saved_history == Some(SavedHistory::RefreshingPartial) {
+                    HistoryDisplay::Waiting
+                } else {
+                    HistoryDisplay::PositionUnavailable
+                }
+            }
+            _ => HistoryDisplay::Document,
+        }
+    }
+
+    pub(in crate::app) fn awaiting_history_rows(
+        &self,
+        snapshot: &crate::runtime::RuntimeSnapshot,
+    ) -> bool {
+        self.history_display(snapshot) == HistoryDisplay::Waiting
+    }
+
     pub(crate) fn new(
         app: WeakEntity<FarcasterApp>,
         list: transcript::list::TranscriptListState,
@@ -46,8 +258,13 @@ impl TranscriptView {
             file_trees: HashMap::new(),
             last_count: 0,
             session: None,
+            record: None,
             reading: HashMap::new(),
+            coverage: None,
             pending_reading_anchor: None,
+            history_tail: None,
+            local: None,
+            resident: Default::default(),
         }
     }
 
@@ -59,9 +276,17 @@ impl TranscriptView {
             && !self.rows.is_empty()
         {
             let saved = ReadingState::capture(self, items);
-            self.reading.insert(session, saved);
+            self.park_resident(&session, items, &saved);
+            let entry = self.reading.entry((session, self.record.take()));
+            if saved.allows_history_tail() {
+                entry.or_insert(saved);
+            } else {
+                entry.insert_entry(saved);
+            }
         }
         self.list.reset();
+        self.coverage = None;
+        self.history_tail = None;
         self.pending_reading_anchor = None;
         self.list.scroll_to_end();
         self.rows = Arc::new(PersistentVec::default());
@@ -75,9 +300,11 @@ impl TranscriptView {
     pub(crate) fn select_session(
         &mut self,
         session: Option<&Path>,
+        record: Option<crate::sessions::SessionKey>,
         previous_items: &PersistentVec<Arc<crate::conversation::TranscriptItem>>,
     ) -> bool {
-        if self.session.as_deref() == session {
+        if self.session.as_deref() == session && (self.record == record || self.record.is_none()) {
+            self.record = record;
             return false;
         }
         let reset = self.session.is_some();
@@ -85,20 +312,28 @@ impl TranscriptView {
             self.reset(previous_items);
         }
         self.session = session.map(Path::to_path_buf);
+        self.record = record;
         reset
     }
 
-    pub(crate) fn follow_session(&mut self, session: &Path) {
-        if self.session.as_deref() == Some(session) {
+    pub(crate) fn follow_session(
+        &mut self,
+        session: &Path,
+        record: Option<crate::sessions::SessionKey>,
+    ) {
+        self.follow_resident_latest(session, record.as_ref());
+        if self.session.as_deref() == Some(session) && self.record == record {
             self.jump_to_latest();
-        } else if let Some(saved) = self.reading.get_mut(session) {
+        } else if let Some(saved) = self.reading.get_mut(&(session.to_owned(), record)) {
             saved.follow_latest();
         }
     }
 
     pub(crate) fn jump_to_latest(&mut self) {
         if let Some(session) = &self.session
-            && let Some(saved) = self.reading.get_mut(session)
+            && let Some(saved) = self
+                .reading
+                .get_mut(&(session.clone(), self.record.clone()))
         {
             saved.follow_latest();
         }
@@ -113,10 +348,9 @@ impl TranscriptView {
         update: transcript::TranscriptRowUpdate,
         previous_items: &PersistentVec<Arc<crate::conversation::TranscriptItem>>,
         items: &PersistentVec<Arc<crate::conversation::TranscriptItem>>,
+        coverage: Option<HistoryCoverage>,
     ) -> bool {
         let mut anchor = self.take_pending_reading_anchor();
-        // Final Markdown rows have different boundaries from streaming chunks.
-        // Capture the current text position before replacing those rows, too.
         if anchor.is_none()
             && !self.list.has_pending_scroll()
             && let Some(transcript::TranscriptRow::StreamChunk { index, .. }) =
@@ -129,22 +363,103 @@ impl TranscriptView {
             anchor = ReadingAnchor::capture(self, previous_items);
         }
         let changed = update.apply(&self.list, &mut self.rows, items);
+        self.coverage = coverage;
         if !self.rows.is_empty()
             && let Some(session) = &self.session
-            && let Some(saved) = self.reading.remove(session)
+            && let std::collections::hash_map::Entry::Occupied(entry) =
+                self.reading.entry((session.clone(), self.record.clone()))
+            && let Some(coverage) = coverage
         {
-            anchor = saved.restore(self, items);
+            if let Some(start) = entry.get().source_offset(coverage, items) {
+                let mut saved = entry.remove();
+                saved.rebase(start, &self.rows);
+                anchor = saved.restore(self, items);
+            } else if coverage == HistoryCoverage::Complete {
+                entry.remove();
+                anchor = None;
+                self.jump_to_latest();
+            }
         }
         if let Some(anchor) = anchor {
             if let Some(offset) = anchor.resolve(&self.rows, items) {
-                self.list.restore_scroll(offset);
-                self.following = false;
-                self.pending_reading_anchor = Some(anchor);
+                self.restore_reading_anchor(anchor, offset);
             } else {
                 self.jump_to_latest();
             }
         }
         changed
+    }
+
+    fn restore_reading_anchor(&mut self, anchor: ReadingAnchor, offset: gpui::ListOffset) {
+        self.list.restore_scroll(offset);
+        self.following = false;
+        self.pending_reading_anchor = Some(anchor);
+    }
+
+    pub(crate) fn preserve_painted_history(
+        &mut self,
+        items: &PersistentVec<Arc<crate::conversation::TranscriptItem>>,
+        saved_transcript: bool,
+    ) {
+        self.preserve_page_position(items, saved_transcript, false)
+    }
+
+    pub(in crate::app) fn finish_local_display(&mut self, app: &FarcasterApp, saved: bool) {
+        if self.selected_local_page(app).is_some() {
+            self.preserve_page_position(&app.snapshot.transcript_presentation().items, saved, true);
+        }
+        self.local = None;
+        self.resident.authorized = None;
+    }
+
+    fn preserve_page_position(
+        &mut self,
+        items: &PersistentVec<Arc<crate::conversation::TranscriptItem>>,
+        saved_transcript: bool,
+        local: bool,
+    ) {
+        let page = if local {
+            self.local
+                .as_ref()
+                .and_then(|display| display.page.as_ref())
+        } else {
+            self.history_tail.as_ref()
+        };
+        let Some(page) = page else { return };
+        let Some((top, following)) = page.list.take_history_handoff_position() else {
+            return;
+        };
+        let scrolled = local && page.list.preview_scrolled();
+        if !scrolled && !self.allows_history_tail() {
+            return;
+        }
+        self.list.inherit_alignment(&page.list);
+        if let Some(offset) = page.matching_suffix_top(top, &self.rows, items) {
+            if !following {
+                if let Some(anchor) =
+                    ReadingAnchor::at(self.rows[offset.item_ix], offset.offset_in_item, items)
+                {
+                    self.restore_reading_anchor(anchor, offset);
+                }
+            } else {
+                if scrolled {
+                    self.jump_to_latest();
+                }
+                if saved_transcript {
+                    self.list.inherit_painted_top(offset);
+                }
+            }
+        } else if let Some((anchor, offset, unseen)) =
+            page.anchor_before_append(top, &self.rows, items)
+        {
+            let unseen = if following {
+                unseen
+            } else {
+                page.unseen.saturating_add(unseen)
+            };
+            self.restore_reading_anchor(anchor, offset);
+            self.unseen = unseen;
+        }
     }
 
     fn take_pending_reading_anchor(&mut self) -> Option<ReadingAnchor> {
@@ -159,6 +474,34 @@ impl TranscriptView {
         }
         self.last_count = count;
     }
+
+    pub(crate) fn set_history_tail(
+        &mut self,
+        source: Option<&HistoryPage<ConversationState>>,
+        project: &Path,
+    ) {
+        self.history_tail = source.and_then(|source| HistoryTail::new(source, project));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn history_tail_row_count(&self) -> usize {
+        self.history_tail.as_ref().map_or(0, |tail| tail.rows.len())
+    }
+
+    fn allows_history_tail(&self) -> bool {
+        self.following
+            && self.list.is_following_tail()
+            && !self.list.has_pending_scroll()
+            && !self.list.has_pending_restore()
+            && self.pending_reading_anchor.is_none()
+            && self.disclosure_states.is_empty()
+            && self.file_trees.is_empty()
+            && self.session.as_ref().is_some_and(|path| {
+                self.reading
+                    .get(&(path.clone(), self.record.clone()))
+                    .is_none_or(ReadingState::allows_history_tail)
+            })
+    }
 }
 
 impl Render for TranscriptView {
@@ -172,14 +515,56 @@ impl Render for TranscriptView {
             return gpui::div().into_any_element();
         };
         let app = app.read(cx);
-        let viewport = window.viewport_size();
-        transcript::render(
+        self.observe_ready_resident(app);
+
+        let viewport = transcript::TranscriptViewport {
+            switch_trace: app
+                .lifecycle
+                .switch_paint
+                .as_ref()
+                .filter(|trace| trace.active_for(app.composer.sessions.current_buffer()))
+                .map(|trace| (trace.clone(), app.lifecycle.awaiting_switch_route.is_some())),
+            font_scale: self.font_size / crate::app::ui::theme::theme().type_scale.reading,
+            show_working: false,
+            following: self.following,
+            unseen: self.unseen,
+            tail_reserve: transcript::tail_reserve(window.viewport_size().height),
+        };
+        let switching = app.lifecycle.pending_session_switch.is_some();
+        let display = self.history_display(&app.snapshot);
+        if switching || display == HistoryDisplay::Waiting {
+            if let Some(view) = self.render_resident(app, viewport.clone()) {
+                return view;
+            }
+            let tail = self.selected_local_page(app).or_else(|| {
+                (!switching && self.allows_history_tail())
+                    .then_some(self.history_tail.as_ref())
+                    .flatten()
+            });
+            if let Some(tail) = tail {
+                let viewport = transcript::TranscriptViewport {
+                    following: tail.list.is_following_tail(),
+                    unseen: tail.unseen,
+                    ..viewport
+                };
+                return transcript::render(
+                    &tail.list,
+                    viewport,
+                    tail.rows.clone(),
+                    tail.presentation.clone(),
+                    tail.disclosures.clone(),
+                    tail.trees.clone(),
+                    tail.markdown.clone(),
+                    self.app.clone(),
+                );
+            }
+            return transcript::loading_history();
+        }
+        let document = transcript::render(
             &self.list,
             transcript::TranscriptViewport {
-                font_scale: self.font_size / crate::app::ui::theme::theme().type_scale.reading,
-                following: self.following,
-                unseen: self.unseen,
-                tail_reserve: transcript::tail_reserve(viewport.height),
+                show_working: app.snapshot.conversation.awaiting_first_activity(),
+                ..viewport
             },
             self.rows.clone(),
             app.snapshot.transcript_presentation(),
@@ -187,6 +572,11 @@ impl Render for TranscriptView {
             self.file_trees.clone(),
             self.markdown_cache.clone(),
             self.app.clone(),
-        )
+        );
+        if display == HistoryDisplay::PositionUnavailable {
+            transcript::with_saved_position_notice(document)
+        } else {
+            document
+        }
     }
 }

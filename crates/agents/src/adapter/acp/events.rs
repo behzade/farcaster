@@ -3,7 +3,7 @@ use serde_json::Value;
 pub(super) use agent_client_protocol::schema::v1::RequestId as AcpRequestId;
 
 #[derive(Clone, Debug)]
-pub(super) enum AcpInbound {
+pub(in crate::adapter) enum AcpInbound {
     Response {
         id: AcpRequestId,
         result: Value,

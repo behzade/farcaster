@@ -1,9 +1,10 @@
+use crate::app::ui::primitives::Input;
 use gpui::{
     AnyElement, App, ElementId, Entity, Focusable as _, InteractiveElement as _, IntoElement,
     ParentElement as _, RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _,
     Window, div, prelude::FluentBuilder as _,
 };
-use gpui_component::input::{Input, InputState};
+use gpui_component::input::InputState;
 
 use crate::app::ui::{assets::AppIcon, theme::theme};
 
@@ -15,6 +16,7 @@ pub(crate) struct SearchField {
     input: Entity<InputState>,
     accessible_label: Option<SharedString>,
     trailing: Option<AnyElement>,
+    inset: gpui::Pixels,
 }
 
 impl SearchField {
@@ -24,11 +26,17 @@ impl SearchField {
             input: input.clone(),
             accessible_label: None,
             trailing: None,
+            inset: theme().size(10.0),
         }
     }
 
     pub(crate) fn accessible_label(mut self, label: impl Into<SharedString>) -> Self {
         self.accessible_label = Some(label.into());
+        self
+    }
+
+    pub(crate) fn inset(mut self, inset: gpui::Pixels) -> Self {
+        self.inset = inset;
         self
     }
 
@@ -45,8 +53,9 @@ impl RenderOnce for SearchField {
             input,
             accessible_label,
             trailing,
+            inset,
         } = self;
-        let accessible = accessible_label.as_ref().map(SharedString::to_string);
+        crate::app::ui::accessibility::observe_accessible_input(&input, window, cx);
         let focus_input = input.clone();
         let focused = input.read(cx).focus_handle(cx).is_focused(window);
         div()
@@ -55,7 +64,7 @@ impl RenderOnce for SearchField {
             .flex_none()
             .flex()
             .gap(theme().space.xs)
-            .pl(theme().size(10.0))
+            .pl(inset)
             .border_b(theme().border)
             .border_color(if focused {
                 theme().colors.focus_border
@@ -63,7 +72,6 @@ impl RenderOnce for SearchField {
                 gpui::rgba(0x00000000)
             })
             .text_color(theme().colors.muted)
-            .when_some(accessible, |field, label| field.aria_label(label))
             .on_click(move |_, window, cx| {
                 focus_input.read(cx).focus_handle(cx).focus(window, cx);
             })
@@ -74,8 +82,19 @@ impl RenderOnce for SearchField {
                     .flex()
                     .items_center()
                     .gap(theme().space.xs)
-                    .child(app_icon(AppIcon::MagnifyingGlass, AppIconSize::Inline))
-                    .child(Input::new(&input).flex_1().min_w_0().appearance(false)),
+                    .child(
+                        crate::app::ui::grid::icon_slot()
+                            .child(app_icon(AppIcon::MagnifyingGlass, AppIconSize::Inline)),
+                    )
+                    .child(
+                        Input::new(&input)
+                            .when_some(accessible_label, |input, label| input.aria_label(label))
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(theme().type_scale.body)
+                            .appearance(false)
+                            .px_0(),
+                    ),
             )
             .children(trailing)
     }

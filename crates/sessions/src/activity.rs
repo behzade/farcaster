@@ -14,6 +14,75 @@ use crate::{SessionSummary, UsageSummary};
 const MAX_ACTIVITY_CHARS: usize = 160;
 const MAX_TOOL_TARGET_CHARS: usize = 120;
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct WorkerActivityKey {
+    pub path: PathBuf,
+    pub native: crate::NativeSessionIdentity,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SessionStatusRecord {
+    App(crate::AppSessionId),
+    Native(WorkerActivityKey),
+}
+
+impl SessionStatusRecord {
+    pub fn for_row(row: &SessionSummary) -> Self {
+        crate::AppSessionId::new(row.app_session_id)
+            .map_or_else(|| Self::Native(row.activity_key()), Self::App)
+    }
+
+    pub fn resolve<'a>(&self, catalog: &'a crate::SessionCatalog) -> Option<&'a SessionSummary> {
+        match self {
+            Self::App(id) => catalog.by_app_id(id.get()),
+            Self::Native(key) => {
+                let mut matches = catalog.at_path(&key.path).filter(|row| key.matches(row));
+                let first = matches.next()?;
+                matches.next().is_none().then_some(first)
+            }
+        }
+    }
+
+    pub fn matches(&self, row: &SessionSummary) -> bool {
+        match self {
+            Self::App(id) => id.get() == row.app_session_id,
+            Self::Native(key) => key.matches(row),
+        }
+    }
+
+    pub fn status_key(&self) -> String {
+        match self {
+            Self::App(id) => id.to_key(),
+            Self::Native(key) => format!("session-native:{key:?}"),
+        }
+    }
+}
+
+impl WorkerActivityKey {
+    fn matches(&self, row: &SessionSummary) -> bool {
+        self.path == row.path
+            && self.native.harness == row.harness
+            && self.native.profile_id == row.profile_id
+            && self.native.project == row.project
+            && self.native.id == row.id
+    }
+}
+
+impl SessionSummary {
+    pub fn activity_key(&self) -> WorkerActivityKey {
+        WorkerActivityKey {
+            path: self.path.clone(),
+            native: self.native_identity(),
+        }
+    }
+}
+
+impl crate::SessionCatalog {
+    pub fn worker_for_activity(&self, key: &WorkerActivityKey) -> Option<&SessionSummary> {
+        self.at_path(&key.path).find(|row| key.matches(row))
+    }
+}
+
 pub fn agent_activity_key(path: &std::path::Path) -> String {
     crate::normalize_session_path(path)
         .to_string_lossy()
@@ -34,6 +103,12 @@ pub enum AgentLifecycle {
     Working,
     Unknown,
     Completed(AgentOutcome),
+}
+
+impl AgentLifecycle {
+    pub fn has_active_work(self) -> bool {
+        matches!(self, Self::Working | Self::NeedsInput)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -83,6 +158,14 @@ impl AgentActivity {
             ended: (!session.is_running).then_some(session.modified),
             elapsed: None,
         }
+    }
+
+    pub fn from_worker_outcome(session: &SessionSummary, outcome: Option<AgentOutcome>) -> Self {
+        let mut activity = Self::limited_fallback(session);
+        activity.lifecycle = outcome.map_or(AgentLifecycle::Unknown, AgentLifecycle::Completed);
+        activity.explicit_outcome = outcome.is_some();
+        activity.ended = outcome.map(|_| session.modified);
+        activity
     }
 
     pub fn from_worker_status(

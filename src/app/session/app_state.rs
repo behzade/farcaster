@@ -14,7 +14,10 @@ pub(in crate::app) struct SessionState {
     pub(in crate::app) drop_target: Option<(i64, ui::primitives::ReorderPosition)>,
     pub(in crate::app) drafts: Vec<sessions::DraftSession>,
     pub(in crate::app) draft_session_ids: HashMap<String, i64>,
+    pub(in crate::app) draft_receipts: super::state_writer::DraftReceipts,
+    pub(in crate::app) allocating_drafts: HashMap<String, sessions::DraftSession>,
     pub(in crate::app) pending_draft_saves: HashSet<String>,
+    pub(in crate::app) pending_folder_drafts: HashMap<String, u64>,
     pub(in crate::app) selected_draft: Option<String>,
     pub(in crate::app) preferred_harness: Option<Backend>,
     pub(in crate::app) preferred_profile_id: Option<String>,
@@ -26,6 +29,7 @@ pub(in crate::app) struct SessionState {
     pub(in crate::app) editing_title: Option<SessionTitleEdit>,
     pub(in crate::app) pending_titles: HashMap<PathBuf, String>,
     pub(in crate::app) pending_title_focus: bool,
+    pub(in crate::app) archive_writes: super::archive::ArchiveWrites,
     pub(in crate::app) pending_archive: Option<session::archive::PendingArchive>,
     pub(in crate::app) deleting_folders: HashMap<u64, HashSet<PathBuf>>,
     pub(in crate::app) pending_delete: Option<session::deletion::PendingDelete>,
@@ -37,8 +41,8 @@ pub(in crate::app) struct SessionState {
 }
 
 pub(in crate::app) struct ActivityState {
-    pub(in crate::app) agents: HashMap<String, AgentActivity>,
-    pub(in crate::app) row_focus: HashMap<String, FocusHandle>,
+    pub(in crate::app) agents: HashMap<crate::agent_activity::WorkerActivityKey, AgentActivity>,
+    pub(in crate::app) row_focus: HashMap<crate::agent_activity::WorkerActivityKey, FocusHandle>,
     pub(in crate::app) background_jobs: Vec<BackgroundJob>,
     pub(in crate::app) run_statuses: HashMap<String, RunStatus>,
     pub(in crate::app) recent_completions: HashMap<String, Instant>,

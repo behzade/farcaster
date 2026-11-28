@@ -1,5 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
+use crate::app::ui::primitives::ButtonPressExt as _;
 use farcaster_editors::EditorCommand;
 use gpui::{
     Context, Entity, IntoElement, ParentElement as _, Render, RenderImage, Styled as _, Window,
@@ -279,7 +280,7 @@ impl Render for TerminalEditor {
                                 button.text_color(theme().colors.indicator)
                             })
                             .toggled(index == active)
-                            .on_click(move |_, window, cx| {
+                            .on_press(true, move |window, cx| {
                                 let _ = entity.update(cx, |editor, cx| {
                                     editor.select(index, cx);
                                     editor.focus(window, cx);

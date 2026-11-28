@@ -1,5 +1,9 @@
 use super::*;
 use crate::agents::Backend;
+use farcaster_storage::{SessionRepository, StoredTranscript, TranscriptSession};
+
+#[path = "stored_history.rs"]
+mod stored_history;
 
 fn restored_question_request(question: crate::sessions::RestoredQuestion) -> ExtensionUiRequest {
     if question.options.is_empty() {
@@ -20,11 +24,22 @@ fn restored_question_request(question: crate::sessions::RestoredQuestion) -> Ext
 }
 
 impl RuntimeOwner {
+    #[cfg(test)]
     pub(super) fn select_history(&mut self, path: PathBuf, project: PathBuf) {
+        self.select_document(path, project, None);
+    }
+
+    pub(super) fn select_document(
+        &mut self,
+        path: PathBuf,
+        project: PathBuf,
+        display_stamp: Option<farcaster_storage::TranscriptStamp>,
+    ) {
         let _timing = self.host.timer(RuntimeMetric::SelectDocument);
         self.history_generation = self.history_generation.saturating_add(1);
         self.pending_document_refresh = None;
-        if self.covers_resident_session(&path) {
+        if self.covers_resident_session(&path) && !self.snapshot.needs_saved_revision(display_stamp)
+        {
             if !self.showing_live_session(&path) {
                 self.restore_live_session(project);
             }
@@ -32,11 +47,20 @@ impl RuntimeOwner {
         }
         if self.snapshot.selected_session.as_deref() == Some(path.as_path())
             && self.snapshot.document_ready
+            && !self.snapshot.needs_saved_revision(display_stamp)
         {
             return;
         }
         if self.bind_history_selection(path.clone(), project.clone()) {
-            self.refresh_history(path, project, HistoryLoadKind::Selection);
+            self.refresh_history(
+                path,
+                project,
+                if display_stamp.is_some() {
+                    HistoryLoadKind::DisplayedSelection
+                } else {
+                    HistoryLoadKind::Selection
+                },
+            );
         }
     }
 
@@ -67,18 +91,21 @@ impl RuntimeOwner {
     }
 
     pub(super) fn bind_external_session_identity(&mut self, path: &std::path::Path) {
-        if let Some((harness, session_id)) = agents::external_session_identity(path) {
+        if let Some((harness, session_id)) = agents::external_session_identity(path)
+            && self.harness.is_none_or(|known| known == harness)
+            && (self.session_id.is_none()
+                || self.session_id.as_deref() == Some(path.to_string_lossy().as_ref()))
+        {
             self.harness = Some(harness);
             self.session_id = Some(session_id);
         }
     }
 
     fn bind_history_selection(&mut self, path: PathBuf, project: PathBuf) -> bool {
-        let previous_harness = self.harness;
         let profile_id = match configuration_for_target(
             &self.process_command,
             self.state.as_ref(),
-            LaunchTarget::Session(&path),
+            LaunchTarget::Session(&path, self.harness),
         ) {
             Ok(config) => config.profile_id,
             Err(error) => {
@@ -90,6 +117,7 @@ impl RuntimeOwner {
             self.pending_session_controls = PendingSessionControls::default();
         }
         self.bind_external_session_identity(&path);
+        let facts = self.session_facts(&path);
         if self.parked_snapshot.is_none()
             && self.snapshot.selected_session.as_deref() != Some(path.as_path())
             && (self.process.is_some()
@@ -101,16 +129,15 @@ impl RuntimeOwner {
         self.project = project.clone();
         self.snapshot.project = project;
         self.snapshot.selected_session = Some(path);
-        if previous_harness != self.harness || self.snapshot.profile_id != profile_id {
-            self.snapshot.account_usage = Default::default();
-            self.snapshot.account_usage_observed_at = None;
-        }
         self.snapshot.profile_id = profile_id;
         self.snapshot.status = "Loading history".into();
         self.snapshot.document_ready = false;
-        self.snapshot.stats = Value::Null;
+        self.snapshot.saved_history = None;
+        self.snapshot.transcript_stamp = None;
+        self.snapshot.history_tail = None;
         self.snapshot.session = None;
         self.snapshot.conversation = Default::default();
+        self.snapshot.restore_session_facts(facts);
         self.transcript_changed_from = Some(0);
         self.publish();
         true
@@ -148,32 +175,37 @@ impl RuntimeOwner {
         let config = configuration_for_target(
             &self.process_command,
             self.state.as_ref(),
-            LaunchTarget::Session(&path),
+            LaunchTarget::Session(&path, self.harness),
         );
         let host = self.host.clone();
+        let repository = self.state.clone();
         if let Err(error) = thread::Builder::new()
             .name("farcaster-history".into())
             .spawn(move || {
                 let mut operation = host.timer(RuntimeMetric::LoadHistory);
+                let request = stored_history::HistoryRequest {
+                    generation,
+                    path: &path,
+                    project: &project,
+                    kind,
+                    sender: &sender,
+                    wake: &wake,
+                };
                 let result = harness
                     .ok_or_else(|| "Choose a backend before loading history.".to_owned())
-                    .and_then(|harness| {
-                        agents::load_session_history_for_profile(&config?, harness, &path, &project)
-                    });
-                if let Ok(history) = &result {
-                    operation.set_work(history.messages.len());
+                    .and_then(|harness| request.read(&config?, harness, repository.as_ref()));
+                match result {
+                    Ok(None) => {}
+                    Ok(Some((history, stamp))) => {
+                        operation.set_work(history.messages.len());
+                        request.finish(Ok(history), stamp);
+                    }
+                    Err(error) => request.finish(Err(error), None),
                 }
-                let _ = sender.send(HistoryResult {
-                    generation,
-                    path,
-                    project,
-                    kind,
-                    result,
-                });
-                wake.unpark();
             })
         {
             self.apply_history(HistoryResult {
+                transcript_stamp: None,
                 generation,
                 path: failed_path,
                 project: failed_project,
@@ -188,7 +220,9 @@ impl RuntimeOwner {
         kind: HistoryLoadKind,
     ) -> &mut Option<u64> {
         match kind {
-            HistoryLoadKind::Selection => &mut self.history_selection_generation,
+            HistoryLoadKind::Selection | HistoryLoadKind::DisplayedSelection => {
+                &mut self.history_selection_generation
+            }
             HistoryLoadKind::DocumentRefresh => &mut self.document_refresh_generation,
         }
     }
@@ -239,26 +273,105 @@ impl RuntimeOwner {
         self.publish();
     }
 
+    pub(super) fn apply_history_update(&mut self, update: HistoryUpdate) {
+        match update {
+            HistoryUpdate::Finished(result) => self.apply_history(result),
+            HistoryUpdate::Saved {
+                result,
+                refreshing,
+                complete,
+            } => {
+                let saved = if complete {
+                    SavedHistory::Complete
+                } else if refreshing {
+                    SavedHistory::RefreshingPartial
+                } else {
+                    SavedHistory::Partial
+                };
+                self.project_history(result, Some(saved), !refreshing);
+            }
+            HistoryUpdate::Tail { generation, page } => {
+                if self.history_selection_generation != Some(generation)
+                    || self.history_generation != generation
+                    || self.snapshot.document_ready
+                    || self.snapshot.history_tail.is_some()
+                    || self.snapshot.status != "Loading history"
+                    || page.content.is_empty()
+                {
+                    return;
+                }
+                let Some(path) = self.snapshot.selected_session.as_deref() else {
+                    return;
+                };
+                if let (Some(state), Some(harness)) = (&self.state, self.harness)
+                    && !state
+                        .can_display_transcript_tail(TranscriptSession {
+                            harness,
+                            path,
+                            project: &self.snapshot.project,
+                            profile_id: self.snapshot.profile_id.as_deref(),
+                        })
+                        .unwrap_or(false)
+                {
+                    return;
+                }
+                let mut tail = ConversationState::default();
+                tail.replace_history(&page.content);
+                self.snapshot.history_tail = Some(Arc::new(agents::HistoryPage {
+                    content: tail,
+                    coverage: page.coverage,
+                }));
+                self.publish();
+            }
+        }
+    }
+
     pub(super) fn apply_history(&mut self, result: HistoryResult) {
+        self.project_history(result, None, true);
+    }
+
+    fn project_history(
+        &mut self,
+        result: HistoryResult,
+        saved: Option<SavedHistory>,
+        finished: bool,
+    ) {
         let active_generation = self.history_load_generation_mut(result.kind);
-        if *active_generation == Some(result.generation) {
+        if finished && *active_generation == Some(result.generation) {
             *active_generation = None;
         }
         if result.generation != self.history_generation {
             self.start_pending_document_refresh();
             return;
         }
-        if (result.kind == HistoryLoadKind::Selection && self.covers_resident_session(&result.path))
+        if (result.kind != HistoryLoadKind::DocumentRefresh
+            && self.snapshot.saved_history.is_none()
+            && self.covers_resident_session(&result.path))
             || (self.active_session.as_ref() == Some(&result.path) && self.process.is_some())
         {
             self.start_pending_document_refresh();
             return;
         }
-        let profile_id = match configuration_for_target(
+        let config = configuration_for_target(
             &self.process_command,
             self.state.as_ref(),
-            LaunchTarget::Session(&result.path),
-        ) {
+            LaunchTarget::Session(&result.path, self.harness),
+        );
+        let same_document = self.snapshot.document_ready
+            && self.snapshot.selected_session.as_ref() == Some(&result.path);
+        if same_document
+            && self.snapshot.saved_history.is_some()
+            && let Some(error) = result.result.as_ref().err().or(config.as_ref().err())
+        {
+            zlog::warn!("Could not refresh the saved transcript: {error}");
+            if self.snapshot.saved_history == Some(SavedHistory::RefreshingPartial) {
+                self.snapshot.saved_history = Some(SavedHistory::Partial);
+                self.publish();
+            }
+            self.start_pending_document_refresh();
+            return;
+        }
+        let profile_id = match config {
             Ok(config) => config.profile_id,
             Err(error) => {
                 self.fail(error);
@@ -267,10 +380,10 @@ impl RuntimeOwner {
             }
         };
         self.bind_external_session_identity(&result.path);
-        let same_document = self.snapshot.document_ready
-            && self.snapshot.selected_session.as_ref() == Some(&result.path);
-        let refreshing_visible_history =
-            result.kind == HistoryLoadKind::DocumentRefresh && same_document;
+        let refreshing_visible_history = same_document
+            && (self.snapshot.saved_history.is_some()
+                || result.kind == HistoryLoadKind::DocumentRefresh);
+        self.snapshot.history_tail = None;
         let mut history = match result.result {
             Ok(history) => history,
             Err(error) => {
@@ -285,23 +398,25 @@ impl RuntimeOwner {
                 return;
             }
         };
-        if let (Some(state), Some(evidence)) =
-            (self.state.as_ref(), history.prompt_deliveries.as_ref())
-            && let Err(error) =
-                state.with(|store| store.reconcile_prompt_deliveries(&result.path, evidence))
-        {
-            zlog::error!("Reconcile saved prompt deliveries: {error}");
-        }
-        self.reconcile_saved_prompts();
         let projection = self.host.timer(RuntimeMetric::ProjectHistory);
-        if let Some(state) = self.state.as_ref() {
-            if let Err(error) = state.with(|store| {
-                annotate_history_presentations(Some(store), &result.path, &mut history.messages);
-                Ok(())
-            }) {
-                zlog::error!("Annotate saved prompt deliveries: {error}");
-            }
-        }
+        let transcript_stamp = if let (Some(state), Some(harness)) = (&self.state, self.harness) {
+            annotate_session_prompts(
+                state,
+                TranscriptSession {
+                    harness,
+                    path: &result.path,
+                    project: &result.project,
+                    profile_id: profile_id.as_deref(),
+                },
+                history.prompt_deliveries.as_ref(),
+                &mut history.messages,
+            )
+            .filter(|stamp| Some(*stamp) == result.transcript_stamp)
+        } else {
+            None
+        };
+        self.reconcile_saved_prompts();
+        let mut facts = self.session_facts(&result.path);
         if self.parked_snapshot.is_none() && !same_document {
             self.parked_snapshot = Some(std::mem::take(&mut self.snapshot));
         }
@@ -314,26 +429,9 @@ impl RuntimeOwner {
         let auto_retry = previous.auto_retry;
         let models = previous.models.clone();
         let history_stats = historical_context_stats(&history.messages, &models);
-        let stats = if same_document {
-            projection::stable_session_stats(&previous.stats, history_stats, false)
-        } else {
-            history_stats
-        };
-        let account_matches = previous.harness == self.harness && previous.profile_id == profile_id;
-        let account_usage = if account_matches {
-            previous.account_usage.clone()
-        } else {
-            Default::default()
-        };
-        let account_usage_observed_at = previous
-            .account_usage_observed_at
-            .filter(|_| account_matches);
+        facts.metrics = projection::stable_session_stats(&history_stats, facts.metrics, false);
         let mut session = previous.session.as_ref().filter(|_| same_document).cloned();
         let history_preview = !same_document || previous.history_preview;
-        let cache_hit_rate = previous
-            .conversation
-            .average_cache_hit_rate
-            .filter(|_| same_document);
         let prefill_model =
             HarnessConfigurationStore::history_model(&models, history.model.as_ref());
         if let Some(session) = &mut session {
@@ -346,23 +444,27 @@ impl RuntimeOwner {
         }
         let mut conversation = ConversationState::default();
         conversation.replace_history(&history.messages);
-        conversation.average_cache_hit_rate =
-            conversation.average_cache_hit_rate.or(cache_hit_rate);
         drop(projection);
         self.transcript_changed_from = Some(0);
         self.snapshot = RuntimeSnapshot {
             profile_id,
             connected: false,
             document_ready: true,
-            status: "Ready".into(),
+            saved_history: saved,
+            transcript_stamp,
+            status: if matches!(
+                saved,
+                Some(SavedHistory::Partial | SavedHistory::RefreshingPartial)
+            ) {
+                "Partial saved history".into()
+            } else {
+                "Ready".into()
+            },
             project: result.project,
             selected_session: Some(result.path),
             conversation: Arc::new(conversation),
             models,
-            stats,
             session,
-            account_usage,
-            account_usage_observed_at,
             auto_retry,
             history_preview,
             pending_question: history.pending_question.map(restored_question_request),
@@ -370,6 +472,7 @@ impl RuntimeOwner {
             prefill_thinking_level: history.thinking_level,
             ..RuntimeSnapshot::default()
         };
+        self.snapshot.restore_session_facts(facts);
         self.snapshot.access_mode = self.process_command.access_mode;
         if self.process.is_none() {
             self.restore_saved_session_controls();
@@ -397,46 +500,38 @@ impl RuntimeOwner {
     }
 }
 
+pub(super) fn annotate_session_prompts(
+    store: &SharedStateStore,
+    session: TranscriptSession<'_>,
+    evidence: Option<&sessions::PromptDeliveryReconciliation>,
+    messages: &mut Arc<Vec<Value>>,
+) -> Option<farcaster_storage::TranscriptStamp> {
+    match store.transcript_prompt_overlay(session, evidence) {
+        Ok(overlay) => {
+            let stamp = overlay.stamp;
+            overlay.apply(messages);
+            stamp
+        }
+        Err(error) => {
+            zlog::error!("Read local transcript prompts: {error}");
+            None
+        }
+    }
+}
+
+#[cfg(test)]
 pub(super) fn annotate_history_presentations(
     state: Option<&StateStore>,
     session: &std::path::Path,
     messages: &mut Arc<Vec<Value>>,
 ) {
     let Some(state) = state else { return };
-    match state.accepted_prompt_history(session) {
-        Ok(saved) => {
-            let history_was_empty = messages.is_empty();
-            let mut submission_ids = messages
-                .iter()
-                .filter_map(|message| message.get("submissionId").and_then(Value::as_str))
-                .map(str::to_owned)
-                .collect::<std::collections::HashSet<_>>();
-            for message in saved {
-                let Some(id) = message.get("submissionId").and_then(Value::as_str) else {
-                    if history_was_empty {
-                        Arc::make_mut(messages).push(message);
-                    }
-                    continue;
-                };
-                if !history_was_empty
-                    && message.get("deliveryTracked").and_then(Value::as_bool) != Some(true)
-                {
-                    continue;
-                }
-                if submission_ids.insert(id.to_owned()) {
-                    Arc::make_mut(messages).push(message);
-                }
-            }
-        }
-        Err(error) => {
-            zlog::error!("Restore accepted prompts: {error}");
-        }
+    farcaster_storage::PromptHistoryOverlay {
+        stamp: None,
+        accepted: state.accepted_prompt_history(session).unwrap(),
+        presentations: state.prompt_presentations(session).unwrap(),
     }
-    if let Ok(presentations) = state.prompt_presentations(session)
-        && !presentations.is_empty()
-    {
-        annotate_prompt_presentations(Arc::make_mut(messages).as_mut_slice(), &presentations);
-    }
+    .apply(messages);
 }
 
 #[cfg(test)]

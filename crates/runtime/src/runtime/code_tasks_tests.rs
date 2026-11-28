@@ -251,10 +251,13 @@ fn starts_without_selecting_its_chat() {
             harness
                 .runtime
                 .send(RuntimeCommand::SelectSession {
+                    display_stamp: None,
                     path: session.expect("accepted task has a session"),
                     harness: Backend::Claude,
                     session_id: String::new(),
                     project: harness.project.clone(),
+                    key: None,
+                    request: None,
                 })
                 .expect("open task chat");
             harness.snapshot(Backend::Claude, |s| !s.conversation.items.is_empty());

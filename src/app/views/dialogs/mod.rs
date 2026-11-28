@@ -1,6 +1,7 @@
 pub(super) mod archive_confirmation;
+pub(in crate::app) mod command_detail;
 pub(super) mod delete_confirmation;
-pub(super) mod image_preview;
+pub(in crate::app) mod image_preview;
 pub(super) mod jj_init_confirmation;
 pub(super) mod model_access_confirmation;
 pub(super) mod move_confirmation;

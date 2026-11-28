@@ -17,9 +17,7 @@ use super::{
 use crate::{
     app::FarcasterApp,
     app::ui::assets::AppIcon,
-    app::ui::primitives::{
-        AppIconSize, ButtonTone, FeedbackTone, app_icon, button, feedback, section_heading,
-    },
+    app::ui::primitives::{AppIconSize, ButtonTone, app_icon, button, sidebar_heading},
     app::ui::theme::theme,
 };
 use workgraph::load_plan;
@@ -125,7 +123,6 @@ impl WorkGraphSidebarView {
         let Some(session_id) = self.session_id.clone() else {
             return;
         };
-        let notify_loading = prepare_refresh(&mut self.state);
         let store = self.store.clone();
         let project = self.project.clone();
         let key = (project.clone(), session_id.clone());
@@ -160,18 +157,7 @@ impl WorkGraphSidebarView {
                 }
             });
         }));
-        if notify_loading {
-            cx.notify();
-        }
     }
-}
-
-fn prepare_refresh(state: &mut PlanLoadState) -> bool {
-    if matches!(state, PlanLoadState::Ready(_) | PlanLoadState::Loading) {
-        return false;
-    }
-    *state = PlanLoadState::Loading;
-    true
 }
 
 impl Render for WorkGraphSidebarView {
@@ -190,7 +176,7 @@ impl Render for WorkGraphSidebarView {
                     .then(|| format!("Plan · {title}"))
                 })
                 .unwrap_or_else(|| "Plan".into()),
-            PlanLoadState::Loading | PlanLoadState::Failed(_) => "Plan".into(),
+            PlanLoadState::Failed(_) => "Plan".into(),
         };
         let header = div()
             .flex()
@@ -200,7 +186,7 @@ impl Render for WorkGraphSidebarView {
             .overflow_hidden()
             .whitespace_nowrap()
             .text_ellipsis()
-            .child(section_heading(title));
+            .child(sidebar_heading(title));
         let visible = sidebar_visible(&self.state, self.session_id.is_some());
         div()
             .debug_selector(|| "run-panel-plan".into())
@@ -209,18 +195,12 @@ impl Render for WorkGraphSidebarView {
                 sidebar
                     .flex()
                     .flex_col()
-                    .gap(theme().size(11.0))
+                    .gap(theme().space.sm)
                     .child(header)
                     .when_some(self.session_goal.as_ref(), |sidebar, goal| {
                         sidebar.child(render_session_goal(goal, true))
                     })
                     .child(match &self.state {
-                        PlanLoadState::Loading => feedback(
-                            "workgraph-sidebar-loading",
-                            "Loading plan…",
-                            FeedbackTone::Info,
-                        )
-                        .into_any_element(),
                         PlanLoadState::Failed(_) => div()
                             .flex()
                             .items_center()
@@ -244,18 +224,21 @@ impl Render for WorkGraphSidebarView {
                                 },
                             ))
                             .into_any_element(),
-                        PlanLoadState::Ready(data) => div()
-                            .flex()
-                            .flex_col()
-                            .children(
-                                data.snapshot
-                                    .as_ref()
-                                    .map(|snapshot| plan_rows(snapshot, &data.graph, ""))
-                                    .unwrap_or_default()
-                                    .into_iter()
-                                    .map(|row| render_sidebar_row(row, self.app.clone())),
-                            )
-                            .into_any_element(),
+                        PlanLoadState::Ready(data) => {
+                            let rows = data
+                                .snapshot
+                                .as_ref()
+                                .map(|snapshot| plan_rows(snapshot, &data.graph, ""))
+                                .unwrap_or_default();
+                            let marker_width = plan_marker_width(&rows);
+                            div()
+                                .flex()
+                                .flex_col()
+                                .children(rows.into_iter().map(|row| {
+                                    render_sidebar_row(row, marker_width, self.app.clone())
+                                }))
+                                .into_any_element()
+                        }
                     })
             })
     }
@@ -265,42 +248,57 @@ fn sidebar_visible(state: &PlanLoadState, has_session: bool) -> bool {
     has_session && !matches!(state, PlanLoadState::Ready(data) if data.session_link.is_none())
 }
 
-fn render_sidebar_row(row: PlanRow, app: WeakEntity<FarcasterApp>) -> impl IntoElement {
+fn plan_marker_width(rows: &[PlanRow]) -> gpui::Pixels {
+    let digits = rows
+        .iter()
+        .map(|row| row.node.number.to_string().len())
+        .max()
+        .unwrap_or_default()
+        .max(4);
+    theme().size(8.0) * digits as f32
+}
+
+fn render_sidebar_row(
+    row: PlanRow,
+    marker_width: gpui::Pixels,
+    app: WeakEntity<FarcasterApp>,
+) -> impl IntoElement {
     let number = row.node.number;
-    let title_color = if row.reached {
-        theme().colors.subtle
-    } else {
-        theme().colors.text
-    };
-    div()
+    let accessible = format!("Open plan node {}", row.node.title);
+    sidebar_row_content(row, marker_width)
         .id(("workgraph-sidebar-node", number))
         .role(Role::Button)
-        .aria_label(format!("Open plan node {}", row.node.title))
+        .aria_label(accessible)
         .tab_index(0)
         .on_mouse_down(
             gpui::MouseButton::Left,
             crate::app::ui::primitives::preserve_pointer_focus,
         )
         .cursor_pointer()
-        .px(theme().size(2.0))
-        .py(theme().size(3.0))
-        .flex()
-        .items_start()
-        .gap(theme().size(7.0))
         .hover(|row| row.bg(theme().colors.highlight))
         .on_click(move |_, window, cx| {
             let _ = app.update(cx, |app, cx| {
                 app.open_workgraph_node(number, window, cx);
             });
         })
+}
+
+fn sidebar_row_content(row: PlanRow, marker_width: gpui::Pixels) -> gpui::Div {
+    let number = row.node.number;
+    let title_color = if row.reached {
+        theme().colors.muted
+    } else {
+        theme().colors.text
+    };
+    crate::app::ui::grid::row()
+        .py(theme().space.xs)
+        .items_start()
+        .gap(theme().space.sm)
         .child(
-            div()
-                .w(theme().size(16.0))
-                .h(theme().size(20.0))
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
+            crate::app::ui::grid::slot(marker_width)
+                .h(theme().type_scale.line_body)
+                .justify_end()
+                .debug_selector(move || format!("plan-marker-{number}"))
                 .text_color(if row.reached {
                     theme().colors.success
                 } else if row.current {
@@ -330,14 +328,15 @@ fn render_sidebar_row(row: PlanRow, app: WeakEntity<FarcasterApp>) -> impl IntoE
                 .child(
                     div()
                         .line_clamp(2)
+                        .debug_selector(move || format!("plan-title-{number}"))
                         .text_size(theme().type_scale.body_small)
+                        .line_height(theme().type_scale.line_body)
                         .font_weight(if row.current {
                             FontWeight::SEMIBOLD
                         } else {
                             FontWeight::NORMAL
                         })
                         .text_color(title_color)
-                        .when(row.reached, |title| title.line_through())
                         .child(row.node.title),
                 )
                 .when(!row.node.files.is_empty(), |content| {

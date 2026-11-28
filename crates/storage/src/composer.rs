@@ -9,11 +9,19 @@ enum StoredAttachment {
 
 impl StateStore {
     pub fn load_composer_sessions(&self) -> Result<Vec<ComposerRecord>, String> {
+        self.read_composer_sessions(false)
+    }
+
+    pub fn load_composer_buffers(&self) -> Result<Vec<ComposerRecord>, String> {
+        self.read_composer_sessions(true)
+    }
+
+    fn read_composer_sessions(&self, qualify_all: bool) -> Result<Vec<ComposerRecord>, String> {
         let mut statement = self
             .connection
             .prepare(
                 "SELECT s.id, s.client_key, s.locator, c.text, c.cursor, c.selection_start,
-                        c.selection_end, c.history_json, c.attachments_json
+                        c.selection_end, c.history_json, c.attachments_json, s.harness
                    FROM composer_sessions c
                    JOIN sessions s ON s.id = c.session_id",
             )
@@ -31,8 +39,20 @@ impl StateStore {
                     })?;
                 let client_key = row.get::<_, Option<String>>(1)?;
                 let locator = row.get::<_, Option<String>>(2)?;
+                let target = target_for_session(client_key.as_deref(), locator.as_deref())?;
+                let id: i64 = row.get(0)?;
+                let target = if let Some(path) = sessions::session_path(&target)
+                    && (qualify_all
+                        || !self
+                            .session_id_for_target(&target, None, None)
+                            .is_ok_and(|resolved| resolved == Some(id)))
+                {
+                    sessions::session_buffer(crate::backend::get(row, 9)?, path)
+                } else {
+                    target
+                };
                 Ok(ComposerRecord {
-                    target: target_for_session(client_key.as_deref(), locator.as_deref())?,
+                    target,
                     text: row.get(3)?,
                     cursor: row.get::<_, u64>(4)?.try_into().unwrap_or(usize::MAX),
                     selection_start: row.get::<_, u64>(5)?.try_into().unwrap_or(usize::MAX),
@@ -54,8 +74,15 @@ impl StateStore {
             .collect()
     }
 
+    fn composer_session_id(&self, buffer: &str) -> Result<Option<i64>, String> {
+        match sessions::composer_buffer_parts(buffer) {
+            Some((harness, target)) => self.session_id_for_target(target, None, Some(harness)),
+            None => self.session_id_for_target(buffer, None, None),
+        }
+    }
+
     pub fn save_composer_session(&self, record: &ComposerRecord) -> Result<(), String> {
-        let Some(session_id) = self.session_id_for_target(&record.target, None, None)? else {
+        let Some(session_id) = self.composer_session_id(&record.target)? else {
             return Ok(());
         };
         let history_json = serde_json::to_string(record.history.as_ref())
@@ -90,7 +117,7 @@ impl StateStore {
     }
 
     pub fn delete_composer_session(&self, target: &str) -> Result<(), String> {
-        let Some(session_id) = self.session_id_for_target(target, None, None)? else {
+        let Some(session_id) = self.composer_session_id(target)? else {
             return Ok(());
         };
         self.connection

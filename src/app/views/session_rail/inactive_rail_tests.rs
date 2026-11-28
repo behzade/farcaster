@@ -1,19 +1,28 @@
 use super::*;
 
+fn archive_rows(ids: &[&str]) -> PersistentVec<ArchivedRow> {
+    ids.iter()
+        .map(|id| ArchivedRow {
+            identity: format!("draft:{id}"),
+            item: ArchivedItem::Draft(id.to_string(), 0),
+            order: (0, 0),
+        })
+        .collect()
+}
+
 #[test]
 fn inserting_before_the_viewport_keeps_the_same_archived_row_visible() {
     let scroll = UniformListScrollHandle::new();
-    let height = session_row_height(true);
+    let height = session_row_height(false);
     scroll
         .0
         .borrow()
         .base_handle
         .set_offset(point(px(0.), -(height + px(5.))));
-    let current = RefCell::new(vec!["a".into(), "b".into(), "c".into()]);
     reconcile_archived_rows(
         &scroll,
-        &current,
-        vec!["new".into(), "a".into(), "b".into(), "c".into()],
+        &archive_rows(&["a", "b", "c"]),
+        &archive_rows(&["new", "a", "b", "c"]),
     );
     assert_eq!(
         scroll.0.borrow().base_handle.offset().y,
@@ -25,8 +34,8 @@ fn inserting_before_the_viewport_keeps_the_same_archived_row_visible() {
 fn pending_archive_reveal_follows_the_session_when_rows_change() {
     let scroll = UniformListScrollHandle::new();
     scroll.scroll_to_item(1, gpui::ScrollStrategy::Nearest);
-    let current = RefCell::new(vec!["a".into(), "b".into()]);
-    reconcile_archived_rows(&scroll, &current, vec!["b".into(), "a".into()]);
+    let reordered = archive_rows(&["b", "a"]);
+    reconcile_archived_rows(&scroll, &archive_rows(&["a", "b"]), &reordered);
     assert_eq!(
         scroll
             .0
@@ -36,7 +45,7 @@ fn pending_archive_reveal_follows_the_session_when_rows_change() {
             .item_index,
         0
     );
-    reconcile_archived_rows(&scroll, &current, Vec::new());
+    reconcile_archived_rows(&scroll, &reordered, &archive_rows(&[]));
     assert!(scroll.0.borrow().deferred_scroll_to_item.is_none());
     assert_eq!(scroll.0.borrow().base_handle.offset().y, px(0.));
 }

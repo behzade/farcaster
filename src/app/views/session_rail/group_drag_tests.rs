@@ -24,7 +24,7 @@ fn dragging_group_titles_persists_order_without_toggling_or_refiling(
         cx,
         |cx, app, _, project| {
             cx.update(|window, cx| {
-                app.update(cx, |app, _| {
+                app.update(cx, |app, cx| {
                     app.sessions.drafts = [(1, "/a"), (2, "/z")]
                         .into_iter()
                         .map(|(id, project)| {
@@ -46,6 +46,7 @@ fn dragging_group_titles_persists_order_without_toggling_or_refiling(
                         .collapsed_projects
                         .extend([PathBuf::from("/a"), PathBuf::from("/z")]);
                     app.remember_rail_projects([PathBuf::from("/a"), PathBuf::from("/z")]);
+                    app.notify_session_rail(cx);
                 });
                 window.replace_root(cx, |_, _| RailHarness(app.clone()));
             });

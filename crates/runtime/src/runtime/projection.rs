@@ -99,20 +99,27 @@ pub(super) fn update_context_from_event(stats: &mut Value, event: &Value) -> boo
     let usage = event
         .get("usage")
         .or_else(|| event.pointer("/message/usage"));
-    let Some(usage) = usage else { return false };
-    let tokens = usage
-        .get("totalTokens")
+    let tokens = event
+        .get("contextUsed")
         .and_then(Value::as_u64)
-        .filter(|tokens| *tokens > 0)
         .or_else(|| {
-            ["input", "output", "cacheRead", "cacheWrite"]
-                .iter()
-                .try_fold(0_u64, |total, key| {
-                    total.checked_add(usage.get(*key)?.as_u64()?)
-                })
+            let usage = usage?;
+            usage
+                .get("totalTokens")
+                .and_then(Value::as_u64)
                 .filter(|tokens| *tokens > 0)
+                .or_else(|| {
+                    ["input", "output", "cacheRead", "cacheWrite"]
+                        .iter()
+                        .try_fold(0_u64, |total, key| {
+                            total.checked_add(usage.get(*key)?.as_u64()?)
+                        })
+                        .filter(|tokens| *tokens > 0)
+                })
         });
-    let Some(tokens) = tokens else { return false };
+    let Some(tokens) = tokens else {
+        return false;
+    };
     let current_window = stats
         .pointer("/contextUsage/contextWindow")
         .and_then(Value::as_u64)
@@ -271,11 +278,7 @@ impl RuntimeOwner {
             }
             self.finish_current_prompt(rollback);
             if outcome == crate::agents::PromptOutcome::DeliveryUnknown {
-                let running = self
-                    .active_snapshot()
-                    .session
-                    .as_ref()
-                    .is_some_and(|session| session.is_streaming);
+                let running = self.backend_activity.turn.is_active();
                 conversation_mut(self.active_snapshot_mut()).running = running;
                 if !running {
                     self.active_snapshot_mut().status = "Done".into();
@@ -296,14 +299,12 @@ impl RuntimeOwner {
             if is_prompt_response
                 && error.kind == crate::agents::SessionResponseErrorKind::Cancelled
             {
-                let running = self
-                    .active_snapshot()
-                    .session
-                    .as_ref()
-                    .is_some_and(|session| session.is_streaming);
+                let running = self.backend_activity.turn.is_active();
                 conversation_mut(self.active_snapshot_mut()).running = running;
                 if !running {
                     self.active_snapshot_mut().status = "Stopped".into();
+                    self.active_snapshot_mut().last_outcome = Some(SessionOutcome::Stopped);
+                    self.publish_session_metadata();
                 }
                 self.maybe_send_deferred_prompt();
                 if self.parked_snapshot.is_none() {
@@ -343,13 +344,12 @@ impl RuntimeOwner {
                 }
             }
             if is_prompt_response {
-                let running = self
-                    .active_snapshot()
-                    .session
-                    .as_ref()
-                    .is_some_and(|session| session.is_streaming);
+                let running = self.backend_activity.turn.is_active();
                 conversation_mut(self.active_snapshot_mut()).running = running;
                 self.maybe_send_deferred_prompt();
+                if self.backend_activity.turn == ActivityObservation::Sampled {
+                    self.send(SessionCommand::LoadState);
+                }
             }
             if self.parked_snapshot.is_none() {
                 self.publish();
@@ -359,22 +359,44 @@ impl RuntimeOwner {
         let Ok(payload) = response.result else { return };
         match payload {
             Payload::LoadState(state) => {
-                if !state.session_id.is_empty() {
-                    self.session_id = Some(state.session_id.clone());
-                }
                 let model_change_sent = !self.pending_session_controls.model_pending();
                 let tier_change_sent = !self.pending_session_controls.service_tier_pending();
-                let normal_prompt_in_flight = self.normal_prompt_in_flight;
+                let normal_prompt_active = self.normal_prompt_in_flight
+                    || self
+                        .deferred_prompt()
+                        .is_some_and(|prompt| prompt.mode == PromptMode::Normal);
                 let selected_session = state
                     .session_file
                     .as_ref()
                     .map(PathBuf::from)
                     .map(|path| crate::sessions::normalize_session_path(&path))
                     .or_else(|| self.active_session.clone());
+                self.active_snapshot_mut().observed_service_tier = state.service_tier.clone();
+                if let Some(path) = &selected_session {
+                    if let Err(error) =
+                        self.save_observed_facts(path, self.unbound_prompt_draft.as_deref())
+                    {
+                        if self.unbound_prompt_draft.is_some() {
+                            self.fail(format!("Bind new chat to its session: {error}"));
+                            return;
+                        }
+                        zlog::warn!("Save session facts: {error}");
+                    }
+                    if let (Some(capture), Some(store)) = (&mut self.live_transcript, &self.state) {
+                        capture.bind(path, store);
+                    }
+                    self.unbound_prompt_draft = None;
+                }
+                if !state.session_id.is_empty() {
+                    self.session_id = Some(state.session_id.clone());
+                }
                 self.active_session = selected_session.clone();
+                self.backend_activity.turn.sample(state.is_streaming);
+                self.backend_activity.compaction.sample(state.is_compacting);
+                let run_active = self.backend_activity.turn.is_active();
                 let snapshot = self.active_snapshot_mut();
                 snapshot.selected_session = selected_session;
-                conversation_mut(snapshot).running = state.is_streaming || normal_prompt_in_flight;
+                conversation_mut(snapshot).running = run_active || normal_prompt_active;
                 snapshot.session = Some(*state);
                 let model_confirmed = snapshot
                     .session
@@ -401,7 +423,7 @@ impl RuntimeOwner {
                 snapshot.status = "Ready".into();
                 self.startup_state_loaded = true;
                 self.active_snapshot_mut().document_ready |= self.startup_history_loaded;
-                self.publish_session_metadata();
+                self.send_session_metadata();
             }
             Payload::LoadHistory(history) => {
                 if let SessionHistory::Replace {
@@ -410,35 +432,37 @@ impl RuntimeOwner {
                 } = history
                 {
                     let mut messages = Arc::new(messages);
-                    if let (Some(state), Some(session), Some(evidence)) = (
-                        self.state.as_mut(),
-                        self.active_session.as_deref(),
-                        prompt_deliveries.as_ref(),
-                    ) && let Err(error) =
-                        state.with(|store| store.reconcile_prompt_deliveries(session, evidence))
+                    if let Some(capture) = &mut self.live_transcript {
+                        capture.replace_startup_history(&messages);
+                    }
+                    if let (Some(state), Some(path), Some(harness)) =
+                        (&self.state, self.active_session.as_deref(), self.harness)
                     {
-                        zlog::error!("Reconcile saved prompt deliveries: {error}");
+                        let _ = history::annotate_session_prompts(
+                            state,
+                            farcaster_storage::TranscriptSession {
+                                harness,
+                                path,
+                                project: &self.project,
+                                profile_id: self.process_command.profile_id.as_deref(),
+                            },
+                            prompt_deliveries.as_ref(),
+                            &mut messages,
+                        );
                     }
                     self.reconcile_saved_prompts();
-                    if let (Some(state), Some(session)) =
-                        (self.state.as_ref(), self.active_session.as_deref())
-                    {
-                        if let Err(error) = state.with(|store| {
-                            annotate_history_presentations(Some(store), session, &mut messages);
-                            Ok(())
-                        }) {
-                            zlog::error!("Annotate prompt deliveries: {error}");
-                        }
-                    }
-                    let previous_cache_hit_rate =
-                        self.active_snapshot().conversation.average_cache_hit_rate;
                     let conversation = conversation_mut(self.active_snapshot_mut());
                     conversation.replace_history(&messages);
-                    conversation.average_cache_hit_rate = conversation
-                        .average_cache_hit_rate
-                        .or(previous_cache_hit_rate);
                     if let Some(prompt) = &mut self.pending_prompt {
-                        prompt.item = None;
+                        if prompt.waiting().is_some() {
+                            if let Some(item) = prompt.item.clone() {
+                                let conversation = conversation_mut(self.active_snapshot_mut());
+                                conversation.append_local_user(item);
+                                conversation.begin_run();
+                            }
+                        } else {
+                            prompt.item = None;
+                        }
                     }
                 }
                 self.startup_history_loaded = true;
@@ -498,7 +522,10 @@ impl RuntimeOwner {
                 self.active_snapshot_mut().status = "Accepted".into();
                 self.send(SessionCommand::LoadState);
             }
-            Payload::Abort => self.active_snapshot_mut().status = "Stopping".into(),
+            Payload::Abort => {
+                self.active_snapshot_mut().status = "Stopping".into();
+                self.active_snapshot_mut().run_outcome = Some(SessionOutcome::Stopped);
+            }
             Payload::Compact => self.send(SessionCommand::LoadState),
             Payload::Rename => {
                 self.active_snapshot_mut().status = "Session named".into();
@@ -542,25 +569,6 @@ pub(super) fn update_session_goal_from_event(
         return false;
     }
     *goal = updated;
-    true
-}
-
-pub(super) fn update_account_usage_from_event(
-    snapshot: &mut RuntimeSnapshot,
-    kind: &SessionActivityKind,
-    event: &Value,
-) -> bool {
-    if kind != &SessionActivityKind::AccountUsageChanged {
-        return false;
-    }
-    let Some(value) = event.get("usage") else {
-        return false;
-    };
-    let Ok(updated) = serde_json::from_value::<crate::agents::AccountUsage>(value.clone()) else {
-        return false;
-    };
-    snapshot.account_usage = updated;
-    snapshot.account_usage_observed_at = Some(Instant::now());
     true
 }
 

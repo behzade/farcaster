@@ -26,9 +26,11 @@ use crate::{
     sessions::{DraftSession, SessionSummary, UsageSummary},
 };
 
+mod accounts;
 mod backend;
 mod composer;
 mod composer_worker;
+mod conversation_store;
 #[path = "drafts.rs"]
 mod draft_storage;
 mod editor_setting;
@@ -52,6 +54,8 @@ mod relocation;
 mod reviews;
 mod schema;
 mod session_controls;
+mod session_metrics;
+mod session_repository;
 mod session_state;
 #[path = "sessions.rs"]
 mod session_storage;
@@ -60,19 +64,26 @@ mod settings;
 mod snapshot;
 mod traits;
 mod transcript;
+mod transcript_viewport;
+pub use transcript_viewport::StoredViewport;
+mod worker_status;
 mod workgraph_identity;
 
 pub use composer_worker::ComposerPersistenceWorker;
+pub use conversation_store::{StoredTranscript, TranscriptSession};
 use draft_storage::{remove_draft_row, save_draft};
 pub use editor_setting::EditorChoice;
 use identity::{bind_locator, ensure_locator_session, ensure_project, target_for_session};
+pub use prompts::{EnqueuedPrompt, PromptHistoryOverlay, PromptSubmission};
 pub use relocation::relocate_snapshot_session_locators;
 pub use session_controls::SessionControlSelection;
+pub use session_metrics::{SessionFacts, SessionOutcome};
+pub use session_repository::{ObservedSession, SessionRepository, TranscriptStamp};
 pub use session_state::SessionStateChanges;
 pub use session_writer::SessionStateWriter;
 pub use snapshot::snapshot_database;
 
-const SCHEMA_VERSION: i64 = 22;
+const SCHEMA_VERSION: i64 = 30;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 const LEGACY_PI_GPUI_IMPORT_KEY: &str = "legacy_pi_gpui_state_imported";
 const REPOSITORY_BACKENDS: [&str; 3] = ["auto", "git", "jj"];
@@ -83,11 +94,28 @@ pub struct StateStore {
 }
 
 #[derive(Clone)]
-pub struct SharedStateStore(Arc<Mutex<StateStore>>);
+pub struct SharedStateStore(Arc<Mutex<StateStore>>, Option<Arc<TranscriptDatabase>>);
+
+struct TranscriptDatabase {
+    idle_connection: Mutex<Option<Connection>>,
+    path: PathBuf,
+    images: PathBuf,
+}
 
 impl SharedStateStore {
     pub fn new(store: StateStore) -> Self {
-        Self(Arc::new(Mutex::new(store)))
+        let database = store
+            .connection
+            .path()
+            .filter(|p| !p.is_empty())
+            .map(|path| {
+                Arc::new(TranscriptDatabase {
+                    idle_connection: Mutex::default(),
+                    path: PathBuf::from(path),
+                    images: store.image_directory.clone(),
+                })
+            });
+        Self(Arc::new(Mutex::new(store)), database)
     }
 
     pub fn lock(&self) -> Result<MutexGuard<'_, StateStore>, String> {
@@ -144,8 +172,6 @@ pub enum WindowState {
 pub struct PanelLayout {
     pub session_rail_hidden: bool,
     pub run_panel_hidden: bool,
-    pub notifications_collapsed: bool,
-    pub notifications_height: Option<f32>,
     pub archived_expanded: bool,
     pub archived_height: Option<f32>,
 }
@@ -155,8 +181,6 @@ impl Default for PanelLayout {
         Self {
             session_rail_hidden: false,
             run_panel_hidden: false,
-            notifications_collapsed: true,
-            notifications_height: None,
             archived_expanded: false,
             archived_height: None,
         }

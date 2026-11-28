@@ -1,5 +1,4 @@
 use super::*;
-use crate::agents::Backend;
 
 impl crate::access::NetworkSettingsStore for StateStore {
     fn load_proxy(&self) -> Result<Option<String>, String> {
@@ -10,44 +9,6 @@ impl crate::access::NetworkSettingsStore for StateStore {
 impl crate::agents::PromptStore for StateStore {
     fn has_queued_for(&self, paths: &[PathBuf]) -> Result<bool, String> {
         self.has_queued_prompts_for(paths)
-    }
-
-    fn enqueue(
-        &self,
-        target: &str,
-        harness: Backend,
-        project: &Path,
-        session: Option<&Path>,
-        mode: PromptMode,
-        message: &str,
-        images: &[PromptImage],
-    ) -> Result<i64, String> {
-        self.enqueue_prompt(target, harness, project, session, mode, message, images)
-    }
-
-    fn enqueue_with_presentation(
-        &self,
-        target: &str,
-        harness: Backend,
-        project: &Path,
-        session: Option<&Path>,
-        mode: PromptMode,
-        message: &str,
-        display_message: Option<&str>,
-        invocation: Option<&str>,
-        images: &[PromptImage],
-    ) -> Result<i64, String> {
-        self.enqueue_prompt_with_presentation(
-            target,
-            harness,
-            project,
-            session,
-            mode,
-            message,
-            display_message,
-            invocation,
-            images,
-        )
     }
 
     fn queued(&self) -> Result<Vec<QueuedPrompt>, String> {

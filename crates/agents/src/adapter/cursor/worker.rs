@@ -101,20 +101,9 @@ pub(super) fn spawn_main(
     config: &AgentLaunchConfig,
     launch: &crate::SessionLaunch,
 ) -> Result<MainSession, String> {
-    let identity = crate::core::CallerRegistry::shared().issue_with_access(
-        &launch.project,
-        crate::core::CallerProfile {
-            backend: Backend::Cursor,
-            provider: None,
-            model: None,
-            effort: None,
-        },
-        launch.wake.clone(),
-        config.access_mode,
-    );
-    identity.set_harness_profile_id(config.profile_id.clone());
+    let identity = crate::core::CallerRegistry::shared().issue_main_session(config, launch);
     let resume = match &launch.start {
-        crate::SessionStart::New => None,
+        crate::SessionStart::New(_) => None,
         crate::SessionStart::Resume(_) => Some(
             main_session::launch_session_locator(launch).ok_or("Cursor SDK session id missing")?,
         ),
@@ -482,7 +471,6 @@ impl Worker {
                 self.events.push_back(WorkerEvent::Activity(activity));
             }
         }
-        // The helper forwards SDK control messages only; activity uses onDelta.
         if let Some(message) = value.get("sdkMessage") {
             let payload = &message["message"];
             if self.run_id.is_none() {
@@ -573,7 +561,6 @@ impl Worker {
                 });
             self.metadata_request = None;
             self.metadata_dirty = false;
-            // A disconnected Send does not cancel the SDK run.
             self.cancelled = Some(Instant::now());
             let _ = self.cancel_run();
             let _ = self.bridge.close();
@@ -626,7 +613,6 @@ impl WorkerSession for Worker {
     fn rename(&mut self, name: &str) -> Result<(), String> {
         self.bridge
             .agent("RenameAgent", json!({"agentId":self.id,"name":name}))?;
-        // Discard a lookup started before the rename; its old name is now stale.
         self.metadata_request = None;
         self.metadata_dirty = false;
         self.events.retain(|event| {

@@ -1,19 +1,19 @@
 use super::*;
-use crate::app::ui::primitives::AppTooltip as _;
-use crate::app::ui::primitives::DropdownMenu as _;
+use crate::app::ui::primitives::{AppTooltip as _, SelectionStyle as _};
 mod layout;
 mod mechanics;
 use mechanics::{model_matches, option_button, option_row, picker_panel, result_list};
 mod worker_model_picker;
+use crate::app::ui::primitives::Input;
 use crate::app::ui::{
-    primitives::{ButtonTone, button, dropdown_button},
+    assets::AppIcon,
+    primitives::{ButtonTone, Dropdown, DropdownItem, button},
     theme::theme,
 };
 use gpui::{
     InteractiveElement as _, IntoElement as _, ParentElement as _, StatefulInteractiveElement as _,
     Styled as _, div, prelude::FluentBuilder as _, px,
 };
-use gpui_component::{input::Input, menu::PopupMenuItem};
 
 pub(in crate::app) struct WorkerModelPicker {
     id: String,
@@ -38,15 +38,22 @@ pub(in crate::app) struct RuntimePickerState {
 fn model_result_button(
     id: impl Into<gpui::ElementId>,
     label: String,
+    current: bool,
     highlighted: bool,
     on_press: impl Fn(&mut Window, &mut gpui::App) + 'static,
 ) -> impl gpui::IntoElement {
     button(id, "", ButtonTone::Quiet, true, on_press)
-        .accessibility_label(label.clone())
+        .toggled(current)
+        .selection_style(current)
+        .accessibility_label(if current {
+            format!("{label}, current model")
+        } else {
+            label.clone()
+        })
         .app_tooltip(label.clone())
         .child(
             div()
-                .w_full()
+                .flex_1()
                 .min_w(theme().size(0.0))
                 .truncate()
                 .child(label),
@@ -56,7 +63,12 @@ fn model_result_button(
         .overflow_hidden()
         .h(theme().size(32.0))
         .justify_start()
-        .when(highlighted, |row| row.bg(theme().colors.surface))
+        .when(current, |row| {
+            row.debug_selector(|| "runtime-model-current".into())
+        })
+        .when(highlighted && !current, |row| {
+            row.bg(theme().colors.surface)
+        })
 }
 
 impl FarcasterApp {
@@ -140,6 +152,9 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if open && self.workspace.runtime_picker.worker.is_none() && !self.can_submit() {
+            return;
+        }
         self.workspace.runtime_picker.open = open;
         if open {
             if self.workspace.runtime_picker.worker.is_none()
@@ -165,6 +180,7 @@ impl FarcasterApp {
             if self.workspace.runtime_picker.worker.is_none()
                 && let Some(selected) = self.snapshot.session_identity().model
             {
+                let selected = self.snapshot.catalog_model(selected);
                 self.workspace.runtime_picker.highlighted = self
                     .snapshot
                     .models
@@ -252,6 +268,13 @@ impl FarcasterApp {
         let selected = identity
             .model
             .map(|model| self.snapshot.catalog_model(model));
+        let uncatalogued_current = selected.filter(|selected| {
+            !self
+                .snapshot
+                .models
+                .iter()
+                .any(|model| model.provider == selected.provider && model.id == selected.id)
+        });
         let feedback = if self.snapshot.models.is_empty() {
             match &self.snapshot.configuration_status {
                 crate::runtime::ConfigurationStatus::Loading => "Loading models…".to_owned(),
@@ -293,6 +316,35 @@ impl FarcasterApp {
             },
         );
         panel
+            .when_some(uncatalogued_current, |panel, model| {
+                panel.child(
+                    div()
+                        .debug_selector(|| "runtime-current-model".into())
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .gap(theme().space.sm)
+                        .p(theme().space.sm)
+                        .selection_style(true)
+                        .child(
+                            div()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .child(
+                                    div()
+                                        .truncate()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .child(model.name.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .text_color(theme().colors.muted)
+                                        .child(format!("{} · Current", model.provider)),
+                                ),
+                        ),
+                )
+            })
             .child(
                 div()
                     .flex_none()
@@ -303,31 +355,33 @@ impl FarcasterApp {
                     .p(theme().space.sm)
                     .child(div().text_color(theme().colors.muted).child("Provider"))
                     .child(
-                        dropdown_button(
+                        Dropdown::new(
                             "runtime-provider",
-                            provider.unwrap_or_else(|| "Provider".into()),
-                            ButtonTone::Quiet,
-                            providers.len() > 1,
-                        )
-                        .min_w(theme().size(0.0))
-                        .max_w(px((width - 100.0).max(0.0)))
-                        .overflow_hidden()
-                        .dropdown_menu(move |mut menu, _, _| {
-                            for provider in &providers {
-                                let entity = provider_entity.clone();
-                                let provider = provider.clone();
-                                menu = menu.item(PopupMenuItem::new(provider.clone()).on_click(
-                                    move |_, window, cx| {
+                            provider.clone().unwrap_or_else(|| "Provider".into()),
+                            providers
+                                .iter()
+                                .map(|candidate| {
+                                    let entity = provider_entity.clone();
+                                    let current = Some(candidate) == provider.as_ref();
+                                    let provider = candidate.clone();
+                                    DropdownItem::new(provider.clone(), move |window, cx| {
                                         let _ = entity.update(cx, |app, cx| {
                                             app.workspace.runtime_picker.provider =
                                                 Some(provider.clone());
                                             app.reset_model_picker_search(window, cx);
                                         });
-                                    },
-                                ));
-                            }
-                            menu
-                        }),
+                                    })
+                                    .selected(current)
+                                })
+                                .collect(),
+                        )
+                        .tone(ButtonTone::Quiet)
+                        .disabled(providers.len() < 2)
+                        .auto_menu_width()
+                        .anchor(gpui::Anchor::TopRight)
+                        .min_w(theme().size(0.0))
+                        .max_w(px((width - 100.0).max(0.0)))
+                        .overflow_hidden(),
                     ),
             )
             .child(
@@ -351,10 +405,10 @@ impl FarcasterApp {
                             *id == model.id && *provider == model.provider
                         });
                         let entity = rows_entity.clone();
-                        let label = format!("{}{}", if current { "✓ " } else { "" }, model.name);
                         model_result_button(
                             ("runtime-model", index),
-                            label,
+                            model.name.clone(),
+                            current,
                             index == highlighted,
                             move |window, cx| {
                                 let _ = entity.update(cx, |app, cx| {
@@ -389,25 +443,49 @@ impl FarcasterApp {
                 )
             })
             .when(!service_tiers.is_empty(), |panel| {
-                panel.child(option_row("Service tier").flex_none().child(
-                    div().flex().flex_wrap().gap(theme().space.xs).children(
-                        service_tiers.iter().enumerate().map(|(index, tier)| {
-                            let entity = entity.clone();
-                            let tier = tier.clone();
-                            option_button(
-                                ("runtime-service-tier", index),
-                                tier.clone(),
-                                selected_tier == Some(tier.as_str()),
-                                move |_, cx| {
-                                    let _ = entity.update(cx, |app, cx| {
-                                        app.set_service_tier(tier.clone(), cx)
-                                    });
-                                },
-                            )
-                        }),
+                panel.child(
+                    option_row("Service tier").flex_none().child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap(theme().space.xs)
+                            .when(selected_tier.is_none(), |row| {
+                                row.child(
+                                    div()
+                                        .id("runtime-service-tier-default")
+                                        .debug_selector(|| "runtime-service-tier-default".into())
+                                        .role(gpui::Role::Label)
+                                        .aria_label("Service tier: Default")
+                                        .h_6()
+                                        .px_2()
+                                        .flex()
+                                        .items_center()
+                                        .rounded(theme().radius.max(theme().size(4.0)))
+                                        .selection_style(true)
+                                        .child("Default"),
+                                )
+                            })
+                            .children(service_tiers.iter().enumerate().map(|(index, tier)| {
+                                let entity = entity.clone();
+                                let tier = tier.clone();
+                                option_button(
+                                    ("runtime-service-tier", index),
+                                    tier.clone(),
+                                    selected_tier == Some(tier.as_str()),
+                                    move |_, cx| {
+                                        let _ = entity.update(cx, |app, cx| {
+                                            app.set_service_tier(tier.clone(), cx)
+                                        });
+                                    },
+                                )
+                            })),
                     ),
-                ))
+                )
             })
             .into_any_element()
     }
 }
+
+#[cfg(test)]
+#[path = "runtime_picker_tests.rs"]
+mod tests;

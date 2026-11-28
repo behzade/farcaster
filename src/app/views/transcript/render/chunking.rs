@@ -1,4 +1,5 @@
 use super::*;
+use conversation::markdown_structure::MarkdownStructure;
 
 pub(super) const MARKDOWN_CHUNK_TARGET_BYTES: usize = 2 * 1024;
 pub(in crate::app::views::transcript) const MARKDOWN_CHUNK_HARD_BYTES: usize = 8 * 1024;
@@ -25,11 +26,60 @@ pub(in crate::app::views::transcript) struct MarkdownChunk {
     pub(in crate::app::views::transcript) fence: Option<FenceContinuation>,
 }
 
-pub(super) fn markdown_needs_chunks(text: &str) -> bool {
-    text.len() > MARKDOWN_CHUNK_HARD_BYTES || text.lines().take(65).count() > 64
+pub(super) fn projected_markdown_chunks(
+    text: &str,
+    streaming: bool,
+    structure: Option<&MarkdownStructure>,
+) -> Option<Vec<MarkdownChunk>> {
+    if text.len() > MARKDOWN_CHUNK_HARD_BYTES
+        || text.lines().nth(64).is_some()
+        || (streaming && text.len() > MARKDOWN_CHUNK_TARGET_BYTES)
+    {
+        return Some(markdown_chunks_with_structure(text, structure));
+    }
+
+    if text.len() <= MARKDOWN_CHUNK_TARGET_BYTES
+        || text.contains("]:")
+        || !text
+            .trim_end()
+            .lines()
+            .skip(1)
+            .any(|line| line.trim().is_empty())
+    {
+        return None;
+    }
+    let parsed;
+    let structure = match structure {
+        Some(s) => s,
+        None => {
+            parsed = MarkdownStructure::parse(text)?;
+            &parsed
+        }
+    };
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    for &line_start in &structure.block_starts {
+        if line_start - start >= MARKDOWN_CHUNK_TARGET_BYTES {
+            chunks.push(plain_markdown_chunk(start, line_start));
+            start = line_start;
+        }
+    }
+    if chunks.is_empty() {
+        return None;
+    }
+    chunks.push(plain_markdown_chunk(start, text.len()));
+    Some(chunks)
 }
 
+#[cfg(test)]
 pub(in crate::app::views::transcript) fn markdown_chunks(text: &str) -> Vec<MarkdownChunk> {
+    markdown_chunks_with_structure(text, None)
+}
+
+fn markdown_chunks_with_structure(
+    text: &str,
+    structure: Option<&MarkdownStructure>,
+) -> Vec<MarkdownChunk> {
     let mut chunks = Vec::new();
     let mut outside_start = 0;
     let mut offset = 0;
@@ -56,6 +106,33 @@ pub(in crate::app::views::transcript) fn markdown_chunks(text: &str) -> Vec<Mark
     }
     if chunks.is_empty() {
         chunks.push(plain_markdown_chunk(0, text.len()));
+    }
+    let parsed;
+    if text.contains('[') {
+        let spans = if let Some(s) = structure {
+            &s.links
+        } else {
+            let Some(s) = MarkdownStructure::parse(text) else {
+                return chunks;
+            };
+            parsed = s;
+            &parsed.links
+        };
+        let mut merged: Vec<MarkdownChunk> = Vec::new();
+        for chunk in chunks {
+            if let Some(previous) = merged.last_mut()
+                && previous.fence.is_none()
+                && chunk.fence.is_none()
+                && spans
+                    .iter()
+                    .any(|range| range.start < chunk.start && chunk.start < range.end)
+            {
+                previous.end = chunk.end;
+            } else {
+                merged.push(chunk);
+            }
+        }
+        return merged;
     }
     chunks
 }
@@ -104,6 +181,15 @@ fn append_fenced_markdown_chunks(
     chunks: &mut Vec<MarkdownChunk>,
 ) {
     const FENCED_CHUNK_LINES: usize = 64;
+    let opening = &text[fence.opening_start..fence.opening_end];
+    let language = opening.trim().trim_start_matches(fence.marker).trim();
+    if crate::app::attachment::resolve(crate::app::attachment::AttachmentSource::Code(language))
+        .source
+        .is_some()
+    {
+        chunks.push(plain_markdown_chunk(fence.opening_start, fence_end));
+        return;
+    }
     if fence_end - fence.opening_start <= MARKDOWN_CHUNK_HARD_BYTES
         && text[fence.opening_end..closing_start].lines().count() <= FENCED_CHUNK_LINES
     {
@@ -162,12 +248,42 @@ fn append_fenced_markdown_chunks(
     }
 }
 
+#[cfg(test)]
 pub(in crate::app::views::transcript) fn markdown_chunk_text(
     text: &str,
     chunk: MarkdownChunk,
 ) -> Cow<'_, str> {
+    chunk_text_with_structure(text, chunk, None)
+}
+
+pub(in crate::app::views::transcript) fn chunk_text_with_structure<'a>(
+    text: &'a str,
+    chunk: MarkdownChunk,
+    structure: Option<&MarkdownStructure>,
+) -> Cow<'a, str> {
     let Some(continuation) = chunk.fence else {
-        return Cow::Borrowed(&text[chunk.start..chunk.end]);
+        let body = &text[chunk.start..chunk.end];
+        let parsed;
+        let structure = match structure {
+            Some(structure) => structure,
+            None if text.contains("]:") => {
+                let Some(structure) = MarkdownStructure::parse(text) else {
+                    return Cow::Borrowed(body);
+                };
+                parsed = structure;
+                &parsed
+            }
+            None => return Cow::Borrowed(body),
+        };
+        if structure.definitions.is_empty() {
+            return Cow::Borrowed(body);
+        }
+        let mut rendered = format!("{body}\n\n");
+        for range in &structure.definitions {
+            rendered.push_str(&text[range.clone()]);
+            rendered.push('\n');
+        }
+        return Cow::Owned(rendered);
     };
     if !continuation.prepend && !continuation.append {
         return Cow::Borrowed(&text[chunk.start..chunk.end]);

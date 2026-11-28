@@ -1,13 +1,11 @@
 use crate::agents::{Backend, HarnessProfile};
-use crate::app::ui::primitives::DropdownMenu as _;
 use gpui::{IntoElement, Styled as _, WeakEntity};
-
-use gpui_component::menu::PopupMenuItem;
 
 use crate::app::{
     FarcasterApp,
     ui::{
-        primitives::{ButtonTone, dropdown_button},
+        assets::AppIcon,
+        primitives::{ButtonTone, Dropdown, DropdownItem},
         theme::theme,
     },
 };
@@ -44,69 +42,62 @@ pub(super) fn harness_selector(
                 "Unavailable backend".to_owned()
             }
         });
-    dropdown_button("draft-harness", label, ButtonTone::Quiet, true)
-        .pl_0()
+    let mut items = Vec::new();
+    for backend in &backends {
+        let target = backend.id;
+        let entity = entity.clone();
+        let label = if backend.sign_in_required {
+            format!("{} — Sign in in Settings → Connections", backend.name)
+        } else if backend.available {
+            backend.name.clone()
+        } else {
+            format!(
+                "{} — not installed (expected: {})",
+                backend.name,
+                backend.program.display()
+            )
+        };
+        items.push(
+            DropdownItem::new(label, move |window, cx| {
+                let _ = entity.update(cx, |this, cx| this.change_draft_harness(target, window, cx));
+            })
+            .icon(AppIcon::for_harness(target))
+            .selected(Some(target) == harness && selected_profile_id.is_none())
+            .disabled(!backend.available),
+        );
+    }
+    for profile in &profiles {
+        let target = profile.backend;
+        let profile_id = profile.id.clone();
+        let entity = entity.clone();
+        let sign_in_required = FarcasterApp::harness_sign_in_required(target, Some(&profile.id));
+        let available = profile.is_selectable() && !sign_in_required;
+        let label = if sign_in_required {
+            format!("{} — Sign in in Settings → Connections", profile.name)
+        } else if available {
+            profile.name.clone()
+        } else {
+            format!(
+                "{} — not installed: {}",
+                profile.name,
+                profile.executable.display()
+            )
+        };
+        items.push(
+            DropdownItem::new(label, move |window, cx| {
+                let _ = entity.update(cx, |this, cx| {
+                    this.change_draft_harness_profile(target, profile_id.clone(), window, cx)
+                });
+            })
+            .icon(AppIcon::for_harness(target))
+            .selected(Some(profile.id.as_str()) == selected_profile_id.as_deref())
+            .disabled(!available),
+        );
+    }
+    Dropdown::new("draft-harness", label, items)
+        .tone(ButtonTone::Quiet)
+        .px(theme().space.xs)
+        .anchor(gpui::Anchor::BottomLeft)
+        .auto_menu_width()
         .text_color(theme().colors.text)
-        .dropdown_menu_with_anchor(gpui::Anchor::BottomLeft, move |mut menu, _, _| {
-            for backend in &backends {
-                let target = backend.id;
-                let entity = entity.clone();
-                let label = if backend.sign_in_required {
-                    format!("{} — Sign in in Settings → Connections", backend.name)
-                } else if backend.available {
-                    backend.name.clone()
-                } else {
-                    format!(
-                        "{} — not installed (expected: {})",
-                        backend.name,
-                        backend.program.display()
-                    )
-                };
-                menu = menu.item(
-                    PopupMenuItem::new(label)
-                        .checked(Some(backend.id) == harness && selected_profile_id.is_none())
-                        .disabled(!backend.available)
-                        .on_click(move |_, window, cx| {
-                            let _ = entity.update(cx, |this, cx| {
-                                this.change_draft_harness(target, window, cx);
-                            });
-                        }),
-                );
-            }
-            for profile in &profiles {
-                let target = profile.backend;
-                let profile_id = profile.id.clone();
-                let entity = entity.clone();
-                let sign_in_required =
-                    FarcasterApp::harness_sign_in_required(target, Some(&profile.id));
-                let available = profile.is_selectable() && !sign_in_required;
-                let label = if sign_in_required {
-                    format!("{} — Sign in in Settings → Connections", profile.name)
-                } else if available {
-                    profile.name.clone()
-                } else {
-                    format!(
-                        "{} — not installed: {}",
-                        profile.name,
-                        profile.executable.display()
-                    )
-                };
-                menu = menu.item(
-                    PopupMenuItem::new(label)
-                        .checked(Some(profile.id.as_str()) == selected_profile_id.as_deref())
-                        .disabled(!available)
-                        .on_click(move |_, window, cx| {
-                            let _ = entity.update(cx, |this, cx| {
-                                this.change_draft_harness_profile(
-                                    target,
-                                    profile_id.clone(),
-                                    window,
-                                    cx,
-                                );
-                            });
-                        }),
-                );
-            }
-            menu
-        })
 }
