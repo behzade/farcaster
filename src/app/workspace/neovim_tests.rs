@@ -1,3 +1,5 @@
+use std::process::{Command, Stdio};
+
 use super::*;
 
 struct Server(std::process::Child);
@@ -7,6 +9,17 @@ impl Drop for Server {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
+}
+
+fn eval_lua(rpc: &mut NvimRpc, body: &str) -> Result<(), String> {
+    rpc.exec(body, vec![]).map(|_| ())
+}
+
+fn socket_channels(rpc: &mut NvimRpc) -> Result<rmpv::Value, String> {
+    rpc.exec(
+        "return vim.tbl_map(function(chan) return chan.id end, vim.tbl_filter(function(chan) return chan.stream == 'socket' end, vim.api.nvim_list_chans()))",
+        vec![],
+    )
 }
 
 #[test]
@@ -106,72 +119,71 @@ fn code_capture_preserves_normal_visual_and_unsaved_buffer_state() -> Result<(),
             .spawn()
             .map_err(|e| e.to_string())?,
     );
-    let lua = |body: &str| {
-        run_remote(
-            &executable,
-            directory.path(),
-            &socket,
-            &format!(
-                "luaeval({})",
-                vim_string(&format!("(function() {body}; return 0 end)()"))
-            ),
-        )
-    };
-    lua(
+    let mut rpc = NvimRpc::new(socket, async_channel::unbounded().0);
+    eval_lua(
+        &mut rpc,
         "vim.api.nvim_buf_set_name(0, 'capture.rs'); vim.api.nvim_buf_set_lines(0, 0, -1, false, {'alpha beta', 'αβγ world', 'third line'}); vim.api.nvim_win_set_cursor(0, {1, 2})",
     )?;
-    let capture = || capture_code(&executable, directory.path(), &socket);
-    let normal = capture()?;
+    let normal = capture_code(&mut rpc)?;
     assert_eq!(normal.text, "alpha beta");
     assert_eq!((normal.cursor_line, normal.cursor_column), (1, 3));
     assert!(normal.modified);
-    lua(
+    eval_lua(
+        &mut rpc,
         "assert(vim.fn.mode() == 'n'); assert(vim.api.nvim_win_get_cursor(0)[2] == 2); vim.cmd('normal! vll')",
     )?;
-    let visual = capture()?;
+    let visual = capture_code(&mut rpc)?;
     assert_eq!(visual.text, "pha");
     assert_eq!(visual.mode, "v");
-    lua(
+    eval_lua(
+        &mut rpc,
         "assert(vim.fn.mode() == 'v'); vim.cmd('normal! ' .. vim.api.nvim_replace_termcodes('<Esc>', true, false, true)); vim.api.nvim_win_set_cursor(0, {2, 0}); vim.cmd('normal! Vj')",
     )?;
-    assert_eq!(capture()?.text, "αβγ world\nthird line");
-    lua(
+    assert_eq!(capture_code(&mut rpc)?.text, "αβγ world\nthird line");
+    eval_lua(
+        &mut rpc,
         "assert(vim.fn.mode() == 'V'); vim.cmd('normal! ' .. vim.api.nvim_replace_termcodes('<Esc>', true, false, true)); vim.api.nvim_win_set_cursor(0, {1, 4}); vim.cmd('normal! vhh')",
     )?;
-    assert_eq!(capture()?.text, "pha");
-    lua(
+    assert_eq!(capture_code(&mut rpc)?.text, "pha");
+    eval_lua(
+        &mut rpc,
         "vim.cmd('normal! ' .. vim.api.nvim_replace_termcodes('<Esc>', true, false, true)); vim.api.nvim_win_set_cursor(0, {2, 0}); vim.cmd('normal! vl')",
     )?;
-    assert_eq!(capture()?.text, "αβ");
-    lua(
+    assert_eq!(capture_code(&mut rpc)?.text, "αβ");
+    eval_lua(
+        &mut rpc,
         "vim.cmd('normal! ' .. vim.api.nvim_replace_termcodes('<Esc>', true, false, true)); vim.api.nvim_win_set_cursor(0, {1, 0}); vim.cmd('normal! ' .. vim.api.nvim_replace_termcodes('<C-v>jl', true, false, true))",
     )?;
-    assert_eq!(capture()?.text, "al\nαβ");
-    lua(
+    assert_eq!(capture_code(&mut rpc)?.text, "al\nαβ");
+    eval_lua(
+        &mut rpc,
         "vim.cmd('normal! ' .. vim.api.nvim_replace_termcodes('<Esc>', true, false, true)); vim.o.selection = 'exclusive'; vim.api.nvim_win_set_cursor(0, {1, 0}); vim.cmd('normal! vll')",
     )?;
-    assert_eq!(capture()?.text, "al");
-    lua(
+    assert_eq!(capture_code(&mut rpc)?.text, "al");
+    eval_lua(
+        &mut rpc,
         "assert(vim.fn.mode() == 'v'); assert(vim.bo.modified); assert(vim.api.nvim_buf_get_lines(0, 1, 2, false)[1] == 'αβγ world'); vim.cmd('normal! ' .. vim.api.nvim_replace_termcodes('<Esc>', true, false, true)); vim.api.nvim_buf_set_lines(0, 0, -1, false, {string.rep('x', 131073)})",
     )?;
     assert!(
-        capture()
+        capture_code(&mut rpc)
             .expect_err("invalid test input must fail")
             .contains("128 KiB")
     );
-    lua(
+    eval_lua(
+        &mut rpc,
         "vim.api.nvim_buf_set_lines(0, 0, -1, false, vim.fn['repeat']({'x'}, 2001)); vim.api.nvim_win_set_cursor(0, {1, 0}); vim.cmd('normal! V2000j')",
     )?;
     assert!(
-        capture()
+        capture_code(&mut rpc)
             .expect_err("invalid test input must fail")
             .contains("2,000 lines")
     );
-    lua(
+    eval_lua(
+        &mut rpc,
         "vim.cmd('normal! ' .. vim.api.nvim_replace_termcodes('<Esc>', true, false, true)); vim.bo.buftype = 'nofile'",
     )?;
     assert!(
-        capture()
+        capture_code(&mut rpc)
             .expect_err("invalid test input must fail")
             .contains("Open a file buffer")
     );
@@ -204,26 +216,19 @@ fn session_processes_isolate_buffers_and_preserve_views() -> Result<(), String> 
     let server_b = start(b.path())?;
     let path = project.path().join("it's | shared.rs");
     std::fs::write(&path, "one\ntwo\nthree\nfour\nfive\n").map_err(|error| error.to_string())?;
-    let request = |state: &Path, expression: String| {
-        run_remote(
-            &executable,
-            project.path(),
-            &state.join("nvim.sock"),
-            &expression,
-        )
-    };
-    let lua = |state: &Path, body: &str| {
-        request(
-            state,
-            format!(
-                "luaeval({})",
-                vim_string(&format!("(function() {body}; return 0 end)()"))
-            ),
-        )
-    };
-    request(a.path(), session_expression(11, Some(&path), None))?;
-    lua(
-        a.path(),
+    let (send, selections) = async_channel::unbounded();
+    let mut rpc_a = NvimRpc::new(a.path().join("nvim.sock"), send);
+    let mut rpc_b = NvimRpc::new(b.path().join("nvim.sock"), async_channel::unbounded().0);
+    open_target(
+        &mut rpc_a,
+        project.path(),
+        11,
+        EditorTarget::File(path.clone(), None),
+    )?;
+    let channel = socket_channels(&mut rpc_a)?;
+    assert_eq!(channel.as_array().map(Vec::len), Some(1));
+    eval_lua(
+        &mut rpc_a,
         r#"
             vim.o.hidden = false
             vim.g.session_marker = 'a'
@@ -232,9 +237,14 @@ fn session_processes_isolate_buffers_and_preserve_views() -> Result<(), String> 
             vim.api.nvim_buf_set_lines(0, 0, 1, false, {'unsaved a'})
         "#,
     )?;
-    request(b.path(), session_expression(22, Some(&path), Some(1)))?;
-    lua(
-        b.path(),
+    open_target(
+        &mut rpc_b,
+        project.path(),
+        22,
+        EditorTarget::File(path.clone(), Some(1)),
+    )?;
+    eval_lua(
+        &mut rpc_b,
         r#"
             assert(vim.api.nvim_get_current_line() == 'one')
             assert(not vim.bo.modified)
@@ -243,18 +253,18 @@ fn session_processes_isolate_buffers_and_preserve_views() -> Result<(), String> 
             vim.api.nvim_buf_set_lines(0, 0, 1, false, {'unsaved b'})
         "#,
     )?;
-    for state in [a.path(), b.path()] {
-        lua(
-            state,
+    for (state, rpc) in [(a.path(), &mut rpc_a), (b.path(), &mut rpc_b)] {
+        eval_lua(
+            rpc,
             &format!(
                 "assert(vim.o.directory == {0}); assert(vim.o.backupdir == {0}); assert(vim.o.undodir == {0})",
                 vim_string(&format!("{}//", state.display()))
             ),
         )?;
     }
-    request(a.path(), session_expression(11, None, None))?;
-    lua(
-        a.path(),
+    open_target(&mut rpc_a, project.path(), 11, EditorTarget::Resume)?;
+    eval_lua(
+        &mut rpc_a,
         r#"
             assert(vim.api.nvim_buf_get_lines(0, 0, 1, false)[1] == 'unsaved a')
             assert(vim.bo.modified)
@@ -263,23 +273,23 @@ fn session_processes_isolate_buffers_and_preserve_views() -> Result<(), String> 
         "#,
     )?;
     drop(server_b);
-    lua(a.path(), "assert(vim.g.session_marker == 'a')")?;
-    lua(
-        a.path(),
+    assert!(eval_lua(&mut rpc_b, "return 1").is_err());
+    eval_lua(&mut rpc_a, "assert(vim.g.session_marker == 'a')")?;
+    eval_lua(
+        &mut rpc_a,
         "vim.g.original_buffer = vim.api.nvim_get_current_buf()",
     )?;
-    let scratch = |text: &str| {
+    let scratch = |rpc: &mut NvimRpc, text: &str| {
         open_target(
-            &executable,
+            rpc,
             project.path(),
-            a.path(),
             11,
             EditorTarget::Transcript(text.to_owned()),
         )
     };
-    scratch("# User\n\nIt's `code` | سلام\n")?;
-    lua(
-        a.path(),
+    scratch(&mut rpc_a, "# User\n\nIt's `code` | سلام\n")?;
+    eval_lua(
+        &mut rpc_a,
         r#"
         assert(vim.bo.buftype == 'nofile')
         assert(vim.bo.filetype == 'markdown')
@@ -290,9 +300,9 @@ fn session_processes_isolate_buffers_and_preserve_views() -> Result<(), String> 
         vim.api.nvim_buf_set_lines(0, 0, 1, false, {'scratch edit'})
     "#,
     )?;
-    scratch("# Latest snapshot")?;
-    lua(
-        a.path(),
+    scratch(&mut rpc_a, "# Latest snapshot")?;
+    eval_lua(
+        &mut rpc_a,
         r#"
         assert(vim.api.nvim_get_current_buf() ~= vim.g.first_scratch)
         assert(vim.api.nvim_buf_get_lines(vim.g.first_scratch, 0, 1, false)[1] == 'scratch edit')
@@ -300,42 +310,66 @@ fn session_processes_isolate_buffers_and_preserve_views() -> Result<(), String> 
         assert(vim.api.nvim_buf_get_lines(vim.g.original_buffer, 0, 1, false)[1] == 'unsaved a')
     "#,
     )?;
-    scratch("")?;
-    lua(a.path(), "assert(vim.api.nvim_get_current_line() == '')")?;
+    scratch(&mut rpc_a, "")?;
+    eval_lua(&mut rpc_a, "assert(vim.api.nvim_get_current_line() == '')")?;
+    activate_session(
+        &mut rpc_a,
+        11,
+        Some(&path),
+        Some(2),
+        None,
+        Some(b"\xef\xbb\xbfbase\r\n\xff\r\n".to_vec()),
+        false,
+    )?;
+    eval_lua(
+        &mut rpc_a,
+        r#"
+        assert(vim.wo.diff)
+        local base = vim.fn.winbufnr(vim.fn.winnr('#'))
+        local lines = vim.api.nvim_buf_get_lines(base, 0, -1, false)
+        assert(#lines == 2 and lines[1] == 'base' and lines[2] == string.char(255))
+        "#,
+    )?;
     let navigation = open_target(
-        &executable,
+        &mut rpc_a,
         project.path(),
-        a.path(),
         11,
         EditorTarget::Review(crate::reviews::Review {
             title: "Inspect | `changes`".into(),
-            items: vec![crate::reviews::ReviewLocation {
-                path: "it's | shared.rs".into(),
-                start_line: Some(2),
-                end_line: Some(4),
-                note: "Inspect this band".into(),
-            }],
+            items: vec![
+                crate::reviews::ReviewLocation {
+                    path: "it's | shared.rs".into(),
+                    start_line: Some(2),
+                    end_line: Some(4),
+                    note: "Inspect this band".into(),
+                },
+                crate::reviews::ReviewLocation {
+                    path: "it's | shared.rs".into(),
+                    start_line: Some(5),
+                    end_line: Some(5),
+                    note: "Check the last line".into(),
+                },
+            ],
         }),
     )?
     .ok_or("missing review navigation")?;
     assert_eq!(navigation.selected, Some(0));
     assert!(navigation.locations[0].valid);
     let selected = open_target(
-        &executable,
+        &mut rpc_a,
         project.path(),
-        a.path(),
         11,
         EditorTarget::ReviewLocation {
             list_id: navigation.list_id,
-            index: 0,
+            index: 1,
             path: path.clone(),
         },
     )?
     .ok_or("missing selected review navigation")?;
     assert_eq!(selected.list_id, navigation.list_id);
-    assert_eq!(selected.selected, Some(0));
-    lua(
-        a.path(),
+    assert_eq!(selected.selected, Some(1));
+    eval_lua(
+        &mut rpc_a,
         r#"
         local qf = vim.fn.getqflist({title = 0, items = 0})
         assert(qf.title == 'Farcaster review: Inspect | `changes`')
@@ -344,17 +378,29 @@ fn session_processes_isolate_buffers_and_preserve_views() -> Result<(), String> 
         assert(vim.bo.buftype == '')
     "#,
     )?;
-    assert!(lua(a.path(), "error('expected test error')").is_err());
+    assert!(eval_lua(&mut rpc_a, "error('expected test error')").is_err());
+    assert_eq!(socket_channels(&mut rpc_a)?, channel);
+    eval_lua(
+        &mut rpc_a,
+        "vim.defer_fn(function() vim.cmd('cprevious') end, 30)",
+    )?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let selection = loop {
+        if let Ok(selection) = selections.try_recv() {
+            break selection;
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(
+                "No Neovim review selection notification while the connection was idle".into(),
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    assert_eq!(selection.list_id, navigation.list_id);
+    assert_eq!(selection.selected, 0);
     assert_eq!(
         std::fs::read_to_string(path).map_err(|error| error.to_string())?,
         "one\ntwo\nthree\nfour\nfive\n"
     );
     Ok(())
-}
-
-#[test]
-fn session_request_quotes_file_data_separately_from_lua() {
-    let expression = session_expression(7, Some(Path::new("/tmp/it's | tricky.rs")), Some(42));
-    assert!(expression.ends_with(", [7, '/tmp/it''s | tricky.rs', 42])"));
-    assert!(session_expression(8, None, None).ends_with(", [8, v:null, v:null])"));
 }

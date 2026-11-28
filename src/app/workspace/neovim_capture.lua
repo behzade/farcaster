@@ -1,4 +1,4 @@
-(function()
+local function capture_code()
   local mode = vim.fn.mode()
   if mode ~= 'n' and mode ~= 'v' and mode ~= 'V' and mode ~= '\22' then
     error('Use normal or visual mode to send to chat')
@@ -25,7 +25,7 @@
   if #text > 131072 then
     error('Select at most 128 KiB of code to send to chat')
   end
-  return vim.json.encode({
+  return {
     path = path,
     cursor_line = cursor[2],
     cursor_column = cursor[3],
@@ -34,5 +34,7 @@
     mode = mode,
     text = text,
     modified = vim.bo.modified,
-  })
-end)()
+  }
+end
+
+return capture_code()

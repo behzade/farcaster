@@ -1,5 +1,6 @@
+use std::process::Command;
+
 use super::*;
-use crate::reviews::{Review, ReviewLocation};
 
 #[test]
 #[ignore = "requires a Neovim executable; exercises real quickfix windows"]
@@ -10,42 +11,17 @@ fn review_quickfix_preserves_history_buffers_and_advisory_ranges() {
         "first\nsecond\nthird\n",
     )
     .expect("write fixture file");
-    let review = Review {
-        title: "Check `code` | سلام".into(),
-        items: vec![
-            ReviewLocation {
-                path: "it's code.rs".into(),
-                start_line: Some(1),
-                end_line: Some(2),
-                note: "Inspect | vim.cmd('quit')".into(),
-            },
-            ReviewLocation {
-                path: "missing.rs".into(),
-                start_line: None,
-                end_line: None,
-                note: "Deleted file".into(),
-            },
-            ReviewLocation {
-                path: "it's code.rs".into(),
-                start_line: Some(10),
-                end_line: Some(12),
-                note: "Old range".into(),
-            },
-        ],
-    };
-    std::fs::write(
-        project.path().join("review.json"),
-        serde_json::to_vec(&review).expect("encode review"),
-    )
-    .expect("write review fixture");
     let script = r#"
 vim.cmd('edit ' .. vim.fn.fnameescape("it's code.rs"))
 local work = vim.api.nvim_get_current_buf()
 vim.api.nvim_buf_set_lines(work, 0, 1, false, {'unsaved'})
 vim.fn.setqflist({}, ' ', {title = 'user list', items = {{filename = "it's code.rs", lnum = 3, text = 'previous'}}})
 local original = vim.fn.getqflist({id = 0}).id
-_A = 'review.json'
-local navigation = vim.json.decode(dofile('review.lua'))
+local navigation = assert(loadfile('review.lua'))({title = 'Check `code` | سلام', items = {
+  {path = "it's code.rs", start_line = 1, end_line = 2, note = "Inspect | vim.cmd('quit')"},
+  {path = 'missing.rs', note = 'Deleted file'},
+  {path = "it's code.rs", start_line = 10, end_line = 12, note = 'Old range'},
+}})
 assert(navigation.selected == 0 and navigation.locations[2].valid == false)
 assert(#vim.api.nvim_tabpage_list_wins(0) == 1)
 local review = vim.fn.getqflist({items = 0, title = 0, context = 0, id = 0})
@@ -73,31 +49,18 @@ vim.cmd('qa!')
 #[ignore = "requires a Neovim executable; exercises real quickfix and editor windows"]
 fn opening_targets_from_review_keeps_quickfix_out_of_the_editing_window() {
     let project = tempfile::tempdir().expect("temporary project");
-    for (name, contents) in [
-        ("first.rs", "first\n"),
-        ("second.rs", "second\nline two\n"),
-        ("scratch.md", "# Transcript\n"),
-        ("base", "base\n"),
-    ] {
+    for (name, contents) in [("first.rs", "first\n"), ("second.rs", "second\nline two\n")] {
         std::fs::write(project.path().join(name), contents).expect("write fixture file");
     }
-    std::fs::write(
-        project.path().join("session.lua"),
-        format!("return {}", include_str!("neovim_session.lua")),
-    )
-    .expect("write review fixture");
     let script = r#"
 local function activate(path, scratch, base)
-  _A = {1, path or vim.NIL, 2, scratch or vim.NIL, base or vim.NIL}
-  dofile('session.lua')
+  assert(loadfile('session.lua'))(1, path, 2, scratch, base)
 end
 activate('first.rs')
 local main = vim.api.nvim_get_current_win()
 local original = vim.api.nvim_get_current_buf()
 vim.api.nvim_buf_set_lines(original, 0, 1, false, {'unsaved'})
-vim.fn.writefile({vim.json.encode({title = 'Review', items = {{path = 'first.rs', note = 'Inspect'}}})}, 'review.json')
-_A = 'review.json'
-dofile('review.lua')
+assert(loadfile('review.lua'))({title = 'Review', items = {{path = 'first.rs', note = 'Inspect'}}})
 vim.cmd('copen')
 local quickfix = vim.api.nvim_get_current_win()
 local qfbuf = vim.api.nvim_get_current_buf()
@@ -114,11 +77,11 @@ end
 assert(vim.api.nvim_buf_get_lines(original, 0, 1, false)[1] == 'unsaved')
 assert(vim.bo[original].modified)
 vim.api.nvim_set_current_win(quickfix)
-activate(nil, 'scratch.md')
+activate(nil, '# Transcript\n')
 assert(vim.api.nvim_get_current_win() == main)
 assert(vim.api.nvim_get_current_line() == '# Transcript')
 vim.api.nvim_set_current_win(quickfix)
-activate('second.rs', nil, 'base')
+activate('second.rs', nil, 'base\n')
 assert(vim.api.nvim_get_current_win() == main and vim.wo.diff)
 assert(vim.api.nvim_win_get_buf(quickfix) == qfbuf)
 assert(vim.bo[qfbuf].buftype == 'quickfix')
@@ -143,56 +106,45 @@ fn hidden_review_navigation_preserves_list_identity_and_revalidates_locations() 
     std::fs::write(project.path().join("first.rs"), "one\ntwo\n").expect("write first fixture");
     std::fs::write(project.path().join("second.rs"), "other\n").expect("write second fixture");
     let script = r#"
-local function request(args)
-  _A = args
-  return vim.json.decode(dofile('review.lua'))
-end
-vim.fn.writefile({vim.json.encode({title = 'Review', items = {
+local request = assert(loadfile('review.lua'))
+local review = {title = 'Review', items = {
   {path = 'missing.rs', note = 'Deleted'},
   {path = 'first.rs', start_line = 2, end_line = 2, note = 'First'},
   {path = 'second.rs', note = 'Second'},
-}, selection_path = vim.fn.fnamemodify('selection.json', ':p')})}, 'review.json')
-local opened = request('review.json')
+}}
+local opened = request(review)
 assert(opened.selected == 1)
-local function published()
-  return vim.json.decode(vim.fn.readfile('selection.json')[1])
-end
-assert(published().list_id == opened.list_id and published().selected == 1)
 assert(not opened.locations[1].valid and opened.locations[1].warning:find('Missing'))
 assert(vim.fn.getqflist({idx = 0}).idx == 2)
 assert(vim.api.nvim_get_current_line() == 'two')
 assert(#vim.api.nvim_tabpage_list_wins(0) == 1)
 vim.cmd('cnext')
 assert(vim.api.nvim_get_current_line() == 'other')
-vim.api.nvim_exec_autocmds('BufEnter', {})
-assert(published().selected == 2)
 vim.cmd('cprevious')
 assert(vim.api.nvim_get_current_line() == 'two')
-vim.api.nvim_exec_autocmds('BufEnter', {})
-assert(published().selected == 1)
 local first = vim.api.nvim_get_current_buf()
 vim.fn.setqflist({}, ' ', {title = 'Other list', items = {{filename = 'first.rs', lnum = 1}}})
 local history = vim.fn.getqflist({nr = '$'}).nr
-local selected = request({opened.list_id, 3, vim.fn.fnamemodify('second.rs', ':p')})
+local selected = request(opened.list_id, 3, vim.fn.fnamemodify('second.rs', ':p'))
 assert(selected.list_id == opened.list_id and selected.selected == 2)
 assert(vim.fn.getqflist({idx = 0}).idx == 3)
 assert(vim.fn.getqflist({nr = '$'}).nr == history)
 assert(vim.api.nvim_get_current_line() == 'other')
 vim.api.nvim_buf_set_lines(first, 0, -1, false, {'unsaved'})
-local stale = request({opened.list_id, 2})
+local stale = request(opened.list_id, 2)
 assert(stale.selected == vim.NIL and not stale.locations[2].valid)
 assert(stale.locations[2].warning:find('stale'))
 assert(vim.api.nvim_get_current_line() == 'other')
 vim.fn.delete('second.rs')
-local deleted = request({opened.list_id, 3})
+local deleted = request(opened.list_id, 3)
 assert(deleted.selected == vim.NIL and not deleted.locations[3].valid)
 assert(vim.fn.filereadable('second.rs') == 0)
-local unavailable = request('review.json')
+local unavailable = request(review)
 assert(unavailable.selected == vim.NIL)
 assert(#vim.api.nvim_tabpage_list_wins(0) == 1)
 assert(vim.bo.buftype ~= 'quickfix')
 vim.fn.setqflist({}, 'f')
-assert(not pcall(request, {opened.list_id, 2}))
+assert(not pcall(request, opened.list_id, 2))
 vim.cmd('qa!')
 "#;
     run_review_script(project.path(), script);
@@ -202,19 +154,14 @@ vim.cmd('qa!')
 #[ignore = "requires a Neovim executable; exercises repurposed splits and review routing"]
 fn review_targets_main_pane_even_when_file_is_already_in_small_split() {
     let project = tempfile::tempdir().expect("temporary project");
-    for name in ["original.rs", "first.rs", "second.rs", "base"] {
+    for name in ["original.rs", "first.rs", "second.rs"] {
         std::fs::write(project.path().join(name), "one\ntwo\n").expect("write fixture file");
     }
-    std::fs::write(
-        project.path().join("session.lua"),
-        format!("return {}", include_str!("neovim_session.lua")),
-    )
-    .expect("write review fixture");
     run_review_script(
         project.path(),
         r#"
-_A = {1, 'original.rs'}
-dofile('session.lua')
+local activate = assert(loadfile('session.lua'))
+activate(1, 'original.rs')
 local main = vim.api.nvim_get_current_win()
 local original = vim.api.nvim_get_current_buf()
 vim.api.nvim_buf_set_lines(original, 0, 1, false, {'unsaved main'})
@@ -224,17 +171,15 @@ local small = vim.api.nvim_get_current_win()
 vim.cmd('edit first.rs')
 local first = vim.api.nvim_get_current_buf()
 vim.api.nvim_buf_set_lines(first, 0, 1, false, {'unsaved small'})
-vim.fn.writefile({vim.json.encode({title = 'Review', items = {
+local review = {title = 'Review', items = {
   {path = 'first.rs', start_line = 2, note = 'First'},
   {path = 'second.rs', note = 'Second'},
-}})}, 'review.json')
-local function request(args)
-  _A = {1, vim.NIL, vim.NIL, vim.NIL, vim.NIL, true}
-  dofile('session.lua')
-  _A = args
-  return vim.json.decode(dofile('review.lua'))
+}}
+local function request(...)
+  activate(1, nil, nil, nil, nil, true)
+  return assert(loadfile('review.lua'))(...)
 end
-local opened = request('review.json')
+local opened = request(review)
 assert(vim.api.nvim_get_current_win() == main, 'initial review must use main pane')
 assert(vim.api.nvim_get_current_buf() == first and vim.fn.line('.') == 2)
 assert(vim.api.nvim_win_get_buf(small) == first, 'leave user split intact')
@@ -242,17 +187,16 @@ assert(vim.bo[original].modified and vim.bo[first].modified)
 assert(vim.api.nvim_buf_get_lines(original, 0, 1, false)[1] == 'unsaved main')
 assert(#vim.api.nvim_tabpage_list_wins(0) == 2)
 vim.api.nvim_set_current_win(small)
-local selected = request({opened.list_id, 2})
+local selected = request(opened.list_id, 2)
 assert(vim.api.nvim_get_current_win() == main, 'sidebar selection must use main pane')
 assert(vim.fn.fnamemodify(vim.api.nvim_buf_get_name(0), ':t') == 'second.rs')
 assert(selected.list_id == opened.list_id and vim.fn.getqflist({idx = 0}).idx == 2)
 vim.cmd('hide cprevious')
 assert(vim.api.nvim_get_current_line() == 'two', 'native navigation still works')
 vim.api.nvim_set_current_win(main)
-_A = {1, 'second.rs', 1, vim.NIL, 'base'}
-dofile('session.lua')
+activate(1, 'second.rs', 1, nil, 'base\n')
 assert(vim.wo.diff)
-request({opened.list_id, 1})
+request(opened.list_id, 1)
 assert(vim.api.nvim_get_current_win() == main and not vim.wo.diff)
 assert(#vim.api.nvim_tabpage_list_wins(0) == 2)
 assert(vim.api.nvim_win_get_buf(small) == first)
@@ -262,11 +206,9 @@ vim.cmd('qa!')
 }
 
 fn run_review_script(project: &Path, script: &str) {
-    std::fs::write(
-        project.join("review.lua"),
-        format!("return {}", include_str!("neovim_review.lua")),
-    )
-    .expect("write editor fixture");
+    for (name, source) in [("review.lua", REVIEW_VIEW), ("session.lua", SESSION_VIEW)] {
+        std::fs::write(project.join(name), source).expect("write editor fixture");
+    }
     std::fs::write(project.join("test.lua"), script).expect("write test script");
     let output = Command::new(nvim_executable())
         .current_dir(project)
@@ -278,26 +220,4 @@ fn run_review_script(project: &Path, script: &str) {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-}
-
-#[test]
-fn review_selection_watcher_reads_published_navigation() {
-    let directory = tempfile::tempdir().expect("temporary state directory");
-    let watcher = ReviewSelectionWatcher::start(directory.path()).expect("start selection watcher");
-    std::fs::write(
-        directory.path().join("review-selection.json"),
-        r#"{"list_id":42,"selected":3}"#,
-    )
-    .expect("publish review selection");
-
-    let selection = (0..100).find_map(|_| {
-        let selection = watcher.take_latest();
-        if selection.is_none() {
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        selection
-    });
-    let selection = selection.expect("receive review selection");
-    assert_eq!(selection.list_id, 42);
-    assert_eq!(selection.selected, 3);
 }

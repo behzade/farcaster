@@ -1,16 +1,14 @@
-(function()
-  local review, list_id, requested
-  if type(_A) == 'table' then
-    list_id, requested = unpack(_A)
+local function open_review(review, requested, path)
+  local list_id
+  if type(review) == 'number' then
+    list_id = review
     local previous = vim.fn.getqflist({id = list_id, context = 0, nr = 0})
     if previous.nr == 0 or type(previous.context) ~= 'table' or not previous.context.review then
       error('Review quickfix list is no longer available; reopen the review')
     end
     review = previous.context.review
     if requested < 1 or requested > #review.items then error('Invalid review location') end
-    if _A[3] then review.items[requested].path = _A[3] end
-  else
-    review = vim.json.decode(table.concat(vim.fn.readfile(_A), '\n'))
+    if path then review.items[requested].path = path end
   end
   local entries, locations = {}, {}
   local first_valid
@@ -86,31 +84,35 @@
   else
     selected = nil
   end
-  if type(review.selection_path) == 'string' then
-    local group = vim.api.nvim_create_augroup('FarcasterReviewSelection', {clear = true})
-    local published
-    local function publish_selection()
-      local current = vim.fn.getqflist({id = 0, idx = 0, context = 0})
-      if current.id ~= list.id or type(current.context) ~= 'table'
-          or not current.context.farcaster_review or current.idx < 1
-          or current.idx == published then
-        return
-      end
-      local ok, status = pcall(vim.fn.writefile, {vim.json.encode({
-        list_id = current.id,
-        selected = current.idx - 1,
-      })}, review.selection_path)
-      if ok and status == 0 then published = current.idx end
+  local group = vim.api.nvim_create_augroup('FarcasterReviewSelection', {clear = true})
+  local published = selected
+  local published_channel = vim.g.farcaster_rpc_channel
+  local function publish_selection()
+    local channel = vim.g.farcaster_rpc_channel
+    local current = vim.fn.getqflist({id = 0, idx = 0, context = 0})
+    if not channel or current.id ~= list.id or type(current.context) ~= 'table'
+        or not current.context.farcaster_review or current.idx < 1
+        or (current.idx == published and channel == published_channel) then
+      return
     end
-    vim.api.nvim_create_autocmd({'BufEnter', 'CursorMoved'}, {
-      group = group,
-      callback = publish_selection,
+    local ok, sent = pcall(vim.rpcnotify, channel, 'farcaster_review_selection', {
+      list_id = current.id,
+      selected = current.idx - 1,
     })
-    publish_selection()
+    if ok and sent then
+      published = current.idx
+      published_channel = channel
+    end
   end
-  return vim.json.encode({
+  vim.api.nvim_create_autocmd({'BufEnter', 'CursorMoved', 'CmdlineLeave'}, {
+    group = group,
+    callback = vim.schedule_wrap(publish_selection),
+  })
+  return {
     list_id = list.id,
     selected = selected and selected - 1 or vim.NIL,
     locations = locations,
-  })
-end)()
+  }
+end
+
+return open_review(...)

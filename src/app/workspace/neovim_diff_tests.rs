@@ -1,3 +1,5 @@
+use std::process::Command;
+
 use super::*;
 
 #[test]
@@ -6,17 +8,15 @@ fn diff_windows_preserve_edits_and_plain_open_restores_normal_view() {
     let project = tempfile::tempdir().expect("create project");
     std::fs::write(project.path().join("work.rs"), "working\nsecond\n")
         .expect("test operation should succeed");
-    std::fs::write(project.path().join("base"), "original\nsecond\n")
-        .expect("test operation should succeed");
     std::fs::write(
         project.path().join("activate.lua"),
-        format!("return {}", include_str!("neovim_session.lua")),
+        include_str!("neovim_session.lua"),
     )
     .expect("test operation should succeed");
     let script = r#"
-local function activate(path, base)
-  _A = {7, path, 2, vim.NIL, base}
-  dofile('activate.lua')
+local session = assert(loadfile('activate.lua'))
+local function activate(path, diff)
+  session(7, path, 2, nil, diff and 'original\nsecond\n')
 end
 activate('work.rs')
 local work = vim.api.nvim_get_current_buf()

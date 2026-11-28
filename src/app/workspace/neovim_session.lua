@@ -1,5 +1,20 @@
-(function()
-  local id, path, line, scratch, diff, review = unpack(_A)
+local function buffer_lines(text)
+  -- Match readfile() text mode so scratch and base buffers keep their line layout.
+  local lines = vim.split(text:gsub('\239\187\191', ''), '\n', { plain = true })
+  local count = #lines
+  if lines[count] == '' then
+    table.remove(lines)
+  end
+  for index, line in ipairs(lines) do
+    if index < count then
+      line = line:gsub('\r+$', '')
+    end
+    lines[index] = line:gsub('%z', '\n')
+  end
+  return lines
+end
+
+local function activate_session(id, path, line, scratch, diff, review)
   local state = rawget(_G, 'farcaster_session_views')
   if not state then
     state = { tabs = {} }
@@ -67,7 +82,7 @@
   end
 
   if scratch ~= nil and scratch ~= vim.NIL then
-    local lines = vim.fn.readfile(scratch)
+    local lines = buffer_lines(scratch)
     local buf = vim.api.nvim_create_buf(false, true)
     vim.bo[buf].bufhidden = 'hide'
     vim.bo[buf].swapfile = false
@@ -90,7 +105,7 @@
     if diff ~= nil and diff ~= vim.NIL then
       local work = vim.api.nvim_get_current_win()
       local filetype = vim.bo.filetype
-      local lines = vim.fn.readfile(diff)
+      local lines = buffer_lines(diff)
       vim.cmd('leftabove vnew')
       local base = vim.api.nvim_get_current_win()
       vim.bo.buftype = 'nofile'
@@ -109,4 +124,6 @@
     end
   end
   return 0
-end)()
+end
+
+return activate_session(...)

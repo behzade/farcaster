@@ -375,9 +375,38 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Entity<NvimEditor>> {
-        match NvimEditor::spawn(project.clone(), window, cx) {
+        let (send, selections) = async_channel::unbounded();
+        match NvimEditor::spawn(project.clone(), send, window, cx) {
             Ok(editor) => {
                 let editor = cx.new(|_| editor);
+                let selection_editor = editor.downgrade();
+                let selection_project = project.clone();
+                cx.spawn_in(window, async move |weak, cx| {
+                    while let Ok(selection) = selections.recv().await {
+                        let Some(editor) = selection_editor.upgrade() else {
+                            break;
+                        };
+                        if weak
+                            .update_in(cx, |this, _window, cx| {
+                                if this.workspace.editor.view.as_ref() == Some(&editor)
+                                    && let Some(review) =
+                                        this.workspace.editor.active_review.as_mut()
+                                    && review.target == this.composer.sessions.current_target()
+                                    && review.project == selection_project
+                                    && review
+                                        .select_from_editor(selection.list_id, selection.selected)
+                                {
+                                    this.notify_run_panel(cx);
+                                    cx.notify();
+                                }
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                })
+                .detach();
                 let key = (project, tab);
                 self.workspace
                     .editor
@@ -389,17 +418,6 @@ impl FarcasterApp {
                         return false;
                     }
                     if monitored.read(cx).is_alive(cx) {
-                        if this.workspace.editor.view.as_ref() == Some(&monitored)
-                            && let Some(selection) =
-                                monitored.update(cx, |editor, _| editor.take_review_selection())
-                            && let Some(review) = this.workspace.editor.active_review.as_mut()
-                            && review.target == this.composer.sessions.current_target()
-                            && review.project == key.0
-                            && review.select_from_editor(selection.list_id, selection.selected)
-                        {
-                            this.notify_run_panel(cx);
-                            cx.notify();
-                        }
                         return true;
                     }
                     this.workspace.editor.project_editors.remove(&key);
