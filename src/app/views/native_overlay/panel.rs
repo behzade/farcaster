@@ -2,8 +2,6 @@ use std::marker::PhantomData;
 
 use gpui::{AnyWindowHandle, App, Context, Entity, Render, Window, WindowHandle};
 
-// Wayland panels mount a Base Root so the component library can register the
-// focused text input. Keep callers independent of that platform detail.
 pub(in crate::app) enum Panel<V> {
     Direct(WindowHandle<V>),
     Root(WindowHandle<gpui_base::Root>, PhantomData<fn() -> V>),

@@ -21,7 +21,7 @@ mod reading;
 #[path = "transcript_resident.rs"]
 mod resident;
 use local::LocalTranscript;
-pub(in crate::app) use local::{DisplayQuery, DisplayRead, FitProbe};
+pub(in crate::app) use local::{DisplayQuery, DisplayRead};
 use reading::{ReadingAnchor, ReadingState};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -48,7 +48,37 @@ pub(in crate::app) struct PreparedPage {
     rows: PersistentVec<transcript::TranscriptRow>,
     presentation: Arc<TranscriptPresentation>,
     markdown: Arc<MarkdownIndex>,
-    first_safe_row: usize,
+    loading_boundary: Option<usize>,
+}
+
+fn suffix_boundary(
+    presentation: &TranscriptPresentation,
+    rows: &PersistentVec<transcript::TranscriptRow>,
+) -> usize {
+    if let Some(user) = presentation
+        .items
+        .position(|item| item.kind == TranscriptKind::User)
+    {
+        return rows.position(|row| row.key() == user).unwrap_or(rows.len());
+    }
+    let last_reply = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| presentation.items[row.key()].kind == TranscriptKind::Assistant)
+        .last();
+    if let Some((last_chunk, reply)) = last_reply {
+        return if last_chunk + 1 == rows.len() {
+            rows.position(|row| row.key() == reply.key())
+                .unwrap_or(last_chunk)
+        } else {
+            last_chunk + 1
+        };
+    }
+    usize::from(
+        presentation.items.first().is_some_and(|item| {
+            matches!(item.kind, TranscriptKind::Tool | TranscriptKind::Thinking)
+        }),
+    )
 }
 
 impl PreparedPage {
@@ -61,14 +91,17 @@ impl PreparedPage {
                     presentation.items.set(index, hydrated);
                 }
             }
+            let rows = transcript::project_presentation_rows(&presentation);
+            let loading_boundary = (stored.coverage == HistoryCoverage::Suffix)
+                .then(|| suffix_boundary(&presentation, &rows));
             return Some(Self {
                 stamp: Some(stored.stamp),
                 full: true,
                 coverage: stored.coverage,
-                rows: transcript::project_presentation_rows(&presentation),
+                rows,
                 presentation: Arc::new(presentation),
                 markdown: Arc::default(),
-                first_safe_row: 0,
+                loading_boundary,
             });
         }
         let mut prepared = Self::new(
@@ -102,16 +135,8 @@ impl PreparedPage {
         {
             return None;
         }
-        let first_safe_row = match page.coverage {
-            HistoryCoverage::Complete => 0,
-            HistoryCoverage::Suffix => {
-                // The first user separates these rows from older activity and reviews.
-                let first_user = source
-                    .items
-                    .position(|item| item.kind == TranscriptKind::User)?;
-                projected.position(|row| row.key() == first_user)? + 1
-            }
-        };
+        let loading_boundary = (page.coverage == HistoryCoverage::Suffix)
+            .then(|| suffix_boundary(&presentation, &projected));
         Some(Self {
             stamp: None,
             full: false,
@@ -119,7 +144,7 @@ impl PreparedPage {
             rows: projected,
             presentation,
             markdown: markdown.into(),
-            first_safe_row,
+            loading_boundary,
         })
     }
 }
@@ -137,9 +162,9 @@ impl HistoryTail {
             rows: projected,
             presentation,
             markdown,
-            first_safe_row,
+            loading_boundary,
         } = prepared;
-        let list = transcript::list::TranscriptListState::new_history_tail(first_safe_row);
+        let list = transcript::list::TranscriptListState::new_history_tail(loading_boundary);
         let mut rows = Arc::default();
         transcript::TranscriptRowUpdate::replace(projected).apply(
             &list,
@@ -180,11 +205,19 @@ pub(crate) struct TranscriptView {
 }
 
 impl TranscriptView {
+    pub(in crate::app) fn set_refreshing_prefix(
+        &self,
+        presentation: &TranscriptPresentation,
+        refreshing: bool,
+    ) {
+        self.list
+            .set_loading_boundary(refreshing.then(|| suffix_boundary(presentation, &self.rows)));
+    }
+
     fn history_display(&self, snapshot: &crate::runtime::RuntimeSnapshot) -> HistoryDisplay {
         use crate::runtime::SavedHistory;
         match snapshot.history_coverage() {
             None => HistoryDisplay::Waiting,
-            // apply_rows consumes the saved reading state when these rows can restore it.
             Some(HistoryCoverage::Suffix)
                 if self.session.as_ref().is_some_and(|path| {
                     self.reading
@@ -245,7 +278,6 @@ impl TranscriptView {
             let saved = ReadingState::capture(self, items);
             self.park_resident(&session, items, &saved);
             let entry = self.reading.entry((session, self.record.take()));
-            // A partial document may still be waiting for the original reading position.
             if saved.allows_history_tail() {
                 entry.or_insert(saved);
             } else {
@@ -319,8 +351,6 @@ impl TranscriptView {
         coverage: Option<HistoryCoverage>,
     ) -> bool {
         let mut anchor = self.take_pending_reading_anchor();
-        // Final Markdown rows have different boundaries from streaming chunks.
-        // Capture the current text position before replacing those rows, too.
         if anchor.is_none()
             && !self.list.has_pending_scroll()
             && let Some(transcript::TranscriptRow::StreamChunk { index, .. }) =
@@ -395,19 +425,40 @@ impl TranscriptView {
         } else {
             self.history_tail.as_ref()
         };
-        if self.allows_history_tail()
-            && let Some(page) = page
-            && page.list.painted_history_top().is_some()
-        {
-            if let Some((anchor, offset, unseen)) = page.anchor_before_append(&self.rows, items) {
-                self.restore_reading_anchor(anchor, offset);
-                self.unseen = unseen;
-            } else if saved_transcript
-                && let Some(offset) = page.matching_suffix_top(&self.rows, items)
-            {
-                // The backend can append before the saved document gets a draw.
-                self.list.inherit_painted_top(offset);
+        let Some(page) = page else { return };
+        let Some((top, following)) = page.list.take_history_handoff_position() else {
+            return;
+        };
+        let scrolled = local && page.list.preview_scrolled();
+        if !scrolled && !self.allows_history_tail() {
+            return;
+        }
+        self.list.inherit_alignment(&page.list);
+        if let Some(offset) = page.matching_suffix_top(top, &self.rows, items) {
+            if !following {
+                if let Some(anchor) =
+                    ReadingAnchor::at(self.rows[offset.item_ix], offset.offset_in_item, items)
+                {
+                    self.restore_reading_anchor(anchor, offset);
+                }
+            } else {
+                if scrolled {
+                    self.jump_to_latest();
+                }
+                if saved_transcript {
+                    self.list.inherit_painted_top(offset);
+                }
             }
+        } else if let Some((anchor, offset, unseen)) =
+            page.anchor_before_append(top, &self.rows, items)
+        {
+            let unseen = if following {
+                unseen
+            } else {
+                page.unseen.saturating_add(unseen)
+            };
+            self.restore_reading_anchor(anchor, offset);
+            self.unseen = unseen;
         }
     }
 
@@ -463,7 +514,6 @@ impl Render for TranscriptView {
         let Some(app) = self.app.upgrade() else {
             return gpui::div().into_any_element();
         };
-        self.retry_short_local_page(&app, cx);
         let app = app.read(cx);
         self.observe_ready_resident(app);
 
@@ -475,6 +525,7 @@ impl Render for TranscriptView {
                 .filter(|trace| trace.active_for(app.composer.sessions.current_buffer()))
                 .map(|trace| (trace.clone(), app.lifecycle.awaiting_switch_route.is_some())),
             font_scale: self.font_size / crate::app::ui::theme::theme().type_scale.reading,
+            show_working: false,
             following: self.following,
             unseen: self.unseen,
             tail_reserve: transcript::tail_reserve(window.viewport_size().height),
@@ -496,7 +547,7 @@ impl Render for TranscriptView {
                     unseen: tail.unseen,
                     ..viewport
                 };
-                let view = transcript::render(
+                return transcript::render(
                     &tail.list,
                     viewport,
                     tail.rows.clone(),
@@ -506,19 +557,15 @@ impl Render for TranscriptView {
                     tail.markdown.clone(),
                     self.app.clone(),
                 );
-                use gpui::{InteractiveElement as _, ParentElement as _, Styled as _};
-                return gpui::div()
-                    .relative()
-                    .size_full()
-                    .child(view)
-                    .child(gpui::div().absolute().inset_0().occlude())
-                    .into_any_element();
             }
             return transcript::loading_history();
         }
         let document = transcript::render(
             &self.list,
-            viewport,
+            transcript::TranscriptViewport {
+                show_working: app.snapshot.conversation.awaiting_first_activity(),
+                ..viewport
+            },
             self.rows.clone(),
             app.snapshot.transcript_presentation(),
             self.disclosure_states.clone(),

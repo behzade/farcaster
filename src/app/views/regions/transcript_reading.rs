@@ -13,8 +13,6 @@ use crate::{
 
 type Items = PersistentVec<Arc<TranscriptItem>>;
 
-// Indices can change when a backend replaces history. Check the source item
-// before restoring an anchor or an expanded detail at that index.
 #[derive(Clone)]
 struct SourceItem {
     index: usize,
@@ -54,8 +52,6 @@ fn fingerprint(item: &TranscriptItem, prefix_chars: usize) -> u64 {
         id.hash(&mut hash);
     } else {
         item.label.hash(&mut hash);
-        // Keep identity stable when a long streaming message grows, without
-        // keeping a copy of the message or its attachments.
         for character in text(item).take(prefix_chars) {
             character.hash(&mut hash);
         }
@@ -65,8 +61,6 @@ fn fingerprint(item: &TranscriptItem, prefix_chars: usize) -> u64 {
 
 #[derive(Clone)]
 pub(super) struct ReadingState {
-    // An index in a saved suffix has no absolute origin. Keep the shared items
-    // only while there is a position or disclosure from that suffix to restore.
     suffix: Option<Items>,
     anchor: Option<ReadingAnchor>,
     disclosures: HashMap<usize, (SourceItem, bool)>,
@@ -114,7 +108,6 @@ impl ReadingState {
         let Some(suffix) = self.suffix.take() else {
             return;
         };
-        // Only rows after the old suffix count as new.
         let end = start + suffix.len();
         self.last_count = rows.iter().filter(|row| row.key() < end).count();
         if start == 0 {
@@ -253,8 +246,6 @@ impl ReadingState {
             .filter(|(_, (source, _))| source.matches(items))
             .map(|(key, (_, value))| (key, value))
             .collect();
-        // Expanded rows need fresh measurements before restoring an offset
-        // inside them, even if a loading preview already measured the rows.
         view.list.remeasure_items(0..view.rows.len());
         if self.anchor.is_some() {
             view.unseen = self
@@ -275,7 +266,7 @@ impl ReadingAnchor {
         Self::at(row, offset.offset_in_item, items)
     }
 
-    fn at(row: TranscriptRow, offset: gpui::Pixels, items: &Items) -> Option<Self> {
+    pub(super) fn at(row: TranscriptRow, offset: gpui::Pixels, items: &Items) -> Option<Self> {
         Some(Self {
             row,
             offset,
@@ -292,14 +283,11 @@ impl ReadingAnchor {
         if !self.source.matches(items) {
             return None;
         }
-        // Prepending earlier tools can move the start of the same activity group.
         let exact = rows.position(|candidate| {
             candidate.same_position(&self.row)
                 || (matches!(candidate, TranscriptRow::ActivityGroup { .. })
                     && candidate.contains_disclosure_key(self.source.index))
         });
-        // Finishing a response replaces streaming chunks with Markdown rows.
-        // Keep the text position until paint, even across several row updates.
         let item_ix = exact.or_else(|| {
             rows.iter()
                 .enumerate()
@@ -322,6 +310,15 @@ impl ReadingAnchor {
 
 impl TranscriptView {
     pub(crate) fn prepare_saved_history_handoff(&mut self, previous: &Items, next: &Items) {
+        if self.coverage == Some(crate::agents::HistoryCoverage::Suffix)
+            && self.list.has_pending_scroll()
+            && let Some((_, following)) = self.list.take_history_handoff_position()
+        {
+            self.following = following;
+            if following {
+                self.unseen = 0;
+            }
+        }
         if self.coverage == Some(crate::agents::HistoryCoverage::Suffix)
             && (!self.list.is_following_tail()
                 || !self.disclosure_states.is_empty()
@@ -355,14 +352,25 @@ impl TranscriptView {
 impl HistoryTail {
     pub(super) fn anchor_before_append(
         &self,
+        top: gpui::ListOffset,
         rows: &PersistentVec<TranscriptRow>,
         items: &Items,
     ) -> Option<(ReadingAnchor, gpui::ListOffset, usize)> {
         let page = &self.presentation.items;
-        let start = unique_page_before_append(items, page)?;
-        let top = self.top_in(rows, start)?;
-        let end = start + page.len();
-        let unseen = rows.iter().filter(|row| row.key() >= end).count();
+        let (start, unseen) = if let Some(start) = unique_page_before_append(items, page) {
+            let end = start + page.len();
+            (start, rows.iter().filter(|row| row.key() >= end).count())
+        } else {
+            let start = items.len().checked_sub(page.len())?;
+            let last = self.rows.last()?;
+            let last = last.at_item(start + last.key());
+            if rows.last()?.same_position(&last) || !matches_page_at(items, start, page) {
+                return None;
+            }
+            let position = rows.position(|row| row.same_position(&last))?;
+            (start, rows.len() - position - 1)
+        };
+        let top = self.top_in(top, rows, start)?;
         Some((
             ReadingAnchor::at(rows[top.item_ix], top.offset_in_item, items)?,
             top,
@@ -372,23 +380,29 @@ impl HistoryTail {
 
     pub(super) fn matching_suffix_top(
         &self,
+        top: gpui::ListOffset,
         rows: &PersistentVec<TranscriptRow>,
         items: &Items,
     ) -> Option<gpui::ListOffset> {
         let page = &self.presentation.items;
         let start = items.len().checked_sub(page.len())?;
-        if !matches_page_at(items, start, page) {
+        let last = self.rows.last()?;
+        if !rows
+            .last()?
+            .same_position(&last.at_item(start + last.key()))
+            || !matches_page_at(items, start, page)
+        {
             return None;
         }
-        self.top_in(rows, start)
+        self.top_in(top, rows, start)
     }
 
     fn top_in(
         &self,
+        top: gpui::ListOffset,
         rows: &PersistentVec<TranscriptRow>,
         start: usize,
     ) -> Option<gpui::ListOffset> {
-        let top = self.list.painted_history_top()?;
         let row = self.rows.get(top.item_ix)?;
         let expected = row.at_item(start + row.key());
         let item_ix = rows.position(|row| row.same_position(&expected))?;
@@ -427,8 +441,6 @@ fn unique_page_start(items: &Items, page: &Items) -> Option<usize> {
     if page.len() == items.len() {
         return (items.shares_storage(page) || matches_page_at(items, 0, page)).then_some(0);
     }
-    // Match whole items, including tools and attachments. A prefix table keeps
-    // repeated turns linear and lets us detect overlapping copies of the page.
     let mut prefix = vec![0; page.len()];
     let mut matched = 0;
     for i in 1..page.len() {

@@ -7,8 +7,6 @@ use std::{
 fn main() -> io::Result<()> {
     let mut executable = std::env::current_exe()?;
     let mut args = std::env::args().skip(1).collect::<Vec<_>>();
-    // Runtime tests replace both the native bridge and its Node helper with
-    // the same protocol peer. The helper itself has a separate integration test.
     if executable.file_name() == Some(std::ffi::OsStr::new("node"))
         && args.first().map(String::as_str) == Some("--input-type=module")
     {

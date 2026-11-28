@@ -357,8 +357,6 @@ impl RuntimeOwner {
                 } else {
                     session_id
                 };
-                // Reselecting a resident actor can race the first history read.
-                // Keep its existing reply and the reader that will finish the document.
                 if self.history_selection_generation == Some(self.history_generation)
                     && (self.snapshot.status == "Loading history"
                         || self.snapshot.saved_history == Some(SavedHistory::RefreshingPartial)

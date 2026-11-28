@@ -25,7 +25,6 @@ pub(in crate::app) fn local_file_target(
     let fragment_line =
         fragment.and_then(|s| positive_line(s.strip_prefix('L')?.split('-').next()?));
     let (path, line) = split_line_suffix(path);
-    // A sandbox URI is a local artifact path, not a registered OS URL scheme.
     let path = path.strip_prefix("sandbox:").unwrap_or(path);
     let url = match Url::parse(path) {
         Ok(url) => url,
@@ -95,8 +94,6 @@ pub(in crate::app) fn data_image(uri: &str) -> Option<Arc<Image>> {
     Some(image)
 }
 
-// Read only a bounded header; this runs once when a Markdown row is parsed.
-// Stable bounds avoid retaining an empty image row while its bytes load.
 pub(in crate::app) fn image_preview_dimensions(uri: &str) -> Option<(u32, u32)> {
     let bytes = if let Some(image) = data_image(uri) {
         image.bytes()[..image.bytes().len().min(64 * 1024)].to_vec()

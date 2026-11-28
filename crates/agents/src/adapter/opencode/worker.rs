@@ -532,6 +532,7 @@ impl OpenCodeUsageTracker {
             turn,
             session: self.session,
             context_window,
+            context_used: None,
             cost: self.cost,
         }
     }
@@ -932,8 +933,6 @@ impl OpenCodeWorkerSession {
                     );
                     continue;
                 };
-                // Permission requests can belong to a child session. Resolve only
-                // a permission we surfaced, with the same request and session IDs.
                 if matches!(
                     self.pending_inputs.get(request_id),
                     Some(PendingOpenCodeInput::Permission { session_id: pending }) if pending == session_id
@@ -1609,7 +1608,6 @@ impl WorkerSession for OpenCodeWorkerSession {
     }
 
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String> {
-        // Native resolution can race a queued user answer.
         let Some(pending) = self.pending_inputs.remove(&response.id) else {
             return Ok(());
         };

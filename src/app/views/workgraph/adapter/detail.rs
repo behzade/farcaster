@@ -202,7 +202,7 @@ impl WorkGraphBoardView {
                             Some(button(
                                 format!("workgraph-link-walk-{walk}"),
                                 "Attach current session",
-                                ButtonTone::Quiet,
+                                ButtonTone::Neutral,
                                 true,
                                 move |_, cx| {
                                     entity.update(cx, |this, cx| {

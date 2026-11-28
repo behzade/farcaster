@@ -20,6 +20,7 @@ use gpui::{
     AnyElement, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Role,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
+use gpui_component::scroll::Scrollbar;
 
 use super::{
     RepositoryView,
@@ -46,6 +47,7 @@ impl FarcasterApp {
 
         div()
             .debug_selector(|| "run-panel-repository".into())
+            .mt(theme().space.md + theme().space.sm)
             .flex_1()
             .min_h_0()
             .min_w_0()
@@ -54,6 +56,7 @@ impl FarcasterApp {
             .gap(theme().space.xs)
             .child(
                 div()
+                    .debug_selector(|| "repository-header-and-filter".into())
                     .flex_none()
                     .flex()
                     .flex_col()
@@ -128,12 +131,14 @@ impl FarcasterApp {
                 },
             )
             .when_some(snapshot, |section, snapshot| {
-                section.child(self.repository_changes(
-                    snapshot,
-                    entity.clone(),
-                    panel.clone(),
-                    browser,
-                ))
+                section
+                    .child(self.repository_changes(
+                        snapshot,
+                        entity.clone(),
+                        panel.clone(),
+                        browser,
+                    ))
+                    .child(Scrollbar::vertical(browser.scroll))
             })
             .when(!self.project.repository.execution_allowed, |section| {
                 section
@@ -199,17 +204,19 @@ impl FarcasterApp {
             &self.project.repository.project,
             browser.state,
         );
+        let has_prefix = !prefix.as_os_str().is_empty();
         div()
             .id("repository-files")
+            .debug_selector(|| "repository-files".into())
             .flex_1()
             .min_h_0()
             .min_w_0()
             .overflow_y_scroll()
             .track_scroll(browser.scroll)
-            .when(!prefix.as_os_str().is_empty(), |list| {
+            .when(has_prefix, |list| {
                 list.child(crate::app::ui::primitives::change_path_prefix(&prefix))
             })
-            .children(rows.iter().filter_map(|row| {
+            .children(rows.iter().enumerate().filter_map(|(position, row)| {
                 match row {
                     TreeRow::Folder {
                         path,
@@ -242,7 +249,7 @@ impl FarcasterApp {
                                 },
                             )
                             .aria_label(accessible)
-                            .mt(theme().space.xs)
+                            .when(position > 0 || has_prefix, |row| row.mt(theme().space.xs))
                             .font_weight(FontWeight::NORMAL)
                             .text_color(theme().colors.muted)
                             .when(!*open, |row| {

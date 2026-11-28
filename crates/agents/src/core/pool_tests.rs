@@ -926,7 +926,6 @@ fn child_questions_use_parent_messages_and_leave_no_user_dialog() -> Result<(), 
                 ],
             }))
             .map_err(|_| "question event")?;
-        // Settling proves the native question no longer pins the worker in NeedsInput.
         events
             .send(WorkerEvent::Settled {
                 output: String::new(),
@@ -1611,7 +1610,6 @@ fn delayed_setup_completion_cannot_complete_a_resumed_worker() -> Result<(), Str
     child.parent_session = context.session.clone();
     child.parent_worker_id = Some(context.worker_id.clone());
     let first = pool.start_assigned(child.clone(), Some(assignment()))?;
-    // Retain the old completion as if setup paused after releasing the pool lock.
     let old_completion = pool.delayed_setup_completion_for_test(&first.id)?;
     factory.events.lock().map_err(|_| "events")?[0]
         .send(WorkerEvent::SessionChanged {

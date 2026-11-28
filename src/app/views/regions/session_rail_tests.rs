@@ -294,7 +294,6 @@ fn single_archive_change_splices_the_warm_archive(cx: &mut gpui::TestAppContext)
                     .set_offset(point(px(0.), -(height * 90. + px(5.))));
                 view.preparations
             });
-            // Insert and remove a row above the viewport, then reject a second archive.
             for (archive, reject) in [(true, false), (false, false), (true, true)] {
                 cx.update(|window, cx| {
                     app.update(cx, |app, cx| {
@@ -484,8 +483,6 @@ fn check_first_submit_rows(test_name: &str, cx: &mut gpui::TestAppContext, catal
             })
             .expect("commit first prompt");
         if catalog_first {
-            // A full refresh can read the caller registration before the actor
-            // reports LoadState and before the UI receives its outbox receipt.
             let registry = crate::agents::CallerRegistry::default();
             let repository = store.clone();
             registry.set_execution_sinks(

@@ -4,7 +4,6 @@ use std::path::Path;
 
 const CHECKPOINT_INTERVAL: Duration = Duration::from_millis(500);
 
-/// The process owns this address. A different document may be selected for display.
 pub(super) struct LiveTranscript {
     harness: Backend,
     path: Option<PathBuf>,
@@ -26,7 +25,6 @@ pub(super) struct LiveTranscript {
 struct PendingItems {
     order: Vec<String>,
     items: HashMap<String, Value>,
-    // Only open stream items remain after a successful checkpoint.
     dirty: HashSet<String>,
 }
 
@@ -80,7 +78,6 @@ impl LiveTranscript {
                 }
             }
         } else {
-            // A new/forked backend locator has no prior document.
             capture.startup_revision = Some(0);
         }
         capture
@@ -242,8 +239,6 @@ impl LiveTranscript {
         let id = &receipt.submission_id;
         use agents::DeliveryStatus as Status;
         let pending = self.inputs.remove(id);
-        // Rejected, cancelled and uncertain sends are handled by the durable outbox.
-        // A late rejection must not overwrite an already accepted/delivered item.
         if !matches!(receipt.status, Status::Accepted | Status::Delivered) {
             return;
         }
@@ -358,9 +353,6 @@ fn update_content(message: &mut Value, indices: &mut Vec<usize>, event: &Value) 
         message["content"].as_array_mut(),
     ) && matches!(field, "text" | "thinking" | "toolcall")
     {
-        // Content indices are provider-assigned and can be sparse. Keep compact
-        // ordered blocks and append just the received text, even if the adapter
-        // also included the complete message on every token.
         let position = indices.binary_search(&index).unwrap_or_else(|position| {
             indices.insert(position, index);
             blocks.insert(position, json!({}));

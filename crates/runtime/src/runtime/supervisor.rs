@@ -351,11 +351,9 @@ fn publish_resident_status(
         && let Some(path) = session
         && catalog.by_path(path).is_some()
     {
-        // A path-only status would update a different resident's row.
         if sessions::session_path(target).is_some() {
             return;
         }
-        // A draft can learn its saved path here; a path-only stop would also stop the sibling.
         if sessions::draft_id(target).is_none()
             || catalog.has_shared_path(path)
             || status == RunStatus::Stopped

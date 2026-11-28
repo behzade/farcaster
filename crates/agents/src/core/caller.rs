@@ -251,8 +251,6 @@ impl CallerRegistry {
                 .get(token)
                 .filter(|caller| caller.persist_session)
                 .and_then(|caller| {
-                    // Only a new binding publishes family state. Refreshes must
-                    // preserve parent IDs that storage may have merged already.
                     let family = if caller.session_record.is_none() {
                         caller.family_link()
                     } else {
@@ -420,8 +418,6 @@ impl CallerRegistry {
     }
 
     fn persist_family(&self, token: &str) {
-        // Retry deferred children before an explicit family update. A failed
-        // registration must not fall back to publishing an unparented row.
         if self.has_session_sink()
             && let Err(error) = self.try_bind_record(token)
         {
@@ -686,7 +682,6 @@ impl CallerRegistry {
             .map(|(name, profile, _)| (name, profile))
     }
 
-    /// Resolve the UI name, execution profile and worker profile in one scan.
     pub fn session_presentation(
         &self,
         key: &SessionKey,
@@ -695,7 +690,6 @@ impl CallerRegistry {
         Self::presentation_for(&callers, key)
     }
 
-    /// UI frames use persisted session metadata if backend registry updates hold the lock.
     pub fn try_session_presentation(
         &self,
         key: &SessionKey,
@@ -1026,8 +1020,6 @@ impl CallerIdentity {
             .ok()
             .and_then(|sink| sink.clone());
         if let Some(sink) = sink {
-            // bind_record has already attached the family. A turn registration
-            // only resolves identity, including any merge since that binding.
             match sink(&context, &binding, None) {
                 Ok(session_record) => binding.session_record = session_record,
                 Err(error) => {

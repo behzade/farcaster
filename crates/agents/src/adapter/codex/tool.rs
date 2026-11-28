@@ -211,8 +211,6 @@ pub(super) fn metadata(item: &Value, kind: &str) -> ToolMetadata {
     }
 }
 
-// The result owns MCP envelope extensions. Keep the original block encoding in
-// call metadata because MCP text envelopes can expand into several display blocks.
 fn call_metadata(item: &Value, kind: &str) -> Value {
     if kind != "mcpToolCall" {
         return item.clone();
@@ -346,7 +344,6 @@ pub(super) fn web_search_query(item: &Value) -> Option<&str> {
         })
 }
 
-// Keep completed tool output identical when the app sees it live or imports the turn later.
 pub(super) fn completion(item: &Value, kind: &str) -> (Value, bool) {
     let failed = item
         .get("status")
@@ -468,7 +465,6 @@ pub(super) fn mcp_output(item: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-// Keep native image storage fields out of the conversation/UI contracts.
 pub(super) fn image_output(item: &Value) -> Vec<Value> {
     use base64::Engine as _;
     let mut blocks = Vec::new();

@@ -141,7 +141,6 @@ impl FarcasterApp {
                 .as_ref()
                 .is_some_and(|pending| !pending.drafts.is_empty())
         {
-            // Discarding a draft waits for the trust prompt. Keep the folder until all its drafts can be removed.
             return;
         }
         let Some(pending) = self.close_delete_confirmation(window, cx) else {

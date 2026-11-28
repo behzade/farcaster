@@ -20,8 +20,6 @@ impl DisplayRead {
     }
 }
 
-/// Keeping the destination with the request prevents a result for another
-/// harness or project at the same locator from reaching this view.
 #[derive(Clone)]
 pub(in crate::app) struct DisplayQuery {
     pub trace: Option<Arc<SwitchPaintTrace>>,
@@ -98,7 +96,6 @@ pub(super) struct LocalTranscript {
     stamp: Option<TranscriptStamp>,
     pub(super) page: Option<HistoryTail>,
     _read: Option<gpui::Task<()>>,
-    fallback: Option<(DisplayQuery, Option<SessionKey>)>,
 }
 
 impl LocalTranscript {
@@ -108,105 +105,7 @@ impl LocalTranscript {
     }
 }
 
-pub(in crate::app) struct FitProbe {
-    rows: std::ops::Range<usize>,
-    list: transcript::list::TranscriptList,
-    reply: futures::channel::oneshot::Sender<bool>,
-}
-
-impl FitProbe {
-    pub(in crate::app) fn element(mut self) -> gpui::AnyElement {
-        use gpui::Styled as _;
-        gpui::canvas(
-            move |bounds, window, cx| {
-                if !self.reply.is_canceled() {
-                    let _ = self
-                        .reply
-                        .send(self.list.covers(self.rows, bounds.size, window, cx));
-                }
-            },
-            |_, _, _, _| {},
-        )
-        .absolute()
-        .inset_0()
-        .into_any_element()
-    }
-}
-
 impl FarcasterApp {
-    /// Measure an uncertain suffix while the previous chat is still on screen.
-    /// The stored page can be much taller than its padding (a single wrapped reply).
-    pub(in crate::app) fn check_display_fit(
-        &mut self,
-        read: &DisplayRead,
-        window: &mut gpui::Window,
-        cx: &mut Context<Self>,
-    ) -> Option<futures::channel::oneshot::Receiver<bool>> {
-        let DisplayRead::Page(page) = read else {
-            return None;
-        };
-        let first = page.first_safe_row;
-        let font_scale = self.views.transcript.read(cx).font_size
-            / crate::app::ui::theme::theme().type_scale.reading;
-        let height = window.viewport_size().height;
-        if first == 0
-            || transcript::suffix_covers_viewport(
-                &page.rows,
-                first,
-                &page.presentation.items,
-                height,
-                font_scale,
-            )
-        {
-            return None;
-        }
-        let (tx, rx) = futures::channel::oneshot::channel();
-        let rows = Arc::new(page.rows.clone());
-        let end = rows.len();
-        let content = page.presentation.clone();
-        let markdown =
-            transcript::markdown::TranscriptMarkdownCache::with_index(page.markdown.clone());
-        let app = cx.weak_entity();
-        let viewport = transcript::TranscriptViewport {
-            font_scale,
-            switch_trace: None,
-            following: true,
-            unseen: 0,
-            tail_reserve: transcript::tail_reserve(height),
-        };
-        let list = transcript::build_list(
-            &transcript::list::TranscriptListState::new_history_tail(first),
-            viewport,
-            rows,
-            content,
-            Default::default(),
-            Default::default(),
-            markdown,
-            app,
-        );
-        self.lifecycle.display_fit = Some(FitProbe {
-            rows: first..end,
-            list,
-            reply: tx,
-        });
-        cx.notify();
-        // Measure in GPUI's layout phase, after releasing this app update. A
-        // hidden window may not receive a display frame of its own.
-        let app = cx.weak_entity();
-        window.defer(cx, move |window, cx| {
-            if app
-                .read_with(cx, |app, _| app.lifecycle.display_fit.is_some())
-                .unwrap_or(false)
-            {
-                window.draw(cx).clear(cx);
-                let _ = app.update(cx, |app, _| {
-                    app.lifecycle.display_fit.take();
-                });
-            }
-        });
-        Some(rx)
-    }
-
     pub(in crate::app) fn present_or_read_transcript(
         &mut self,
         query: DisplayQuery,
@@ -224,8 +123,6 @@ impl FarcasterApp {
                 match read {
                     DisplayRead::Page(prepared) => {
                         let stamp = prepared.stamp;
-                        let fallback =
-                            (prepared.first_safe_row > 0).then(|| (query.clone(), key.clone()));
                         let page = view.local_layout(prepared, &query.path, key.clone());
                         view.local = Some(LocalTranscript {
                             request,
@@ -233,7 +130,6 @@ impl FarcasterApp {
                             stamp,
                             page,
                             _read: None,
-                            fallback,
                         });
                         true
                     }
@@ -248,7 +144,7 @@ impl FarcasterApp {
             }
         }
         let path = query.path.clone();
-        let read = query.clone().read(None, full, cx);
+        let read = query.read(None, full, cx);
         let apply = cx.spawn(async move |weak, cx| {
             let DisplayRead::Page(prepared) = read.await else {
                 return;
@@ -264,12 +160,10 @@ impl FarcasterApp {
                         .as_ref()
                         .is_some_and(|local| local.request == request && local.matches(app))
                     {
-                        let fallback = (prepared.first_safe_row > 0).then(|| (query, key.clone()));
                         let stamp = prepared.stamp;
                         let page = view.local_layout(prepared, &path, key);
                         let local = view.local.as_mut().unwrap();
                         local.stamp = stamp;
-                        local.fallback = fallback;
                         local.page = page;
                         cx.notify();
                     }
@@ -283,7 +177,6 @@ impl FarcasterApp {
                 stamp: None,
                 page: None,
                 _read: Some(apply),
-                fallback: None,
             });
         });
     }
@@ -326,52 +219,6 @@ impl TranscriptView {
             }
         }
         Some(page)
-    }
-
-    pub(super) fn retry_short_local_page(
-        &mut self,
-        app: &gpui::Entity<FarcasterApp>,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(local) = self
-            .local
-            .as_mut()
-            .filter(|local| local.matches(app.read(cx)))
-        else {
-            return;
-        };
-        if !local
-            .page
-            .as_ref()
-            .is_some_and(|page| page.list.was_too_short())
-        {
-            return;
-        }
-        let Some((query, key)) = local.fallback.take() else {
-            return;
-        };
-        let request = local.request;
-        let path = query.path.clone();
-        let weak_app = self.app.clone();
-        local._read = Some(cx.spawn(async move |weak, cx| {
-            let Ok(read) = weak_app.update(cx, |_, cx| query.read(None, true, cx)) else {
-                return;
-            };
-            let DisplayRead::Page(prepared) = read.await else {
-                return;
-            };
-            let _ = weak.update(cx, |view, cx| {
-                if view
-                    .local
-                    .as_ref()
-                    .is_some_and(|local| local.request == request)
-                {
-                    let page = view.local_layout(prepared, &path, key);
-                    view.local.as_mut().unwrap().page = page;
-                    cx.notify();
-                }
-            });
-        }));
     }
 
     pub(super) fn selected_local_page(&self, app: &FarcasterApp) -> Option<&HistoryTail> {

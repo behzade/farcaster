@@ -9,7 +9,8 @@ use super::{WorkGraphBoardView, caption, status_label};
 use crate::app::views::workgraph::components::{detail_action, detail_section};
 use crate::app::{
     ui::{
-        primitives::{ButtonTone, button},
+        assets::AppIcon,
+        primitives::{ButtonTone, button, icon_button},
         theme::theme,
     },
     views::workgraph::{
@@ -45,6 +46,7 @@ impl WorkGraphBoardView {
                     .find(|node| node.number == task && node.plan_number == number)
             })
             .or_else(|| graph.nodes.iter().find(|node| node.plan_number == number));
+        let narrow = layout == BoardLayoutMode::Narrow;
         div()
             .id("plan-overview-detail")
             .w(px(DETAIL_WIDTH))
@@ -52,29 +54,16 @@ impl WorkGraphBoardView {
             .min_w_0()
             .h_full()
             .overflow_y_scroll()
-            .when(layout == BoardLayoutMode::Narrow, |detail| detail.w_full())
+            .when(narrow, |detail| detail.w_full())
             .bg(theme().colors.canvas)
             .rounded_br(crate::app::ui::primitives::surface_radius())
-            .when(layout == BoardLayoutMode::Narrow, |detail| {
+            .when(narrow, |detail| {
                 detail.rounded_bl(crate::app::ui::primitives::surface_radius())
             })
             .p(theme().size(24.0))
             .flex()
             .flex_col()
-            .gap(theme().size(24.0))
-            .child(detail_action(button(
-                "catalog-detail-back",
-                "Close details",
-                ButtonTone::Quiet,
-                true,
-                move |_, cx| {
-                    back.update(cx, |this, cx| {
-                        this.catalog.selected = None;
-                        this.catalog.task = None;
-                        cx.notify();
-                    })
-                },
-            )))
+            .gap(theme().size(20.0))
             .child(
                 div()
                     .flex()
@@ -82,16 +71,50 @@ impl WorkGraphBoardView {
                     .gap(theme().space.sm)
                     .child(
                         div()
-                            .text_size(theme().type_scale.reading)
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(plan.title.clone()),
+                            .w_full()
+                            .flex()
+                            .items_start()
+                            .justify_between()
+                            .gap(theme().space.sm)
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_size(theme().type_scale.reading)
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(plan.title.clone()),
+                            )
+                            .child(icon_button(
+                                "catalog-detail-back",
+                                if narrow {
+                                    AppIcon::ArrowLeft
+                                } else {
+                                    AppIcon::X
+                                },
+                                "Close details",
+                                ButtonTone::Quiet,
+                                move |_, cx| {
+                                    back.update(cx, |this, cx| {
+                                        this.catalog.selected = None;
+                                        this.catalog.task = None;
+                                        cx.notify();
+                                    })
+                                },
+                            )),
                     )
-                    .child(status_label(row.status))
-                    .child(caption(format!(
-                        "{} of {} tasks done · {} blocked",
-                        row.done, row.total, row.blocked
-                    )))
-                    .child(detail_action(button(
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap(theme().space.sm)
+                            .child(status_label(row.status))
+                            .child(caption(format!(
+                                "{} of {} tasks done · {} blocked",
+                                row.done, row.total, row.blocked
+                            ))),
+                    )
+                    .child(div().pt(theme().space.xs).child(detail_action(button(
                         "catalog-open-plan",
                         "Open plan",
                         ButtonTone::Neutral,
@@ -99,7 +122,7 @@ impl WorkGraphBoardView {
                         move |window, cx| {
                             open.update(cx, |this, cx| this.open_plan(number, window, cx))
                         },
-                    ))),
+                    )))),
             )
             .child(
                 detail_section("Tasks").child(
@@ -128,9 +151,9 @@ impl WorkGraphBoardView {
                                         .flex_none()
                                         .cursor_pointer()
                                         .aria_selected(is_selected)
-                                        .rounded(theme().size(4.0))
+                                        .rounded(theme().size(6.0))
                                         .p(theme().space.sm)
-                                        .bg(theme().colors.canvas)
+                                        .bg(theme().colors.panel)
                                         .selection_style(is_selected)
                                         .hover(|style| style.bg(theme().colors.highlight))
                                         .on_click(move |_, _, cx| {
@@ -139,6 +162,9 @@ impl WorkGraphBoardView {
                                                 cx.notify();
                                             })
                                         })
+                                        .flex()
+                                        .flex_col()
+                                        .gap(theme().size(3.0))
                                         .child(
                                             div()
                                                 .text_size(theme().type_scale.body_small)
@@ -274,7 +300,7 @@ fn render_relations(
                     node.title,
                     graph.work_status(number).label()
                 ),
-                ButtonTone::Quiet,
+                ButtonTone::Neutral,
                 true,
                 move |window, cx| {
                     entity.update(cx, |this, cx| {

@@ -433,8 +433,6 @@ fn recent_page_messages(page: &Value) -> Option<crate::HistoryPage> {
         }
     }
 
-    // Keep only a contiguous suffix. If an older turn needs the full rollout
-    // to restore an image, its newer neighbors can still be shown.
     let mut recent = Vec::new();
     for turn in turns {
         if turn["itemsView"] != "full"
@@ -461,7 +459,6 @@ fn recent_page_messages(page: &Value) -> Option<crate::HistoryPage> {
             .iter()
             .flat_map(|item| turn_item_messages(turn, item))
             .collect();
-        // Only the full read has a rollout path for restoring these images.
         if history_images::needs_restore(&messages) {
             break;
         }

@@ -114,7 +114,6 @@ pub(crate) struct Command {
     pub label: &'static str,
     pub show_in_help: bool,
     pub show_in_picker: bool,
-    // The first binding is the shortcut shown in the action picker.
     pub bindings: Vec<Shortcut>,
 }
 

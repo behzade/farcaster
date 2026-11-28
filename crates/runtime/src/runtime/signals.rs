@@ -40,8 +40,6 @@ impl RuntimeOwner {
                 self.idle_retirement.invalidate();
                 self.idle_retirement.requests.insert(id);
             }
-            // Startup, settlement, or another signal can make this signal stale.
-            // Transport failures still arrive through the event stream.
             Err(error) => {
                 zlog::debug!("Signal was not applied: {error}");
             }

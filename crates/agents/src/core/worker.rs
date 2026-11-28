@@ -94,6 +94,7 @@ pub struct WorkerUsage {
     pub turn: TokenUsage,
     pub session: TokenUsage,
     pub context_window: u64,
+    pub context_used: Option<u64>,
     pub cost: Option<f64>,
 }
 
@@ -138,7 +139,6 @@ impl MessageSource {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorkerActivity {
-    /// A local command completed without a model user-message echo.
     CommandCompleted {
         submission_id: String,
     },
@@ -153,7 +153,6 @@ pub enum WorkerActivity {
         message: PeerMessage,
     },
     TurnStarted,
-    /// The provider started an assistant item, or supplied its final text or reasoning.
     AssistantItem {
         source: MessageSource,
         final_content: Option<Value>,

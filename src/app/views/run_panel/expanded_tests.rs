@@ -390,7 +390,6 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
             );
             assert!(cx.debug_bounds(oldest_selector).is_none());
 
-            // This row stays visible before and after the 600px wheel movement.
             let distance_selector = Box::leak(
                 format!(
                     "agent-card-{}",
@@ -400,7 +399,6 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
             );
             let before_scroll = cx.debug_bounds(distance_selector).unwrap();
             super::worker_list::PREPARATIONS.with(|count| count.set(0));
-            // Exercise the actual wheel path, not just programmatic selection.
             super::agents::CARD_BUILDS.with(|count| count.set(0));
             let pointer = gpui::point(gpui::px(150.0), gpui::px(200.0));
             cx.simulate_event(gpui::ScrollEvent {
@@ -459,7 +457,6 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
             );
             super::worker_list::PREPARATIONS.with(|count| count.set(0));
 
-            // Keyboard navigation can select a worker far outside the current viewport.
             cx.update(|_, cx| {
                 app.update(cx, |app, cx| {
                     app.cancel_pending_session_switch();
@@ -512,7 +509,6 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
                 "a changed worker must update its visible family"
             );
 
-            // An unrelated panel redraw must retain the scroll position.
             cx.update(|_, cx| {
                 let panel = app.read(cx).views.run_panel.clone();
                 panel.update(cx, |_, cx| cx.notify());
@@ -536,7 +532,6 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
                 cx.debug_bounds("run-panel-main-agent").is_some(),
                 "wheel must return to the top before selecting across the gap"
             );
-            // A measured tail must not make wheel scrolling skip the unseen middle.
             cx.simulate_event(gpui::ScrollEvent {
                 position: gpui::point(gpui::px(150.0), gpui::px(200.0)),
                 delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(-1500.0))),
@@ -557,7 +552,6 @@ fn expanded_workers_build_only_visible_cards_and_reveal_selection(cx: &mut gpui:
             assert!(cx.debug_bounds(oldest_selector).is_none());
             scroll_to_top(cx);
 
-            // Resizing must preserve full-list wheel geometry too.
             cx.update(|window, cx| {
                 let panel = app.read(cx).views.run_panel.clone();
                 window.replace_root(cx, |_, _| PanelHarness(panel, gpui::px(420.0)));

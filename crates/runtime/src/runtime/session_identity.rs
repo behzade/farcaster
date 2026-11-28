@@ -60,12 +60,10 @@ impl RuntimeSnapshot {
             .is_some_and(|selected| selected.same_record(row) && selected.id == row.id)
     }
 
-    // A first snapshot can lack native state, and a legacy row can lack the inferred profile.
     pub(super) fn matches_lone_row(&self, row: &crate::sessions::SessionSummary) -> bool {
         if self.harness.is_some_and(|harness| harness != row.harness) {
             return false;
         }
-        // While previewing another document, its metadata describes the selection.
         if self.live_session.as_ref() == Some(&row.path)
             && self
                 .selected_session
@@ -84,8 +82,6 @@ impl RuntimeSnapshot {
             })
     }
 
-    /// Loading snapshots can lack native metadata. Use all available identity
-    /// fields when two catalog records have the same locator.
     pub fn matches_session_row(&self, row: &crate::sessions::SessionSummary) -> bool {
         self.harness == Some(row.harness)
             && self.project == row.project

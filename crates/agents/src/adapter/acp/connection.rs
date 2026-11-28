@@ -25,7 +25,7 @@ use super::{
 const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub(super) struct AcpConnection {
+pub(in crate::adapter) struct AcpConnection {
     connection: ConnectionTo<Agent>,
     incoming: mpsc::Receiver<Result<AcpInbound, String>>,
     queued: VecDeque<AcpInbound>,
@@ -136,13 +136,14 @@ impl AcpConnection {
         })
     }
 
-    pub(super) fn initialize(&self, profile: &AcpProfile) -> Result<Value, String> {
+    pub(in crate::adapter) fn initialize(&self, profile: &AcpProfile) -> Result<Value, String> {
         let initialized = self.request_blocking("initialize", json!({
             "protocolVersion": 1,
             "clientCapabilities": {
                 "_meta": {"parameterizedModelPicker": profile.backend == Backend::Cursor},
                 "fs": {"readTextFile": false, "writeTextFile": false},
                 "terminal": false,
+                "auth": {"terminal": profile.backend == Backend::Antigravity},
                 "elicitation": {"form": {}},
             },
             "clientInfo": {"name": "farcaster", "title": "Farcaster", "version": env!("CARGO_PKG_VERSION")},
@@ -207,7 +208,11 @@ impl AcpConnection {
             .ok_or_else(|| "Cursor model catalog omitted models".into())
     }
 
-    pub(super) fn send_request(&self, method: &str, params: Value) -> Result<AcpRequestId, String> {
+    pub(in crate::adapter) fn send_request(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<AcpRequestId, String> {
         let request = self
             .connection
             .send_request(UntypedMessage::new(method, params).map_err(|error| error.to_string())?);
@@ -257,7 +262,7 @@ impl AcpConnection {
             .map_err(|error| error.to_string())
     }
 
-    pub(super) fn poll(&mut self) -> Option<Result<AcpInbound, String>> {
+    pub(in crate::adapter) fn poll(&mut self) -> Option<Result<AcpInbound, String>> {
         self.queued
             .pop_front()
             .map(Ok)

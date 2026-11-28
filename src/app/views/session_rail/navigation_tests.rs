@@ -262,7 +262,6 @@ fn switching_active_chats_reuses_the_expanded_archive(cx: &mut gpui::TestAppCont
             use crate::runtime::RuntimeEvent;
             use gpui::{IntoElement, Render, Window};
 
-            // Exercise both GPUI embedding paths using the actual archive view.
             struct ArchivePanel(
                 gpui::Entity<crate::app::views::InactiveSessionRailView>,
                 bool,
@@ -308,7 +307,6 @@ fn switching_active_chats_reuses_the_expanded_archive(cx: &mut gpui::TestAppCont
                 });
                 let before = cx.update(|_, cx| rail.read(cx).preparations);
                 assert!(before > 0);
-                // A click across active roots, then keyboard navigation into and along the archive.
                 for (target, keyboard) in [
                     (&second, false),
                     (&first, true),

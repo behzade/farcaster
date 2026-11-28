@@ -170,7 +170,6 @@ fn context_meter(percent: Option<f64>) -> AnyElement {
         |bounds, _, _| bounds,
         move |bounds, _, window, _| {
             let size = f32::from(bounds.size.width.min(bounds.size.height));
-            // Match the circle and stroke in the app's 256-unit Phosphor icons.
             let stroke = size * 16.0 / 256.0;
             let radius = size * 96.0 / 256.0;
             let center = bounds.center();

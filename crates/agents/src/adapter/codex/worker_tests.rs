@@ -1447,12 +1447,6 @@ fn confirmed_start_precedes_a_failed_deferred_interrupt() {
         result: json!({"turn": {"id": "turn-1", "status": "inProgress"}}),
     }));
     assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
-    assert!(matches!(
-        session.poll(),
-        Some(WorkerEvent::Activity(
-            WorkerActivity::ThinkingStarted { .. }
-        ))
-    ));
     assert!(matches!(session.poll(), Some(WorkerEvent::Failed(_))));
 }
 
@@ -1668,6 +1662,59 @@ fn idle_abort_cleans_native_terminals_before_accepting_another_turn() {
 }
 
 #[test]
+fn queued_codex_reply_finishes_on_the_wake_that_delivered_it() {
+    use crate::{SessionEvent, SessionTransport};
+
+    let mut worker = test_session();
+    worker.begin_turn("turn-1");
+    let mut item = json!({"threadId":"thread-1", "turnId":"turn-1",
+        "item":{"type":"agentMessage","id":"reply","text":""}});
+    let started = item.clone();
+    item["item"]["text"] = json!("Finished the task");
+    for (method, params) in [
+        ("item/started", started),
+        ("item/completed", item),
+        (
+            "turn/completed",
+            json!({"threadId":"thread-1",
+            "turn":{"id":"turn-1","status":"completed"}}),
+        ),
+    ] {
+        worker
+            .queued_inbound
+            .push_back(Ok(CodexInbound::Notification {
+                method: method.into(),
+                params,
+            }));
+    }
+
+    let mut transport = main_session::WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "thread-1".into(),
+        Box::new(worker),
+        Default::default(),
+        None,
+    )
+    .unwrap();
+    let mut conversation = crate::conversation::ConversationState::default();
+    // The runtime ends its drain on the first empty poll.
+    while let Some(event) = transport.poll() {
+        if let SessionEvent::Activity(event) = event {
+            conversation.reduce(event.value());
+        }
+    }
+    assert!(
+        conversation
+            .items
+            .iter()
+            .any(|item| item.text == "Finished the task")
+    );
+    assert!(conversation.settled);
+    assert!(!conversation.running);
+}
+
+#[test]
 fn answer_before_reasoning_uses_a_separate_content_slot() {
     let mut session = test_session();
 
@@ -1675,12 +1722,7 @@ fn answer_before_reasoning_uses_a_separate_content_slot() {
         session.begin_turn(turn_id);
         session.begin_turn(turn_id);
         assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
-        assert!(matches!(
-            session.poll(),
-            Some(WorkerEvent::Activity(WorkerActivity::ThinkingStarted {
-                content_index: 0
-            }))
-        ));
+        assert!(session.poll().is_none(), "turn start alone has no content");
         for (method, delta, index) in [
             ("item/agentMessage/delta", "The answer", 1),
             ("item/reasoning/summaryTextDelta", "A thought", 0),
@@ -1831,8 +1873,6 @@ fn approval_reviews_do_not_create_or_restart_tool_execution() {
     use crate::conversation::{ConversationState, ToolExecutionState};
     use crate::{SessionEvent, SessionTransport};
 
-    // Reviews may cover a child action, or arrive after the target tool ended.
-    // Neither case supplies a new execution lifecycle for the client to start.
     for native_status in [None, Some("inProgress"), Some("completed"), Some("failed")] {
         for review_status in ["approved", "denied", "aborted", "timedOut"] {
             let mut session = test_session();
@@ -3204,12 +3244,6 @@ fn apply_steering_claims_all_queued_inputs_and_fans_out_batch_delivery() {
     }));
     assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
     assert!(matches!(session.poll_prompt_ack(), Some((id, Ok(()))) if id == "steer-1"));
-    assert!(matches!(
-        session.poll(),
-        Some(WorkerEvent::Activity(
-            WorkerActivity::ThinkingStarted { .. }
-        ))
-    ));
     session
         .queued_inbound
         .push_back(Ok(CodexInbound::Notification {
@@ -3511,12 +3545,6 @@ fn assert_second_abort_cancels_auto_started_queue(abort_before_delete_reply: boo
         }));
     assert!(matches!(
         session.poll(),
-        Some(WorkerEvent::Activity(
-            WorkerActivity::ThinkingStarted { .. }
-        ))
-    ));
-    assert!(matches!(
-        session.poll(),
         Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
             submission_id: Some(submission_id),
             ..
@@ -3537,12 +3565,8 @@ fn assert_second_abort_cancels_auto_started_queue(abort_before_delete_reply: boo
 }
 
 #[test]
-fn second_abort_before_failed_delete_cancels_exact_auto_started_queue() {
+fn second_abort_cancels_the_auto_started_queue_before_or_after_the_delete_reply() {
     assert_second_abort_cancels_auto_started_queue(true);
-}
-
-#[test]
-fn second_abort_after_failed_delete_cancels_exact_auto_started_queue() {
     assert_second_abort_cancels_auto_started_queue(false);
 }
 
@@ -3608,12 +3632,6 @@ fn normal_prompt_delivery_uses_backend_client_id_and_original_submission_id() {
                 "content":[{"type":"text","text":"new work"}]
             }}),
         }));
-    assert!(matches!(
-        session.poll(),
-        Some(WorkerEvent::Activity(
-            WorkerActivity::ThinkingStarted { .. }
-        ))
-    ));
     assert!(matches!(
         session.poll(),
         Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {

@@ -145,8 +145,6 @@ impl Supervisor {
                     && (self.actors.contains_key(key) || self.latest.contains_key(key))
             })
             .collect::<HashSet<_>>();
-        // Legacy catalog paths can retain a symlink. The worker pool needs
-        // normalized keys, while these rows still use their stored locators.
         let family_keys = family
             .iter()
             .map(|row| row.catalog_key())

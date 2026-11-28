@@ -17,6 +17,68 @@ fn merge_agent_activity(
 }
 
 #[gpui::test]
+fn transcript_keeps_working_visible_through_delivery(cx: &mut gpui::TestAppContext) {
+    use crate::conversation::ConversationState;
+    use serde_json::json;
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::transcript_keeps_working_visible_through_delivery"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let mut state = ConversationState::default();
+            let prompt = state.push_local_user("hello".into(), 0, false);
+            state.bind_submitted_prompt("prompt", &prompt);
+            let mut pending_top = None;
+            for (event, working) in [
+                (json!({"type":"agent_start"}), true),
+                (
+                    json!({"type":"prompt_delivery","submissionId":"prompt","status":"delivered",
+                    "message":{"role":"user","content":"hello"}}),
+                    true,
+                ),
+                (
+                    json!({"type":"tool_execution_start","toolCallId":"read-1","toolName":"read",
+                    "args":{"path":"main.rs"}}),
+                    false,
+                ),
+                (json!({"type":"agent_settled"}), false),
+                (json!({"type":"agent_start"}), true),
+                (json!({"type":"agent_settled"}), false),
+            ] {
+                let changed = state.reduce(&event);
+                runtime.send_event(RuntimeEvent::Snapshot {
+                    generation: 1,
+                    snapshot: Arc::new(RuntimeSnapshot {
+                        project: project.into(),
+                        selected_session: Some(project.join("working-status")),
+                        conversation: Arc::new(state.clone()),
+                        transcript_changed_from: changed,
+                        document_ready: true,
+                        ..Default::default()
+                    }),
+                });
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                    window.draw(cx).clear(cx);
+                });
+                let status = cx.debug_bounds("transcript-working");
+                assert_eq!(status.is_some(), working, "{event}");
+                if event["type"] == "prompt_delivery" {
+                    pending_top = Some(status.unwrap().top());
+                }
+                if event["type"] == "tool_execution_start" {
+                    let activity = cx.debug_bounds("transcript-row-1").expect("first tool row");
+                    assert_eq!(pending_top, Some(activity.top()));
+                }
+            }
+        },
+    );
+}
+
+#[gpui::test]
 fn snapshots_from_a_superseded_switch_leave_views_clean(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
         concat!(
@@ -846,7 +908,6 @@ fn child_activity_event_invalidates_and_renders_the_real_run_sidebar(
             });
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
-                    // This snapshot confirms a persisted selection. The offline harness starts on a draft.
                     app.sessions.selected_draft = None;
                     app.open_run_sheet(window, cx);
                     app.drain_runtime(cx);

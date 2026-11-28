@@ -4,8 +4,6 @@ use gpui::{
 };
 use gpui_component::input::InputEvent;
 
-/// Occluded macOS windows stop receiving display frames. Publish an updated
-/// accessibility tree after an action without waiting for the window to be raised.
 pub(crate) fn refresh_hidden_accessibility(window: &mut Window, cx: &mut App) {
     if window.is_a11y_active() && !window.visibility().is_visible() {
         defer_accessibility_draw(window, cx);

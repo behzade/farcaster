@@ -208,9 +208,6 @@ pub(crate) fn run(
                 display_id,
                 focus: !isolation::is_isolated(),
                 show: true,
-                // A visible window on another display still needs smooth
-                // scrolling and streaming while another app has focus. GPUI
-                // otherwise caps its queued animation frames at about 30 FPS.
                 inactive_frame_interval: None,
                 titlebar: Some(TitlebarOptions {
                     title: Some(isolation::window_title("Farcaster").into()),
@@ -270,11 +267,6 @@ pub(crate) fn run(
             {
                 use crate::app::views::native_overlay::native::NativeHost;
 
-                // Isolated serves UI inspection even when fully covered.
-                // AccessKit's first request otherwise returns an empty tree
-                // and schedules a display frame that an occluded window never
-                // receives. Initialize once, outside the root view's lease;
-                // leave normal launches lazy and do not activate either app.
                 let handle: gpui::AnyWindowHandle = (*handle).into();
                 let _ = handle.update(cx, |_, window, cx| match NativeHost::prepare_accessibility(
                     window,
@@ -328,8 +320,6 @@ fn install_linux_desktop_identity_at(
     appimage: Option<PathBuf>,
     data_dirs: &[PathBuf],
 ) {
-    // Native packages install their own launcher, which may use a runtime
-    // wrapper. Only AppImages need to register the running executable.
     let Some(executable) = appimage else {
         remove_legacy_native_desktop_entry(data_home, data_dirs);
         return;
@@ -374,8 +364,6 @@ fn remove_legacy_native_desktop_entry(data_home: &Path, data_dirs: &[PathBuf]) {
     }) else {
         return;
     };
-    // Only recognize native package locations. An AppImage or a custom
-    // launcher may use the same generated template and must stay intact.
     let Some(prefix) = executable
         .strip_suffix("/lib/farcaster/farcaster")
         .or_else(|| executable.strip_suffix("/bin/farcaster"))
@@ -392,7 +380,6 @@ fn remove_legacy_native_desktop_entry(data_home: &Path, data_dirs: &[PathBuf]) {
     if !native_package || contents != linux_desktop_entry(executable, &icon) {
         return;
     }
-    // Leave the entry alone until a distinct packaged launcher can replace it.
     let user_entry = fs::canonicalize(&entry).ok();
     if !data_dirs.iter().any(|directory| {
         let packaged = directory.join(ENTRY);
@@ -451,9 +438,6 @@ pub(crate) fn observe_window_placement<T: 'static>(
 }
 
 fn initial_window_bounds(bounds: WindowBounds, isolated: bool) -> WindowBounds {
-    // Isolated windows launch without focus. Restoring fullscreen can start an
-    // AppKit transition in the background and leave its opaque title strip over
-    // our workspace bar. Keep the saved frame, but start the preview windowed.
     match bounds {
         WindowBounds::Fullscreen(frame) if isolated => WindowBounds::Windowed(frame),
         bounds => bounds,

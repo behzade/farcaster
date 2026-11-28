@@ -365,23 +365,76 @@ fn measurement_shrink_fills_the_viewport_in_one_layout(cx: &mut TestAppContext) 
 
 #[gpui::test]
 fn history_tail_rechecks_measured_room_after_resize(cx: &mut TestAppContext) {
-    let state = TranscriptListState::new_history_tail(2);
+    let state = TranscriptListState::new_history_tail(Some(2));
     state.splice_with_size_hints(0..0, std::iter::repeat_n(px(200.), 5));
     let (_, cx) = cx.add_window_view(|_, _| FixedHeightView {
         state: state.clone(),
         row_height: px(40.),
         rendered: Default::default(),
     });
-    for (height, readable) in [(121., false), (120., true), (121., false)] {
+    for height in [150., 120., 121.] {
         cx.simulate_resize(size(px(400.), px(height)));
         cx.update(|window, cx| window.draw(cx).clear(cx));
-        assert_eq!(cx.debug_bounds("transcript-loading").is_none(), readable);
-        assert_eq!(cx.debug_bounds("fixed-row-4").is_some(), readable);
+        assert!(cx.debug_bounds("transcript-loading").is_none());
+        assert_eq!(cx.debug_bounds("fixed-row-4").unwrap().bottom(), px(height));
         assert!(cx.debug_bounds("fixed-row-1").is_none());
-        if readable {
-            wheel(cx, px(50.));
-            assert!(!state.has_pending_scroll());
-            assert!(state.is_following_tail());
+        let gap = cx.debug_bounds("transcript-older-loading");
+        assert_eq!(
+            gap.map(|b| b.size.height),
+            (height > 120.).then(|| px(height - 120.))
+        );
+    }
+    wheel(cx, px(50.));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(!state.is_following_tail());
+    assert!(
+        cx.debug_bounds("transcript-older-loading")
+            .unwrap()
+            .size
+            .height
+            > px(1.)
+    );
+}
+
+#[gpui::test]
+fn scrolling_a_short_suffix_preserves_its_gap_at_handoff(cx: &mut TestAppContext) {
+    for (delta, draw_before_handoff, expected_gap) in
+        [(50., true, 170.), (50., false, 170.), (180., true, 240.)]
+    {
+        let cx = cx.add_empty_window();
+        let page = TranscriptListState::new_history_tail(Some(2));
+        page.splice_with_size_hints(0..0, [px(40.); 5]);
+        draw_transcript(cx, &page, px(40.), px(240.));
+        assert_eq!(
+            page.painted_history_top().unwrap().offset_in_item,
+            px(-120.)
+        );
+        wheel(cx, px(delta));
+        assert!(page.has_pending_scroll());
+        if draw_before_handoff {
+            draw_transcript(cx, &page, px(40.), px(240.));
+        }
+
+        let (top, following) = page.take_history_handoff_position().unwrap();
+        assert!(!following);
+        assert!(!page.has_pending_scroll());
+        assert_eq!(top.item_ix, 2);
+        assert_eq!(top.offset_in_item, -px(expected_gap));
+
+        let full = TranscriptListState::new();
+        full.splice_with_size_hints(0..0, [px(65.); 30]);
+        full.inherit_alignment(&page);
+        let first_safe_row = 25 + top.item_ix;
+        full.restore_scroll(ListOffset {
+            item_ix: first_safe_row,
+            ..top
+        });
+        for _ in 0..2 {
+            draw_transcript(cx, &full, px(40.), px(240.));
+            let painted = full.painted_history_top().unwrap();
+            let safe_row_y =
+                px((first_safe_row - painted.item_ix) as f32 * 40.) - painted.offset_in_item;
+            assert_eq!(safe_row_y, px(expected_gap));
         }
     }
 }
@@ -458,7 +511,6 @@ fn reading_restore_measures_expanded_row_before_applying_offset(cx: &mut TestApp
         item_ix: 12,
         offset_in_item: px(500.0),
     });
-    // Streaming can change the row layout again before the first paint.
     state.scroll_to(state.logical_scroll_top());
     draw_transcript(cx, &state, px(1_000.0), px(100.0));
     let offset = state.logical_scroll_top();

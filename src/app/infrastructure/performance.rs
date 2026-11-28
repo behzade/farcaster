@@ -439,7 +439,6 @@ impl PerformanceMonitor {
         DETAILED.store(detailed, Ordering::Relaxed);
         profiler::set_trace_enabled(detailed);
         Self {
-            // The journal records frames even when expensive task tracing is off.
             frames: cx.foreground_journal().collector(),
             window_id,
             sampled_at: Instant::now(),

@@ -294,7 +294,6 @@ fn prepare_voice_editor(cx: &mut gpui::VisualTestContext, app: &gpui::Entity<Far
             app.workspace.surface = AppSurface::Editor;
             app.workspace.voice.available = true;
             app.navigation.chat.focus.focus(window, cx);
-            // No editor process, so the timer cannot start a real microphone.
             assert!(app.workspace.editor.view.is_none());
         });
     });
@@ -820,7 +819,6 @@ fn modifier_shortcut_tracks_current_modifiers_and_cancels_on_focus_loss(
                 shift: true,
                 ..both
             };
-            // A key held before the modifiers must not become a voice gesture.
             chord(cx, "x", true);
             modifiers(cx, both);
             chord(cx, "x", false);
@@ -831,7 +829,6 @@ fn modifier_shortcut_tracks_current_modifiers_and_cancels_on_focus_loss(
                 ))
             });
             modifiers(cx, gpui::Modifiers::default());
-            // Only the current combination matters, not how we reached it.
             modifiers(cx, extra);
             modifiers(cx, both);
             cx.update(|_, cx| {
@@ -841,7 +838,6 @@ fn modifier_shortcut_tracks_current_modifiers_and_cancels_on_focus_loss(
                 ))
             });
             modifiers(cx, gpui::Modifiers::default());
-            // Adding a modifier while recording cancels, without submitting.
             modifiers(cx, both);
             let (recorder, finished) = hex::Dictation::stub_with_finish();
             cx.update(|_, cx| {
@@ -858,7 +854,6 @@ fn modifier_shortcut_tracks_current_modifiers_and_cancels_on_focus_loss(
             modifiers(cx, gpui::Modifiers::default());
             assert!(!finished());
             cx.update(|_, cx| assert!(app.read(cx).workspace.voice.input.is_none()));
-            // Leaving the app while arming cancels the timer and requires release.
             modifiers(cx, both);
             cx.deactivate_window();
             cx.executor()
@@ -870,8 +865,6 @@ fn modifier_shortcut_tracks_current_modifiers_and_cancels_on_focus_loss(
             cx.update(|_, cx| {
                 app.update(cx, |app, _| {
                     app.workspace.voice.available = true;
-                    // The test platform reports no modifiers on activation; model
-                    // the native snapshot when the chord remains held instead.
                     app.workspace.voice.release_keys(both);
                 })
             });
@@ -891,7 +884,6 @@ fn modifier_shortcut_tracks_current_modifiers_and_cancels_on_focus_loss(
                 ))
             });
             modifiers(cx, gpui::Modifiers::default());
-            // Returning with no keys held must accept the first chord.
             cx.deactivate_window();
             cx.update(|window, _| window.activate_window());
             cx.run_until_parked();

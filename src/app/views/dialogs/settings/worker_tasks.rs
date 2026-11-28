@@ -215,7 +215,7 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
                 .child(button(
                     "inherit-limit",
                     format!("Limit: {} active", editor.inherit_limit),
-                    ButtonTone::Quiet,
+                    ButtonTone::Neutral,
                     !editing,
                     move |window, cx| {
                         let _ =
@@ -229,7 +229,7 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
                     } else {
                         "Enable"
                     },
-                    ButtonTone::Quiet,
+                    ButtonTone::Neutral,
                     !editing,
                     move |_, cx| {
                         let _ = toggle.update(cx, |this, cx| this.toggle_worker_profile(None, cx));
@@ -308,7 +308,7 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
         detail = detail.child(div().flex().child(button(
             "worker-profile-limit",
             format!("Limit: {} active", profile.limit),
-            ButtonTone::Quiet,
+            ButtonTone::Neutral,
             !editing,
             move |window, cx| {
                 let _ = limit.update(cx, |this, cx| {
@@ -331,17 +331,22 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
                             .text_color(theme().colors.muted)
                             .child("Asks for a model on first use."),
                     )
-                    .child(div().flex().child(button(
-                        "worker-model-add-empty",
-                        "Choose model",
-                        ButtonTone::Neutral,
-                        !editing,
-                        move |_, cx| {
-                            let _ = add.update(cx, |this, cx| {
-                                this.edit_worker_models(target, WorkerModelEdit::Add, cx)
-                            });
-                        },
-                    ))),
+                    .child(
+                        div().flex().child(
+                            button(
+                                "worker-model-add-empty",
+                                "Choose model",
+                                ButtonTone::Neutral,
+                                !editing,
+                                move |_, cx| {
+                                    let _ = add.update(cx, |this, cx| {
+                                        this.edit_worker_models(target, WorkerModelEdit::Add, cx)
+                                    });
+                                },
+                            )
+                            .shadow(crate::app::ui::primitives::control_shadow()),
+                        ),
+                    ),
             );
         } else if let Some(model) = profile.models.first() {
             let target = WorkerRouteTarget {
@@ -475,17 +480,20 @@ fn route(
                         .flex()
                         .items_center()
                         .gap(theme().space.xs)
-                        .child(button(
-                            "worker-model-clear",
-                            "Clear model",
-                            ButtonTone::Quiet,
-                            enabled,
-                            move |_, cx| {
-                                let _ = clear.update(cx, |this, cx| {
-                                    this.edit_worker_models(target, WorkerModelEdit::Remove, cx)
-                                });
-                            },
-                        ))
+                        .child(
+                            button(
+                                "worker-model-clear",
+                                "Clear model",
+                                ButtonTone::Neutral,
+                                enabled,
+                                move |_, cx| {
+                                    let _ = clear.update(cx, |this, cx| {
+                                        this.edit_worker_models(target, WorkerModelEdit::Remove, cx)
+                                    });
+                                },
+                            )
+                            .shadow(crate::app::ui::primitives::control_shadow()),
+                        )
                         .child(
                             actions_button(
                                 ("worker-route-actions", target.model),
@@ -656,6 +664,7 @@ fn route_menu(
                     .collect(),
             )
             .accessibility_label(format!("{field}: {label}"))
+            .shadow(crate::app::ui::primitives::control_shadow())
             .disabled(!enabled)
             .w_full(),
         )

@@ -21,7 +21,6 @@ pub(crate) struct DiffColumns {
 }
 
 impl DiffColumns {
-    /// Size once for the whole tree, including totals of collapsed folders.
     pub(crate) fn for_counts(counts: impl IntoIterator<Item = (usize, usize)>) -> Self {
         let totals = counts
             .into_iter()
@@ -122,7 +121,6 @@ pub(crate) fn section_heading(title: impl Into<SharedString>) -> impl gpui::Into
         .child(title)
 }
 
-/// Pane sections sit below item titles in the type hierarchy.
 pub(crate) fn sidebar_heading(title: impl Into<SharedString>) -> impl gpui::IntoElement {
     let title = title.into();
     div()

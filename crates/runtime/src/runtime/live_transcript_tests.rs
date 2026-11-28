@@ -80,7 +80,7 @@ fn live_transcript_binds_before_checkpoint_and_reopens_streams_without_duplicate
         &mut owner,
         json!({"type":"tool_execution_end","toolCallId":"c1","isError":false,"result":{"content":[{"type":"text","text":"finished"}],"details":{"exitCode":0}}}),
     );
-    owner.reset_process_runtime(); // Shutdown/replacement must also checkpoint final updates.
+    owner.reset_process_runtime();
     drop(owner);
     drop(store);
 
@@ -102,7 +102,6 @@ fn live_transcript_binds_before_checkpoint_and_reopens_streams_without_duplicate
         crate::conversation::ToolExecutionState::Succeeded
     );
 
-    // Backends which only send tool_execution_* events have no prior assistant declaration.
     convo.replace_history(&document.messages[2..]);
     assert_eq!(convo.items.len(), 1);
     assert_eq!(convo.items[0].tool_output, "finished");

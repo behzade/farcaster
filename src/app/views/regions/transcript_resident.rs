@@ -244,8 +244,6 @@ impl TranscriptView {
             markdown.clone(),
             self.app.clone(),
         );
-        // Row handlers route through the selected runtime. Keep hit tests on
-        // the preview until the matching snapshot has been accepted.
         Some(
             gpui::div()
                 .relative()

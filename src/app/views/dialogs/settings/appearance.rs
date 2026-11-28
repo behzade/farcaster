@@ -108,7 +108,8 @@ fn theme_list(themes: &ThemeSettings, entity: WeakEntity<FarcasterApp>) -> AnyEl
                 .flex_none()
                 .px(theme().space.sm)
                 .py(theme().space.sm)
-                .rounded(theme().size(4.0))
+                .rounded(theme().size(6.0))
+                .bg(theme().colors.surface)
                 .selection_style(active)
                 .when(editable, |row| {
                     row.role(gpui::Role::Button)
@@ -121,7 +122,7 @@ fn theme_list(themes: &ThemeSettings, entity: WeakEntity<FarcasterApp>) -> AnyEl
                         .tab_index(0)
                         .cursor_pointer()
                         .when(!active, |row| {
-                            row.hover(|row| row.bg(theme().colors.surface))
+                            row.hover(|row| row.bg(theme().colors.highlight))
                         })
                         .focus_visible(|row| {
                             row.shadow(crate::app::ui::primitives::focus_outline(
@@ -161,7 +162,12 @@ fn theme_list(themes: &ThemeSettings, entity: WeakEntity<FarcasterApp>) -> AnyEl
                             div()
                                 .flex_none()
                                 .text_size(theme().type_scale.caption)
-                                .text_color(theme().colors.muted)
+                                .when(active, |badge| {
+                                    badge
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(theme().colors.accent)
+                                })
+                                .when(!active, |badge| badge.text_color(theme().colors.muted))
                                 .child(if active {
                                     "Active"
                                 } else if custom {
@@ -278,12 +284,12 @@ fn theme_actions(
     div()
         .flex()
         .items_center()
-        .gap(theme().space.xs)
+        .gap(theme().space.sm)
         .flex_wrap()
         .child(button(
             "theme-export",
             "Export",
-            ButtonTone::Quiet,
+            ButtonTone::Neutral,
             editable,
             move |window, cx| {
                 let _ = export.update(cx, |this, cx| this.export_theme(window, cx));
@@ -292,7 +298,7 @@ fn theme_actions(
         .child(button(
             "theme-import",
             "Import",
-            ButtonTone::Quiet,
+            ButtonTone::Neutral,
             editable,
             move |window, cx| {
                 let _ = import.update(cx, |this, cx| this.import_theme(window, cx));
@@ -301,7 +307,7 @@ fn theme_actions(
         .child(button(
             "theme-duplicate",
             "Duplicate to edit",
-            ButtonTone::Quiet,
+            ButtonTone::Neutral,
             editable,
             move |window, cx| {
                 let _ = duplicate.update(cx, |this, cx| {
@@ -314,7 +320,7 @@ fn theme_actions(
                 button(
                     "theme-delete",
                     "Delete theme",
-                    ButtonTone::Quiet,
+                    ButtonTone::Neutral,
                     editable,
                     move |window, cx| {
                         let _ = delete.update(cx, |this, cx| this.delete_theme(window, cx));

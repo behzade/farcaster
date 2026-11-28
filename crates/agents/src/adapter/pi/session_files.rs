@@ -144,7 +144,6 @@ pub(super) fn load_history_with_preview(
     {
         return load_history(path);
     }
-    // The first frame can start in the unread prefix. Keep it intact for the full read.
     let frames = if start == 0 {
         bytes.as_slice()
     } else {
@@ -156,7 +155,6 @@ pub(super) fn load_history_with_preview(
     if let Some(page) = recent_messages(frames, start == 0) {
         preview(page);
     }
-    // Both projections see the same leaf even if Pi appends during the callback.
     read_history(path, file.take(start).chain(bytes.as_slice()))
 }
 
@@ -195,8 +193,6 @@ fn recent_messages(frames: &[u8], whole_file: bool) -> Option<crate::HistoryPage
     messages.truncate(MAX_PREVIEW_MESSAGES);
     messages.reverse();
 
-    // A result can update a prior call, and a submission receipt can update a
-    // prior user row. Only emit rows whose projection is local to the suffix.
     let mut calls = HashSet::new();
     let mut start = None;
     for (index, message) in messages.iter().enumerate() {

@@ -358,7 +358,6 @@ fn catalog_generation_renders_while_the_store_is_busy(cx: &mut gpui::TestAppCont
         ),
         cx,
         |cx, app, _, project| {
-            // The offline harness launches each app test in its own process and data directory.
             let store = crate::app::persistence::initialize().unwrap();
             let root = project.join("root");
             cx.update(|_, cx| {
@@ -409,7 +408,6 @@ fn catalog_generation_renders_while_the_store_is_busy(cx: &mut gpui::TestAppCont
                 let holder = scope.spawn(move || {
                     let _guard = store.lock().unwrap();
                     locked.send(()).unwrap();
-                    // A regression can finish and report the missed signal.
                     rendered.recv_timeout(Duration::from_secs(5)).is_ok()
                 });
                 lock_acquired.recv().unwrap();
@@ -589,7 +587,6 @@ fn incremental_events_only_rebuild_affected_worker_families(cx: &mut gpui::TestA
         cx,
         |cx, app, runtime, project| {
             let project = project.canonicalize().unwrap();
-            // The selected family is an orphan until session 9 arrives.
             let root = worker_session(&project, 1, "root", Some(9));
             let worker = worker_session(&project, 2, "worker", Some(1));
             let other = worker_session(&project, 3, "other", None);
@@ -654,8 +651,6 @@ fn incremental_events_only_rebuild_affected_worker_families(cx: &mut gpui::TestA
                 );
                 let mut activity =
                     AgentActivity::from_worker_status(&worker, WorkerStatus::NeedsInput, false);
-                // Native activity retains the original locator even if its alias has
-                // disappeared by the time the UI drains the event.
                 activity.session_path = project.join("removed-alias").join("worker");
                 assert_eq!(
                     publish(
@@ -673,8 +668,6 @@ fn incremental_events_only_rebuild_affected_worker_families(cx: &mut gpui::TestA
                 );
 
                 let parent = worker_session(&project, 9, "new-parent", None);
-                // Switch away before painting. The prepared orphan still needs
-                // invalidation when its missing parent arrives in the background.
                 let select = |cx: &mut gpui::App, path: &Path| {
                     app.update(cx, |app, _| {
                         Arc::make_mut(&mut app.snapshot).selected_session = Some(path.to_owned());
@@ -691,7 +684,6 @@ fn incremental_events_only_rebuild_affected_worker_families(cx: &mut gpui::TestA
                         .has_prepared_workers_for(&parent.catalog_key())
                 );
                 assert_eq!(app.read(cx).activity.row_focus[&worker_key], focus);
-                // A sibling move/delete in this family must still invalidate the cache.
                 let sibling = worker_session(&project, 4, "sibling", Some(9));
                 assert_eq!(
                     publish(cx, RuntimeEvent::SessionUpdated(sibling.clone())),
@@ -708,8 +700,6 @@ fn incremental_events_only_rebuild_affected_worker_families(cx: &mut gpui::TestA
                     7
                 );
                 assert_eq!(publish(cx, RuntimeEvent::SessionUpdated(legacy.clone())), 8);
-                // Both parents now have the same native ID. Catalog order gives the link
-                // to the older row in the other family.
                 let mut competing = other.clone();
                 competing.id = native_parent.id;
                 competing.modified = SystemTime::UNIX_EPOCH - std::time::Duration::from_secs(1);

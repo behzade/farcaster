@@ -128,7 +128,6 @@ impl FarcasterApp {
         };
         let mut active = self.visible_session_targets();
         let active_index = active.iter().position(|item| selected.matches(item));
-        // Stepping within the active section need not prepare a collapsed archive.
         let archived = if active_index.is_some_and(|i| {
             i.checked_add_signed(direction)
                 .is_none_or(|next| next < active.len())

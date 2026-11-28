@@ -37,7 +37,6 @@ pub struct ObservedSession<'a> {
     pub draft: Option<&'a str>,
 }
 
-/// Keeps prompt submission, backend registration and catalog writes on the same session.
 pub trait SessionRepository {
     fn transcript_stamp(
         &self,
@@ -60,7 +59,6 @@ pub trait SessionRepository {
         session: TranscriptSession<'_>,
         messages: &mut Arc<Vec<serde_json::Value>>,
     ) -> Result<(), String>;
-    /// Includes a user-turn boundary when a bounded viewport page can reach it.
     fn load_transcript_tail(
         &self,
         session: TranscriptSession<'_>,

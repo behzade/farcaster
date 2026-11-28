@@ -112,7 +112,6 @@ impl ToolDetails {
             .filter(|command| !command.trim().is_empty())
     }
 
-    /// Presentation only. The exact invocation remains in arguments and inspection_text.
     pub fn display_command(&self) -> Option<Cow<'_, str>> {
         self.command_preview().map(command_display::display)
     }

@@ -165,7 +165,6 @@ impl FarcasterApp {
         if matches!(&command, RuntimeCommand::NewSession { id, .. }
             if self.sessions.pending_folder_drafts.contains_key(id))
         {
-            // Saving the folder draft will dispatch the latest selection.
             return;
         }
         let backend = command_backend(&command).or(self.snapshot.harness);

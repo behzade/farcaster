@@ -182,8 +182,8 @@ impl FarcasterApp {
                             );
                         }
                     }
+                    conversation.begin_run();
                 }
-                conversation.running = true;
                 snapshot.status = "Working".into();
                 if show_in_transcript {
                     self.mark_transcript_changed(index, index == 0, cx);
@@ -253,7 +253,6 @@ impl FarcasterApp {
             {
                 self.apply_composer_snapshot(snapshot, window, cx);
             }
-            // Background editor sends may have had no draft row before rejection.
             if let Some(id) = crate::sessions::draft_id(&target)
                 && self
                     .sessions

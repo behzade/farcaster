@@ -43,8 +43,6 @@ pub(super) fn spawn(
             if weak.update(cx, |this, cx| this.drain_runtime(cx)).is_err() {
                 break;
             }
-            // Search results and other requested data arrive after the input
-            // action's redraw. Occluded windows still need to publish that data.
             let _ = window.update(cx, |_, window, cx| {
                 crate::app::ui::accessibility::refresh_hidden_accessibility(window, cx);
             });

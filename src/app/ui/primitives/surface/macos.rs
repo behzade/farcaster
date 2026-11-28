@@ -35,9 +35,6 @@ impl Shadow {
             RaisedEdge::Top => height,
             _ => width,
         };
-        // One sample per physical pixel reproduces the shared linear fade.
-        // Plain CALayers let us keep the app's no-unsafe-code boundary and
-        // never add an NSView or hitbox above the live editor.
         let count = (depth * f64::from(window.scale_factor())).ceil().max(1.0) as usize;
         CATransaction::begin();
         CATransaction::setDisableActions(true);

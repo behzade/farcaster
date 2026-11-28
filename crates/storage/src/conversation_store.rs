@@ -16,9 +16,7 @@ pub struct TranscriptSession<'a> {
 #[derive(Clone, Debug)]
 pub struct StoredTranscript {
     pub messages: Vec<Value>,
-    /// This result contains the entire session, including its beginning.
     pub complete: bool,
-    /// The stored document covers the beginning, even if only a suffix was requested.
     pub complete_from_start: bool,
     pub total: usize,
     pub revision: i64,
@@ -37,8 +35,6 @@ impl SharedStateStore {
         let Some(database) = &self.1 else {
             return self.with(operation);
         };
-        // Keep an idle connection for the next open. A concurrent import gets
-        // its own connection and cannot block a viewport read on this mutex.
         let cached = database
             .idle_connection
             .lock()
@@ -100,8 +96,6 @@ impl TranscriptSession<'_> {
         if let Some(id) = self.find(tx)? {
             return Ok(id);
         }
-        // A successful first import may precede catalog discovery. Never rewrite an
-        // existing row's owner to accommodate a stale reader.
         let now = u64_to_i64(now_ms());
         let project = ensure_project(tx, self.project, now)?;
         let locator = sessions::normalize_session_path(self.path);
@@ -162,8 +156,6 @@ struct BlockImage {
     image: crate::images::StoredImage,
 }
 
-// A partial transcript paints only below a user turn. Many sessions have hundreds of
-// consecutive tool items, so seek through the user-only index before loading bodies.
 pub(super) fn viewport_page_start(
     db: &Connection,
     id: i64,
@@ -172,8 +164,6 @@ pub(super) fn viewport_page_start(
     const EXTRA_MESSAGES: usize = 1024;
     const EXTRA_BYTES: i64 = 8 * 1024 * 1024;
     let earliest = start.saturating_sub(EXTRA_MESSAGES);
-    // Start at a turn boundary before the requested rows. A late user message
-    // inside the page can leave too few independent rows to fill the window.
     let anchor = db
         .query_row(
             "SELECT ordinal FROM transcript_messages WHERE session_id=?1 AND user_message=1
@@ -274,8 +264,6 @@ impl StateStore {
                     continue;
                 }
                 let archived = references.next_if(|r| r.block == index);
-                // A local delivery receipt identifies the exact submitted files, even
-                // when the backend omitted an image or returned a shortened preview.
                 if let Some(reference) = originals.next().or_else(|| archived.map(|r| r.image)) {
                     let image = inline(self.decode_prompt_image(reference)?)?;
                     block["data"] = image.data.into();
@@ -435,8 +423,6 @@ impl StateStore {
         messages: &[Value],
         metadata: &Value,
     ) -> Result<Option<TranscriptStamp>> {
-        // Read only fingerprints in the common append case. Encoding images can touch
-        // the filesystem, so do that before taking SQLite's write lock.
         let read = self.connection.unchecked_transaction()?;
         let id = session.find(&read)?;
         let info = read
@@ -702,9 +688,6 @@ impl StateStore {
     }
 }
 
-// Locator binding can consolidate a discovered row into the durable draft. Keep
-// a complete ordered snapshot in preference to a partial one. If both are complete,
-// the newest snapshot already reflects any truncation or branch change at the source.
 pub(super) fn merge(tx: &Transaction<'_>, keep: i64, other: i64) -> rusqlite::Result<()> {
     let header = |id| {
         tx.query_row(

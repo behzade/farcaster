@@ -952,6 +952,7 @@ fn resumed_prompt_survives_startup_history_without_starting_title_generation() {
                 images: Vec::new(),
             })
         });
+        conversation_mut(&mut owner.snapshot).begin_run();
         owner.dispatch_prompt(None);
 
         assert!(owner.deferred_prompt().is_some());
@@ -980,6 +981,15 @@ fn resumed_prompt_survives_startup_history_without_starting_title_generation() {
         };
         for (index, response) in responses.into_iter().enumerate() {
             owner.apply_response(response);
+            assert!(
+                owner.snapshot.conversation.awaiting_first_activity(),
+                "{harness} history_first={history_first} preserve={preserve} response={index}"
+            );
+            assert_eq!(
+                owner.snapshot.conversation.items.last().unwrap().text,
+                "Continue the task",
+                "the waiting prompt must stay visible during startup"
+            );
             if index == 0 {
                 assert!(
                     commands.borrow().is_empty(),
@@ -1007,6 +1017,37 @@ fn resumed_prompt_survives_startup_history_without_starting_title_generation() {
         assert_eq!(owner.snapshot.conversation.items.len(), 1);
         assert_eq!(owner.snapshot.conversation.items[0].text, "Earlier task");
     }
+}
+
+#[test]
+fn quota_command_hint_defers_to_native_commands_and_ordinary_prompt_text() -> Result<(), String> {
+    for (backend, advertised, message) in [
+        (Backend::Antigravity, true, "/usage"),
+        (Backend::Antigravity, false, "/usage is what I typed"),
+        (Backend::Claude, false, "/usage"),
+    ] {
+        let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let (mut owner, _, commands) = held_acks_runtime(temp.path())?;
+        owner.harness = Some(backend);
+        if advertised {
+            owner.snapshot.commands.push(
+                serde_json::from_value(json!({"name":"usage","source":"extension"}))
+                    .expect("command fixture"),
+            );
+        }
+        let path = owner.active_session.as_ref().expect("fixture session");
+        owner.send_prompt(
+            format!("session:{}", path.display()),
+            PromptMode::FollowUp,
+            message.into(),
+            Vec::new(),
+            true,
+        );
+        assert!(commands.borrow().iter().any(
+            |cmd| matches!(cmd, SessionCommand::Prompt { message: sent, .. } if sent == message)
+        ));
+    }
+    Ok(())
 }
 
 #[test]
@@ -1039,7 +1080,6 @@ fn escape_signals_require_steering_and_tolerate_transport_rejection() -> Result<
     use crate::runtime::RuntimeSignal;
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let (mut owner, _, commands) = held_acks_runtime(temp.path())?;
-    // A running turn or follow-up alone must not make Escape interrupt it.
     conversation_mut(&mut owner.snapshot)
         .queue
         .follow_up

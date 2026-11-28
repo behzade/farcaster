@@ -167,8 +167,8 @@ impl RuntimeOwner {
             .map(|path| self.session_facts(path));
         let preserve_transcript = preserve_transcript || resume_document;
         let keep_preview = preserve_transcript && self.snapshot.history_preview;
-        let preserved_conversation =
-            (preserve_transcript && !keep_preview).then(|| self.snapshot.conversation.clone());
+        let preserved_conversation = (resume_document || (preserve_transcript && !keep_preview))
+            .then(|| self.snapshot.conversation.clone());
         let use_visible_snapshot = self.snapshot.selected_session == session;
         let sandbox_adapter = self.selected_sandbox_adapter();
         let target_snapshot = if use_visible_snapshot {
@@ -259,9 +259,9 @@ impl RuntimeOwner {
                 session.clone(),
                 status,
             );
-            if let Some(conversation) = preserved_conversation {
-                self.snapshot.conversation = conversation;
-            }
+        }
+        if let Some(conversation) = preserved_conversation {
+            self.active_snapshot_mut().conversation = conversation;
         }
         self.active_snapshot_mut().profile_id = self.process_command.profile_id.clone();
         if let Some(facts) = preserved_facts {
@@ -457,7 +457,6 @@ impl RuntimeOwner {
                         zlog::warn!("Ignoring malformed prompt delivery event");
                         return SnapshotChange::None;
                     };
-                    // Retired receipts can belong to a previous process on this actor.
                     if self
                         .retired_prompts
                         .get(&delivery.submission_id)

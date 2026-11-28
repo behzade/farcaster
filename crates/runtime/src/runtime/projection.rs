@@ -99,20 +99,27 @@ pub(super) fn update_context_from_event(stats: &mut Value, event: &Value) -> boo
     let usage = event
         .get("usage")
         .or_else(|| event.pointer("/message/usage"));
-    let Some(usage) = usage else { return false };
-    let tokens = usage
-        .get("totalTokens")
+    let tokens = event
+        .get("contextUsed")
         .and_then(Value::as_u64)
-        .filter(|tokens| *tokens > 0)
         .or_else(|| {
-            ["input", "output", "cacheRead", "cacheWrite"]
-                .iter()
-                .try_fold(0_u64, |total, key| {
-                    total.checked_add(usage.get(*key)?.as_u64()?)
-                })
+            let usage = usage?;
+            usage
+                .get("totalTokens")
+                .and_then(Value::as_u64)
                 .filter(|tokens| *tokens > 0)
+                .or_else(|| {
+                    ["input", "output", "cacheRead", "cacheWrite"]
+                        .iter()
+                        .try_fold(0_u64, |total, key| {
+                            total.checked_add(usage.get(*key)?.as_u64()?)
+                        })
+                        .filter(|tokens| *tokens > 0)
+                })
         });
-    let Some(tokens) = tokens else { return false };
+    let Some(tokens) = tokens else {
+        return false;
+    };
     let current_window = stats
         .pointer("/contextUsage/contextWindow")
         .and_then(Value::as_u64)
@@ -354,7 +361,10 @@ impl RuntimeOwner {
             Payload::LoadState(state) => {
                 let model_change_sent = !self.pending_session_controls.model_pending();
                 let tier_change_sent = !self.pending_session_controls.service_tier_pending();
-                let normal_prompt_in_flight = self.normal_prompt_in_flight;
+                let normal_prompt_active = self.normal_prompt_in_flight
+                    || self
+                        .deferred_prompt()
+                        .is_some_and(|prompt| prompt.mode == PromptMode::Normal);
                 let selected_session = state
                     .session_file
                     .as_ref()
@@ -363,8 +373,6 @@ impl RuntimeOwner {
                     .or_else(|| self.active_session.clone());
                 self.active_snapshot_mut().observed_service_tier = state.service_tier.clone();
                 if let Some(path) = &selected_session {
-                    // Bind and save the first observation in one transaction before
-                    // publishing the path to the catalog or dispatching the prompt.
                     if let Err(error) =
                         self.save_observed_facts(path, self.unbound_prompt_draft.as_deref())
                     {
@@ -383,13 +391,12 @@ impl RuntimeOwner {
                     self.session_id = Some(state.session_id.clone());
                 }
                 self.active_session = selected_session.clone();
-                // An idle sample can arrive between a start event and its settlement.
                 self.backend_activity.turn.sample(state.is_streaming);
                 self.backend_activity.compaction.sample(state.is_compacting);
                 let run_active = self.backend_activity.turn.is_active();
                 let snapshot = self.active_snapshot_mut();
                 snapshot.selected_session = selected_session;
-                conversation_mut(snapshot).running = run_active || normal_prompt_in_flight;
+                conversation_mut(snapshot).running = run_active || normal_prompt_active;
                 snapshot.session = Some(*state);
                 let model_confirmed = snapshot
                     .session
@@ -447,7 +454,15 @@ impl RuntimeOwner {
                     let conversation = conversation_mut(self.active_snapshot_mut());
                     conversation.replace_history(&messages);
                     if let Some(prompt) = &mut self.pending_prompt {
-                        prompt.item = None;
+                        if prompt.waiting().is_some() {
+                            if let Some(item) = prompt.item.clone() {
+                                let conversation = conversation_mut(self.active_snapshot_mut());
+                                conversation.append_local_user(item);
+                                conversation.begin_run();
+                            }
+                        } else {
+                            prompt.item = None;
+                        }
                     }
                 }
                 self.startup_history_loaded = true;

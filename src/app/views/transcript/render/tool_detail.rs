@@ -7,8 +7,6 @@ use super::ToolPreview;
 const MAX_FIELDS: usize = 32;
 const MAX_CHARS: usize = 4096;
 
-// Structured arguments are the source of truth; never parse the adapter's
-// human-readable dump to guess which parts are prose or command output.
 pub(super) fn markdown(item: &TranscriptItem) -> Option<String> {
     let details = item.tool_details.as_ref()?;
     let arguments = details
@@ -70,7 +68,6 @@ pub(super) fn markdown(item: &TranscriptItem) -> Option<String> {
     Some(body)
 }
 
-// Complex input metadata follows the result so it cannot bury the output.
 fn nested(value: &Value) -> bool {
     value.is_object()
         || value.as_array().is_some_and(|values| {
@@ -217,7 +214,6 @@ impl PreviewBudget {
     }
 }
 
-// Argument strings are literal data, including Markdown-like instructions.
 fn literal(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len());
     for ch in text.chars() {

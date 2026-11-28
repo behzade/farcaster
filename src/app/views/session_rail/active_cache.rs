@@ -76,8 +76,6 @@ impl FarcasterApp {
     }
 }
 
-// Keep neighboring selectable rows attached by identity. Splicing the first row in a
-// large group leaves the remaining links valid, including those in later groups.
 #[derive(Default)]
 struct SelectableNeighbors {
     rows: HashMap<RailSessionIdentity, Neighbor>,
@@ -216,8 +214,6 @@ impl PreparedActiveRows {
         }
     }
 
-    // Equal nonpositive IDs use catalog insertion order, which cannot be recovered from the ID.
-    // Draft promotion can change two identities at once. Reprepare those transitions.
     pub(in crate::app::views) fn patch_archive(
         &mut self,
         app: &FarcasterApp,

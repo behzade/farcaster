@@ -53,5 +53,4 @@ jobs:
           version: 0.17.0
 
       - name: Test every first-party package
-        # gpui-libghostty includes Ghostty source; Zig fetches its pinned packages.
         run: sh scripts/test.sh

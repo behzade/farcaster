@@ -240,8 +240,6 @@ impl StateStore {
         let draft = sessions::draft_id(target).filter(|key| !key.is_empty());
         if let Some(key) = draft {
             let project = sessions::normalize_session_path(submission.project);
-            // An editor save can still be queued when the first prompt arrives.
-            // After submission or binding, the stored row owns the launch configuration.
             let row = transaction
                 .query_row(
                     "SELECT s.id, s.locator, s.backend_id, CASE WHEN p.path=?2 THEN p.id END,
@@ -292,7 +290,6 @@ impl StateStore {
                 return Ok((id, bound_session));
             }
         }
-        // Promotion may detach the draft key while its actor still knows the locator.
         let existing = if let Some(path) = session {
             self.session_id_for_target(&sessions::session_target(path), Some(path), Some(harness))?
         } else if draft.is_none() {
@@ -456,31 +453,64 @@ impl StateStore {
             .collect()
     }
 
-    /// Displaying a page on its own is safe when full-history projection cannot
-    /// append a local delivery or substitute a stored prompt presentation.
     pub fn can_display_history_tail(&self, session: &Path) -> Result<bool, String> {
         self.can_display_tail_for_id(unique_prompt_session(&self.connection, session)?)
     }
 
     pub(super) fn can_display_tail_for_id(&self, session_id: Option<i64>) -> Result<bool, String> {
+        let has_presentation = self
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM session_events WHERE session_id=?1
+             AND json_extract(body,'$.type')='prompt_presentation')",
+                [session_id],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(!has_presentation && !self.has_unresolved_delivery(session_id)?)
+    }
+
+    fn has_unresolved_delivery(&self, session_id: Option<i64>) -> Result<bool, String> {
         self.connection.query_row(
-            "SELECT NOT EXISTS (
-                SELECT 1 FROM session_events e
-                WHERE e.session_id=?1 AND (
-                    json_extract(e.body,'$.type')='prompt_presentation' OR (
-                        json_extract(e.body,'$.type')='accepted_prompt'
-                        AND json_extract(e.body,'$.deliveryTracked')=1
-                        AND COALESCE(json_extract(e.body,'$.deliveryStatus'),'accepted')='accepted'
-                        AND NOT EXISTS (
-                            SELECT 1 FROM session_events r WHERE r.session_id=e.session_id
-                            AND json_extract(r.body,'$.type') IN ('prompt_delivery_receipt','prompt_delivery_resolution')
-                            AND json_extract(r.body,'$.submissionId')=json_extract(e.body,'$.submissionId')
-                        )
-                    )
+            "SELECT EXISTS (
+                SELECT 1 FROM session_events e WHERE e.session_id=?1
+                AND json_extract(e.body,'$.type')='accepted_prompt'
+                AND json_extract(e.body,'$.deliveryTracked')=1
+                AND COALESCE(json_extract(e.body,'$.deliveryStatus'),'accepted')='accepted'
+                AND NOT EXISTS (
+                    SELECT 1 FROM session_events r WHERE r.session_id=e.session_id
+                    AND json_extract(r.body,'$.type') IN ('prompt_delivery_receipt','prompt_delivery_resolution')
+                    AND json_extract(r.body,'$.submissionId')=json_extract(e.body,'$.submissionId')
                 )
             )",
             [session_id], |row| row.get(0)
-        ).map_err(|error| format!("check local history presentation: {error}"))
+        ).map_err(|error| format!("check local prompt delivery: {error}"))
+    }
+
+    pub(super) fn viewport_presentations(
+        &self,
+        id: i64,
+        start: usize,
+    ) -> Result<Option<Vec<PromptPresentation>>, Box<dyn std::error::Error>> {
+        if self.has_unresolved_delivery(Some(id))? {
+            return Ok(None);
+        }
+        let mut page = Vec::new();
+        let mut locate = self.connection.prepare_cached(
+            "SELECT max(ordinal) FROM transcript_messages INDEXED BY transcript_submission
+             WHERE session_id=?1 AND submission_id=?2 AND user_message=1",
+        )?;
+        for presentation in self.presentations_for_id(Some(id))? {
+            let ordinal: Option<usize> =
+                locate.query_row(params![id, presentation.submission_id], |row| row.get(0))?;
+            let Some(ordinal) = ordinal else {
+                return Ok(None);
+            };
+            if ordinal >= start {
+                page.push(presentation);
+            }
+        }
+        Ok(Some(page))
     }
 
     pub fn accepted_prompt_history(
@@ -577,7 +607,6 @@ impl StateStore {
         if let Some(evidence) = evidence {
             self.reconcile_deliveries_for_id(id, evidence)?;
         }
-        // Read the overlay and its version from one SQLite snapshot.
         let _read = self
             .connection
             .unchecked_transaction()

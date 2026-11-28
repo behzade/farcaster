@@ -50,13 +50,18 @@ impl StateStore {
                     migrate_v14_to_v15(&migration)?;
                 }
                 Some(14) => migrate_v14_to_v15(&migration)?,
-                Some(15..=25) => {}
-                // Rebuild only derived pages to update the turn boundary, image budget,
-                // and Markdown source positions.
+                Some(15..=25 | 29) => {}
                 Some(26..=27) => {
                     migration
                         .execute("DELETE FROM transcript_viewports", [])
                         .map_err(|error| format!("invalidate old transcript viewports: {error}"))?;
+                }
+                Some(28) => {
+                    migration.execute(
+                        "DELETE FROM transcript_viewports WHERE items IS NULL AND EXISTS (
+                         SELECT 1 FROM session_events WHERE session_id=transcript_viewports.session_id
+                         AND json_extract(body,'$.type')='prompt_presentation')", [],
+                    ).map_err(|error| format!("invalidate skipped prompt viewports: {error}"))?;
                 }
                 Some(version) => {
                     return Err(format!(

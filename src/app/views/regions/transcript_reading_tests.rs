@@ -30,6 +30,110 @@ fn send_snapshot(runtime: &TestRuntime, generation: u64, snapshot: Arc<RuntimeSn
 }
 
 #[test]
+fn locally_stored_suffix_retains_its_loading_boundary() {
+    use crate::{
+        agents::HistoryCoverage,
+        storage::{StoredViewport, TranscriptStamp},
+    };
+    let project = Path::new(".");
+    let snapshot = reading_snapshot(project, "stored", 4);
+    for (coverage, expected_boundary) in [
+        (HistoryCoverage::Suffix, Some(0)),
+        (HistoryCoverage::Complete, None),
+    ] {
+        let page = super::super::PreparedPage::from_store(
+            StoredViewport {
+                full_document: true,
+                coverage,
+                content: (*snapshot.conversation).clone(),
+                markdown: Default::default(),
+                revision: 1,
+                stamp: TranscriptStamp {
+                    session_id: 1,
+                    revision: 1,
+                    prompt_event_seq: 0,
+                },
+            },
+            project,
+        )
+        .unwrap();
+        assert_eq!(page.loading_boundary, expected_boundary);
+    }
+}
+
+#[gpui::test]
+fn transcript_reading_paints_mid_turn_reply_while_earlier_messages_load(
+    cx: &mut gpui::TestAppContext,
+) {
+    use crate::{
+        agents::{HistoryCoverage, HistoryPage},
+        conversation::ConversationState,
+    };
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::transcript_reading_paints_mid_turn_reply_while_earlier_messages_load"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            cx.simulate_resize(size(px(1600.), px(1600.)));
+            cx.update(|_, cx| app.update(cx, |app, _| app.sessions.selected_draft = None));
+            let full = reading_snapshot(project, "mid-turn", 20);
+            let messages = &full.conversation.items;
+            let mut tail = ConversationState::default();
+            tail.items = messages.iter_range(19..20).cloned().collect();
+            let before = RuntimeSnapshot {
+                status: "Loading history".into(),
+                conversation: Default::default(),
+                history_tail: Some(Arc::new(HistoryPage {
+                    content: tail.clone(),
+                    coverage: HistoryCoverage::Suffix,
+                })),
+                ..(*full).clone()
+            };
+            send_snapshot(runtime, 1, Arc::new(before));
+            cx.update(|_, cx| app.update(cx, |app, cx| app.drain_runtime(cx)));
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            let reply = cx
+                .debug_bounds("transcript-row-0")
+                .expect("final reply in a mid-turn suffix");
+            assert!(
+                cx.debug_bounds("transcript-older-loading")
+                    .unwrap()
+                    .bottom()
+                    <= reply.top()
+            );
+            send_snapshot(
+                runtime,
+                1,
+                Arc::new(RuntimeSnapshot {
+                    conversation: Arc::new(tail),
+                    saved_history: Some(crate::runtime::SavedHistory::RefreshingPartial),
+                    status: "Partial saved history".into(),
+                    document_ready: true,
+                    ..(*full).clone()
+                }),
+            );
+            cx.update(|_, cx| app.update(cx, |app, cx| app.drain_runtime(cx)));
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            assert_eq!(cx.debug_bounds("transcript-row-0"), Some(reply));
+            send_snapshot(
+                runtime,
+                1,
+                Arc::new(RuntimeSnapshot {
+                    document_ready: true,
+                    ..(*full).clone()
+                }),
+            );
+            cx.update(|_, cx| app.update(cx, |app, cx| app.drain_runtime(cx)));
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            assert_eq!(cx.debug_bounds("transcript-row-19"), Some(reply));
+            assert!(cx.debug_bounds("transcript-older-loading").is_none());
+        },
+    );
+}
+
+#[test]
 fn transcript_reading_matches_only_a_unique_page_before_new_items() {
     fn items(messages: &[&str]) -> super::Items {
         let mut conversation = crate::conversation::ConversationState::default();
@@ -119,7 +223,6 @@ fn transcript_reading_keeps_painted_rows_when_full_history_has_new_turns(
                 });
                 cx.update(|_, cx| {
                     if saved_between {
-                        // The native refresh completes before the next draw of the full SQLite document.
                         send_snapshot(
                             runtime,
                             generation,
@@ -241,12 +344,46 @@ fn transcript_reading_maps_a_scrolled_suffix_when_older_messages_arrive(
                 let mut full = reading_snapshot(project, name, 100);
                 let snapshot = Arc::make_mut(&mut full);
                 snapshot.document_ready = true;
-                // Both indexes contain exactly the same prompt. Only the surrounding page
-                // identifies which turn the user read.
                 let items = &mut Arc::make_mut(&mut snapshot.conversation).items;
                 items.set(84, items[4].clone());
                 let mut suffix = crate::conversation::ConversationState::default();
                 suffix.items = items.iter_range(80..100).cloned().collect();
+                let tail_top = if switch_away {
+                    None
+                } else {
+                    let mut tail = crate::conversation::ConversationState::default();
+                    tail.items = items.iter_range(90..100).cloned().collect();
+                    send_snapshot(
+                        runtime,
+                        generation,
+                        Arc::new(RuntimeSnapshot {
+                            status: "Loading history".into(),
+                            document_ready: false,
+                            conversation: Default::default(),
+                            history_tail: Some(Arc::new(crate::agents::HistoryPage {
+                                content: tail,
+                                coverage: crate::agents::HistoryCoverage::Suffix,
+                            })),
+                            ..snapshot.clone()
+                        }),
+                    );
+                    Some(cx.update(|window, cx| {
+                        app.update(cx, |app, cx| app.drain_runtime(cx));
+                        window.draw(cx).clear(cx);
+                        let page = transcript
+                            .read(cx)
+                            .history_tail
+                            .as_ref()
+                            .unwrap()
+                            .list
+                            .clone();
+                        page.scroll_by(px(-80.), window, transcript.entity_id());
+                        transcript.update(cx, |_, cx| cx.notify());
+                        window.draw(cx).clear(cx);
+                        assert!(!page.is_following_tail());
+                        page.painted_history_top().unwrap()
+                    }))
+                };
                 send_snapshot(
                     runtime,
                     generation,
@@ -261,6 +398,16 @@ fn transcript_reading_maps_a_scrolled_suffix_when_older_messages_arrive(
                     app.update(cx, |app, cx| app.drain_runtime(cx));
                     window.draw(cx).clear(cx);
                     transcript.update(cx, |view, cx| {
+                        if let Some(top) = tail_top {
+                            assert!(!view.following);
+                            assert_eq!(
+                                view.list.logical_scroll_top(),
+                                ListOffset {
+                                    item_ix: 10 + top.item_ix,
+                                    ..top
+                                }
+                            );
+                        }
                         view.list.scroll_to(ListOffset {
                             item_ix: 4,
                             offset_in_item: px(9.),
@@ -323,7 +470,6 @@ fn transcript_reading_survives_session_switch_and_loading(cx: &mut gpui::TestApp
         |cx, app, runtime, project| {
             let transcript = cx.update(|_, cx| {
                 app.update(cx, |app, cx| {
-                    // Injecting snapshots bypasses the sidebar's selection of a saved chat.
                     app.sessions.selected_draft = None;
                     cx.notify();
                     app.views.transcript.clone()
@@ -353,8 +499,6 @@ fn transcript_reading_survives_session_switch_and_loading(cx: &mut gpui::TestApp
                 .expect("saved row")
                 .origin
                 .y;
-            // A reset can precede a loading snapshot, then a second history
-            // reset before the destination is ready. Neither may overwrite A.
             let updated = reading_snapshot(project, "a", 64);
             for (generation, snapshot) in
                 [(2, b.clone()), (3, updated.clone()), (4, b), (5, updated)]
@@ -390,8 +534,6 @@ fn transcript_reading_survives_session_switch_and_loading(cx: &mut gpui::TestApp
                 if returning {
                     assert!(cx.debug_bounds("transcript-loading").is_some());
                     assert!(cx.debug_bounds("transcript-row-15").is_none());
-                    // This SQLite document contains only the last eight messages.
-                    // Its rows cannot resolve the saved position or disclosures at 12.
                     let mut partial = crate::conversation::ConversationState::default();
                     partial.items = items
                         .iter_range(items.len() - 8..items.len())
@@ -501,7 +643,6 @@ fn transcript_reading_return_after_resize_syncs_follow_state(cx: &mut gpui::Test
             let last_row = cx
                 .debug_bounds("transcript-row-59")
                 .expect("last row after resize");
-            // Let the scroll handler's deferred view update run after paint.
             cx.update(|_, cx| {
                 let view = transcript.read(cx);
                 assert!(view.list.is_following_tail());
@@ -770,7 +911,6 @@ fn check_stream_reading_restore(
                 }
                 _ => {}
             }
-            // Without an intervening paint, finalization must remap the pending anchor.
             send_snapshot(runtime, generation, Arc::new(streaming));
             app.update(cx, |app, cx| app.drain_runtime(cx));
 
@@ -807,6 +947,155 @@ fn check_stream_reading_restore(
             assert!(!view.following);
         });
     });
+}
+
+#[gpui::test]
+fn reopened_page_transfers_only_reader_input_over_a_saved_anchor(cx: &mut gpui::TestAppContext) {
+    use super::super::{DisplayQuery, DisplayRead, PreparedPage};
+    use crate::{
+        agents::HistoryCoverage,
+        storage::{StoredViewport, TranscriptStamp},
+    };
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::reopened_page_transfers_only_reader_input_over_a_saved_anchor"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            cx.simulate_resize(size(px(1200.), px(650.)));
+            let transcript = cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions.selected_draft = None;
+                    cx.notify();
+                    app.views.transcript.clone()
+                })
+            });
+            let old = ListOffset {
+                item_ix: 12,
+                offset_in_item: px(9.),
+            };
+            for (i, delta, draw) in [
+                (0, 0., true),
+                (1, 20., false),
+                (2, 20., true),
+                (3, 100_000., false),
+            ] {
+                let name = format!("reopen-{i}");
+                let generation = 3 * i + 1;
+                let mut ready = reading_snapshot(project, &name, 60);
+                Arc::make_mut(&mut ready).document_ready = true;
+                let path = ready.selected_session.clone().unwrap();
+                send_snapshot(runtime, generation, ready.clone());
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                    transcript.update(cx, |view, cx| {
+                        view.list.restore_scroll(old);
+                        view.following = false;
+                        view.unseen = 4;
+                        view.disclosure_states.insert(12, true);
+                        cx.notify();
+                    });
+                    window.draw(cx).clear(cx);
+                });
+                send_snapshot(
+                    runtime,
+                    generation + 1,
+                    reading_snapshot(project, "away", 2),
+                );
+                cx.update(|_, cx| {
+                    app.update(cx, |app, cx| {
+                        app.drain_runtime(cx);
+                        let page = PreparedPage::from_store(
+                            StoredViewport {
+                                full_document: true,
+                                coverage: HistoryCoverage::Complete,
+                                content: (*ready.conversation).clone(),
+                                markdown: Default::default(),
+                                revision: 1,
+                                stamp: TranscriptStamp {
+                                    session_id: 1,
+                                    revision: 1,
+                                    prompt_event_seq: 0,
+                                },
+                            },
+                            project,
+                        )
+                        .unwrap();
+                        app.present_or_read_transcript(
+                            DisplayQuery {
+                                trace: None,
+                                path,
+                                project: project.into(),
+                                harness: crate::agents::Backend::Pi,
+                                profile: None,
+                            },
+                            None,
+                            Some(DisplayRead::Page(page)),
+                            cx,
+                        );
+                    })
+                });
+                send_snapshot(
+                    runtime,
+                    generation + 2,
+                    Arc::new(RuntimeSnapshot {
+                        status: "Loading history".into(),
+                        document_ready: false,
+                        conversation: Default::default(),
+                        ..(*ready).clone()
+                    }),
+                );
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                    window.draw(cx).clear(cx);
+                    let page = transcript
+                        .read(cx)
+                        .selected_local_page(app.read(cx))
+                        .unwrap()
+                        .list
+                        .clone();
+                    assert_eq!(page.painted_history_top(), Some(old));
+                    if delta == 0. {
+                        page.scroll_to(ListOffset { item_ix: 16, ..old });
+                    } else {
+                        page.scroll_by(px(delta), window, transcript.entity_id());
+                        assert!(page.has_pending_scroll());
+                    }
+                    if draw {
+                        transcript.update(cx, |_, cx| cx.notify());
+                        window.draw(cx).clear(cx);
+                    }
+                });
+                let appended = if draw && delta > 0. { 2 } else { 0 };
+                if appended > 0 {
+                    ready = reading_snapshot(project, &name, 60 + appended);
+                    Arc::make_mut(&mut ready).document_ready = true;
+                }
+                send_snapshot(runtime, generation + 2, ready);
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| app.drain_runtime(cx));
+                    window.draw(cx).clear(cx);
+                    let view = transcript.read(cx);
+                    assert_eq!(view.disclosure_states.get(&12), Some(&true));
+                    if delta == 100_000. {
+                        assert!(view.following && view.list.is_following_tail());
+                        assert_eq!(view.unseen, 0);
+                    } else {
+                        assert!(!view.following);
+                        assert_eq!(
+                            view.list.logical_scroll_top(),
+                            ListOffset {
+                                offset_in_item: old.offset_in_item + px(delta),
+                                ..old
+                            }
+                        );
+                        assert_eq!(view.unseen, 4 + appended);
+                    }
+                });
+            }
+        },
+    );
 }
 
 #[track_caller]
@@ -957,8 +1246,6 @@ fn resident_transcript_draws_saved_anchor_before_routing_and_reuses_layout(
                     .unwrap()
                     .unwrap();
                 changed.coverage = crate::agents::HistoryCoverage::Suffix;
-                // A later turn in the suffix repeats the original message at local index 12.
-                // Its text and disclosure fingerprint both agree at the wrong offset.
                 let repeated = changed.content.items[12].clone();
                 changed.content.items = changed.content.items.iter().skip(2).cloned().collect();
                 changed.content.items.set(12, repeated);
@@ -1024,7 +1311,6 @@ fn resident_transcript_draws_saved_anchor_before_routing_and_reuses_layout(
                 y
             );
 
-            // A notification for parked A clears its saved anchor before its actor responds.
             send_snapshot(runtime, 4, snapshot("b"));
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
@@ -1045,7 +1331,6 @@ fn resident_transcript_draws_saved_anchor_before_routing_and_reuses_layout(
             });
             assert!(cx.debug_bounds("transcript-row-79").is_some());
 
-            // Same count, same catalog timestamp. A newer saved message must win before routing.
             send_snapshot(runtime, 6, snapshot("b"));
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| app.drain_runtime(cx));

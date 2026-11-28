@@ -67,7 +67,6 @@ fn changed_prefix_images_recover_the_original_tail_before_and_after_preparation(
         .next()
         .unwrap()?
         .path();
-    // Each image fits, but the two base64 strings plus the page body exceed the budget.
     std::fs::OpenOptions::new()
         .write(true)
         .open(&attachment)?
@@ -108,8 +107,6 @@ fn inline_receipt_is_checked_against_remaining_body_budget_before_parsing() -> R
             .is_some()
     );
     let id = session.find(&store.connection)?.unwrap();
-    // The deliberately invalid image entry would fail deserialization if the
-    // reader allocated and parsed the receipt before checking the remaining budget.
     let receipt = json!({"type":"accepted_prompt","submissionId":"oversize","images":["x".repeat(2 * 1024 * 1024)]});
     store.connection.execute(
         "INSERT INTO session_events(session_id,seq,t,schema_version,body) VALUES(?1,1,0,1,?2)",
@@ -161,7 +158,6 @@ fn transcript_reads_reuse_an_idle_connection_and_allow_an_overlapping_read()
                 .map_err(|e| e.to_string())
         };
         assert!(exists(store)?);
-        // A second reader must be able to open even while this operation is running.
         assert!(repo.1.as_ref().unwrap().idle_connection.try_lock().is_ok());
         repo.with_transcript_connection(|other| {
             assert!(!exists(other)?);
@@ -197,7 +193,6 @@ fn prepared_group_keeps_header_and_source_identity_and_omits_expanded_output()
     let original = repo.load_transcript(s, None)?.unwrap();
     let mut full = ConversationState::default();
     full.replace_history(&original.messages);
-    // A read must succeed even if the normal connection's mutex is in use.
     let guard = repo.lock()?;
     let size: usize = guard.connection.query_row(
         "SELECT octet_length(items) FROM transcript_viewports",
@@ -266,6 +261,65 @@ fn saved_image_rows_share_attachment_files_and_restore_their_original_items()
     let last = &compact.content.items[2].images[0];
     assert!(Arc::ptr_eq(first, last));
     assert_eq!(first.bytes(), png);
+    Ok(())
+}
+
+#[test]
+fn command_presentation_in_saved_tail_matches_full_history_after_upgrade() -> Result<(), Error> {
+    let tmp = tempfile::tempdir()?;
+    let db = tmp.path().join("state.sqlite");
+    let path = tmp.path().join("thread");
+    let session = TranscriptSession {
+        harness: Backend::Codex,
+        path: &path,
+        project: tmp.path(),
+        profile_id: None,
+    };
+    let store = StateStore::open_at(&db)?;
+    let mut messages: Vec<_> = (0..100)
+        .map(|i| json!({"role":"assistant","content":[{"type":"text","text":format!("message {i}")}]}))
+        .collect();
+    for (ordinal, id) in [(0, "older"), (34, "boundary"), (95, "recent")] {
+        messages[ordinal] = json!({"role":"user","submissionId":id,"content":"expanded"});
+    }
+    messages[98] = json!({"role":"user","content":"expanded"});
+    store.replace_conversation(session, 0, &messages, &json!({}))?;
+    let id = session.find(&store.connection)?.unwrap();
+    for (seq, submission, title) in [(1, "older", "$old"), (2, "recent", "$new")] {
+        let event = json!({"type":"prompt_presentation","submissionId":submission,
+                           "resolved":"expanded","display":title,"invocation":"command"});
+        store.connection.execute(
+            "INSERT INTO session_events VALUES(?1,?2,0,1,?3)",
+            params![id, seq, event.to_string()],
+        )?;
+    }
+    let check = |store: &StateStore| -> Result<(), Error> {
+        let page = store.read_display(session, false)?.unwrap();
+        let full = store.read_display(session, true)?.unwrap();
+        assert!(!page.full_document);
+        assert_eq!(page.coverage, agents::HistoryCoverage::Suffix);
+        let offset = full.content.items.len() - page.content.items.len();
+        assert!(offset > 0 && offset < 95);
+        for (i, item) in page.content.items.iter().enumerate() {
+            assert!(viewport_item_matches(item, &full.content.items[offset + i]));
+        }
+        assert_eq!(page.content.items[95 - offset].text, "$new");
+        assert_eq!(page.content.items[98 - offset].text, "expanded");
+        Ok(())
+    };
+    store.connection.execute_batch(
+        "UPDATE transcript_viewports SET items=NULL,event_seq=2;
+                                    UPDATE meta SET value='28' WHERE key='schema_version'",
+    )?;
+    drop(store);
+    let store = StateStore::open_at(&db)?;
+    check(&store)?;
+    store.prepare_viewport(id)?;
+    check(&store)?;
+    assert!(!store.can_display_history_tail(&path)?);
+    store.connection.execute("INSERT INTO session_events VALUES(?1,3,0,1,?2)",
+        params![id,json!({"type":"prompt_presentation","resolved":"expanded","display":"legacy","invocation":"command"}).to_string()])?;
+    assert!(store.read_display(session, false)?.unwrap().full_document);
     Ok(())
 }
 
@@ -378,7 +432,6 @@ fn migration_backfills_existing_transcript_and_late_receipt_invalidates_its_view
 fn measure_stored_viewport_decode_on_isolated_transcripts() -> Result<(), Box<dyn std::error::Error>>
 {
     let path = PathBuf::from(std::env::var("FARCASTER_TRANSCRIPT_BENCH_DB")?);
-    // Read the installed database without migrating it or changing any chat.
     let db = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let store = StateStore {
         connection: db,

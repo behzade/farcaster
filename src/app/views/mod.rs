@@ -27,4 +27,4 @@ use super::FarcasterApp;
 
 pub(crate) const OVERLAY_KEY_CONTEXT: &str = "FarcasterOverlay";
 
-pub(in crate::app) use regions::{DisplayQuery, DisplayRead, FitProbe};
+pub(in crate::app) use regions::{DisplayQuery, DisplayRead};

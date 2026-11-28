@@ -97,7 +97,6 @@ impl SessionStateWriter {
         Ok(receiver)
     }
 
-    /// Complete a write for a caller that must use the assigned ID immediately.
     pub fn save_draft_before_handoff(
         &self,
         draft: DraftSession,

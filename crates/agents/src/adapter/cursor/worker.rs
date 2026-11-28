@@ -471,7 +471,6 @@ impl Worker {
                 self.events.push_back(WorkerEvent::Activity(activity));
             }
         }
-        // The helper forwards SDK control messages only; activity uses onDelta.
         if let Some(message) = value.get("sdkMessage") {
             let payload = &message["message"];
             if self.run_id.is_none() {
@@ -562,7 +561,6 @@ impl Worker {
                 });
             self.metadata_request = None;
             self.metadata_dirty = false;
-            // A disconnected Send does not cancel the SDK run.
             self.cancelled = Some(Instant::now());
             let _ = self.cancel_run();
             let _ = self.bridge.close();
@@ -615,7 +613,6 @@ impl WorkerSession for Worker {
     fn rename(&mut self, name: &str) -> Result<(), String> {
         self.bridge
             .agent("RenameAgent", json!({"agentId":self.id,"name":name}))?;
-        // Discard a lookup started before the rename; its old name is now stale.
         self.metadata_request = None;
         self.metadata_dirty = false;
         self.events.retain(|event| {

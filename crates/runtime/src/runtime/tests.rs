@@ -1404,10 +1404,22 @@ fn initial_prompt_is_not_duplicated_when_starting_its_process()
 
     assert!(owner.deferred_prompt().is_some());
     assert_eq!(owner.snapshot.conversation.items.len(), 1);
-    owner.active_session = Some(temp.path().join("session.jsonl"));
-    owner.startup_state_loaded = true;
-    owner.startup_history_loaded = true;
-    owner.maybe_send_deferred_prompt();
+    assert!(owner.snapshot.conversation.awaiting_first_activity());
+    owner.apply_response(agents::SessionResponse::success(
+        None,
+        agents::SessionResponsePayload::LoadState(serde_json::from_value(json!({
+            "isStreaming": false, "isCompacting": false, "sessionId": "new-session",
+            "sessionFile": temp.path().join("session.jsonl"), "autoCompactionEnabled": true,
+            "messageCount": 0, "pendingMessageCount": 0
+        }))?),
+    ));
+    assert!(owner.snapshot.conversation.awaiting_first_activity());
+    owner.apply_response(agents::SessionResponse::success(
+        None,
+        agents::SessionResponsePayload::LoadHistory(agents::SessionHistory::Preserve),
+    ));
+    assert!(owner.pending_request_id().is_some());
+    assert!(owner.snapshot.conversation.awaiting_first_activity());
 
     let user_messages = owner
         .snapshot
@@ -1575,7 +1587,6 @@ fn new_session_stays_cold_until_the_first_prompt() -> Result<(), Box<dyn std::er
     assert!(owner.snapshot.connected);
     let state = owner.state.clone().expect("persisted outbox");
     let draft_id = state.with(|store| Ok(store.load_drafts()?[0].app_session_id))?;
-    // Stop at the first published locator, before processing a prompt receipt.
     let deadline = Instant::now() + Duration::from_secs(5);
     while owner.active_session.is_none() {
         assert!(Instant::now() < deadline, "backend did not report its path");
@@ -1705,10 +1716,8 @@ fn retry_from_draft_resumes_the_previously_registered_session()
                     _ => None,
                 });
             assert_eq!(identity, Some((draft.id.clone(), app_id)));
-            // Promotion detaches the draft key before the previously queued follow-up is retried.
             store.with(|store| store.remove_draft(&draft.id))?;
         }
-        // No actor has received LoadState for this launch.
         assert!(owner.process.is_some());
         assert_eq!(owner.harness, Some(Backend::Pi));
         assert_eq!(owner.active_session.as_ref(), Some(&path));

@@ -4,7 +4,6 @@ use super::*;
 
 type SessionDocumentRevision = (PathBuf, SystemTime, usize);
 
-// Record the backend when dispatching, before a new actor has published its first snapshot.
 #[derive(Default)]
 pub(super) struct ActorPaths(HashMap<PathBuf, Vec<(Backend, String)>>);
 
@@ -96,7 +95,6 @@ pub(super) fn catalog_actor_key(
     if !catalog.has_shared_path(&row.path) {
         return paths.session_key(&row.path, row.harness, latest);
     }
-    // Preserve a resident draft or fork actor when a second backend starts sharing its path.
     let matching = |snapshot: &RuntimeSnapshot| {
         (snapshot.selected_session.as_ref() == Some(&row.path)
             || snapshot.live_session.as_ref() == Some(&row.path))

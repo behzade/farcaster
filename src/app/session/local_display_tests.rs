@@ -174,8 +174,6 @@ fn saved_selection_supersedes_unresolved_catalog_retry(cx: &mut gpui::TestAppCon
                 app.update(cx, |app, cx| {
                     app.select_rail_session(saved.catalog_key(), window, cx);
                     assert!(app.lifecycle.opening_local.is_some());
-                    // The catalog drops the saved row during the read. Its click still
-                    // supersedes the retry even though its route and buffer never change.
                     app.sessions.all = Default::default();
                     app.sessions.visible = Default::default();
                     let mut target = saved.target();
@@ -271,8 +269,6 @@ fn saved_chat_paints_before_routing_and_ignores_superseded_reads(cx: &mut gpui::
                 })
             });
             assert!(rows.iter().all(|row| row.has_local_transcript));
-            // Reselecting the displayed draft while a saved chat's read is
-            // staged keeps that draft selected after the background task settles.
             let draft_id = cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
                     app.new_session(project.clone(), window, cx);
@@ -315,8 +311,6 @@ fn saved_chat_paints_before_routing_and_ignores_superseded_reads(cx: &mut gpui::
             });
             assert_eq!(cx.debug_bounds("transcript-row-1"), Some(pi_bounds));
 
-            // Neither SQLite completion can run until the forced click frame finishes.
-            // During these reads the rail, composer and painted transcript still show Pi.
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
                     app.select_rail_session(codex.catalog_key(), window, cx);
@@ -336,8 +330,6 @@ fn saved_chat_paints_before_routing_and_ignores_superseded_reads(cx: &mut gpui::
                 assert_selected(app, third);
                 app.lifecycle.awaiting_switch_route.unwrap()
             });
-            // The middle click never routed. An old route ACK and either older
-            // actor's snapshot must leave the displayed page on the third chat.
             runtime.send_event(RuntimeEvent::SelectionRouted(old_route));
             for (row, name, count) in [(pi, "pi", 2), (codex, "codex", 4)] {
                 runtime.send_event(RuntimeEvent::Snapshot {
@@ -354,8 +346,6 @@ fn saved_chat_paints_before_routing_and_ignores_superseded_reads(cx: &mut gpui::
                 wait_for_local_paint(cx, app, "third message 5", "transcript-row-5"),
                 bounds
             );
-            // The native file still identifies the old conversation, while SQLite
-            // already supplied six current rows for this selection.
             std::fs::write(&third.path, "{}").unwrap();
             super::remembered_transcript::remember(&snapshot(third, &messages("old", 1)));
             let loading = Arc::new(RuntimeSnapshot {
@@ -432,12 +422,14 @@ fn saved_chat_paints_before_routing_and_ignores_superseded_reads(cx: &mut gpui::
 }
 
 #[gpui::test]
-fn short_saved_suffix_reads_full_document_before_route(cx: &mut gpui::TestAppContext) {
+fn short_saved_suffix_paints_before_route_and_stays_at_its_final_position(
+    cx: &mut gpui::TestAppContext,
+) {
     check_saved_suffix_fit(
         cx,
         concat!(
             module_path!(),
-            "::short_saved_suffix_reads_full_document_before_route"
+            "::short_saved_suffix_paints_before_route_and_stays_at_its_final_position"
         ),
         6000.,
         false,
@@ -502,7 +494,7 @@ fn check_saved_suffix_fit(
                 thread::sleep(SWITCH_POLL);
             }
         },
-        |cx, app, _, project| {
+        |cx, app, runtime, project| {
             let project = project.canonicalize().unwrap();
             trust::apply(&project, TrustChoice::TrustProject).unwrap();
             let rows = crate::app::persistence::open()
@@ -537,7 +529,8 @@ fn check_saved_suffix_fit(
                             );
                             assert!(items.last().unwrap().text.starts_with("Wrapped reply text"));
                         } else {
-                            assert_eq!(view.local_display_row_count(app), 84);
+                            assert!(items.len() < 84);
+                            assert_eq!(items.last().unwrap().text, "tall message 83");
                         }
                     }
                     selected
@@ -545,8 +538,44 @@ fn check_saved_suffix_fit(
                 assert!(cx.debug_bounds("transcript-loading").is_none());
                 if selected {
                     if !wrapped {
-                        assert!(cx.debug_bounds("transcript-row-0").is_some());
-                        assert!(cx.debug_bounds("transcript-row-83").is_some());
+                        let (route, count) = cx.update(|_, cx| {
+                            let app = app.read(cx);
+                            (
+                                app.lifecycle.awaiting_switch_route.unwrap(),
+                                app.views.transcript.read(cx).local_display_row_count(app),
+                            )
+                        });
+                        assert_eq!(count, 64);
+                        let last = cx.debug_bounds("transcript-row-63").unwrap();
+                        let gap = cx.debug_bounds("transcript-older-loading").unwrap();
+                        assert!(gap.bottom() <= last.top());
+                        runtime.send_event(RuntimeEvent::SelectionRouted(route));
+                        let all = messages("tall", 84);
+                        let mut partial = snapshot(row, &all[20..]);
+                        Arc::make_mut(&mut partial).saved_history =
+                            Some(crate::runtime::SavedHistory::RefreshingPartial);
+                        runtime.send_event(RuntimeEvent::Snapshot {
+                            generation: 2,
+                            snapshot: partial,
+                        });
+                        cx.update(|window, cx| {
+                            app.update(cx, |app, cx| app.drain_runtime(cx));
+                            window.draw(cx).clear(cx);
+                        });
+                        assert_eq!(cx.debug_bounds("transcript-row-63"), Some(last));
+                        assert_eq!(cx.debug_bounds("transcript-older-loading"), Some(gap));
+                        runtime.send_event(RuntimeEvent::Snapshot {
+                            generation: 2,
+                            snapshot: snapshot(row, &all),
+                        });
+                        for _ in 0..4 {
+                            cx.update(|window, cx| {
+                                app.update(cx, |app, cx| app.drain_runtime(cx));
+                                window.draw(cx).clear(cx);
+                            });
+                            assert_eq!(cx.debug_bounds("transcript-row-83"), Some(last));
+                            assert!(cx.debug_bounds("transcript-older-loading").is_none());
+                        }
                     }
                     break;
                 }

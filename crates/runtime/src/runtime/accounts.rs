@@ -79,8 +79,6 @@ impl AccountService {
         let mut ids = HashSet::new();
         for connection in &self.snapshot.connections {
             if matches(connection) {
-                // Guard identity-free events while the source is being checked.
-                // The check does not change any previously observed account facts.
                 self.awaiting_identity.insert(connection.id.clone());
                 ids.insert(connection.id.clone());
             }
@@ -212,7 +210,6 @@ impl AccountService {
                         .iter()
                         .map(|o| o.source.key())
                         .collect();
-                    // A complete discovery can remove a credential without removing its history.
                     for connection in &mut self.snapshot.connections {
                         if connection.source.incarnation.is_none()
                             && connection.source.same_store(&discovery.source)
@@ -273,7 +270,6 @@ impl AccountService {
             }
         }
         if self.dirty {
-            // Persist the exact projection published to every account surface.
             if let Some(state) = &self.state
                 && let Err(error) = state.with(|s| s.save_accounts(&self.snapshot))
             {

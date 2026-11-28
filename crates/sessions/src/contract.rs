@@ -44,7 +44,6 @@ pub struct SessionImport {
     pub title: String,
     pub first_user_message: String,
     pub timestamp: String,
-    /// Worker ownership; ordinary fork ancestry belongs in `forked_from`.
     pub parent_session: Option<String>,
     pub forked_from: Option<String>,
     pub modified: SystemTime,
@@ -59,7 +58,6 @@ pub struct SessionImport {
 pub struct SessionSummary {
     pub has_local_transcript: bool,
     pub id: String,
-    /// Present while this database row still belongs to a local draft.
     pub draft_id: Option<String>,
     pub worker_profile: Option<String>,
     pub app_session_id: i64,
@@ -71,7 +69,6 @@ pub struct SessionSummary {
     pub first_user_message: String,
     pub timestamp: String,
     pub created_at: Option<SystemTime>,
-    /// Worker ownership; ordinary fork ancestry belongs in `forked_from`.
     pub parent_session: Option<String>,
     pub forked_from: Option<String>,
     pub parent_harness: Option<Backend>,
@@ -145,7 +142,6 @@ impl SessionSummary {
         self.key_with_locator(|| crate::normalize_session_path(&self.path))
     }
 
-    /// Storage normalizes the locator before publishing a catalog entry.
     pub fn catalog_key(&self) -> crate::SessionKey {
         self.key_with_locator(|| self.path.clone())
     }

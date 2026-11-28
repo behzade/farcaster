@@ -12,7 +12,6 @@ fn fingerprint(item: &TranscriptItem) -> [u8; 32] {
 }
 
 impl TranscriptItem {
-    /// Reduce the initial, collapsed tool row. The caller excludes review artifacts.
     pub fn for_collapsed_viewport(&self) -> Self {
         use farcaster_agent_protocol::ToolCategory;
         let Some(details) = &self.tool_details else {
@@ -52,7 +51,6 @@ impl TranscriptItem {
     }
 }
 
-/// A compact tool can match only its own complete source item, including its hidden output.
 pub fn viewport_item_matches(preview: &TranscriptItem, item: &TranscriptItem) -> bool {
     if let Some(stamp) = preview
         .tool_details

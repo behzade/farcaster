@@ -46,18 +46,12 @@ impl Render for FarcasterApp {
         };
         let work_active = self.workspace.surface == AppSurface::Work;
         let obscured = self.native_surface_obscured(window, cx);
-        let fit_probe = self
-            .lifecycle
-            .display_fit
-            .take()
-            .map(super::FitProbe::element);
         let main = self.render_workspace_main(
             entity.clone(),
             mode,
             window.viewport_size().height,
             self.composer_region_focused(window, cx),
             obscured,
-            fit_probe,
         );
         let session_rail_width = self.views.session_rail.read(cx).width();
         let run_panel_width = self.views.run_panel.read(cx).width();
@@ -89,7 +83,6 @@ impl Render for FarcasterApp {
             .font(ui_font())
             .key_context(key_context)
             .track_focus(&self.navigation.chat.focus)
-            // Handle unused Chat clicks before GPUI focuses the root.
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, window, cx| {

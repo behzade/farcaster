@@ -192,7 +192,6 @@ impl FarcasterApp {
     ) -> gpui::AnyElement {
         let rows = prepared.visible.clone();
         let keys = prepared.keys.clone();
-        // Match the collapsed cards' two lines, vertical padding, and section gap.
         let row_height =
             theme().type_scale.line_body * 2.0 + theme().space.xs * 2.0 + theme().space.sm;
         worker_list::reconcile(view.list, view.rows, &keys, row_height);
@@ -379,8 +378,6 @@ impl FarcasterApp {
         };
         let activity = div()
             .id("run-panel-activity")
-            // Let row highlights extend around the shared text anchor without
-            // clipping their leading selection edge in the scroll container.
             .mx(-theme().space.xs)
             .px(theme().space.xs)
             .min_h_0()
@@ -449,19 +446,7 @@ impl FarcasterApp {
             .child(activity.mt(theme().space.xs))
             .when(
                 !expanded && self.project.repository.backend.is_some(),
-                |run| {
-                    run.child(
-                        div()
-                            .mt(theme().space.md + theme().space.sm)
-                            .flex_1()
-                            .min_h_0()
-                            .child(self.render_repository(
-                                entity.clone(),
-                                run_panel.clone(),
-                                browser,
-                            )),
-                    )
-                },
+                |run| run.child(self.render_repository(entity.clone(), run_panel.clone(), browser)),
             );
         panel()
             .size_full()

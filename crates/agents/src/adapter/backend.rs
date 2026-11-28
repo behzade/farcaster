@@ -25,6 +25,9 @@ pub(super) static STANDARD_SERVICE_TIER: LazyLock<[String; 1]> =
 mod tests;
 
 pub(super) trait BackendAdapter: Sync {
+    fn cli_command_hint(&self, _name: &str) -> Option<&'static str> {
+        None
+    }
     fn account_capabilities(&self) -> crate::accounts::AccountCapabilities {
         crate::accounts::AccountCapabilities::default()
     }
@@ -51,7 +54,6 @@ pub(super) trait BackendAdapter: Sync {
     ) -> Option<crate::WorkerStatus> {
         None
     }
-    /// Return locally verifiable fork ancestry for repairing older catalog rows.
     fn fork_source(
         &self,
         _path: &Path,
@@ -62,6 +64,17 @@ pub(super) trait BackendAdapter: Sync {
     fn sign_in_required(&self, _config: &AgentLaunchConfig) -> bool {
         false
     }
+    fn sign_in_methods(&self) -> &'static [(&'static str, &'static str)] {
+        &[("default", "Sign in")]
+    }
+    fn terminal_sign_in(
+        &self,
+        _config: &AgentLaunchConfig,
+        _project: &Path,
+        _method: &str,
+    ) -> Result<Option<std::process::Command>, String> {
+        Ok(None)
+    }
     fn supports_sign_in(&self) -> bool {
         false
     }
@@ -69,6 +82,7 @@ pub(super) trait BackendAdapter: Sync {
         &self,
         _config: &AgentLaunchConfig,
         _project: &Path,
+        _method: &str,
         _cancelled: &std::sync::atomic::AtomicBool,
         _on_url: &dyn Fn(String),
     ) -> Result<(), String> {
@@ -96,7 +110,7 @@ pub(super) trait BackendAdapter: Sync {
         config: &AgentLaunchConfig,
         launch: SessionLaunch,
     ) -> Result<Box<dyn SessionTransport>, String>;
-    fn steering_boundary(&self) -> SteeringBoundary;
+    fn steering_boundary(&self, _config: &crate::AgentLaunchConfig) -> SteeringBoundary;
     fn supports_auto_title_generation(&self) -> bool {
         false
     }

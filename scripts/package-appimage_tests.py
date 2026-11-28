@@ -25,10 +25,22 @@ if name == "cargo":
 elif name == "pkg-config":
     print(root / "lib")
 elif name == "uname":
-    print("Linux" if args == ["-s"] else "x86_64")
+    settings = json.loads((root / "settings.json").read_text())
+    print("Linux" if args == ["-s"] else settings.get("arch", "x86_64"))
+elif name == "curl":
+    (root / "download.json").write_text(json.dumps(args))
+    settings = json.loads((root / "settings.json").read_text())
+    output = pathlib.Path(args[args.index("--output") + 1])
+    output.write_text("" if settings.get("empty_runtime") else "fixture runtime")
+    if settings.get("download_failure"):
+        sys.exit(22)
 elif name == "linuxdeploy":
     appdir = pathlib.Path(args[args.index("--appdir") + 1])
     (root / "deploy.json").write_text(json.dumps(args))
+    runtime = pathlib.Path(os.environ["LDAI_RUNTIME_FILE"])
+    assert runtime.is_absolute() and runtime.read_text() == "fixture runtime"
+    assert os.environ["LINUXDEPLOY_OUTPUT_VERSION"] == "1.2.3"
+    (root / "runtime.json").write_text(json.dumps(str(runtime)))
     for i, arg in enumerate(args):
         if arg == "--library":
             source = pathlib.Path(args[i + 1])
@@ -37,7 +49,7 @@ elif name == "linuxdeploy":
             shutil.copyfile(source, destination)
     (appdir / "AppRun").symlink_to("usr/bin/farcaster")
     shutil.copytree(appdir, root / "image", symlinks=True)
-    output = pathlib.Path(os.environ["OUTPUT"])
+    output = pathlib.Path(os.environ["LDAI_OUTPUT"])
     shutil.copyfile(__file__, output)
     output.chmod(0o755)
     if json.loads((root / "settings.json").read_text()).get("deploy_failure"):
@@ -85,11 +97,10 @@ class AppImagePackagingTests(unittest.TestCase):
         (self.root / "release/farcaster").write_text("fixture release binary")
         for library in LIBRARIES:
             (self.root / "lib" / library).write_text("fixture " + library)
-        for name in ("cargo", "pkg-config", "uname", "linuxdeploy"):
+        for name in ("cargo", "pkg-config", "uname", "linuxdeploy", "curl"):
             tool = self.root / "tools" / name
             tool.write_text(f"#!{sys.executable}\n" + TOOLS)
             tool.chmod(0o755)
-        # Do not accidentally use the host's appimage-run in native-runtime tests.
         for name in ("bash", "sh", "env", "dirname", "realpath", "mkdir", "mktemp",
                      "install", "cp", "stat", "find", "mv", "rm", "python3"):
             (self.root / "tools" / name).symlink_to(shutil.which(name))
@@ -103,6 +114,9 @@ class AppImagePackagingTests(unittest.TestCase):
                            PATH=str(self.root / "tools"),
                            CARGO_TARGET_DIR=str(self.root), BUNDLE_FORMATS="appimage",
                            APPIMAGE_EXTRACT_AND_RUN="1")
+        environment.pop("LDAI_RUNTIME_FILE", None)
+        if "runtime_file" in settings:
+            environment["LDAI_RUNTIME_FILE"] = settings["runtime_file"]
         return subprocess.run(["sh", str(SCRIPT)],
                               env=environment, capture_output=True, text=True)
 
@@ -131,6 +145,51 @@ class AppImagePackagingTests(unittest.TestCase):
         extraction = json.loads((self.root / "extract.json").read_text())
         self.assertEqual(extraction["tool"], "appimage-run")
         self.assertEqual(extraction["args"][0], "-x")
+
+    def test_downloads_runtime_with_redirects_for_target_architecture(self):
+        result = self.package(arch="aarch64")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = json.loads((self.root / "download.json").read_text())
+        self.assertIn("--fail", args)
+        self.assertIn("--location", args)
+        self.assertEqual(args[args.index("--retry") + 1], "3")
+        self.assertIn("https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-aarch64", args)
+        self.assertTrue((self.root / "release/Farcaster-v1.2.3-aarch64.AppImage").is_file())
+
+    def test_uses_local_runtime_without_curl(self):
+        runtime = self.root / "local runtime"
+        runtime.write_text("fixture runtime")
+        (self.root / "tools/curl").unlink()
+        result = self.package(runtime_file=str(runtime))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads((self.root / "runtime.json").read_text()), str(runtime))
+        self.assertFalse((self.root / "download.json").exists())
+
+    def test_missing_curl_reports_local_runtime_option(self):
+        (self.root / "tools/curl").unlink()
+        result = self.package()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Install curl or set LDAI_RUNTIME_FILE", result.stderr)
+        self.assertFalse((self.root / "deploy.json").exists())
+
+    def test_download_failure_preserves_previous_image(self):
+        self.output.write_text("previous image")
+        result = self.package(download_failure=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.root / "deploy.json").exists())
+        self.assertEqual(self.output.read_text(), "previous image")
+        self.assertEqual({p.name for p in self.output.parent.iterdir()},
+                         {"farcaster", self.output.name})
+
+    def test_rejects_missing_or_empty_runtime_before_deploy(self):
+        for settings in ({"runtime_file": str(self.root / "missing")},
+                         {"empty_runtime": True}):
+            with self.subTest(settings=settings):
+                result = self.package(**settings)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("AppImage runtime:", result.stderr)
+                self.assertFalse((self.root / "deploy.json").exists())
+                self.assertFalse(self.output.exists())
 
     def test_runner_extraction_still_checks_permissions(self):
         result = self.package(runner=True, binary_mode=0o764)

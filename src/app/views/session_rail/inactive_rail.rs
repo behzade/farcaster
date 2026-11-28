@@ -143,7 +143,6 @@ impl FarcasterApp {
                 self.notify_archived_session_rail(cx);
                 return;
             };
-            // A draft can replace its saved row at a different sort position.
             if session.is_some()
                 || (row.app_session_id > 0 && catalog.by_app_id(row.app_session_id).is_some())
             {

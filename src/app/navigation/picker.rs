@@ -239,6 +239,9 @@ impl FarcasterApp {
                 window.focused(cx)
             };
             if sheet_open {
+                if self.overlays.view.settings {
+                    self.close_sign_in_terminal(None, cx);
+                }
                 self.overlays.view.sessions = false;
                 self.overlays.view.run = false;
                 self.overlays.view.keybindings = false;

@@ -82,7 +82,6 @@ pub(crate) struct Colors {
 }
 
 impl Colors {
-    // Choice selection stays muted; action and status colors have other roles.
     pub(crate) fn selected_fill(self) -> Rgba {
         self.highlight
     }
@@ -96,8 +95,6 @@ impl Colors {
     }
 
     pub(crate) fn selection_background(self) -> Rgba {
-        // Text keeps its foreground during selection. Use the strongest tint
-        // that preserves readable text, including on light themes.
         let text = relative_luminance(self.text);
         for step in (0..=45).rev() {
             let fill = self.canvas.blend(self.link.alpha(step as f32 / 100.0));
@@ -716,8 +713,6 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     component.radius = theme.radius.max(theme.size(4.0));
     component.radius_lg = theme.radius.max(theme.size(10.0));
     component.shadow = true;
-    // Resolve every component color here so no state inherits the library preset.
-    // Buttons own their fills; primary also colors checked controls.
     component.colors = ThemeColor {
         accent: colors.highlight.into(),
         accent_foreground: colors.text.into(),

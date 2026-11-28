@@ -12,12 +12,14 @@ pub use core::{WorkerActivitySubscription, subscribe_worker_activity};
 mod profiles;
 pub use profiles::{HarnessProfile, HarnessProfiles, profile_id_from_locator};
 
-pub use adapter::model_display_name;
 pub use adapter::profile_data_environment_key;
 pub use adapter::project_shell_environment;
 #[cfg(feature = "test-support")]
 pub use adapter::set_test_project_environment;
-pub use adapter::{SignIn, SignInEvent, sign_in, sign_in_required, supports_sign_in};
+pub use adapter::{
+    SignIn, SignInEvent, refresh_login, sign_in, sign_in_methods, sign_in_required,
+    sign_in_with_method, supports_sign_in, terminal_sign_in,
+};
 pub use adapter::{account_capabilities, logout_account, read_accounts};
 pub use adapter::{
     annotate_history_message, app_shell_environment, apply_project_trust, available_access_modes,
@@ -35,6 +37,7 @@ pub use adapter::{
     supports_session_resume, supports_startup_command, supports_steering, validate_launch,
     validate_session_move, warm_session_history_for_profile, worker_factories,
 };
+pub use adapter::{cli_command_hint, model_display_name};
 pub use adapter::{delegated_worker_access_mode, worker_access_modes};
 pub use contract::WorkerStatus;
 pub use contract::extensions;

@@ -25,7 +25,6 @@ pub struct TaskSettings {
     pub access_mode: HarnessAccessMode,
 }
 
-/// Best-effort control of the current run. Safe to repeat as its state changes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RuntimeSignal {
     Abort,
@@ -285,7 +284,6 @@ pub enum RuntimeEvent {
     },
     WorkerSnapshot(agents::WorkerSnapshot),
     AgentActivityUpdated {
-        /// Native worker identity and the normalized catalog locator.
         key: crate::agent_activity::WorkerActivityKey,
         activity: AgentActivity,
     },
@@ -341,11 +339,8 @@ pub enum SavedHistory {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RuntimeSnapshot {
     pub connected: bool,
-    /// A complete session document can remain ready without a running harness.
     pub document_ready: bool,
-    /// Displayed from the local transcript, before any needed native reconciliation.
     pub saved_history: Option<SavedHistory>,
-    /// Source version for a complete, locally persisted history projection.
     pub transcript_stamp: Option<farcaster_storage::TranscriptStamp>,
     pub status: String,
     pub harness: Option<Backend>,
@@ -357,15 +352,12 @@ pub struct RuntimeSnapshot {
     pub prefill_model: Option<Model>,
     pub pending_initial_model: bool,
     pub prefill_thinking_level: Option<String>,
-    /// Last tier reported by this session, including an explicit default.
     pub observed_service_tier: Option<String>,
     pub prefill_service_tier: Option<String>,
     pub pending_initial_service_tier: bool,
     pub selected_session: Option<PathBuf>,
     pub conversation: Arc<ConversationState>,
-    /// Complete recent messages for display while the selected history is loading.
     pub history_tail: Option<Arc<crate::agents::HistoryPage<ConversationState>>>,
-    /// Adds locally saved prompts and cancellation IDs to the backend queue for display.
     pub prompt_queue: Option<Arc<crate::conversation::QueueState>>,
     pub models: Vec<Model>,
     pub thinking_levels: Vec<String>,
@@ -389,7 +381,6 @@ pub struct RuntimeSnapshot {
 }
 
 impl RuntimeSnapshot {
-    /// Coverage of the rows the actor can display while opening a document.
     pub fn history_coverage(&self) -> Option<agents::HistoryCoverage> {
         if !self.document_ready
             && self.status == "Loading history"

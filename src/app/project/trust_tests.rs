@@ -172,7 +172,6 @@ fn same_project_navigation_rechecks_trust_without_blocking_the_click(
                                 | RuntimeCommand::SelectSession { .. }
                         ))
                     );
-                    // Simulate the lock holder revoking the saved decision before it releases the lock.
                     std::fs::write(&file, "{}").unwrap();
                     std::fs::remove_dir(&lock).unwrap();
                     (row.path, original_draft)
