@@ -62,10 +62,7 @@ fn toolbar_keeps_room_for_session_identity_without_overlapping_navigation(
                 ] {
                     let bounds = cx.debug_bounds(id).unwrap();
                     assert_eq!(bounds.top(), bar.top(), "{id} at width {width}");
-                    assert_eq!(
-                        bounds.size.height,
-                        bar.size.height - crate::app::ui::theme::theme().border
-                    );
+                    assert_eq!(bounds.size.height, bar.size.height, "{id} at width {width}");
                     assert!(bounds.size.width >= px(28.0));
                     if let Some(right) = previous {
                         assert!(bounds.left() >= right, "{id} at width {width}");

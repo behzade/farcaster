@@ -538,6 +538,7 @@ fn submitting_to_an_archived_session_restores_only_its_record(cx: &mut gpui::Tes
                     let rows = vec![selected.clone(), sibling.clone()];
                     app.sessions.all = rows.clone().into();
                     app.sessions.visible = rows.into();
+                    app.notify_session_rail(cx);
                     app.switch_composer_target(
                         crate::sessions::session_buffer(selected.harness, &path),
                         window,

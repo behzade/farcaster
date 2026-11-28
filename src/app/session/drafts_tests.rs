@@ -89,6 +89,7 @@ fn draft_archive_sends_durable_intent_without_a_ui_locator(cx: &mut gpui::TestAp
                                     .expect("runtime binding");
                             }
                             app.sessions.drafts.insert(0, draft.clone());
+                            app.notify_session_rail(cx);
                             while runtime.try_recv_command().is_some() {}
                             app.request_draft_archive(draft.id.clone(), archived, window, cx);
                             assert_eq!(app.sessions.drafts[0].archived, archived);
