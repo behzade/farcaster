@@ -33,6 +33,26 @@ pub(crate) fn surface_shadow() -> Vec<BoxShadow> {
     ]
 }
 
+pub(crate) fn control_shadow() -> Vec<BoxShadow> {
+    let dark = appearance() == Appearance::Dark;
+    vec![
+        BoxShadow {
+            color: hsla(0.0, 0.0, 0.0, if dark { 0.30 } else { 0.09 }),
+            offset: gpui::point(px(0.0), px(1.0)),
+            blur_radius: px(2.0),
+            spread_radius: px(0.0),
+            inset: false,
+        },
+        BoxShadow {
+            color: hsla(0.0, 0.0, 0.0, if dark { 0.16 } else { 0.05 }),
+            offset: gpui::point(px(0.0), px(0.0)),
+            blur_radius: px(1.0),
+            spread_radius: px(0.0),
+            inset: false,
+        },
+    ]
+}
+
 pub(crate) fn floating_surface() -> Div {
     div()
         .rounded(surface_radius())

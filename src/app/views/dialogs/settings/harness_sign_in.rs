@@ -159,6 +159,7 @@ pub(in crate::app::views) fn render(
                     });
                 },
             )
+            .shadow(crate::app::ui::primitives::control_shadow())
         };
         let card = div()
             .debug_selector(move || format!("sign-in-card-{index}"))

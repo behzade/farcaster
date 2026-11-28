@@ -659,6 +659,7 @@ pub(super) fn settings(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> 
                                 true,
                                 move |_, cx| cx.open_url(&url),
                             )
+                            .shadow(crate::app::ui::primitives::control_shadow())
                             .icon(AppIcon::ArrowSquareOut)
                             .into_any_element(),
                         );
@@ -688,6 +689,7 @@ pub(super) fn settings(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> 
                                     });
                                 },
                             )
+                            .shadow(crate::app::ui::primitives::control_shadow())
                             .icon(AppIcon::SignOut)
                             .into_any_element(),
                         );

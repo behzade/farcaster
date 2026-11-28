@@ -30,8 +30,8 @@ pub(crate) use button::{
     prominent_icon_button,
 };
 pub(crate) use content::{
-    DiffColumns, change_group_label, change_path_prefix, diff_count_columns,
-    folder_change_summary, panel, section_heading, sidebar_heading,
+    DiffColumns, change_group_label, change_path_prefix, diff_count_columns, folder_change_summary,
+    panel, section_heading, sidebar_heading,
 };
 pub(crate) use context_menu::ContextMenuTrigger;
 pub(crate) use delete::DeleteButton;
@@ -52,7 +52,8 @@ pub(crate) use search::SearchField;
 pub(crate) use selection::SelectionStyle;
 pub(crate) use stack::{PanelSlot, panel_bounds, panel_space};
 pub(crate) use surface::{
-    RaisedEdge, floating_surface, raised_edge_shadow, surface_radius, surface_shadow,
+    RaisedEdge, control_shadow, floating_surface, raised_edge_shadow, surface_radius,
+    surface_shadow,
 };
 pub(crate) use textarea::{create_submit_textarea, submit_textarea};
 pub(crate) use tooltip::{AppTooltip, AppTooltips, init_tooltips, tooltip_overlay};
