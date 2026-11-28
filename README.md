@@ -2,115 +2,82 @@
 
 # Farcaster
 
-Farcaster is a native, keyboard-first workspace for running and coordinating coding agents across harnesses, with an embedded terminal and editor support.
+A native, keyboard-first workspace for running and coordinating coding agents across harnesses, built around embedded Neovim and a terminal.
+
+[Releases](https://github.com/behzade/farcaster/releases) · [Harness support](docs/harnesses.md) · [Shortcuts](docs/shortcuts.md) · [License](LICENSE)
 
 ![Farcaster showing concurrent agent sessions, a conversation, and changed files](https://github.com/user-attachments/assets/a8adf3c9-5512-4485-9455-dfff8c2eb4f9)
 
-## Why
+The agent space moves fast, and switching harnesses shouldn't mean relearning the interface or leaving Neovim behind. Farcaster puts your existing harnesses and subscriptions into one keyboard-driven workspace (with support for other terminal and external editors too).
 
-The agent space is changing fast, but switching harnesses shouldn't mean relearning the interface or leaving your editor behind. I wanted to use different agents and subscriptions with the same controls, and keep Neovim at the center of my workflow.
+## Supported Harnesses
 
-## Is this another agent harness?
+Farcaster is in daily use, though it is still early and bugs or missing features are expected.
 
-No. Farcaster brings your existing harnesses and subscriptions into one UI. It builds around them rather than competing with them.
+- [Codex](https://github.com/openai/codex) (`codex-cli` app server)
+- [Pi](https://github.com/badlogic/pi-mono) (Pi RPC)
+- [OpenCode](https://opencode.ai/) (v2+ `opencode` server)
+- [Cursor](https://cursor.com/cli) (Cursor SDK)
+- [Claude Code](https://github.com/anthropics/claude-code) (`claude -p`)
+- Antigravity (`agy` ACP)
 
-## What does this app give you?
-
-- A native, keyboard-first desktop app.
-- An agent, editor, and terminal for each session.
-- [Editor support](#editors), with deeper [Neovim integration](#neovim) for sending context to agents.
-- [Shared tools](#tools) for coordinating workers and tracking tasks across harnesses.
-
-## Editors
-
-Use your preferred terminal editor inside Farcaster, or open files in an external editor. Clicking on a changed file opens it in your chosen editor. Neovim has the deepest integration.
-
-### Neovim
-
-![Reviewing Rust code in Farcaster's embedded Neovim editor](https://github.com/user-attachments/assets/4c4c6bef-0f41-4059-8cf2-84d4ad8eb945)
-
-Each chat session has its own Neovim and terminal tab, using libghostty: `agent | editor | terminal`.
-
-- You can open the transcript itself in a temp Markdown file in Neovim to copy/select things.
-- You can send messages with context from Neovim (normal mode -> line context, select -> selected context) to the current session, another existing session or a new session to fire off a new task.
-
-## Tools
-
-Farcaster comes with an optional MCP server (can be turned off in settings) that provides the following capabilities:
-
-- **Workgraph:** A set of tools (`workgraph_*`) for creating tasks and dependencies that persist beyond any one agent session.
-- **Worker Tools:** Tools for creating and communicating with agent sessions across harnesses, providers, and models.
-
-  ![A main agent coordinating workers across harnesses and models in Farcaster](https://github.com/user-attachments/assets/6fe3519d-b46a-41c9-a499-67474aeb3500)
-
-- <a name="review"></a>**Review:** Agents present files, line ranges, and notes through `submit_review`. Open files in your chosen editor; Neovim also provides quickfix navigation.
-
-## Current status
-
-I have been using Farcaster daily for a while. It's still early, and bugs/missing features are expected. The current list of supported harnesses is as follows:
-
-- [Codex](https://github.com/openai/codex) (through codex-cli app server)
-- [Pi](https://github.com/badlogic/pi-mono) (through Pi RPC)
-- [OpenCode](https://opencode.ai/) (version 2+, through the `opencode` server executable)
-- [Cursor](https://cursor.com/cli) (through Cursor CLI ACP adapter)
-- [Claude Code](https://github.com/anthropics/claude-code) (through `claude -p`)
-- Antigravity (through its ACP server)
-
-See the [harness feature table](docs/harnesses.md) for capabilities and usage notes.
-
-In theory, any harness supporting ACP could be integrated through the app's ACP adapter, but most harnesses support a wider range of features than ACP.
+See the [harness feature table](docs/harnesses.md) for per-harness capabilities and caveats.
 
 ## Getting Started
 
-Download the latest build for your platform from the [releases page](https://github.com/behzade/farcaster/releases). Builds for macOS ARM64 and x86_64 Linux are currently available.
+Download the latest build from [Releases](https://github.com/behzade/farcaster/releases), and make sure your chosen harness (installed and signed in) and editor launcher are available in your environment.
 
-On Linux, make the downloaded AppImage executable with `chmod +x /path/to/Farcaster.AppImage`, even when using `appimage-run`, so desktop launchers can resolve its app icon.
+- **macOS (ARM64):** The app is ad hoc signed and not notarized. If macOS blocks launch, allow it via System Settings → Privacy & Security → Open Anyway ([Apple guide](https://support.apple.com/102445)).
+- **Linux (x86_64):** Available as a `.deb` package or AppImage. For the AppImage, mark it executable (`chmod +x /path/to/Farcaster.AppImage`) even when using `appimage-run` so desktop launchers can resolve its icon.
+- **Nix (Linux x86_64 / aarch64):** With flakes enabled, install or run directly (builds from source without a binary cache):
 
-The macOS app uses ad hoc signing; it is not notarized.
-If macOS blocks the app because it is not notarized and you trust the download, follow [Apple's instructions](https://support.apple.com/102445) to allow it through System Settings → Privacy & Security → Open Anyway.
+  ```sh
+  nix profile install github:behzade/farcaster
+  # or run without installing:
+  nix run github:behzade/farcaster
+  ```
 
-You'll also need the agent harness you want to use installed and signed in, and your chosen editor or its command-line launcher available in your environment.
+## Features
 
-### Nix (Linux)
+### Neovim (and other editors)
 
-On x86_64 or aarch64 Linux with Nix flakes enabled, install Farcaster into your user profile:
+![Reviewing Rust code in Farcaster's embedded Neovim editor](https://github.com/user-attachments/assets/4c4c6bef-0f41-4059-8cf2-84d4ad8eb945)
 
-```sh
-nix profile install github:behzade/farcaster
-```
+Each session has its own embedded Neovim and terminal tab powered by `libghostty` (`agent | editor | terminal`):
 
-Or run it without installing:
+- Open the transcript as a temporary Markdown buffer in Neovim to navigate, select, and copy.
+- Send prompts with line or visual-selection context from Neovim to the current session, another session, or a new task.
 
-```sh
-nix run github:behzade/farcaster
-```
+Not using Neovim? You can swap in another terminal editor inside Farcaster or open changed files in an external editor.
 
-The Nix package builds from source unless a prebuilt result is available from a configured binary cache.
+### Coordination Tools (MCP)
 
-## Voice
+Farcaster includes an optional local MCP server (toggleable in Settings) shared across harnesses:
 
-Voice uses Hex to send spoken prompts from chat or the editor, including code context from the editor. Enable it in Settings → General.
+- **Workgraph:** Persistent tasks and dependencies (`workgraph_*`) that outlive any single session.
+- **Worker Tools:** Spawn and message worker sessions across harnesses, providers, and models.
 
-- Keep Hex desktop running with its local API available. Linux requires Hex 3.3+; macOS requires the Rust version of Hex.
-- Spoken replies use `espeak-ng` on Linux and the built-in `say` on macOS. Install `espeak-ng` separately for AppImage or Arch; Debian recommends it and Nix includes it.
-- If Voice is unavailable, open Hex and reopen Settings. If replies are silent, check `espeak-ng` is on Farcaster's `PATH`; replies are only read aloud outside chat.
+  ![A main agent coordinating workers across harnesses and models in Farcaster](https://github.com/user-attachments/assets/6fe3519d-b46a-41c9-a499-67474aeb3500)
 
-See [voice shortcuts](docs/shortcuts.md#voice) for controls.
+- <a name="review"></a>**Review:** Agents present files, line ranges, and notes via `submit_review`. Open them in your chosen editor, with quickfix navigation in Neovim.
+
+### Voice
+
+Send spoken prompts (including code context from the editor) using Hex by enabling Voice in Settings → General. See [voice shortcuts](docs/shortcuts.md#voice) for controls.
+
+- Requires Hex desktop running with its local API (Linux: Hex 3.3+; macOS: the Rust version of Hex).
+- Spoken replies (when outside chat) use `say` on macOS and `espeak-ng` on Linux (included in Nix, recommended by Debian, install separately for AppImage/Arch).
 
 ## Development
 
-Found a bug, needed a platform-specific fix, or want to extend Farcaster? Bug reports and focused pull requests are welcome. For larger features, open an issue first. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Bug reports and focused pull requests are welcome; open an issue first for larger features. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-The repository includes a Nix development shell. To build and run from a local checkout:
+Build and run from a local checkout with the included Nix dev shell:
 
 ```sh
 nix develop
 cargo run --locked --bin farcaster
 ```
-
-## Why build around harnesses?
-
-After a few attempts (tried to fork and extend codex-cli first, then tried building on Pi) I realized that the harness space is very fast moving, with a lot of work and innovation happening in the space. So it would be better to position the app in a way that benefits from said improvements instead of competing with them.
 
 ## Documentation
 
@@ -119,4 +86,4 @@ After a few attempts (tried to fork and extend codex-cli first, then tried build
 
 ## Thanks
 
-Thanks to [Zed](https://zed.dev/) for [GPUI](https://gpui.rs/), [GPUI Component](https://github.com/longbridge/gpui-component) for the UI components, and [T3 Code](https://github.com/pingdotgg/t3code) for the UI inspiration.
+Thanks to [Zed](https://zed.dev/) for [GPUI](https://gpui.rs/), [GPUI Component](https://github.com/longbridge/gpui-component), and [T3 Code](https://github.com/pingdotgg/t3code) for the UI inspiration. Licensed under [GPL-3.0-or-later](LICENSE).
