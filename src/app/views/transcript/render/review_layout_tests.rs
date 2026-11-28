@@ -120,7 +120,6 @@ fn restored_history_places_reviews_after_chunked_final_responses_without_duplica
         json!({"role":"user","content":[{"type":"text","text":"Next"}]}),
     ]);
     let rows = project_conversation_rows(&state);
-    // The first draw needs the whole history even when the dirty hint names its tail.
     let cold = update_conversation_rows(
         &PersistentVec::default(),
         &ConversationState::default(),

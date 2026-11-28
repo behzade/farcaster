@@ -46,7 +46,6 @@ impl StateStore {
             .map_err(|error| format!("load selected session: {error}"))
     }
 
-    /// Save a draft snapshot while preserving the archive intent already in the database.
     pub fn save_draft_with_identity(
         &mut self,
         mut draft: DraftSession,
@@ -67,7 +66,6 @@ impl StateStore {
                 .unwrap_or_default();
         }
         if draft.app_session_id > 0 {
-            // A queued snapshot can outlive draft promotion or a previous archive intent.
             update_draft(&tx, &draft)?;
         } else {
             draft.app_session_id = save_draft(&tx, &draft)?;
@@ -77,7 +75,6 @@ impl StateStore {
             .ok_or_else(|| "The chat has no saved identity".to_owned())
     }
 
-    /// Resolve a confirmed draft's project and any bound session before stopping its actors.
     pub fn draft_archive_session(
         &self,
         id: sessions::AppSessionId,

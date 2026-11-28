@@ -137,6 +137,7 @@ pub(super) fn identity(value: &Value, provider: &str) -> Option<AccountIdentity>
         label: Some(provider.into()),
         workspace: text("organization"),
         plan: text("subscriptionType"),
+        ..Default::default()
     })
 }
 

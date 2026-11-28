@@ -304,7 +304,6 @@ fn chat_background_clicks_return_to_composer_without_taking_input_focus(
             cx.simulate_input("still typing");
             cx.update(|_, cx| assert_eq!(input.read(cx).value().as_ref(), "still typing"));
 
-            // An explicit input keeps its keyboard ownership.
             let search = cx.update(|_, cx| app.read(cx).navigation.search.clone());
             cx.update(|window, cx| window.draw(cx).clear(cx));
             let search_bounds = cx.update(|_, cx| search.read(cx).input_bounds());
@@ -324,7 +323,6 @@ fn chat_background_clicks_return_to_composer_without_taking_input_focus(
                 assert_eq!(input.read(cx).value().as_ref(), "still typing");
             });
 
-            // Only Chat redirects the fallback; native surfaces retain it.
             for surface in [
                 crate::app::AppSurface::Editor,
                 crate::app::AppSurface::Terminal,
@@ -501,7 +499,6 @@ fn escape_signals_steering_before_gpui_resolves_the_abort_sequence(cx: &mut gpui
             );
             assert!(!cx.update(|window, _| window.has_pending_keystrokes()));
 
-            // A single Escape expires through GPUI, without a second steer or abort.
             press(cx);
             assert_eq!(signals(), [RuntimeSignal::ApplySteering]);
             cx.run_until_parked();
@@ -512,7 +509,6 @@ fn escape_signals_steering_before_gpui_resolves_the_abort_sequence(cx: &mut gpui
             press(cx);
             assert_eq!(signals(), [RuntimeSignal::ApplySteering]);
 
-            // Sidebar focus cancels the pending chat sequence and owns later keys.
             cx.update(|window, cx| {
                 let focus = app.read(cx).navigation.search_focus.clone();
                 focus.focus(window, cx);
@@ -527,7 +523,6 @@ fn escape_signals_steering_before_gpui_resolves_the_abort_sequence(cx: &mut gpui
                 assert!(!cx.update(|window, _| window.has_pending_keystrokes()));
             }
 
-            // Focus changes cancel GPUI's prefix; project work owns its Escape.
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
                     app.workspace.surface = crate::app::AppSurface::Work;
@@ -550,7 +545,6 @@ fn escape_signals_steering_before_gpui_resolves_the_abort_sequence(cx: &mut gpui
             assert!(signals().is_empty(), "project work must not steer or abort");
             assert!(!cx.update(|window, _| window.has_pending_keystrokes()));
             cx.update(|_, cx| assert_eq!(app.read(cx).workspace.surface, AppSurface::Chat));
-            // Embedded editor/terminal input must receive each Escape immediately.
             let native = cx.update(|window, cx| {
                 let focus = app.read(cx).navigation.chat.focus.clone();
                 let native =

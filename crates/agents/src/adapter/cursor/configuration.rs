@@ -182,8 +182,6 @@ pub(super) fn restore(models: &[Model], saved: &Value) -> Result<Model, String> 
     Ok(model)
 }
 
-// The central catalog owns persistence and reuse; only this adapter interprets
-// its model request data. Missing data marks old caches for a one-time refresh.
 pub(super) fn from_catalog(catalog: &crate::ConfigurationCatalog) -> Option<Vec<Model>> {
     if catalog.models.is_empty() {
         return None;

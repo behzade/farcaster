@@ -72,7 +72,6 @@ impl BackendAdapter for CodexAdapter {
         }
     }
     fn fork_source(&self, path: &Path, profile: Option<&crate::HarnessProfile>) -> Option<String> {
-        // A custom executable without a saved data directory may use an unknown home.
         let directory = match profile {
             Some(profile) => Some(profile.data_directory.as_deref()?),
             None => None,
@@ -101,7 +100,7 @@ impl BackendAdapter for CodexAdapter {
         let command = super::super::configuration_launch(config, Backend::Codex)?;
         super::load_configuration(&command, project).and_then(super::super::configuration_catalog)
     }
-    fn steering_boundary(&self) -> SteeringBoundary {
+    fn steering_boundary(&self, _config: &crate::AgentLaunchConfig) -> SteeringBoundary {
         SteeringBoundary::Native
     }
     fn supports_auto_title_generation(&self) -> bool {

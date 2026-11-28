@@ -176,7 +176,6 @@ pub struct TranscriptItem {
     pub kind: TranscriptKind,
     pub label: String,
     pub text: String,
-    // Persist image references through the storage attachment store.
     #[serde(skip)]
     pub images: Arc<Vec<Arc<EncodedImage>>>,
     pub files: Arc<Vec<FileAttachment>>,

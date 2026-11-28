@@ -831,7 +831,6 @@ fn cold_preview_uses_the_active_branch_and_keeps_owned_payloads_in_full_history(
 fn legacy_preview_starts_at_a_user_after_any_unresolved_row_dependency() {
     use serde_json::json;
 
-    // Without a leaf ID the full loader uses file order, including entries with IDs.
     let entries = [
         json!({"type":"message","id":"first","message":{"role":"assistant","content":[{"type":"toolCall","id":"earlier"}]}}),
         json!({"type":"message","message":{"role":"user","content":"first user"}}),
@@ -878,7 +877,6 @@ fn complete_pi_page_keeps_every_active_message_through_the_exact_cap() {
     let page = recent_messages(frames.as_bytes(), true).unwrap();
     assert_eq!(page.coverage, crate::HistoryCoverage::Complete);
     assert_eq!(page.content, project_display_history(&entries));
-    // With an unread prefix there is no user boundary in this same window.
     assert!(recent_messages(frames.as_bytes(), false).is_none());
 }
 

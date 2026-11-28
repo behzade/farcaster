@@ -908,7 +908,6 @@ fn child_activity_event_invalidates_and_renders_the_real_run_sidebar(
             });
             cx.update(|window, cx| {
                 app.update(cx, |app, cx| {
-                    // This snapshot confirms a persisted selection. The offline harness starts on a draft.
                     app.sessions.selected_draft = None;
                     app.open_run_sheet(window, cx);
                     app.drain_runtime(cx);

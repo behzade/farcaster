@@ -125,7 +125,6 @@ impl Supervisor {
                             .catalog_sessions
                             .apply_archive_result(row, requested_path, request.archived)
                             .unwrap_or_else(|| {
-                                // A draft may bind before its first catalog update.
                                 let mut session = row.clone();
                                 if let Some(running) = self.live_catalog_running_for(
                                     &session,
@@ -172,7 +171,6 @@ impl Supervisor {
                         activity,
                     });
                 } else if let Some(catalog) = self.actors.get(&self.catalog_key) {
-                    // The worker can bind before its session or its parent reaches this catalog.
                     catalog.send(RuntimeCommand::RefreshSessions);
                 }
             }

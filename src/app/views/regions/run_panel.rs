@@ -178,7 +178,6 @@ impl Render for RunPanelView {
             .is_some_and(|path| selected.as_ref() == Some(&path));
         let reveal_selected = std::mem::take(&mut self.reveal_selected);
         let reveal_worker = (self.last_selected != selected || reveal_selected) && !preserve_scroll;
-        // The main agent sits outside the worker list and has no scroll anchor.
         if reveal_worker
             && self.expanded_workers_root.is_none()
             && root.is_some()

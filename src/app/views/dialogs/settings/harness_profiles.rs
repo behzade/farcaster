@@ -11,10 +11,17 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
     };
     let mut content = div().flex().flex_col().gap(theme().space.sm).child(
         div()
+            .w_full()
             .flex()
             .items_center()
+            .justify_between()
             .gap(theme().space.sm)
-            .child(setting_label("Harness profiles", ""))
+            .child(
+                div()
+                    .text_size(theme().type_scale.reading)
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .child("Harness profiles"),
+            )
             .child(
                 settings_control(
                     "toggle-harness-profile-form",
@@ -25,11 +32,14 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
                 .aria_expanded(adding)
                 .w_auto()
                 .px(theme().space.sm)
-                .child(if adding { "Close form" } else { "Add profile" })
+                .gap(theme().space.xs)
+                .bg(theme().colors.surface)
+                .text_color(theme().colors.text)
                 .child(app_icon(
                     if adding { AppIcon::X } else { AppIcon::Plus },
-                    AppIconSize::Control,
+                    AppIconSize::Inline,
                 ))
+                .child(if adding { "Close form" } else { "Add profile" })
                 .on_click(move |_, window, cx| {
                     let _ = toggle.update(cx, |this, cx| {
                         this.settings.adding_harness_profile = !adding;
@@ -134,7 +144,7 @@ fn add_form(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement 
             button(
                 format!("profile-backend-{backend}"),
                 crate::agents::backend_display_name(backend),
-                ButtonTone::Quiet,
+                ButtonTone::Neutral,
                 true,
                 move |window, cx| {
                     let _ = select.update(cx, |this, cx| {
@@ -142,6 +152,7 @@ fn add_form(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement 
                     });
                 },
             )
+            .shadow(crate::app::ui::primitives::control_shadow())
             .selected(selected)
             .toggled(selected)
             .selection_style(selected),

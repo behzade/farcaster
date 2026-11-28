@@ -63,7 +63,6 @@ impl StateInner {
     fn constrained_scroll(&self, y: Pixels) -> Pixels {
         let end = self.maximum_scroll();
         let start = if let Some(first_safe) = self.loading_boundary {
-            // Allow one viewport of older history even when the whole suffix is short.
             self.heights.prefix(first_safe) - self.viewport_height
         } else {
             px(0.0)
@@ -292,7 +291,6 @@ impl TranscriptListState {
     pub(crate) fn take_history_handoff_position(&self) -> Option<(ListOffset, bool)> {
         let mut state = self.0.borrow_mut();
         let mut top = state.painted_history_top?;
-        // Selection can finish between the wheel event and the next layout.
         if state.apply_pending_scroll() {
             state.resume_tail_at_end();
             top = state.logical_scroll_top();
@@ -305,8 +303,6 @@ impl TranscriptListState {
         self.0.borrow_mut().painted_history_top = Some(offset);
     }
 
-    /// Move the measured heights and scroll offset while keeping the active
-    /// list's event handler bound to its window. Pending input stays local.
     pub(crate) fn move_layout_to(&self, other: &Self) {
         let mut source = self.0.borrow_mut();
         let mut dest = other.0.borrow_mut();
@@ -408,8 +404,6 @@ impl TranscriptListState {
     }
 
     pub(crate) fn restore_scroll(&self, offset: ListOffset) {
-        // Measure the anchor row before applying its saved offset. Its initial
-        // height hint may describe a collapsed tool or a different window width.
         self.scroll_to(ListOffset {
             item_ix: offset.item_ix,
             offset_in_item: px(0.0),
@@ -421,7 +415,6 @@ impl TranscriptListState {
         let mut state = self.0.borrow_mut();
         let index = offset.item_ix.min(state.heights.len());
         if state.pending_restore.is_some() {
-            // A row update may remap the anchor before its first paint.
             state.pending_restore = Some(offset);
             state.scroll_y = state.heights.prefix(index);
         } else {
@@ -678,8 +671,6 @@ impl Element for TranscriptList {
         let boundary = loading_boundary.unwrap_or(0);
         let (scroll_y, following_tail, visible_range) = loop {
             if self.state.is_following_tail() {
-                // The end is known. Measure upward from it until the viewport is
-                // full, so an offscreen table never delays painting the last row.
                 let end = self.state.0.borrow().heights.len();
                 let mut start = end;
                 let mut remaining = bounds.size.height;
@@ -775,8 +766,6 @@ impl Element for TranscriptList {
         });
         let history_top = if visible_range.is_empty() {
             let state = self.state.0.borrow();
-            // The entire viewport can contain the loading label. The first safe
-            // row below it still identifies the same position in the full history.
             (boundary < state.heights.len()).then(|| state.logical_scroll_top())
         } else {
             Some(ListOffset {
@@ -802,14 +791,11 @@ impl Element for TranscriptList {
             }
         });
         let hitbox = if self.state.is_history_tail() {
-            // Preview row keys are local to the suffix. Block links, disclosures,
-            // context menus and text selection until the full list owns input.
             window.insert_hitbox(bounds, HitboxBehavior::BlockMouse)
         } else {
             hitbox
         };
 
-        // Restoration or resizing can reach the tail without queued scrolling.
         if (viewport_scrolled || following_tail != following_before_layout)
             && let Some(handler) = handler
         {
@@ -863,16 +849,12 @@ impl Element for TranscriptList {
             prepaint.paint_rows(bounds, window, cx, self.switch_trace.as_ref());
             return;
         }
-        // Rich-text selection may focus its own handle. Keep the keyboard owner
-        // that held focus when the user started selecting transcript text.
         let focus_state = self.state.clone();
         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
             if phase != DispatchPhase::Capture || !bounds.contains(&event.position) {
                 return;
             }
             if event.button != MouseButton::Left {
-                // Context menus own focus explicitly; rich text must not take it
-                // through GPUI's default mouse-down focus on any button.
                 window.prevent_default();
                 return;
             }
@@ -896,7 +878,6 @@ impl Element for TranscriptList {
                 let jitter = !state.selection_moved;
                 drop(state);
                 if jitter {
-                    // Keep pointer jitter from turning a link click into a selection.
                     cx.stop_propagation();
                 }
             }
@@ -1010,8 +991,6 @@ impl Element for TranscriptList {
 }
 
 fn restore_selection_focus(focus: Option<gpui::FocusHandle>, window: &mut Window, cx: &mut App) {
-    // Base queues participant focus during bubbling. Queue the restoration
-    // again so it runs after that callback, even for double and triple clicks.
     window.defer(cx, move |window, cx| {
         window.defer(cx, move |window, cx| {
             if let Some(focus) = focus {

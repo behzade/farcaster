@@ -154,7 +154,6 @@ pub(super) fn image_card(
     )
 }
 
-// Tool output gets a preview and a purpose caption; upload/composer cards stay compact.
 pub(super) fn image_thumbnail(
     id: impl Into<gpui::ElementId>,
     image: Arc<Image>,

@@ -91,8 +91,6 @@ impl HistoryRequest<'_> {
                                         == Some(saved)
                                 })
                     };
-                    // A catalog refresh can be metadata-only. If its native source is
-                    // unchanged, keep the provider out of the document read as well.
                     if selection || source_matches(&page) {
                         let full = if page.messages.len() == page.total {
                             Ok(Some(page))
@@ -129,7 +127,7 @@ impl HistoryRequest<'_> {
                 }
                 Ok(None) => {}
                 Err(error) => {
-                    expected_revision = None; // A failed read cannot authorize a replacement.
+                    expected_revision = None;
                     zlog::warn!("Read saved conversation: {error}");
                 }
             }
@@ -180,7 +178,6 @@ impl HistoryRequest<'_> {
                     repo.restore_transcript_links(session, &mut history.messages)?;
                 }
                 Ok(None) => {
-                    // A live writer or a newer import won while this backend was reading.
                     if let Some(newer) = repo.load_transcript(session, None)? {
                         let stamp = newer.stamp;
                         self.send(HistoryUpdate::Saved {

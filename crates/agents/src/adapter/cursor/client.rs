@@ -1,4 +1,3 @@
-//! Cursor's sdk.v1 Connect/JSON protocol (cursor/sdk-bridge v1.0.35).
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{SocketAddr, TcpStream},

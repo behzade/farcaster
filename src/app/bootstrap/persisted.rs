@@ -123,7 +123,6 @@ pub(super) fn load(
     drop(draft_timing);
 
     if initial_session.is_some() && initial_draft.app_session_id > 0 {
-        // The selected draft has become a chat; keep its saved composer under the chat identity.
         match crate::app::persistence::open()
             .and_then(|mut store| store.remove_draft(&initial_draft.id))
         {

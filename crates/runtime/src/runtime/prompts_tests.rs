@@ -1080,7 +1080,6 @@ fn escape_signals_require_steering_and_tolerate_transport_rejection() -> Result<
     use crate::runtime::RuntimeSignal;
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let (mut owner, _, commands) = held_acks_runtime(temp.path())?;
-    // A running turn or follow-up alone must not make Escape interrupt it.
     conversation_mut(&mut owner.snapshot)
         .queue
         .follow_up

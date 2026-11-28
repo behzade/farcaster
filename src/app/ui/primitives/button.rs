@@ -18,8 +18,6 @@ use crate::{
 
 type ButtonPress = dyn Fn(&mut Window, &mut App);
 
-// Component buttons already have stable ids and retain this interactivity
-// when rendering. Adapt that same node, without adding a layout/AX wrapper.
 pub(super) struct Accessible<T>(pub T);
 
 impl<T: gpui::InteractiveElement> gpui::InteractiveElement for Accessible<T> {
@@ -33,8 +31,6 @@ pub(super) fn on_accessible_click<T: gpui::InteractiveElement>(
     control: T,
     press: impl Fn(&mut Window, &mut App) + 'static,
 ) -> T {
-    // Read the rendered node, so a later `.disabled(...)` or loading state
-    // also blocks an AX press. No action is allowed before its first paint.
     let enabled = Rc::new(Cell::new(false));
     let rendered = enabled.clone();
     Accessible(control)
@@ -79,8 +75,6 @@ pub(crate) fn on_press_button(
 }
 
 fn press_accessibly(press: &ButtonPress, window: &mut Window, cx: &mut App) {
-    // AX clients can operate background windows. Press the control without
-    // activating the app; AppKit handles activation for real pointer input.
     press(window, cx);
     crate::app::ui::accessibility::refresh_hidden_accessibility(window, cx);
 }
@@ -204,7 +198,6 @@ pub(crate) fn icon_button_with_size(
     })
 }
 
-/// Native accessibility presses must not depend on pointer position or hit testing.
 pub(crate) fn on_press_control(
     control: Stateful<Div>,
     on_press: impl Fn(&mut Window, &mut App) + 'static,

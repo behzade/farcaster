@@ -621,8 +621,6 @@ impl Render for WorkGraphBoardView {
     }
 }
 
-// Initial navigation reads the local snapshot before showing the view. Subsequent
-// refreshes keep that snapshot visible while reading updates off the UI thread.
 fn read_plan(
     store: &crate::app::persistence::SharedStateStore,
     project: &std::path::Path,

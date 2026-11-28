@@ -276,8 +276,6 @@ pub(super) fn tool_summary(item: &TranscriptItem) -> String {
 }
 
 fn command_label(command: &str) -> String {
-    // Let the wrapped row, rather than the 96-character activity summary,
-    // determine where commands wrap. Bound work for very large scripts.
     let mut chars = command.trim().chars();
     let mut preview: String = chars.by_ref().take(512).collect();
     if chars.next().is_some() {

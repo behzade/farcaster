@@ -34,10 +34,11 @@ impl CatalogState {
 fn status_label(status: WorkStatus) -> Div {
     div()
         .text_size(theme().type_scale.caption)
+        .font_weight(FontWeight::MEDIUM)
         .text_color(match status {
             WorkStatus::Done => theme().colors.success,
-            WorkStatus::Active => theme().colors.accent,
-            WorkStatus::Blocked => theme().colors.warning,
+            WorkStatus::Active => theme().colors.warning,
+            WorkStatus::Blocked => theme().colors.error,
             WorkStatus::Ready => theme().colors.muted,
         })
         .child(if status == WorkStatus::Done {
@@ -154,14 +155,14 @@ impl WorkGraphBoardView {
             || self.project.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
         );
-        let toolbar = div()
-            .flex_none()
-            .px(theme().space.md)
-            .py(theme().space.sm)
+        let filters = div()
             .flex()
             .flex_wrap()
             .items_center()
-            .gap(theme().space.xs)
+            .gap(theme().size(2.0))
+            .p(theme().size(2.0))
+            .rounded(theme().size(6.0))
+            .bg(theme().colors.canvas)
             .children(
                 [
                     (None, "All"),
@@ -177,10 +178,11 @@ impl WorkGraphBoardView {
                         .filter(|row| filter.is_none_or(|filter| filter == row.status))
                         .count();
                     let entity = entity.clone();
+                    let selected = self.catalog.filter == filter;
                     button(
                         format!("plan-filter-{label}"),
                         format!("{label} {count}"),
-                        if self.catalog.filter == filter {
+                        if selected {
                             ButtonTone::Neutral
                         } else {
                             ButtonTone::Quiet
@@ -195,8 +197,18 @@ impl WorkGraphBoardView {
                             })
                         },
                     )
+                    .when(!selected, |btn| btn.text_color(theme().colors.muted))
                 }),
-            )
+            );
+        let toolbar = div()
+            .flex_none()
+            .px(theme().space.md)
+            .py(theme().space.sm)
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(theme().space.sm)
+            .child(filters)
             .child(div().flex_1())
             .when(
                 self.catalog.filter.is_none()
@@ -205,11 +217,11 @@ impl WorkGraphBoardView {
                     toolbar.child(button(
                         "plans-toggle-done",
                         if self.catalog.hide_done {
-                            "Show completed plans"
+                            "Show completed"
                         } else {
-                            "Hide completed plans"
+                            "Hide completed"
                         },
-                        ButtonTone::Quiet,
+                        ButtonTone::Neutral,
                         true,
                         move |_, cx| {
                             collapse.update(cx, |this, cx| {
@@ -230,7 +242,7 @@ impl WorkGraphBoardView {
                 } else {
                     "Sort: Status"
                 },
-                ButtonTone::Quiet,
+                ButtonTone::Neutral,
                 true,
                 move |_, cx| {
                     sort.update(cx, |this, cx| {
@@ -248,12 +260,14 @@ impl WorkGraphBoardView {
             .flex()
             .flex_col()
             .px(theme().space.md)
+            .pb(theme().space.md)
             .gap(theme().space.xs)
             .child(
                 div()
                     .flex()
                     .flex_none()
                     .gap(theme().space.sm)
+                    .px(theme().space.sm)
                     .py(theme().space.xs)
                     .child(caption("Plan / dependencies").flex_1())
                     .child(caption("Status / progress").w(theme().size(120.0))),

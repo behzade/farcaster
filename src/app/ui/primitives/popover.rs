@@ -106,7 +106,6 @@ impl RenderOnce for Popover {
         let panel = window.use_keyed_state((self.id.clone(), "panel"), cx, |_, _| {
             popup::PopupState::default()
         });
-        // Ordinary GPUI windows, including the modal panel, already draw above the editor.
         if !popup::uses_native_popups(window, cx) || panel.read(cx).failed {
             popup::prepare(
                 panel,
@@ -174,7 +173,6 @@ impl RenderOnce for Popover {
                 let position = if at_pointer {
                     pointer.unwrap_or(bounds.origin)
                 } else {
-                    // Match the component's default quarter-rem gap at the trigger edge.
                     let gap = window.rem_size() * 0.25;
                     match anchor {
                         Anchor::TopLeft => bounds.bottom_left() + point(px(0.0), gap),
@@ -606,9 +604,6 @@ impl<T: Selectable + gpui::InteractiveElement + IntoElement + 'static> RenderOnc
     }
 }
 
-// Registers an action target on the popover's dispatch node, without moving
-// keyboard focus or adding a layout box around the trigger. This lets an AX
-// press use the same Confirm action as the keyboard.
 type ScopeBuilder = Box<dyn FnOnce(FocusHandle, &mut Window, &mut App) -> AnyElement>;
 
 struct ActionScope {

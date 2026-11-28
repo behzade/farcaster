@@ -91,7 +91,6 @@ impl StateStore {
             let status = match row.get::<_, Option<String>>(1)?.as_deref() {
                 Some("done") => Some(AgentOutcome::Complete),
                 Some("failed") => Some(AgentOutcome::Failed),
-                // A worker that was active when the app exited has no live process to resume its turn.
                 Some("active" | "stopped") => Some(AgentOutcome::Incomplete),
                 _ => None,
             };

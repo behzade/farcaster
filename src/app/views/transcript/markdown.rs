@@ -189,8 +189,6 @@ pub(super) fn clickable_images(source: &str) -> Cow<'_, str> {
         urls: &HashMap<String, String>,
         edits: &mut Vec<(std::ops::Range<usize>, String)>,
     ) {
-        // A soft newline is still part of the same Markdown paragraph. An
-        // image on its own source line belongs below its caption, not beside it.
         let image_line = allow_image_blocks
             && (matches!(node, Node::Image(_) | Node::ImageReference(_)) && !in_link
                 || matches!(node, Node::Link(link) if link.children.len() == 1 && matches!(link.children[0], Node::Image(_) | Node::ImageReference(_)))
@@ -201,9 +199,6 @@ pub(super) fn clickable_images(source: &str) -> Cow<'_, str> {
             let before = source[..start].rsplit('\n').next().unwrap_or_default();
             let after = source[end..].split('\n').next().unwrap_or_default();
             if before.trim().is_empty() && after.trim().is_empty() {
-                // Base's image-only paragraph path ignores explicit height
-                // while loading. Keep this in its measured inline flow so a
-                // retained row cannot cache a zero-height preview.
                 edits.push((start..start, "\n\n\u{200b}".into()));
                 edits.push((end..end, "\n\n".into()));
             }
@@ -232,8 +227,6 @@ pub(super) fn clickable_images(source: &str) -> Cow<'_, str> {
             let title = title
                 .map(|title| format!(" title=\"{}\"", attr(title)))
                 .unwrap_or_default();
-            // Reserve the actual aspect ratio before image loading so retained
-            // transcript rows have stable bounds from their first frame.
             let bounds = crate::app::workspace::files::image_preview_dimensions(url)
                 .map(|(width, height)| {
                     let scale = (320.0 / f64::from(width))

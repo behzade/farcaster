@@ -274,7 +274,6 @@ mod exchange {
             assert_eq!(answer["id"], "approve-7");
             assert_eq!(answer["result"]["outcome"]["optionId"], "allow-once-7");
             peer.reply(&prompt, json!({"stopReason":"end_turn"}));
-            // Keep the peer open until the client has consumed the response.
             finished
                 .recv_timeout(Duration::from_secs(3))
                 .expect("release ACP test peer");
@@ -316,7 +315,6 @@ mod exchange {
                 let request = peer.read();
                 peer.write(json!({"jsonrpc":"2.0", "id":request["id"], "error":{"code":code, "message":"request denied"}}));
             }
-            // Trigger EOF only after the client has consumed both error responses.
             finished
                 .recv_timeout(Duration::from_secs(3))
                 .expect("release ACP error peer");

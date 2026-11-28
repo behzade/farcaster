@@ -58,13 +58,11 @@ fn composer_remains_plain_text_and_restores_highlights_after_draft_replacement(
             view.presentation
                 .update_highlights(&view.decorations, &value, decorations.clone(), cx);
             assert_eq!(view.decorations.get_ranges(cx), [2..8]);
-            // Switching drafts clears annotations even when the text stays the same.
             view.input
                 .update(cx, |input, cx| input.set_value(value.clone(), window, cx));
             view.presentation
                 .update_highlights(&view.decorations, &value, decorations.clone(), cx);
             assert_eq!(view.decorations.get_ranges(cx), [2..8]);
-            // A second render scope must replace this same collection.
             ComposerPresentation::default().update_highlights(
                 &view.decorations,
                 &value,
@@ -176,7 +174,6 @@ fn typing_through_wrapping_keeps_composer_position_and_text_scroll_stable(
         ),
         cx,
         |cx, app, _, _| {
-            // Keep the wrapped sample within the composer's minimum height.
             cx.simulate_resize(gpui::size(px(1_600.), px(900.)));
             cx.update(|window, cx| {
                 window.activate_window();

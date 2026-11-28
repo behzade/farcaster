@@ -73,8 +73,6 @@ impl FarcasterApp {
             )
             && self.modal_owner_window(window, cx).is_none()
         {
-            // A new panel sets its initial focus when it renders. An existing
-            // panel can receive the request without focusing its owner's window.
             if let Some(panel) = self.overlays.modal.window {
                 let focus = focus.clone();
                 let _ = panel.update(cx, |_, window, cx| focus.focus(window, cx));
@@ -422,7 +420,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         if self.overlays.view.sessions {
-            self.apply_sheet_flags(sheet_flags(None));
+            self.apply_sheet_flags(sheet_flags(None), cx);
             self.overlays.view.pending_setup = false;
             self.overlays.sheet_return_focus = None;
         }
@@ -1236,7 +1234,7 @@ impl FarcasterApp {
         if should_capture_return_focus(self.current_sheet_flags()) {
             self.overlays.sheet_return_focus = picker_return.unwrap_or_else(|| window.focused(cx));
         }
-        self.apply_sheet_flags(sheet_flags(Some(sheet)));
+        self.apply_sheet_flags(sheet_flags(Some(sheet)), cx);
         self.overlays.view.pending_setup = true;
         cx.notify();
     }
@@ -1252,7 +1250,10 @@ impl FarcasterApp {
         }
     }
 
-    fn apply_sheet_flags(&mut self, flags: SheetFlags) {
+    fn apply_sheet_flags(&mut self, flags: SheetFlags, cx: &mut Context<Self>) {
+        if self.overlays.view.settings && !flags.settings {
+            self.close_sign_in_terminal(None, cx);
+        }
         self.overlays.view.sessions = flags.sessions;
         self.overlays.view.run = flags.run;
         self.overlays.view.worker_notices = flags.worker_notices;
@@ -1371,7 +1372,7 @@ impl FarcasterApp {
         if self.overlays.view.settings && self.settings.proxy_save.is_some() {
             self.save_settings_proxy(cx);
         }
-        self.apply_sheet_flags(sheet_flags(None));
+        self.apply_sheet_flags(sheet_flags(None), cx);
         self.overlays.view.pending_setup = false;
         let target = self.overlays.sheet_return_focus.take();
         self.restore_overlay_focus(target, &self.overlays.sheet_focus.clone(), window, cx);

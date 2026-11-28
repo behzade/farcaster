@@ -128,12 +128,16 @@ impl WorkerSessionTransport {
     }
 
     pub(super) fn session_usage(&self) -> SessionUsage {
+        let used = self
+            .usage
+            .context_used
+            .unwrap_or_else(|| self.usage.turn.total());
         SessionUsage {
             context_usage: Some(SessionContextUsage {
-                tokens: Some(self.usage.turn.total()),
+                tokens: Some(used),
                 context_window: self.usage.context_window,
                 percent: Some(if self.usage.context_window > 0 {
-                    self.usage.turn.total() as f64 * 100.0 / self.usage.context_window as f64
+                    used as f64 * 100.0 / self.usage.context_window as f64
                 } else {
                     0.0
                 }),

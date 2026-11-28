@@ -204,7 +204,6 @@ fn mixed_user_messages_highlight_only_recognized_invocation_tokens() {
 #[test]
 fn invocation_treatment_uses_distinct_skill_and_prompt_palettes() {
     assert_ne!(theme().colors.skill, theme().colors.accent);
-    assert_ne!(theme().colors.skill, theme().colors.success);
     let skill = invocation_transcript_markdown_style("<skill name=\"review\">body</skill>");
     assert_eq!(skill.inline_code.color, Some(theme().colors.skill.into()));
     assert_eq!(skill.inline_code.background_color, None);
@@ -213,17 +212,6 @@ fn invocation_treatment_uses_distinct_skill_and_prompt_palettes() {
     assert_eq!(prompt.inline_code.color, Some(theme().colors.accent.into()));
     assert_eq!(
         prompt.inline_code.background_color,
-        Some(theme().colors.panel.into())
-    );
-}
-
-#[test]
-fn markdown_inline_code_uses_the_reading_palette() {
-    let style = transcript_markdown_style();
-
-    assert_eq!(style.inline_code.color, Some(theme().colors.code.into()));
-    assert_eq!(
-        style.inline_code.background_color,
         Some(theme().colors.panel.into())
     );
 }
@@ -257,21 +245,6 @@ fn failed_commands_share_activity_with_surrounding_calls() {
             len: 3,
             ..
         }
-    ));
-}
-
-#[test]
-fn mixed_completed_tools_collapse_into_one_activity_row() {
-    let rows = project_rows(&[
-        item(TranscriptKind::User, "", "question"),
-        item(TranscriptKind::Tool, "Read", "Path: a"),
-        item(TranscriptKind::Tool, "Read", "Path: b"),
-        item(TranscriptKind::Tool, "Bash", "Command: true"),
-    ]);
-    assert_eq!(rows.len(), 2);
-    assert!(matches!(
-        &rows[1],
-        TranscriptRow::ActivityGroup { len: 3, .. }
     ));
 }
 

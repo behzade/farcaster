@@ -64,8 +64,6 @@ impl crate::app::FarcasterApp {
         status: RunStatus,
         force_recent: bool,
     ) -> bool {
-        // An actor may start with only a locator. Capture the row while that
-        // locator is unique so a later import cannot inherit its status.
         if let Some(path) = crate::sessions::session_path(&target)
             && !self.sessions.all.has_shared_path(path)
             && let Some(row) = self.sessions.all.by_path(path)

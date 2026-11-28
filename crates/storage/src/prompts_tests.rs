@@ -36,7 +36,6 @@ fn prompt_submission_saves_the_draft_before_a_late_writer_save()
         .connection
         .execute_batch("DROP TRIGGER reject_outbox")?;
 
-    // The draft was already saved when the user changed project, harness and profile.
     let allocated = writer.save_draft_with_identity(stale.clone())?;
     let queued = repo.submit_prompt(submit(Backend::Codex))?;
     assert_eq!(queued.app_session_id, allocated);
@@ -45,7 +44,6 @@ fn prompt_submission_saves_the_draft_before_a_late_writer_save()
     assert_eq!(queued.images[0].clone().into_inline()?, image);
     stale.title = Some("Old draft title".into());
 
-    // The writer may receive either kind of stale draft snapshot before binding.
     assert_eq!(
         writer.save_draft_with_identity(stale.clone())?,
         queued.app_session_id
@@ -628,7 +626,6 @@ fn transcript_prompt_overlay_scopes_deliveries_and_presentations_to_the_owner()
         pi.presentations[0].submission_id.as_deref(),
         Some("shared-receipt")
     );
-    // Reopen a presentation written by the preceding schema version.
     repository.with(|store| {
         store.connection.execute(
             "UPDATE session_events SET body=json_remove(body,'$.submissionId') WHERE json_extract(body,'$.type')='prompt_presentation'",

@@ -266,7 +266,6 @@ fn canonical_metadata_before_legacy_archive_receipt(cx: &mut gpui::TestAppContex
                 let mut original = session(id, None, false, false);
                 original.path = alias.join(format!("{id}.jsonl"));
                 original.project = alias.clone();
-                // A locator placeholder is permitted by archive_matching_sessions.
                 if fail {
                     original.id = original.path.display().to_string();
                 }
@@ -302,8 +301,6 @@ fn canonical_metadata_before_legacy_archive_receipt(cx: &mut gpui::TestAppContex
                 };
                 cx.update(|window, cx| {
                     app.update(cx, |app, cx| {
-                        // Discovery rows are normally indexed before publication. Seed the
-                        // legacy catalog explicitly while driving the real store below.
                         app.sessions.all = vec![original.clone(), other.clone()].into();
                         app.sessions.visible = vec![original.clone(), other.clone()].into();
                         app.request_session_archive(original.path.clone(), true, window, cx);

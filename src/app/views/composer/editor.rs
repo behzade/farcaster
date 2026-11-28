@@ -102,7 +102,6 @@ impl RenderOnce for ComposerInput {
             .font_family(UI_FONT_FAMILY)
             .text_size(composer_font_size())
             .line_height(composer_line_height())
-            // Kit adds 6px of padding and a 6px gutter even without line numbers.
             .ml(-px(6.))
             .pl(
                 (theme().space.sm - gpui_component::Size::default().input_px().min(px(6.)))
@@ -205,10 +204,6 @@ impl RenderOnce for ComposerInput {
                         )
                     })
                     .on_prepaint(move |bounds, _, cx| {
-                        // Kit adds padding inside the editor state, independently
-                        // of the outer frame's style. Even with line numbers off,
-                        // Editor keeps a 6px gutter and reserves 10px for the caret.
-                        // Match its wrap width so the editor grows before it scrolls.
                         let padding = gpui_component::Size::default().input_px();
                         let width =
                             bounds.size.width - padding - padding.min(px(6.)) - px(6.) - px(10.);
@@ -296,7 +291,6 @@ fn composer_line_height() -> gpui::Pixels {
 
 fn composer_editor(input: &Entity<EditorState>, height: gpui::Pixels) -> gpui::Stateful<gpui::Div> {
     let newline = input.clone();
-    // Keep the requested number of text rows after Kit's internal padding.
     let height = height + gpui_component::Size::default().input_py() * 2.;
     div()
         .id("composer-editor")

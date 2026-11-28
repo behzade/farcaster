@@ -5,7 +5,6 @@ use std::{
 };
 
 const LIMIT: usize = 24;
-// Bound the retained message payload as well as the number of histories.
 const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
 
 pub(super) trait CachedHistory: Clone {
@@ -144,8 +143,6 @@ impl<K: Eq, S: Eq, T: CachedHistory> HistoryCache<K, S, T> {
         self.load_with_preview(key, revision, None, |_| load())
     }
 
-    /// Each caller receives at most one page, even if a revision change triggers a retry.
-    /// Only the full history enters the LRU.
     pub(super) fn load_with_preview(
         &self,
         key: K,
@@ -172,8 +169,6 @@ impl<K: Eq, S: Eq, T: CachedHistory> HistoryCache<K, S, T> {
                     }
                 }
                 let Some(before) = before else { break None };
-                // A waiter can still use its completed read after LRU eviction,
-                // including histories too large to retain in the cache at all.
                 if let Some(flight) = joined.as_ref()
                     && flight.source.revision == before
                     && let Some(history) = flight.history.get()

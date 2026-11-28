@@ -10,9 +10,6 @@ use gpui_component::{
     input::{Input as ComponentInput, InputState},
 };
 
-/// Keep the input's frame and editor under one click target. The component's
-/// padding can take focus without focusing its text editor. Settle focus after
-/// the click, as well as the editor's normal mouse-down and selection handling.
 #[derive(IntoElement)]
 pub(crate) struct Input {
     component: ComponentInput,
@@ -59,8 +56,6 @@ impl Styled for Input {
 
 impl RenderOnce for Input {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        // The component derives its fill from the border token. Keep the field
-        // fill independent so stronger borders do not wash out its text.
         let component = if self.appearance && !self.disabled {
             self.component
                 .bg(crate::app::ui::theme::theme().colors.canvas)
@@ -82,8 +77,6 @@ impl RenderOnce for Input {
     }
 }
 
-// Delegate layout and native semantics to the component. This adds no layout
-// box, focus handle, or accessibility node around the existing input.
 struct InputClickFocus {
     child: AnyElement,
     state: Entity<InputState>,

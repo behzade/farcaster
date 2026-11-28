@@ -106,7 +106,6 @@ pub(super) fn restore(messages: &mut [Value], thread: &Value, home: &Path, locat
             if reader.read_line(&mut line).ok()? == 0 {
                 break;
             }
-            // JSON escaping can only make an ASCII base64 string longer on disk.
             if line.len() < shortest {
                 continue;
             }

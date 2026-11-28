@@ -968,7 +968,6 @@ impl WorkerSession for CodexWorkerSession {
     }
 
     fn respond_questions(&mut self, response: crate::QuestionResponse) -> Result<(), String> {
-        // Resolution can race a user's click. Never send an answer for a cleared request.
         let Some(pending) = self.pending_questions.get(&response.id) else {
             return Ok(());
         };
@@ -1135,8 +1134,6 @@ impl WorkerSession for CodexWorkerSession {
                         .as_deref()
                         .is_some_and(|id| id.starts_with(QUESTION_SUBMISSION_PREFIX)) =>
                 {
-                    // Keep the receipt identity so shared delivery matching cannot
-                    // mistake this answer for a same-text composer submission.
                     self.resolve_question_submission(submission_id.as_deref().unwrap());
                 }
                 WorkerEvent::PromptCancelled { submission_id }
@@ -1986,6 +1983,7 @@ impl CodexWorkerSession {
                                     .get("modelContextWindow")
                                     .and_then(Value::as_u64)
                                     .unwrap_or(0),
+                                context_used: None,
                                 cost: None,
                             };
                             self.command_state.usage = Some(reported_usage);
@@ -2722,7 +2720,6 @@ impl CodexWorkerSession {
         if is_new {
             self.events.push_back(WorkerEvent::Started);
             self.output.clear();
-            // Reserve slot zero for reasoning even if answer text arrives first.
             self.reasoning_started = !self.manual_compaction;
             self.turn_error = None;
         }
@@ -3261,8 +3258,6 @@ fn codex_passive_item(item: &Value) -> bool {
 
 fn codex_tool_review_started(params: &Value) -> Option<WorkerActivity> {
     let id = params.get("targetItemId")?.as_str()?;
-    // Reviews can cover child actions without their own tool lifecycle. Native
-    // item events alone start/end execution, including pre-review command items.
     Some(WorkerActivity::ToolReviewChanged {
         id: id.to_owned(),
         state: ToolReviewState::Reviewing,

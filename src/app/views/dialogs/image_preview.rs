@@ -310,7 +310,6 @@ impl Render for ImageViewport {
                     },
                     move |_, mut image, window, cx| {
                         image.paint(window, cx);
-                        // Keep dragging when the pointer leaves the clipped viewport.
                         window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
                             if phase == DispatchPhase::Bubble {
                                 let _ = pointer.update(cx, |this, cx| {

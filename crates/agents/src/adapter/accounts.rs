@@ -27,10 +27,7 @@ pub fn logout_account(
     config.validate_profile_backend(source.backend)?;
     let result =
         super::for_backend(source.backend).logout_account(config, source, identity, project);
-    crate::accounts::publish_account_event(AccountEvent::LoginChanged {
-        backend: source.backend,
-        profile_id: source.profile_id.clone(),
-    });
+    super::sign_in::refresh_login(config, source.backend);
     result
 }
 
@@ -51,7 +48,6 @@ pub(super) fn source(
     }
 }
 
-/// Identify the environment's origin, without retaining its credential value.
 pub(super) fn environment_source(
     command: &std::process::Command,
     name: &str,

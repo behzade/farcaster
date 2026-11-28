@@ -92,7 +92,6 @@ impl NativeHost {
             window_background: gpui::WindowBackgroundAppearance::Transparent,
             ..Default::default()
         };
-        // Tooltips need no input state. Skip Root and its full-window shadow.
         let popup = if host.relays_input(input) && input != OverlayInput::Tooltip {
             let owner_handle = owner.window_handle();
             let root = cx
@@ -133,9 +132,6 @@ impl NativeHost {
                         OverlayInput::Tooltip => unreachable!(),
                     });
                 }
-                // Each macOS window activates AccessKit lazily. If the owner
-                // already serves an AX client, build the panel's real tree
-                // before AppKit can expose its initial empty window node.
                 #[cfg(target_os = "macos")]
                 if owner.is_a11y_active() && input != OverlayInput::Tooltip {
                     Self::prepare_accessibility(window)?;
@@ -173,7 +169,6 @@ impl NativeHost {
     }
 
     pub(super) fn relays_input(&self, input: OverlayInput) -> bool {
-        // Wayland popups and passive X11 panels leave native focus on the owner.
         if self.is_wayland() {
             return true;
         }
@@ -207,8 +202,6 @@ impl NativeHost {
                 offset.y
             },
         );
-        // GPUI clamps anchors inside the parent's visible geometry. Compensate
-        // for client-side shadow insets so popup and owner coordinates agree.
         let padding = gpui_component::window_paddings(owner);
         let minimum = gpui::point(padding.left, padding.top);
         let maximum = gpui::point(
@@ -242,8 +235,6 @@ impl NativeHost {
                         gpui::px(0.0)
                     },
                 ),
-            // Async requests have no triggering press serial. Keyboard and IME
-            // input stays on the owner and is relayed to this popup instead.
             grab: false,
         })
     }
@@ -425,7 +416,6 @@ mod macos {
             let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
                 return Err("notification owner is not an AppKit window".into());
             };
-            // Match a retained AppKit view to GPUI's opaque handle without dereferencing it.
             NSApplication::sharedApplication(main)
                 .windows()
                 .iter()
@@ -469,8 +459,6 @@ mod macos {
             let main =
                 MainThreadMarker::new().ok_or("panel presentation requires the main thread")?;
             if !NSApplication::sharedApplication(main).isActive() {
-                // A background AX request must not make the panel key or put
-                // it above the app the user is working in. Keep it by its owner.
                 panel.setCollectionBehavior(self.window.collectionBehavior());
                 popup.window.orderWindow_relativeTo(
                     NSWindowOrderingMode::Above,
@@ -509,8 +497,6 @@ mod macos {
             offset: gpui::Point<Pixels>,
         ) {
             if let Some(main) = MainThreadMarker::new() {
-                // GPUI popups start at menu level, above other apps' windows.
-                // Background panels must use their owner's level instead.
                 let level = if NSApplication::sharedApplication(main).isActive() {
                     NSPopUpMenuWindowLevel
                 } else {

@@ -12,7 +12,6 @@ fn cold_chunk_text_uses_saved_definitions_and_falls_back_for_unindexed_items() {
         end: source.len(),
         fence: None,
     };
-    // A partial index makes its output distinguishable from a fresh parse.
     let mut structure = MarkdownStructure::parse(&source).unwrap();
     assert_eq!(structure.definitions.len(), 2);
     structure.definitions.truncate(1);
@@ -163,8 +162,6 @@ fn wide_screenshot_preview_uses_its_aspect_ratio(cx: &mut gpui::TestAppContext) 
                 div()
                     .w(px(400.))
                     .debug_selector(|| "screenshot-document".into())
-                    // Keep bytes pending to check the first frame, before
-                    // the renderer can use a decoded image's dimensions.
                     .child(TextView::new(&self.state).image_source(|_| {
                         gpui::ImageSource::Custom(std::sync::Arc::new(|_, _| None))
                     })),

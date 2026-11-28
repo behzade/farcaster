@@ -126,8 +126,6 @@ impl ArchiveWrites {
         }
         let key = archive_target(row);
         if matches!(key, ArchiveTarget::App(_)) {
-            // Metadata can publish the durable ID before the archive receipt. The old
-            // record may still use its locator as its backend ID.
             if let Some(previous) = catalog
                 .matching_record(row)
                 .filter(|old| old.app_session_id <= 0)
@@ -237,8 +235,6 @@ impl FarcasterApp {
                 .map(SessionSummary::catalog_key);
             let panel = self.views.run_panel.read(cx);
             if let Some(family) = family {
-                // Once its missing parent gains an ID, the cached orphan or its
-                // former locator can identify a different root, even off screen.
                 if panel.prepared_worker_root().is_some_and(|key| {
                     catalog
                         .by_key(&key)
@@ -566,7 +562,6 @@ impl FarcasterApp {
                     .iter()
                     .find(|row| row.id == original.id)
                 {
-                    // A first send can be rejected while the confirmation is open.
                     if !self.can_archive_draft(draft) {
                         return;
                     }

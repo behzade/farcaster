@@ -183,8 +183,6 @@ impl FarcasterApp {
                 }
             });
         }
-        // The editor already belongs to the clicked session while the runtime
-        // may still be delivering extensions from the previous one.
         if !self.awaiting_selection_snapshot()
             && let Some((generation, text)) = self.extensions.pending_editor_text.take()
         {

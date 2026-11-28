@@ -2,8 +2,6 @@ use std::borrow::Cow;
 
 use serde_json::Value;
 
-/// Unwrap serialized MCP result envelopes from any backend. Leave ordinary
-/// output borrowed, preserve unknown JSON, and bound nested wrapper decoding.
 pub fn normalize_tool_output(blocks: &[Value]) -> Cow<'_, [Value]> {
     fn expand(blocks: &[Value], depth: usize) -> Cow<'_, [Value]> {
         let mut output: Option<Vec<Value>> = None;

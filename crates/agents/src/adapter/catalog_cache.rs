@@ -1,4 +1,3 @@
-//! Shared request-ready catalogs, keyed by backend, account profile, and project.
 use crate::{AgentLaunchConfig, Backend, ConfigurationCatalog};
 use std::{
     collections::HashMap,
@@ -67,8 +66,6 @@ impl Cache {
             }
             state.requests.entry(key.clone()).or_default().clone()
         };
-        // Share an in-flight fetch. A background refresh does not block readers
-        // of the last complete catalog, and its failure does not erase that catalog.
         let result = request.get_or_init(fetch).clone();
         let mut state = self.state.lock().expect("catalog cache");
         if state
@@ -108,8 +105,6 @@ pub(super) fn load(
     cache().load(Key::new(config, harness, project)?, fetch)
 }
 
-/// Hydrate the shared lookup from the central persisted catalog. Old display-only
-/// catalogs remain useful to the UI but must be refreshed before building requests.
 pub fn seed_configuration_catalog(
     config: &AgentLaunchConfig,
     harness: Backend,

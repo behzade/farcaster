@@ -50,7 +50,6 @@ fn first_caller_registration_and_resume_keep_the_submitted_draft_id() -> Result<
     assert_eq!(bound.app_session_id, Some(app_id));
     assert!(bound.prompt_draft.is_none());
 
-    // Fail after registration, before the runtime receives LoadState or sends a prompt.
     drop(root);
     let saved = reader
         .draft_session_target(&draft.id)?
@@ -93,8 +92,6 @@ fn caller_binding_publishes_child_and_family_together() -> Result<(), String> {
         Some(Arc::new(move |caller, family| {
             let id = registrations.with(|store| store.register_caller_session(caller, family))?;
             if caller.parent_worker_id.is_some() {
-                // Read as soon as registration returns, before any later family
-                // callback could hide an incorrectly published root.
                 let rows = catalog.with(|store| store.cached_sessions(""))?;
                 during_registration.lock().expect("capture").push(rows);
             }
@@ -166,7 +163,6 @@ fn caller_binding_publishes_child_and_family_together() -> Result<(), String> {
     );
     assert!(linked.title.is_empty());
 
-    // Rebinding a row whose family is already stored does not expose it again.
     child.bind("child");
     let snapshots = captured.lock().expect("capture");
     assert_eq!(snapshots.len(), 2);
@@ -199,8 +195,6 @@ fn caller_binding_publishes_child_and_family_together() -> Result<(), String> {
     assert_eq!(execution.model, "selected");
     assert_eq!(execution.effort.as_deref(), Some("high"));
 
-    // Switching back to a saved child must move the live route and selection
-    // to that row, rather than leaving restart pointed at the previous session.
     child.bind("other-child");
     child.select_model("openai", "updated");
     child.select_effort("low");
@@ -437,8 +431,6 @@ fn linked_child_registers_turns_after_parent_merge_without_rewriting_family() ->
         crate::sessions::AppSessionId::new(canonical_id).map(crate::sessions::SessionKey::App)
     );
 
-    // The child's registry snapshot still has the old parent ID. Neither a
-    // parent refresh nor a live parent caller is required to register a turn.
     child.begin_execution(Some("after-merge"));
     let (_, turn) = registry.resolve_execution(child.token())?;
     assert_eq!(turn.prompt_id.as_deref(), Some("after-merge"));

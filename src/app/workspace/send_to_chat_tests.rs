@@ -142,7 +142,6 @@ fn sending_code_to_archived_history_restores_the_selected_record(cx: &mut gpui::
                     let current = app.current_code_destination().expect("selected history");
                     assert_eq!(current.harness, Some(selected.harness));
                     assert_eq!(current.session, Some(selected.target()));
-                    // Promotion can move the composer to a saved buffer before its first snapshot.
                     let snapshot = std::sync::Arc::make_mut(&mut app.snapshot);
                     snapshot.selected_session = None;
                     snapshot.harness = Some(Backend::Cursor);

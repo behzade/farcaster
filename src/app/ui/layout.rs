@@ -10,8 +10,6 @@ pub(crate) fn chat_column() -> Div {
         .px(theme().size(40.0))
 }
 
-// Transcript rows include their own inset for message backgrounds and hit areas.
-// Keep their content on the composer's grid without caller-supplied arithmetic.
 pub(crate) fn transcript_column() -> Div {
     chat_column().px(theme().size(40.0) - super::grid::transcript_inset())
 }

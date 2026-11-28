@@ -18,7 +18,6 @@ fn environment_sources_share_inherited_credentials_but_separate_project_override
     let other = environment_source(&command, "PATH", second).unwrap();
     assert_ne!(local, other);
     assert_ne!(local, inherited);
-    // Rotating an override keeps its connection origin stable.
     assert_eq!(local, environment_source(&command, "PATH", first).unwrap());
     assert!(!local.contains("fixture-credential"));
     assert!(!other.contains("fixture-credential"));

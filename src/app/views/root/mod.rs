@@ -83,7 +83,6 @@ impl Render for FarcasterApp {
             .font(ui_font())
             .key_context(key_context)
             .track_focus(&self.navigation.chat.focus)
-            // Handle unused Chat clicks before GPUI focuses the root.
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, window, cx| {

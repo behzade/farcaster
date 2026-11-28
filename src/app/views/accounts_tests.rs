@@ -172,3 +172,93 @@ fn signed_in_connection_can_show_a_reported_plan_without_an_email() {
     snapshot.connections[0].auth = AccountAuthState::Configured;
     assert!(visible_connections(&snapshot).is_empty());
 }
+
+#[gpui::test]
+fn accounts_settings_aligns_header_refresh_and_full_width_cards(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::accounts_settings_aligns_header_refresh_and_full_width_cards"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.simulate_resize(gpui::size(gpui::px(1400.), gpui::px(900.)));
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let mut snapshot = accounts(1);
+                    snapshot.accounts[0].identity.plan = Some("pro".into());
+                    snapshot.apply(AccountObservation {
+                        source: AccountSource {
+                            backend: Backend::Antigravity,
+                            profile_id: None,
+                            context: "/project/ag".into(),
+                            provider: "google".into(),
+                            credential_source: "native:ag".into(),
+                            incarnation: None,
+                        },
+                        identity: Some(AccountIdentity {
+                            authority: "google".into(),
+                            plan: Some("Google AI Pro".into()),
+                            upgrade_url: Some("https://example.com/upgrade".into()),
+                            ..Default::default()
+                        }),
+                        auth: AccountAuthState::SignedIn,
+                        limits: Vec::new(),
+                        complete_limits: true,
+                        limits_failed: false,
+                        observed_at: account_now(),
+                        capabilities: AccountCapabilities {
+                            identity: true,
+                            login: true,
+                            logout: true,
+                            ..Default::default()
+                        },
+                    });
+                    app.accounts = std::sync::Arc::new(snapshot);
+                    app.open_settings(window, cx);
+                    app.settings.tab = SettingsTab::Accounts;
+                    cx.notify();
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+
+            let page = cx.debug_bounds("settings-accounts").expect("accounts page");
+            let heading = cx
+                .debug_bounds("accounts-section-heading")
+                .expect("connected accounts heading");
+            let refresh = cx.debug_bounds("accounts-refresh").expect("refresh button");
+            assert!(
+                heading.right() < refresh.left(),
+                "refresh button sits beside heading rather than spanning full width"
+            );
+            assert!(
+                (refresh.right() - page.right()).abs() <= gpui::px(1.0),
+                "refresh button aligns to the right edge of the accounts page"
+            );
+
+            let card0 = cx
+                .debug_bounds("account-card-0")
+                .expect("first account card");
+            let card1 = cx
+                .debug_bounds("account-card-1")
+                .expect("second account card");
+            assert_eq!(card0.left(), page.left());
+            assert_eq!(card0.right(), page.right());
+            assert_eq!(card1.left(), card0.left());
+            assert_eq!(card1.right(), card0.right());
+            assert!(card0.bottom() < card1.top());
+
+            let sign_in0 = cx
+                .debug_bounds("sign-in-card-0")
+                .expect("first sign-in card");
+            let sign_in1 = cx
+                .debug_bounds("sign-in-card-1")
+                .expect("second sign-in card");
+            assert_eq!(sign_in0.left(), page.left());
+            assert_eq!(sign_in0.right(), page.right());
+            assert_eq!(sign_in1.left(), page.left());
+            assert_eq!(sign_in1.right(), page.right());
+        },
+    );
+}

@@ -676,13 +676,8 @@ fn git_binary_untracked_files_leave_totals_unknown() {
 
 #[cfg(unix)]
 #[test]
-fn git_untracked_symlink_counts_the_link_not_its_destination() {
+fn git_untracked_symlinks_count_the_link_for_regular_and_fifo_targets() {
     assert_untracked_symlink_totals(false);
-}
-
-#[cfg(unix)]
-#[test]
-fn git_untracked_symlink_to_fifo_uses_the_command_timeout() {
     assert_untracked_symlink_totals(true);
 }
 

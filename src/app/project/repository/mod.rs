@@ -291,8 +291,6 @@ impl FarcasterApp {
     ) {
         let repository = &mut self.project.repository;
         repository.center_restore = None;
-        // Keep the previous observation warm during a same-project recheck, but
-        // suspend execution until the new decision arrives.
         if let Some((previous, _)) = repository.trust_check.take() {
             repository.execution_allowed = previous;
         }

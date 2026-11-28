@@ -16,6 +16,25 @@ pub(crate) fn prepare(
     write_launch(path, program, arguments, project, &environment)
 }
 
+pub(crate) fn prepare_command(
+    path: &Path,
+    command: &std::process::Command,
+    project: &Path,
+) -> Result<String, String> {
+    let arguments = command.get_args().map(OsStr::to_owned).collect::<Vec<_>>();
+    let environment = command
+        .get_envs()
+        .filter_map(|(k, v)| Some((k.to_owned(), v?.to_owned())))
+        .collect::<Vec<_>>();
+    write_launch(
+        path,
+        Path::new(command.get_program()),
+        &arguments,
+        project,
+        &environment,
+    )
+}
+
 fn write_launch(
     path: &Path,
     program: &Path,

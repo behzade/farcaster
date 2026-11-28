@@ -50,7 +50,7 @@ fn muted_choice_selection_stays_readable_in_every_bundled_theme() {
         let colors = definition.colors;
         assert_contrast(colors.selected_text(), colors.selected_fill(), 4.5);
         assert_contrast(colors.selected_border(), colors.selected_fill(), 3.0);
-        assert_contrast(colors.selected_text(), colors.surface, 3.0); // Switch thumb on an unchecked track.
+        assert_contrast(colors.selected_text(), colors.surface, 3.0);
         assert_ne!(colors.selected_fill(), colors.accent);
         assert_ne!(colors.selected_fill(), colors.canvas);
     }
@@ -270,8 +270,6 @@ fn installed_controls_and_base_theme_keep_palette_colors(cx: &mut gpui::TestAppC
             component.semantic_tokens()
         );
 
-        // Checked controls, switch thumbs, sliders and scrollbars need contrast
-        // against their actual fills, not just the application background.
         for (foreground, background, minimum) in [
             (component.primary_foreground, component.primary, 4.5),
             (component.switch_thumb, component.switch, 3.0),

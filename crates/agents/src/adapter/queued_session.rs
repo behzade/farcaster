@@ -375,8 +375,6 @@ impl QueuedSession {
                     }
                     if let Some(dispatch) = self.dispatched.get_mut(id) {
                         let status = receipt.status;
-                        // Wait for the paired response to decide whether to return this
-                        // native steer to our queue or expose the rejection.
                         if dispatch.native_steer && status == DeliveryStatus::Rejected {
                             return None;
                         }

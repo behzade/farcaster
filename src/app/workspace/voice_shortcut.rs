@@ -58,7 +58,6 @@ impl ModifierShortcut {
         }
     }
 
-    // Commit on release so a following key can still form Ctrl+Alt+V, etc.
     fn capture(&mut self) -> Option<&'static str> {
         if let Some(key) = self.capture {
             let required = modifier_binding(key).unwrap();
@@ -117,7 +116,6 @@ impl FarcasterApp {
         self.settings
             .voice_shortcut
             .as_deref()
-            // Retire the old modifier-only binding on every platform.
             .filter(|key| *key != "right-shift")
             .unwrap_or(DEFAULT_SHORTCUT)
     }

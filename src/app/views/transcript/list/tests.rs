@@ -398,8 +398,6 @@ fn history_tail_rechecks_measured_room_after_resize(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn scrolling_a_short_suffix_preserves_its_gap_at_handoff(cx: &mut TestAppContext) {
-    // The suffix contains three safe rows. Its initial 120px gap is larger
-    // than the entire withheld prefix. A full wheel can hide every safe row.
     for (delta, draw_before_handoff, expected_gap) in
         [(50., true, 170.), (50., false, 170.), (180., true, 240.)]
     {
@@ -513,7 +511,6 @@ fn reading_restore_measures_expanded_row_before_applying_offset(cx: &mut TestApp
         item_ix: 12,
         offset_in_item: px(500.0),
     });
-    // Streaming can change the row layout again before the first paint.
     state.scroll_to(state.logical_scroll_top());
     draw_transcript(cx, &state, px(1_000.0), px(100.0));
     let offset = state.logical_scroll_top();

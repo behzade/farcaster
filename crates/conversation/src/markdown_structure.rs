@@ -1,4 +1,3 @@
-//! Source positions used when splitting a Markdown document into independent rows.
 use std::ops::Range;
 
 use markdown::mdast::Node;

@@ -297,8 +297,6 @@ fn preview_stops_at_the_first_incomplete_turn_in_descending_order() {
         let page = json!({"data":[incomplete, older]});
         assert!(recent_page_messages(&page).unwrap().content.is_empty());
     }
-    // The authoritative read preserves abbreviated text and normalizes historical
-    // tool states and unrendered user inputs through the same projector.
     let mut native = turn("middle", "first…12 chars truncated…last");
     native["items"].as_array_mut().unwrap().extend([
         json!({"id":"command","type":"commandExecution","status":"inProgress","command":"pwd","aggregatedOutput":null}),

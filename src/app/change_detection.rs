@@ -103,8 +103,6 @@ pub(in crate::app) fn archive_catalog_change(
     }
 }
 
-// A new or reparented record may resolve or orphan other rows. A metadata update
-// with stable links only affects its own archive row or its family's badge.
 pub(in crate::app) fn archive_row_change(
     catalog: &sessions::SessionCatalog,
     next: &SessionSummary,
@@ -129,8 +127,6 @@ pub(in crate::app) fn archive_row_change(
         if old.archived != next.archived || (next.archived && old.modified != next.modified) {
             return ArchiveChange::Rebuild;
         }
-        // Unbound rows can tie on both archive sort fields. Upsert moves the
-        // edited row to the front of its recency group, changing stable tie order.
         if next.archived && next.app_session_id <= 0 {
             let first = catalog.partition_point(|row| row.modified > next.modified);
             if catalog.get(first).is_some_and(|row| !row.same_record(old)) {
@@ -197,7 +193,6 @@ pub(in crate::app) fn run_panel_family_changed(
         current_root,
         next_root,
         |left, right, depth| {
-            // Worker cards retain the full summary for their tooltip and fallback activity.
             if depth > 0 {
                 return left == right;
             }

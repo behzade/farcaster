@@ -140,7 +140,6 @@ impl StateStore {
             .unwrap_or_else(|| serde_json::json!({}));
         let mut facts: SessionFacts = serde_json::from_value(record.clone())
             .map_err(|error| format!("decode session facts: {error}"))?;
-        // Older records saved this observation only in session_models.
         if record.get("serviceTier").is_none() {
             facts.service_tier = self.connection.query_row(
                 "SELECT m.service_tier FROM session_models m JOIN sessions s ON s.id=m.session_id

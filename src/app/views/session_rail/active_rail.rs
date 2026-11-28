@@ -501,7 +501,6 @@ impl FarcasterApp {
                             },
                         )
                         .debug_selector(|| "sidebar-settings-control".into())
-                        // Align the visible gear, including its SVG inset, with the row labels.
                         .ml(-((theme().controls.icon_button
                             - theme().icons.control)
                             / 2.0

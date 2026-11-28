@@ -1,5 +1,3 @@
-//! Per-selection timing for FARCASTER_PERF_TRACE. Keep only the first paint of
-//! actual destination rows. A loading placeholder or the previous chat is excluded.
 use std::{
     path::Path,
     sync::{
@@ -115,8 +113,6 @@ impl SwitchPaintTrace {
         let first = frames.first().expect("destination never painted");
         assert!(!first.is_empty());
         for frame in &frames[1..] {
-            // Older rows may fill the space above the initial page. Every row
-            // already painted must keep its exact bounds on every later frame.
             assert!(
                 frame.ends_with(first),
                 "destination row bounds shifted between GPUI paints: {first:?} -> {frame:?}"

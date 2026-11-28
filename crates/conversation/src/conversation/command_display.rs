@@ -5,7 +5,6 @@ pub(super) fn display(command: &str) -> Cow<'_, str> {
 }
 
 fn script(command: &str) -> Option<String> {
-    // Avoid scanning or allocating unbounded scripts just to draw a label.
     if command.len() > 64 * 1024 || !literal_words(command) {
         return None;
     }

@@ -601,7 +601,11 @@ pub(super) fn usage_update(update: &Value) -> Option<WorkerUsage> {
     let cache_read = number(usage, &["cachedInputTokens", "cacheRead"]);
     let cache_write = number(usage, &["cacheWriteInputTokens", "cacheWrite"]);
     let context_window = number(update, &["size", "contextWindow"]);
-    (input + output + cache_read + cache_write + context_window > 0).then_some(WorkerUsage {
+    ([input, output, cache_read, cache_write, context_window]
+        .iter()
+        .any(|value| *value > 0)
+        || update.get("used").is_some_and(Value::is_u64))
+    .then_some(WorkerUsage {
         turn: TokenUsage {
             input,
             output,
@@ -615,6 +619,7 @@ pub(super) fn usage_update(update: &Value) -> Option<WorkerUsage> {
             cache_write,
         },
         context_window,
+        context_used: update.get("used").and_then(Value::as_u64),
         cost: None,
     })
 }

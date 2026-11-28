@@ -51,8 +51,6 @@ pub(in crate::app) struct PreparedPage {
     loading_boundary: Option<usize>,
 }
 
-/// Earlier tool activity can join the first group. Rows after a user turn
-/// have a stable layout even when the preceding history is still missing.
 fn suffix_boundary(
     presentation: &TranscriptPresentation,
     rows: &PersistentVec<transcript::TranscriptRow>,
@@ -63,8 +61,6 @@ fn suffix_boundary(
     {
         return rows.position(|row| row.key() == user).unwrap_or(rows.len());
     }
-    // With no turn boundary, older tools can extend the first activity group.
-    // An assistant message owns its own chunks and can paint independently.
     let last_reply = rows
         .iter()
         .enumerate()
@@ -222,7 +218,6 @@ impl TranscriptView {
         use crate::runtime::SavedHistory;
         match snapshot.history_coverage() {
             None => HistoryDisplay::Waiting,
-            // apply_rows consumes the saved reading state when these rows can restore it.
             Some(HistoryCoverage::Suffix)
                 if self.session.as_ref().is_some_and(|path| {
                     self.reading
@@ -283,7 +278,6 @@ impl TranscriptView {
             let saved = ReadingState::capture(self, items);
             self.park_resident(&session, items, &saved);
             let entry = self.reading.entry((session, self.record.take()));
-            // A partial document may still be waiting for the original reading position.
             if saved.allows_history_tail() {
                 entry.or_insert(saved);
             } else {
@@ -357,8 +351,6 @@ impl TranscriptView {
         coverage: Option<HistoryCoverage>,
     ) -> bool {
         let mut anchor = self.take_pending_reading_anchor();
-        // Final Markdown rows have different boundaries from streaming chunks.
-        // Capture the current text position before replacing those rows, too.
         if anchor.is_none()
             && !self.list.has_pending_scroll()
             && let Some(transcript::TranscriptRow::StreamChunk { index, .. }) =
@@ -437,7 +429,6 @@ impl TranscriptView {
         let Some((top, following)) = page.list.take_history_handoff_position() else {
             return;
         };
-        // A reader can move the reopened page after its saved anchor was restored.
         let scrolled = local && page.list.preview_scrolled();
         if !scrolled && !self.allows_history_tail() {
             return;
@@ -455,7 +446,6 @@ impl TranscriptView {
                     self.jump_to_latest();
                 }
                 if saved_transcript {
-                    // The backend can append before the saved document gets a draw.
                     self.list.inherit_painted_top(offset);
                 }
             }

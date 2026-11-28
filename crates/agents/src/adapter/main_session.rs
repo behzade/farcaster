@@ -710,13 +710,23 @@ impl WorkerSessionTransport {
                 "detail": detail,
             }),
             WorkerActivity::Usage(usage) => {
-                self.usage = usage;
-                json!({
-                    "type": "turn_end",
-                    "contextWindow": usage.context_window,
-                    "usage": usage_json(usage.turn),
-                    "sessionUsage": usage_json(usage.session),
-                })
+                if let Some(used) = usage.context_used
+                    && usage.turn == TokenUsage::default()
+                    && usage.session == TokenUsage::default()
+                {
+                    self.usage.context_used = Some(used);
+                    self.usage.context_window = usage.context_window;
+                    json!({"type":"context_usage_update","contextUsed":used,"contextWindow":usage.context_window})
+                } else {
+                    self.usage = usage;
+                    json!({
+                        "type": "turn_end",
+                        "contextWindow": usage.context_window,
+                        "contextUsed": usage.context_used,
+                        "usage": usage_json(usage.turn),
+                        "sessionUsage": usage_json(usage.session),
+                    })
+                }
             }
             WorkerActivity::SelectionChanged { model, effort } => {
                 if let Some(model) = model {
@@ -868,8 +878,6 @@ impl WorkerSessionTransport {
         {
             self.finish_assistant_message(None);
         }
-        // A legacy stream can omit item/started and mix reasoning with text before
-        // sending its first item ID. Keep that content and leave its source unbound.
         let mixed = self.assistant_message.source.is_none()
             && final_content.as_ref().is_some_and(|block| {
                 self.assistant_message
@@ -889,7 +897,6 @@ impl WorkerSessionTransport {
                 self.assistant_message.completed = false;
                 self.start_assistant_message();
                 if block["type"] == "text" {
-                    // Some backends settle with the whole turn, others with just the last reply.
                     let partial = self.assistant_message.text().unwrap_or_default();
                     let prefix = self
                         .observed_text
@@ -1240,7 +1247,6 @@ impl SessionTransport for WorkerSessionTransport {
                 return Some(event);
             }
         }
-        // Yield to session commands without parking while worker events may remain.
         std::thread::current().unpark();
         None
     }

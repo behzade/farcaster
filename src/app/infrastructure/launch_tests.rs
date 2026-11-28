@@ -167,7 +167,6 @@ fn linux_desktop_appimage_launch_updates_an_older_appimage_entry()
 
 #[cfg(target_os = "linux")]
 fn legacy_linux_desktop_entry(data_home: &Path, executable: &str) -> String {
-    // Keep the pre-migration format independent of the production formatter.
     format!(
         "[Desktop Entry]\nCategories=Development;\nComment=Native desktop client for coding agents\nExec=\"{executable}\"\nIcon={}/icons/hicolor/256x256/apps/io.github.behzade.farcaster.png\nName=Farcaster\nStartupWMClass=io.github.behzade.farcaster\nTerminal=false\nType=Application\n",
         data_home.display()
@@ -202,7 +201,6 @@ fn linux_desktop_native_upgrade_removes_only_generated_package_entries()
         assert!(!entry.exists(), "old native launcher remains: {executable}");
         assert_eq!(fs::read_to_string(&packaged)?, packaged_contents);
     }
-    // Repeated launches have nothing left to migrate.
     install_linux_desktop_identity_at(&data_home, None, &[packaged_home]);
     assert!(!entry.exists());
     Ok(())
@@ -222,7 +220,6 @@ fn linux_desktop_native_upgrade_preserves_entries_without_a_replacement()
 
     install_linux_desktop_identity_at(directory.path(), None, &[]);
     assert_eq!(fs::read_to_string(&entry)?, contents);
-    // XDG_DATA_DIRS can include XDG_DATA_HOME or a symlink back to it.
     let alias = directory.path().join("alias");
     std::os::unix::fs::symlink(directory.path(), &alias)?;
     install_linux_desktop_identity_at(directory.path(), None, &[alias]);
@@ -261,7 +258,6 @@ fn linux_desktop_native_upgrade_preserves_custom_appimage_and_managed_entries()
         assert_eq!(fs::read_to_string(&entry)?, contents);
     }
     fs::remove_file(&entry)?;
-    // Even a symlink to the exact old generated format belongs to its manager.
     let managed = directory.path().join("managed.desktop");
     fs::write(&managed, &legacy)?;
     std::os::unix::fs::symlink(&managed, &entry)?;

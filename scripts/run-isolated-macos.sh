@@ -13,7 +13,6 @@ if [ ! -d "$bundle" ]; then
     printf '%s\n' "$bundle" > "$pointer"
 fi
 
-# Reuse the existing process without replacing its executable or creating another.
 if ps -axo comm= | grep -Fxq -- "$bundle/Contents/MacOS/farcaster"; then
     # Even a background open sends a reopen event to AppKit. Reusing a live
     # instance needs no Launch Services request and must not change its focus.
@@ -30,7 +29,6 @@ plist="$bundle/Contents/Info.plist"
 codesign --force --sign - --identifier io.github.behzade.farcaster.isolated \
     --requirements '=designated => identifier "io.github.behzade.farcaster.isolated"' "$bundle"
 
-# Launch Services reuses this bundle; -g leaves the user's current app active.
 project=${1:-$root}
 set -- -g
 if [ -n "${FARCASTER_DATA_DIR:-}" ]; then

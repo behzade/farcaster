@@ -1,5 +1,3 @@
-/// Reconcile a completed snapshot with text already emitted at the same scope.
-/// Callers retain native block identity and decide whether that scope can be replaced.
 pub(super) enum TextUpdate<'a> {
     Unchanged,
     Append(&'a str),

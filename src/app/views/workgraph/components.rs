@@ -314,10 +314,10 @@ pub(super) fn render_create_form(
                 .justify_end()
                 .gap(theme().space.sm)
                 .child(button(
-                        "workgraph-create-cancel",
-                        "Cancel",
-                        ButtonTone::Quiet,
-                        true,
+                    "workgraph-create-cancel",
+                    "Cancel",
+                    ButtonTone::Neutral,
+                    true,
                         move |window, cx| {
                             cancel.update(cx, |this, cx| {
                                 this.cancel_create(window, cx);

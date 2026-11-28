@@ -20,8 +20,6 @@ impl DisplayRead {
     }
 }
 
-/// Keeping the destination with the request prevents a result for another
-/// harness or project at the same locator from reaching this view.
 #[derive(Clone)]
 pub(in crate::app) struct DisplayQuery {
     pub trace: Option<Arc<SwitchPaintTrace>>,

@@ -49,7 +49,7 @@ fn submission_queue_matches_backend_steering_support(cx: &mut gpui::TestAppConte
                     let path = project.join("shared.jsonl");
                     app.sessions.selected_draft = None;
                     for (backend, expected_mode) in [
-                        (crate::agents::Backend::Antigravity, PromptMode::FollowUp),
+                        (crate::agents::Backend::Antigravity, PromptMode::Steer),
                         (crate::agents::Backend::Cursor, PromptMode::Steer),
                     ] {
                         app.composer.pending_submissions.clear();
@@ -247,7 +247,6 @@ fn check_rejected_first_prompt(
                 let (first, _, failed) = send(app, "Prompt A", window, cx);
                 assert!(failed.err().unwrap().contains("fixture enqueue failure"));
                 assert!(app.composer.input.read(cx).value().is_empty());
-                // A draft or archive writer can allocate the row even while A is pending.
                 if allocate_before_rejection {
                     let snapshot = app
                         .sessions
@@ -297,7 +296,6 @@ fn check_rejected_first_prompt(
                     app_session_id: queued.app_session_id,
                     provisional_title: title,
                 });
-                // A launch failure after enqueue still owns the draft, even before a locator arrives.
                 reject(second);
                 app.drain_runtime(cx);
                 app.resolve_pending_submission(window, cx);

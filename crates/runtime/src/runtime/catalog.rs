@@ -189,8 +189,6 @@ impl RuntimeOwner {
     }
 
     pub(super) fn refresh_worker_status(&mut self, id: &str) {
-        // Read current status on the catalog actor so a pending signal cannot replay an old
-        // status over a newer full catalog. Idle workers without output need stored outcomes.
         if let Ok(Some(snapshot)) = self.host.worker_status_snapshot(id)
             && (snapshot.status != agents::WorkerStatus::Idle || snapshot.output.is_some())
         {

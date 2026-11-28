@@ -1044,7 +1044,6 @@ fn known_pool_status_reaches_the_ui_without_reading_the_session_store() -> Resul
         );
         assert!(ui_events.try_recv().is_err());
     }
-    // Idle without output needs the stored outcome. This case must still use discovery.
     owner.state = Some(StateStore::open_at(&database)?.into());
     workers.lock().unwrap().1[0].status = WorkerStatus::Idle;
     owner.apply_command(RuntimeCommand::RefreshWorkerStatus("worker".into()));

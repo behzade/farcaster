@@ -56,7 +56,6 @@ fn native_tool_result<'a>(frame: &'a Value, blocks: &[Value]) -> Option<&'a Valu
     let native = frame
         .get("tool_use_result")
         .or_else(|| frame.get("toolUseResult"))?;
-    // A frame-level payload can only be assigned to a single tool call.
     (!native.is_null()
         && blocks
             .iter()
