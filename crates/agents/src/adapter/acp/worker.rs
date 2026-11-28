@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use agent_client_protocol::schema::v1::ContentBlock;
+use agent_client_protocol::v1::schema::ContentBlock;
 use serde_json::{Value, json};
 
 use super::{

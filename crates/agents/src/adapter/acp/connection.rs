@@ -7,7 +7,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use agent_client_protocol::{Agent, Client, ConnectionTo, Lines, Responder, UntypedMessage};
+use agent_client_protocol::v1::{ConnectionTo, Responder};
+use agent_client_protocol::{Agent, Client, Lines, UntypedMessage};
 use futures::{
     FutureExt as _,
     channel::oneshot,
@@ -82,7 +83,7 @@ impl AcpConnection {
         thread::Builder::new()
             .name("acp-sdk".into())
             .spawn(move || {
-                let client = Client.builder()
+                let client = Client.v1()
                     .name("farcaster")
                     .on_receive_request(
                         async move |request: UntypedMessage, responder, _cx| {
@@ -112,7 +113,7 @@ impl AcpConnection {
                         futures::select! {
                             _ = stopped.fuse() => Ok(()),
                             _ = cx.incoming_closed().fuse() => Err(
-                                agent_client_protocol::util::internal_error("ACP agent closed its output")
+                                agent_client_protocol::Error::internal_error().data("ACP agent closed its output")
                             ),
                         }
                     },
@@ -230,7 +231,7 @@ impl AcpConnection {
                         id: response_id,
                         rejection: crate::PromptRejection::new(
                             match error.code {
-                                agent_client_protocol::ErrorCode::AuthRequired => {
+                                agent_client_protocol::ErrorCode::AUTH_REQUIRED => {
                                     crate::RejectionReason::Authentication
                                 }
                                 _ => crate::RejectionReason::Other,
